@@ -1,0 +1,77 @@
+{
+  "name": "ten-minimums-not-exonerated",
+  "source": "synthetic",
+  "description": "Con 10 SMMLV o más no hay exoneración aunque la empresa la tenga activa.",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "SolidarityFundRule"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-01",
+      "end": "2026-11-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 17509050,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    }
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 8754525 },
+      { "code": "transport_allowance", "amount": 0 },
+      { "code": "ibc", "amount": 8754525 },
+      { "code": "health_employee", "amount": 350181 },
+      { "code": "pension_employee", "amount": 350181 },
+      { "code": "solidarity_fund", "amount": 87600 },
+      { "code": "health_employer", "amount": 744200 },
+      { "code": "pension_employer", "amount": 1050600 },
+      { "code": "arl", "amount": 45700 },
+      { "code": "compensation_fund", "amount": 350200 },
+      { "code": "icbf", "amount": 262700 },
+      { "code": "sena", "amount": 175100 },
+      { "code": "severance", "amount": 729252 },
+      { "code": "severance_interest", "amount": 87545 },
+      { "code": "premium", "amount": 729252 },
+      { "code": "vacation", "amount": 365064 }
+    ],
+    "net": 7966563,
+    "employerCost": 13294138
+  },
+  "notes": [
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 17 509 050 ÷ 30 × 15 = 8754525; salary = round(0 + 8754525) − 0 = 8 754 525",
+    "transport_allowance = 0: ingreso para el tope 17 509 050 > 3 501 810 (2 × SMMLV)",
+    "SalDev_m = 0 + 8754525 + 0 + 0 = 8754525; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(8754525) = 8 754 525",
+    "health_employee = al peso(8 754 525 × 0,04 = 350181) − 0 = 350 181",
+    "pension_employee = al peso(8 754 525 × 0,04) − 0 = 350 181",
+    "solidarity_fund: tramo por 10 SMMLV = 0.01; techo100(8 754 525 × 0.01) − 0 = 87 600",
+    "exonerado = false (empresa exonerada = true; ingreso salarial del mes 17 509 050 ≥ 17 509 050)",
+    "health_employer = techo100(8 754 525 × 0,085) − 0 = 744 200",
+    "pension_employer = techo100(8 754 525 × 0.12) − 0 = 1 050 600",
+    "arl = techo100(8754525 × 0.00522 = 45698.6205) − 0 = 45 700",
+    "compensation_fund = techo100(8754525 × 0,04) − 0 = 350 200",
+    "icbf = techo100(8754525 × 0,03) − 0 = 262 700",
+    "sena = techo100(8754525 × 0,02) − 0 = 175 100",
+    "provisiones: base = 8754525 + 0 + 0 + 0 = 8754525; severance = round(729251.9325) = 729 252; severance_interest = round(87545.25) = 87 545; premium = 729 252; vacation = round((8754525 + 0) × 0,0417 = 365063.6925) = 365 064",
+    "totalEarned = 8754525 + 0 + 0 + 0 + 0 = 8754525; totalDeductions = 788000; net = 7966525; employerCost = 8754525 + aportes 2628500 + provisiones 1911113 = 13294138"
+  ]
+}

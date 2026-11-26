@@ -1,4 +1,6 @@
 using Modules.Suppliers.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Suppliers.Application;
 
@@ -7,9 +9,15 @@ internal static class SupplierMapping
     /// <summary>
     /// Del agregado al detalle, con la ciudad ya resuelta por el llamador (<c>null</c> fuera de
     /// Colombia). No la resuelve esta función: cada handler decide cómo (una consulta puntual en
-    /// Get/Create/Update, un lote en List) y esto sólo ensambla.
+    /// Get/Create/Update, un lote en List) y esto sólo ensambla. Lo mismo con el mayorista vinculado (<c>null</c> si no lo
+    /// hay): <see cref="ResolveLinkedTenantAsync"/>.
     /// </summary>
-    public static SupplierResponse ToResponse(this Supplier supplier, SupplierCityRef? city) => new(
+    public static SupplierResponse ToResponse(
+        this Supplier supplier,
+        SupplierCityRef? city,
+        SupplierLinkedTenantDto? linkedTenant,
+        string? linkedRelationshipStatus = null,
+        SupplierRegionRef? region = null) => new(
         supplier.Id.Value,
         supplier.Name,
         supplier.BusinessName,
@@ -33,7 +41,10 @@ internal static class SupplierMapping
             new SupplierContactPayload(contact.Name, contact.Role, contact.Phone, contact.Email))],
         supplier.IsActive,
         supplier.CreatedAt,
-        supplier.UpdatedAt);
+        supplier.UpdatedAt,
+        linkedTenant,
+        linkedTenant is null ? null : linkedRelationshipStatus,
+        region is null ? null : new SupplierRegionDto(region.Id, region.Name));
 
     /// <summary>
     /// La versión de un solo proveedor: resuelve su ciudad (sólo si la tiene) y arma el detalle. La
@@ -44,21 +55,72 @@ internal static class SupplierMapping
     public static async Task<SupplierResponse> ToResponseAsync(
         this Supplier supplier,
         ISupplierGeographyLookup geographyLookup,
+        ITenantDirectory tenantDirectory,
+        ISupplierRelationshipLookup relationships,
         CancellationToken cancellationToken)
     {
+        var linkedTenant = await supplier.ResolveLinkedTenantAsync(tenantDirectory, cancellationToken);
+        var status = await supplier.ResolveRelationshipStatusAsync(relationships, cancellationToken);
+        // Spec 2026-11-23: una región que Geography ya no devuelve se omite en vez de tirar la ficha (referencia blanda).
+        SupplierRegionRef? region = null;
+        if (supplier.RegionId is { } regionId)
+        {
+            (await geographyLookup.FindRegionsAsync([regionId], cancellationToken)).TryGetValue(regionId, out region);
+        }
+
         if (supplier.CityId is not { } cityId)
         {
-            return supplier.ToResponse(null);
+            return supplier.ToResponse(null, linkedTenant, status, region);
         }
 
         var city = await geographyLookup.FindCityAsync(cityId, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"City '{cityId}' referenced by supplier '{supplier.Id}' was not found.");
 
-        return supplier.ToResponse(city);
+        return supplier.ToResponse(city, linkedTenant, status, region);
     }
 
-    public static SupplierListItemResponse ToListItem(this Supplier supplier, SupplierCityRef? city) => new(
+    /// <summary>
+    /// Mayorista fase 3 (adenda): el estado de la relación con el mayorista vinculado, o <c>null</c> para un proveedor externo
+    /// (sin consultar) o si la relación ya no existe.
+    /// </summary>
+    public static async Task<string?> ResolveRelationshipStatusAsync(
+        this Supplier supplier,
+        ISupplierRelationshipLookup relationships,
+        CancellationToken cancellationToken)
+    {
+        if (supplier.LinkedTenantId is not { } linkedTenantId)
+        {
+            return null;
+        }
+
+        var statuses = await relationships.FindStatusesAsync(supplier.TenantId, [linkedTenantId], cancellationToken);
+        return statuses.GetValueOrDefault(linkedTenantId);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista): el mayorista vinculado con su nombre vigente, o <c>null</c> para un proveedor externo. Los
+    /// tenants no se borran (sólo se suspenden), así que un vínculo sin tenant es corrupción de datos: 500, como la ciudad.
+    /// </summary>
+    public static async Task<SupplierLinkedTenantDto?> ResolveLinkedTenantAsync(
+        this Supplier supplier,
+        ITenantDirectory tenantDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (supplier.LinkedTenantId is not { } linkedTenantId)
+        {
+            return null;
+        }
+
+        var name = await tenantDirectory.GetDisplayNameAsync(new TenantId(linkedTenantId), cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Tenant '{linkedTenantId}' linked to supplier '{supplier.Id}' was not found.");
+
+        return new SupplierLinkedTenantDto(linkedTenantId, name);
+    }
+
+    public static SupplierListItemResponse ToListItem(
+        this Supplier supplier, SupplierCityRef? city, string? linkedRelationshipStatus) => new(
         supplier.Id.Value,
         supplier.Name,
         supplier.BusinessName,
@@ -70,7 +132,9 @@ internal static class SupplierMapping
         supplier.PaymentTermDays,
         [.. supplier.BankAccounts.Select(account =>
             new SupplierListBankAccount(account.BankName, account.AccountNumber))],
-        supplier.IsActive);
+        supplier.IsActive,
+        supplier.LinkedTenantId is not null,
+        supplier.LinkedTenantId is null ? null : linkedRelationshipStatus);
 
     /// <summary>
     /// Sólo un proveedor colombiano tiene ciudad DIVIPOLA que resolver. El validador ya se aseguró
@@ -92,6 +156,31 @@ internal static class SupplierMapping
                     "suppliers.supplier.city_not_found",
                     "The city was not found.")
             : null;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-23: la región existe y es del país del proveedor, o <c>null</c> si no vino ninguna. El validador ya
+    /// rechazó la región con Colombia. Un país sin catálogo no tiene filas en <c>geography.regions</c>, así que falla igual
+    /// que una región inexistente o de otro país; lo mismo un id de departamento colombiano mandado como región.
+    /// </summary>
+    public static async Task<SupplierRegionRef?> ResolveRegionAsync(
+        this ISupplierWriteCommand command,
+        ISupplierGeographyLookup geographyLookup,
+        CancellationToken cancellationToken)
+    {
+        if (command.RegionId is not { } regionId)
+        {
+            return null;
+        }
+
+        var found = await geographyLookup.FindRegionsAsync([regionId], cancellationToken);
+        var country = command.Country.Trim().ToUpperInvariant();
+        return found.TryGetValue(regionId, out var region)
+            && string.Equals(region.CountryCode, country, StringComparison.Ordinal)
+            ? region
+            : throw new SuppliersDomainException(
+                "suppliers.supplier.region_invalid",
+                "The region does not exist or does not belong to the country.");
     }
 
     /// <summary>
@@ -126,5 +215,6 @@ internal static class SupplierMapping
             Role = contact.Role,
             Phone = contact.Phone,
             Email = contact.Email
-        })]);
+        })],
+        command.RegionId);
 }

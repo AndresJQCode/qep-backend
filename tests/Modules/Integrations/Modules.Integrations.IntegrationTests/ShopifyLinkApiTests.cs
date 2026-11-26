@@ -20,6 +20,8 @@ internal static class ShopifyFlow
 
     public const string SentinelAccessToken = "shpat_link-token-SENTINEL-6d5c";
 
+    public const string SentinelRefreshToken = "shprt_link-refresh-SENTINEL-6d5c";
+
     public const string SentinelCode = "shopify-code-SENTINEL-link";
 
     private const string Timestamp = "1760796000";
@@ -30,10 +32,11 @@ internal static class ShopifyFlow
 
     /// <summary>Los webhooks (sin ninguno previo) y el canje sano: el orden importa, ver
     /// <see cref="FakeShopifyHandler.ScriptWebhooks"/>.</summary>
-    public static void ScriptHappyShop(FakeShopifyHandler shopify, string token = SentinelAccessToken, bool rejectWebhooks = false)
+    public static void ScriptHappyShop(
+        FakeShopifyHandler shopify, string token = SentinelAccessToken, bool rejectWebhooks = false, string refreshToken = SentinelRefreshToken)
     {
         shopify.ScriptWebhooks(Shop, ShopifyWebhookCallbackUrl, rejectWebhooks);
-        shopify.ScriptHappyInstall(Shop, token);
+        shopify.ScriptHappyInstall(Shop, token, refreshToken: refreshToken);
     }
 
     /// <summary>Inicio A con <paramref name="client"/> en <paramref name="tenantId"/> y canje anónimo; devuelve el installId.</summary>
@@ -230,6 +233,76 @@ public sealed class ShopifyLinkApiTests
         Assert.Equal(0, await CountInstallsAsync(connectionString));
     }
 
+    // Spec 2026-11-17 §2 y Review Focus 4: el enlace guarda el perfil de la tienda como campo interno; ni la respuesta del
+    // enlace ni el GET de la conexión lo traen, ni el correo del comerciante.
+    [Fact]
+    public async Task TheShopProfileIsNotInTheConnectionResponse()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+
+        var link = await SendAsync(owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId), new { installId });
+        var linkText = await link.Content.ReadAsStringAsync(Ct);
+        var connection = System.Text.Json.JsonSerializer.Deserialize<ConnectionResponse>(
+            linkText, System.Text.Json.JsonSerializerOptions.Web);
+        var read = await owner.GetAsync($"/api/v1/tenants/{tenant.TenantId}/integrations/connections/{connection!.Id}", Ct);
+        var readText = await read.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.Created, link.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        foreach (var text in new[] { linkText, readText })
+        {
+            Assert.DoesNotContain(ShopifyFieldKeys.ShopProfile, text, StringComparison.Ordinal);
+            Assert.DoesNotContain(FakeShopifyHandler.ProfileEmail, text, StringComparison.Ordinal);
+            Assert.DoesNotContain("3001112233", text, StringComparison.Ordinal);
+        }
+
+        var stored = await ScalarAsync<string>(
+            connectionString,
+            "SELECT fields->>'shopProfile' FROM integrations.connections WHERE id = @id AND tenant_id = @tenantId",
+            ("id", connection.Id),
+            ("tenantId", tenant.TenantId));
+        var profile = ShopifyShopProfile.TryParse(stored);
+        Assert.NotNull(profile);
+        Assert.Equal("COP", profile.CurrencyCode);
+        Assert.Equal("Medellín", profile.BillingAddress?.City);
+        Assert.Equal(0, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM audit.entries WHERE changed_fields::text LIKE @email",
+            ("email", $"%{FakeShopifyHandler.ProfileEmail}%")));
+    }
+
+    // Spec 2026-11-17 §3 y §7: al volver a instalar una tienda ya enlazada, la pantalla de enlace la ve en connectedShops
+    // del tenant y ofrece «Ir a la configuración».
+    [Fact]
+    public async Task TheInstallShowsTheShopAlreadyInTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var first = await SendAsync(
+            owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId),
+            new { installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId) });
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+        var secondInstall = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+        var response = await owner.GetAsync($"/api/v1/integrations/shopify/installs/{secondInstall}", Ct);
+        var install = await response.Content.ReadFromJsonAsync<ShopifyInstallResponse>(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var row = Assert.Single(install!.Tenants, candidate => candidate.TenantId == tenant.TenantId);
+        Assert.True(row.CanLink);
+        Assert.Equal([new ShopifyConnectedShopResponse("Mi Tienda", ShopifyFlow.Shop)], row.ConnectedShops);
+    }
+
     // §4.1: desinstalar y volver a enlazar la misma tienda en el mismo tenant reutiliza la conexión, con el token nuevo.
     [Fact]
     public async Task LinkSameTenantTwiceReactivatesTheSameConnectionWithTheNewToken()
@@ -305,6 +378,96 @@ public sealed class ShopifyLinkApiTests
             connectionString,
             "SELECT count(*) FROM integrations.connections WHERE id = @id AND status = 'NeedsAttention' AND last_failure_code = 'webhooks_not_registered'",
             ("id", linked.Id)));
+    }
+
+    // Spec 2026-11-12 §6.1: la instalación vive 7 días y su token, 1 hora. Enlazar una cuyo token está por vencer lo
+    // refresca primero, antes de registrar webhooks, y la conexión guarda el par refrescado con sus vencimientos.
+    [Fact]
+    public async Task LinkAnInstallWhoseTokenIsAboutToExpireRefreshesItFirst()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptRefresh(factory.ShopifyHandler, HttpStatusCode.OK);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE integrations.shopify_installs SET access_token_expires_at = now() + interval '5 minutes' WHERE id = @id",
+            ("id", installId));
+        var afterExchange = factory.ShopifyHandler.Requests.Count;
+
+        var response = await SendAsync(owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId), new { installId });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.DoesNotContain("SENTINEL", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        var connection = await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        var linkRequests = factory.ShopifyHandler.Requests.Skip(afterExchange).ToArray();
+        var refresh = Array.FindIndex(linkRequests, request => request.Body?.Contains("grant_type=refresh_token", StringComparison.Ordinal) == true);
+        var firstCreate = Array.FindIndex(
+            linkRequests, request => request.Body?.Contains("webhookSubscriptionCreate", StringComparison.Ordinal) == true);
+        Assert.Equal(0, refresh);
+        Assert.True(firstCreate > refresh);
+        Assert.Contains($"refresh_token={ShopifyFlow.SentinelRefreshToken}", linkRequests[refresh].Body, StringComparison.Ordinal);
+        Assert.All(
+            linkRequests.Where(request => request.Body?.Contains("webhookSubscription", StringComparison.Ordinal) == true),
+            request => Assert.Equal(RefreshedAccessToken, request.AccessToken));
+        Assert.Equal(RefreshedAccessToken, await StoredSecretAsync(factory, tenant.TenantId, connection!.Id, ShopifyFieldKeys.AccessToken));
+        Assert.Equal(RefreshedRefreshToken, await StoredSecretAsync(factory, tenant.TenantId, connection.Id, ShopifyFieldKeys.RefreshToken));
+        Assert.NotNull(await ScalarAsync<string>(
+            connectionString,
+            "SELECT fields->>'tokenExpiresAt' FROM integrations.connections WHERE id = @id AND fields ? 'refreshTokenExpiresAt'",
+            ("id", connection.Id)));
+        Assert.Equal(0, await CountInstallsAsync(connectionString));
+    }
+
+    // Si el refresh token de la instalación ya no sirve, el enlace falla sin crear una conexión que se caería en una hora.
+    [Fact]
+    public async Task LinkWhenTheInstallRefreshAnswers401FailsWithoutAConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptRefresh(factory.ShopifyHandler, HttpStatusCode.Unauthorized);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE integrations.shopify_installs SET access_token_expires_at = now() + interval '5 minutes' WHERE id = @id",
+            ("id", installId));
+
+        var response = await SendAsync(owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId), new { installId });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("integrations.shopify.install_expired", (await ProblemAsync(response)).Code);
+        Assert.DoesNotContain("SENTINEL", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        Assert.DoesNotContain("SENTINEL", await RequestFailuresTextAsync(connectionString), StringComparison.Ordinal);
+        Assert.Equal(0, await CountConnectionsAsync(connectionString, tenant.TenantId));
+        Assert.Equal(1, await CountInstallsAsync(connectionString));
+        Assert.DoesNotContain(
+            factory.ShopifyHandler.Requests, request => request.Body?.Contains("webhookSubscription", StringComparison.Ordinal) == true);
+    }
+
+    private const string RefreshedAccessToken = "shpat_refreshed-link-SENTINEL";
+
+    private const string RefreshedRefreshToken = "shprt_refreshed-link-SENTINEL";
+
+    /// <summary>El refresco de la tienda; un 401 repite el refresh token en el cuerpo, para probar que no se filtra.</summary>
+    private static void ScriptRefresh(FakeShopifyHandler shopify, HttpStatusCode status) =>
+        shopify.ScriptRefresh(ShopifyFlow.Shop, RefreshedAccessToken, RefreshedRefreshToken, status);
+
+    private static async Task<string> StoredSecretAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, string fieldKey)
+    {
+        using var scope = factory.Services.CreateScope();
+        var connection = await scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().FindAsync(tenantId, connectionId, Ct);
+        var secret = Assert.Single(connection!.Secrets, stored => stored.FieldKey == fieldKey);
+        Assert.True(scope.ServiceProvider.GetRequiredService<ISecretProtector>()
+            .TryUnprotect(connectionId, fieldKey, secret.Protected, out var plaintext));
+        return plaintext;
     }
 
     // Dos enlaces de la misma tienda que pasan la lectura de la ruta a la vez. Si el ganador es del mismo

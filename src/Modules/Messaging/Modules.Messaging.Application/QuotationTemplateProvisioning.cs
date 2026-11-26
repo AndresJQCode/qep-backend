@@ -74,7 +74,7 @@ public static class QuotationTemplateDefinition
 
     /// <summary>El payload de creación de la versión <paramref name="name"/> con el cuerpo <paramref name="body"/>, con el encabezado de
     /// documento apuntando al <paramref name="handle"/> de la Resumable Upload.</summary>
-    public static JsonObject Payload(string handle, string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body), handle);
+    public static JsonObject Payload(string handle, string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body), TemplateMediaHeader.Document(handle));
 
     /// <summary>§4.5, adopción: unos <c>components</c> de Meta son adoptables por su forma, no por su texto: encabezado de documento, sin
     /// botones, cuerpo no vacío y variables dentro de la lista de la cotización más las claves viejas. No mira el nombre ni el pie. Se
@@ -277,7 +277,7 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         var memberId = await callerMembership.FindAsync(command.TenantId, cancellationToken);
         var template = MessageTemplate.Pending(
             command.TenantId, command.ConnectionId, created.Id, name, QuotationTemplateDefinition.Language, created.Category, TemplateComponentsBuilder.Named,
-            created.Status, TemplateComponentsBuilder.Components(QuotationTemplateDefinition.Draft(name, body), handle).ToJsonString(), MessageTemplateKind.Quotation,
+            created.Status, TemplateComponentsBuilder.Components(QuotationTemplateDefinition.Draft(name, body), TemplateMediaHeader.Document(handle)).ToJsonString(), MessageTemplateKind.Quotation,
             memberId, now);
         repository.Add(template);
         audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateQuotationProvisioned, template.Id, now);

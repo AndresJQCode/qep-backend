@@ -10,7 +10,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// prendido sin bucket público, la API no arranca (P2), y según su valor el composition root
 /// registra el publicador de comprobantes que copia o el que no hace nada (P3).
 /// </summary>
-public sealed class PaymentProofPublicLinksHostTests
+public sealed class PaymentProofPublicLinksHostTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // P2: prendida sin bucket público, la opción no publicaría nada y nadie se enteraría. Los dos
     // valores de Storage se fijan vacíos para que no los traigan los user-secrets de quien corre la
@@ -41,8 +41,7 @@ public sealed class PaymentProofPublicLinksHostTests
     [Fact]
     public async Task WithPublicLinksOffThePublisherGivesNoUrl()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         await using var scope = factory.Services.CreateAsyncScope();
 
         var publisher = scope.ServiceProvider.GetRequiredService<IPaymentProofPublisher>();

@@ -32,6 +32,8 @@ public sealed class AssigneesApiTests
         Assert.Contains(items, item => item.Item1 == owner);
         Assert.Equal(2, items.Length);
         Assert.Equal(items.OrderBy(item => item.Item2, StringComparer.CurrentCultureIgnoreCase), items);
+        var mine = body.GetProperty("items").EnumerateArray().Where(item => item.GetProperty("isMe").GetBoolean()).Select(item => item.GetProperty("memberId").GetGuid());
+        Assert.Equal([owner], mine);
     }
 
     [Fact]

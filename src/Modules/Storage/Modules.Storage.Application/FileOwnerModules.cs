@@ -27,6 +27,11 @@ public static class FileOwnerModules
             [FileOwnerType.Product] = TenantModuleKeys.Catalog,
             [FileOwnerType.PaymentProof] = TenantModuleKeys.Orders,
             [FileOwnerType.Tenant] = null,
+            [FileOwnerType.Store] = TenantModuleKeys.Store,
+            [FileOwnerType.SupportTicket] = TenantModuleKeys.Support,
+            [FileOwnerType.MessageTemplate] = TenantModuleKeys.Messaging,
+            [FileOwnerType.ChatbotMedia] = TenantModuleKeys.Automations,
+            [FileOwnerType.HrDocument] = TenantModuleKeys.Hr,
             [FileOwnerType.WmsEvidence] = TenantModuleKeys.Wms,
             [FileOwnerType.WmsExport] = TenantModuleKeys.Wms,
         }.ToFrozenDictionary();

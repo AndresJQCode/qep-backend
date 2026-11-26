@@ -8,6 +8,22 @@ internal sealed class ChargeRepository(ServiceContractsDbContext dbContext) : IC
 {
     public void AddRange(IEnumerable<Charge> charges) => dbContext.Charges.AddRange(charges);
 
+    // Sin FK entre billing.charges y billing.reminder_steps (la FK de reminder_steps es a customer_messages), así que los pasos se
+    // borran a mano. Todo queda en el change tracker y sale en el SaveChanges del handler: una sola transacción.
+    public async Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken)
+    {
+        var charges = await dbContext.Charges.Where(charge => charge.ServiceId == serviceId).ToListAsync(cancellationToken);
+        if (charges.Count == 0)
+        {
+            return;
+        }
+
+        var chargeIds = charges.Select(charge => charge.Id).ToArray();
+        var steps = await dbContext.ReminderSteps.Where(step => chargeIds.Contains(step.ChargeId)).ToListAsync(cancellationToken);
+        dbContext.ReminderSteps.RemoveRange(steps);
+        dbContext.Charges.RemoveRange(charges);
+    }
+
     public Task<Charge?> FindAsync(Guid tenantId, Guid chargeId, CancellationToken cancellationToken) =>
         dbContext.Charges.FirstOrDefaultAsync(
             charge => charge.TenantId == tenantId && charge.Id == chargeId, cancellationToken);
@@ -141,7 +157,9 @@ internal sealed class ChargeRepository(ServiceContractsDbContext dbContext) : IC
             overdue.Sum(row => row.Count),
             failed,
             open.Select(row => new CurrencyAmountDto(row.Currency, row.Amount)).ToList(),
-            overdue.Select(row => new CurrencyAmountDto(row.Currency, row.Amount)).ToList());
+            overdue.Select(row => new CurrencyAmountDto(row.Currency, row.Amount)).ToList(),
+            // Las revisiones no salen de los cobros: las cuenta quien compone la bandeja (PriceReviewReader).
+            PriceReviewCountsDto.Empty);
     }
 
     public async Task<IReadOnlyDictionary<Guid, ReminderDto>> ListLastRemindersAsync(

@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -118,6 +118,50 @@ public sealed class RegistrationApiTests
         Assert.Equal("1.234,56", settings.GetProperty("numberFormat").GetString());
     }
 
+    // Spec 2026-11-22 (i18n): sin idioma el tenant nuevo habla es-419; con él, el elegido.
+    [Theory]
+    [InlineData(null, "es-419")]
+    [InlineData("es-ES", "es-ES")]
+    public async Task RegisterTakesTheLanguageOrDefaultsToLatinAmerica(string? language, string expected)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), true);
+        using var client = CreateOwnerClient(factory, NewEmail());
+
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/auth/register-tenant",
+            new { displayName = "Language Org", slug = NewSlug(), language },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var registered = await created.Content.ReadFromJsonAsync<RegisterPayload>(
+            TestContext.Current.CancellationToken);
+        using var reader = factory.CreateClient();
+        reader.DefaultRequestHeaders.Add("X-Subject-Id", registered!.OwnerUserId.ToString());
+        reader.DefaultRequestHeaders.Add("X-Tenant-Id", registered.TenantId.ToString());
+        var settings = await reader.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{registered.TenantId}/settings",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(expected, settings.GetProperty("language").GetString());
+    }
+
+    [Fact]
+    public async Task RegisterWithAnUnsupportedLanguageIsA422WithTheDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), true);
+        using var client = CreateOwnerClient(factory, NewEmail());
+
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/auth/register-tenant",
+            new { displayName = "Language Org", slug = NewSlug(), language = "es-CO" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, created.StatusCode);
+        var problem = await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.settings.language.invalid", problem.GetProperty("code").GetString());
+    }
+
     /// <summary>
     /// SDD-CT-06. tenants.slug es único (IX_tenants_slug), y elegir un nombre que alguien ya
     /// tomó es el error más probable en la pantalla de registro. Antes de esta prueba la
@@ -154,6 +198,33 @@ public sealed class RegistrationApiTests
             "SELECT count(*) FROM tenancy.tenants WHERE slug = @slug",
             ("slug", slug));
         Assert.Equal("1", count![0]);
+    }
+
+    /// <summary>
+    /// Los slugs reservados son las rutas fijas del host del formulario de Soporte (§9.2): un
+    /// tenant llamado <c>api</c> taparía una ruta del host.
+    /// </summary>
+    [Fact]
+    public async Task RegisterTenantRejectsAReservedSlug()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), true);
+        using var owner = CreateOwnerClient(factory, NewEmail());
+
+        var response = await RegisterAsync(owner, "api");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.slug.reserved", problem!.Code);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var count = await QueryRowAsync(
+            connection,
+            "SELECT count(*) FROM tenancy.tenants WHERE slug = @slug",
+            ("slug", "api"));
+        Assert.Equal("0", count![0]);
     }
 
     private static string NewEmail() => $"owner-{Guid.NewGuid():N}@example.com";
@@ -207,17 +278,6 @@ public sealed class RegistrationApiTests
         return values;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private static HttpClient CreateOwnerClient(QepApiFactory factory, string email)
     {
         var client = factory.CreateClient();
@@ -243,6 +303,8 @@ public sealed class RegistrationApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

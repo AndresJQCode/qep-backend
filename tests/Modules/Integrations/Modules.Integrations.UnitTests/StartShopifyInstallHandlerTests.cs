@@ -323,8 +323,19 @@ internal sealed class InMemoryShopifyInstallRepository : IShopifyInstallReposito
     public Task<ShopifyInstall?> FindByStateAsync(string state, CancellationToken cancellationToken) =>
         Task.FromResult(Added.FirstOrDefault(install => string.Equals(_storedStates[install.Id], state, StringComparison.Ordinal)));
 
-    public Task<ShopifyInstall?> FindAsync(Guid installId, CancellationToken cancellationToken) =>
-        Task.FromResult(Added.FirstOrDefault(install => install.Id == installId));
+    /// <summary>Lo que pasa en cada lectura por id, con la fila encontrada (por ejemplo, que otro enlace la refrescó).</summary>
+    public Action<ShopifyInstall>? OnFind { get; set; }
+
+    public Task<ShopifyInstall?> FindAsync(Guid installId, CancellationToken cancellationToken)
+    {
+        var found = Added.FirstOrDefault(install => install.Id == installId);
+        if (found is not null)
+        {
+            OnFind?.Invoke(found);
+        }
+
+        return Task.FromResult(found);
+    }
 
     public Task<bool> TryClaimAsync(ShopifyInstall install, string state, CancellationToken cancellationToken)
     {
@@ -351,6 +362,24 @@ internal sealed class InMemoryShopifyInstallRepository : IShopifyInstallReposito
         }
 
         Exchanged[install.Id] = install;
+        return Task.FromResult(true);
+    }
+
+    /// <summary>Las instalaciones cuyo par refrescado se guardó, en orden (spec 2026-11-12).</summary>
+    public List<Guid> StoredRefreshes { get; } = [];
+
+    /// <summary>Simula que el enlace o el barrido borró la fila antes de guardar el refresco.</summary>
+    public bool LoseNextRefreshStore { get; set; }
+
+    public Task<bool> TryStoreRefreshedTokenAsync(ShopifyInstall install, CancellationToken cancellationToken)
+    {
+        if (LoseNextRefreshStore || !Added.Any(row => row.Id == install.Id))
+        {
+            LoseNextRefreshStore = false;
+            return Task.FromResult(false);
+        }
+
+        StoredRefreshes.Add(install.Id);
         return Task.FromResult(true);
     }
 }

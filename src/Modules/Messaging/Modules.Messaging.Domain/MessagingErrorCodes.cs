@@ -13,6 +13,10 @@ public static class MessagingErrorCodes
     public const string MessageNotFound = "messaging.message.not_found";
     public const string WebhookSignatureInvalid = "messaging.webhook.signature_invalid";
 
+    /// <summary>Spec 2026-11-22 §9.3: the app hub refused a subscription to the <c>messaging</c> topic (module off, no
+    /// <c>messaging.conversation.read</c>, or a topic that is not the exact one). The generic code of the hub is <c>realtime.topic_forbidden</c>.</summary>
+    public const string RealtimeTopicForbidden = "messaging.realtime.topic_forbidden";
+
     /// <summary>Spec 2026-10-30 §4.4: el mismo <c>clientId</c> de una clave de API ya salió en otra conversación del tenant (409).</summary>
     public const string ExternalIdempotencyKeyReused = "external.idempotency_key_reused";
 
@@ -36,6 +40,10 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-14 §5.2: plantillas, campañas e inicio de conversación no existen en Instagram (§3).</summary>
     public const string ChannelUnsupported = "messaging.channel_unsupported";
+
+    /// <summary>Spec 2026-11-17 (abrir la conversación del cliente): sin <c>connectionId</c> y con varias conexiones de WhatsApp activas,
+    /// el asesor elige el número; el endpoint nunca lo deduce (422, sin la lista: el SPA ya la tiene).</summary>
+    public const string ConnectionRequired = "messaging.conversation.connection_required";
 
     /// <summary>Spec 2026-10-10 §10: enviar a una conversación asignada a otra membresía.</summary>
     public const string AssignedToOther = "messaging.conversation.assigned_to_other";
@@ -67,6 +75,10 @@ public static class MessagingErrorCodes
 
     /// <summary>§5.2: las claves de <c>parameters</c> no son exactamente las de la plantilla.</summary>
     public const string TemplateParametersMismatch = "messaging.template.parameters_mismatch";
+
+    /// <summary>Spec 2026-11-13 §4.2: la API externa mandó un encabezado multimedia que la plantilla no pide, o no lo mandó y la plantilla lo
+    /// pide, o es de otro tipo.</summary>
+    public const string TemplateHeaderMismatch = "messaging.template.header_mismatch";
 
     /// <summary>§5.2: <c>POST /conversations</c> con un cliente que no existe en el tenant o está inactivo (404).</summary>
     public const string CustomerNotFound = "messaging.customer.not_found";
@@ -146,6 +158,23 @@ public static class MessagingErrorCodes
     /// <summary>§4.5: la Resumable Upload del PDF de ejemplo falló. No queda fila; reintentar es seguro.</summary>
     public const string TemplateUploadFailed = "messaging.template.upload_failed";
 
+    /// <summary>Spec 2026-11-17: la imagen del encabezado no es JPEG ni PNG. En la sesión de subida va sin mapa <c>errors</c> (error del
+    /// formulario); al crear la plantilla marca <c>headerImageFileId</c>.</summary>
+    public const string TemplateHeaderImageUnsupported = "messaging.template.header_image_unsupported";
+
+    /// <summary>Spec 2026-11-17: la imagen del encabezado pasa de 5 MB, declarada o guardada. Mismo mapa que
+    /// <see cref="TemplateHeaderImageUnsupported"/>.</summary>
+    public const string TemplateHeaderImageTooLarge = "messaging.template.header_image_too_large";
+
+    /// <summary>Spec 2026-11-17: el <c>headerImageFileId</c> no existe, es de otro tenant o no es una imagen de plantilla.</summary>
+    public const string TemplateHeaderImageNotFound = "messaging.template.header_image_not_found";
+
+    /// <summary>Spec 2026-11-17: la sesión existe pero el PUT de la imagen todavía no llegó al bucket.</summary>
+    public const string TemplateHeaderImageNotUploaded = "messaging.template.header_image_not_uploaded";
+
+    /// <summary>Spec 2026-11-17: Storage rechazó el contenido (no es lo que dice, tamaño distinto o antivirus); quedó en cuarentena.</summary>
+    public const string TemplateHeaderImageRejected = "messaging.template.header_image_rejected";
+
     /// <summary>§4.5: la conexión ya tiene su plantilla de cotización en <c>PENDING</c>, <c>APPROVED</c> o <c>IN_APPEAL</c>.</summary>
     public const string TemplateQuotationExists = "messaging.template.quotation_exists";
 
@@ -154,6 +183,62 @@ public static class MessagingErrorCodes
 
     /// <summary>§4.5: existe una <c>qep_cotizacion</c> creada fuera de QEP cuyo cuerpo no es el de la definición.</summary>
     public const string TemplateQuotationConflict = "messaging.template.quotation_conflict";
+
+    /// <summary>Spec 2026-11-09 D1: la conexión ya tiene su plantilla de pedido viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_order</c>.</summary>
+    public const string TemplateOrderExists = "messaging.template.order_exists";
+
+    /// <summary>Spec 2026-11-09 D3: existe una <c>qep_pedido</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateOrderConflict = "messaging.template.order_conflict";
+
+    /// <summary>Spec 2026-11-21: la conexión ya tiene su plantilla de factura viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_invoice</c>.</summary>
+    public const string TemplateInvoiceExists = "messaging.template.invoice_exists";
+
+    /// <summary>Spec 2026-11-21: existe una <c>qep_factura</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateInvoiceConflict = "messaging.template.invoice_conflict";
+
+    /// <summary>Soporte fase 2: la conexión ya tiene su plantilla «Aviso de respuesta» viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_reply</c>.</summary>
+    public const string TemplateSupportReplyExists = "messaging.template.support_reply_exists";
+
+    /// <summary>Soporte fase 2: existe una <c>qep_soporte_respuesta</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateSupportReplyConflict = "messaging.template.support_reply_conflict";
+
+    /// <summary>Soporte fase 4b: la conexión ya tiene su plantilla «Respuesta formal» viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_formal_reply</c>.</summary>
+    public const string TemplateSupportFormalReplyExists = "messaging.template.support_formal_reply_exists";
+
+    /// <summary>Soporte fase 4b: existe una <c>qep_soporte_formal</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateSupportFormalReplyConflict = "messaging.template.support_formal_reply_conflict";
+
+    /// <summary>Soporte fase 4b: la conexión ya tiene su plantilla de encuesta viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_survey</c>.</summary>
+    public const string TemplateSupportSurveyExists = "messaging.template.support_survey_exists";
+
+    /// <summary>Soporte fase 4b: existe una <c>qep_soporte_encuesta</c> creada fuera de QEP con otro cuerpo o unos botones distintos.</summary>
+    public const string TemplateSupportSurveyConflict = "messaging.template.support_survey_conflict";
+
+    /// <summary>Mayorista: la conexión ya tiene su plantilla de aviso de invitación viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_wholesale_invitation_notice</c>.</summary>
+    public const string TemplateWholesaleInvitationNoticeExists = "messaging.template.wholesale_invitation_notice_exists";
+
+    /// <summary>Mayorista: existe una <c>qep_mayorista_invitacion</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateWholesaleInvitationNoticeConflict = "messaging.template.wholesale_invitation_notice_conflict";
+
+    /// <summary>Support task notices: the connection already has its live task notice template, or two provisionings raced on
+    /// <c>UX_message_templates_task_notice</c>.</summary>
+    public const string TemplateTaskNoticeExists = "messaging.template.task_notice_exists";
+
+    /// <summary>Support task notices: a <c>qep_tarea_asignada</c> created outside QEP has another body or an incompatible shape.</summary>
+    public const string TemplateTaskNoticeConflict = "messaging.template.task_notice_conflict";
+
+    /// <summary>Agenda: la conexión ya tiene su plantilla de recordatorio de cita viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_appointment_reminder</c>.</summary>
+    public const string TemplateAppointmentReminderExists = "messaging.template.appointment_reminder_exists";
+
+    /// <summary>Agenda: existe una <c>qep_agenda_recordatorio</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateAppointmentReminderConflict = "messaging.template.appointment_reminder_conflict";
 
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
@@ -179,6 +264,14 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-21 §4.2: el asistente ya está atendiendo la conversación.</summary>
     public const string AutomationAlreadyActive = "messaging.automation.already_active";
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: el agente quiere devolver una delegación que ya no es la viva de la
+    /// conversación (una persona la tomó, o la devolvió otro intento). Interno: lo atrapan Ai y Automations, no llega a un endpoint.</summary>
+    public const string DelegationNotLive = "messaging.automation.delegation_not_live";
+
+    /// <summary>Revisión de la rama, hallazgo 3: la conversación ya tiene una delegación viva (<c>IX_bot_delegations_live</c>); dos bloques
+    /// «Agente IA» que delegan a la vez. Interno como <see cref="DelegationNotLive"/>: el motor cierra la corrida que perdió.</summary>
+    public const string DelegationLiveExists = "messaging.automation.delegation_live_exists";
 
     /// <summary>Spec 2026-10-28 D-9: el rango del reporte supera el tope de su agrupación (92 días, 53 semanas o 24 meses).</summary>
     public const string ReportRangeTooLarge = "messaging.report.range_too_large";
@@ -230,4 +323,31 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-29: la conexión no tiene importación del historial.</summary>
     public const string HistorySyncNotFound = "messaging.history_sync.not_found";
+
+    /// <summary>Spec 2026-11-09: la hora programada pasa de <c>LastInboundAt + 24 h − 2 min</c>, o la ventana ya cerró.</summary>
+    public const string ScheduledOutsideWindow = "messaging.scheduled.outside_window";
+
+    /// <summary>Spec 2026-11-09: la hora programada es anterior a <c>now + 1 min</c>.</summary>
+    public const string ScheduledTooSoon = "messaging.scheduled.too_soon";
+
+    /// <summary>Spec 2026-11-09: ya hay un mensaje programado activo en la conversación.</summary>
+    public const string ScheduledAlreadyExists = "messaging.scheduled.already_exists";
+
+    /// <summary>Spec 2026-11-09: el id no es de esta conversación del tenant.</summary>
+    public const string ScheduledNotFound = "messaging.scheduled.not_found";
+
+    /// <summary>Spec 2026-11-09: editar, cancelar o «Enviar ya» fuera de <c>Scheduled</c>.</summary>
+    public const string ScheduledNotEditable = "messaging.scheduled.not_editable";
+
+    /// <summary>Spec 2026-11-09: reintentar o descartar fuera de <c>Failed</c>.</summary>
+    public const string ScheduledNotRetriable = "messaging.scheduled.not_retriable";
+
+    /// <summary>Spec 2026-11-09: el reintento de un mensaje de hilo que ya no se puede reintentar.</summary>
+    public const string MessageNotRetriable = "messaging.message.not_retriable";
+
+    /// <summary>Spec 2026-11-09: el envío quedó sin resultado conocido; nunca se reenvía solo.</summary>
+    public const string ScheduledUnknownOutcome = "messaging.scheduled.unknown_outcome";
+
+    /// <summary>Spec 2026-11-09: el archivo del mensaje programado ya no está o no se pudo preparar.</summary>
+    public const string ScheduledMediaMissing = "messaging.scheduled.media_missing";
 }

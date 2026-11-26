@@ -26,11 +26,33 @@ public sealed record FlowVariable(string Name, string Type);
 /// </summary>
 public abstract record FlowNode(string Id, string Kind, string Title, IReadOnlyDictionary<string, string?> Outputs);
 
-/// <summary>Con <see cref="UrlButton"/> sale como interactivo <c>CtaUrl</c> (D-I1); sin él, como texto.</summary>
-public sealed record MessageNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Text, UrlButton? UrlButton)
+/// <summary>
+/// Con <see cref="UrlButton"/> sale como interactivo <c>CtaUrl</c> (D-I1); sin él, como texto. Con <see cref="Media"/> (spec 2026-11-18)
+/// lleva un archivo y <see cref="Text"/> es su pie; <c>null</c> es el mensaje de texto de siempre.
+/// </summary>
+public sealed record MessageNode(
+    string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Text, UrlButton? UrlButton, MessageMedia? Media = null)
     : FlowNode(Id, FlowNodeKinds.Message, Title, Outputs);
 
 public sealed record UrlButton(string Label, string Url);
+
+/// <summary>
+/// Spec 2026-11-18: el archivo de un bloque «Mensaje». El flujo guarda sólo el id del archivo de Storage (dueño <c>ChatbotMedia</c>),
+/// nunca una URL: la URL pública, el nombre y el tipo se resuelven por tenant cuando hacen falta. <see cref="Kind"/> es uno de
+/// <see cref="ChatbotMediaKinds"/>.
+/// </summary>
+public sealed record MessageMedia(string Kind, Guid FileId);
+
+/// <summary>Los tipos de archivo de un bloque «Mensaje», en minúscula (decisión del owner 2026-11-18).</summary>
+public static class ChatbotMediaKinds
+{
+    public const string Image = "image";
+    public const string Video = "video";
+    public const string Audio = "audio";
+    public const string Document = "document";
+
+    public static readonly IReadOnlyList<string> All = [Image, Video, Audio, Document];
+}
 
 /// <summary><see cref="MaxAttempts"/> pisa el del chatbot (D-C7); <c>null</c> usa el del chatbot.</summary>
 public sealed record OpenQuestionNode(
@@ -91,6 +113,75 @@ public sealed record HttpNode(
 {
     /// <summary>D-H4: el timeout cuando el bloque no trae uno.</summary>
     public const int DefaultTimeoutSeconds = 8;
+}
+
+/// <summary>
+/// Spec 2026-11-17 (agente IA en chatbots) §5.1: el flujo le pasa la conversación a un agente publicado del tenant y la recupera por una de
+/// sus cinco salidas. <see cref="AgentId"/> es <c>null</c> en un bloque recién creado; <see cref="Objective"/> es el objetivo del paso (no se
+/// interpola); <see cref="Context"/> es un <c>TemplateText</c> que se interpola al entrar y se corta a <see cref="AiAgentLimits.TextMaxLength"/>;
+/// <see cref="FirstTurn"/> es uno de <see cref="AiAgentFirstTurns"/> (D-B7); <see cref="IdleMinutes"/> es la inactividad del bloque (D-B11);
+/// <see cref="SaveTo"/> es la variable objeto donde el bloque deja <c>summary</c>, <c>reason</c> y <c>quotationNumber</c>.
+/// </summary>
+public sealed record AiAgentNode(
+    string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, Guid? AgentId, string Objective, string Context, string FirstTurn,
+    int IdleMinutes, string SaveTo)
+    : FlowNode(Id, FlowNodeKinds.AiAgent, Title, Outputs);
+
+/// <summary>Spec 2026-11-17 D-B7: con <c>lastMessage</c> el agente responde el entrante que llevó la corrida hasta el bloque; con
+/// <c>nextMessage</c> calla hasta el próximo.</summary>
+public static class AiAgentFirstTurns
+{
+    public const string LastMessage = "lastMessage";
+    public const string NextMessage = "nextMessage";
+
+    public static readonly IReadOnlySet<string> All = new[] { LastMessage, NextMessage }.ToFrozenSet(StringComparer.Ordinal);
+}
+
+/// <summary>Spec 2026-11-17 §5.1 y D-B11: los topes del bloque «Agente IA».</summary>
+public static class AiAgentLimits
+{
+    /// <summary>El objetivo y el contexto (este, después de interpolar, se corta acá).</summary>
+    public const int TextMaxLength = 2000;
+
+    public const int MinIdleMinutes = 5;
+
+    /// <summary>23 h: deja una hora de la ventana de 24 h para que el flujo mande algo por <c>idle</c>.</summary>
+    public const int MaxIdleMinutes = 1380;
+
+    public const int DefaultIdleMinutes = 60;
+}
+
+/// <summary>Spec 2026-11-17 §5.2: un agente del tenant como lo ve el validador. <see cref="Status"/> es el nombre del <c>AgentStatus</c> de Ai
+/// (<c>Draft</c>, <c>Active</c>, <c>Paused</c>), que Automations no referencia.</summary>
+public sealed record FlowAgentRef(Guid Id, string Name, string Status)
+{
+    public const string Draft = "Draft";
+    public const string Active = "Active";
+    public const string Paused = "Paused";
+}
+
+/// <summary>
+/// Spec 2026-11-19 (chatbot CRM action): one operation on the tenant's CRM, as the system. <see cref="Operation"/> is one of
+/// <see cref="CrmOperations"/>; <see cref="TagId"/> only counts for the tag operations and <see cref="StageId"/> only for
+/// <c>moveDeal</c> (<see cref="FlowNormalizer"/> clears the other one). <see cref="SaveTo"/> is the object variable where the block
+/// leaves <c>result</c>, one of <see cref="CrmResultCodes"/>. Both ids are tenant-specific: a flow imported into another tenant fails
+/// validation until a tag or stage of that tenant is chosen.
+/// </summary>
+public sealed record CrmActionNode(
+    string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Operation, Guid? TagId, Guid? StageId, string SaveTo)
+    : FlowNode(Id, FlowNodeKinds.CrmAction, Title, Outputs);
+
+/// <summary>Spec 2026-11-19: the operations of the «Acción de CRM» block, one per block.</summary>
+public static class CrmOperations
+{
+    public const string AddTag = "addTag";
+    public const string RemoveTag = "removeTag";
+    public const string MoveDeal = "moveDeal";
+
+    public static readonly IReadOnlySet<string> All = new[] { AddTag, RemoveTag, MoveDeal }.ToFrozenSet(StringComparer.Ordinal);
+
+    /// <summary>The tag operations act on the customer (module Customers); <c>moveDeal</c> acts on a deal (module Pipeline).</summary>
+    public static bool IsTagOperation(string operation) => operation is AddTag or RemoveTag;
 }
 
 public sealed record KeyValue(string Key, string Value);

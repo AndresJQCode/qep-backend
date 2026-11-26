@@ -17,3 +17,4 @@ artifacts/
 # Cache local de wrangler (CLI de Cloudflare). Guarda datos de la cuenta con la
 # que se inicio sesion.
 .wrangler/
+.atl

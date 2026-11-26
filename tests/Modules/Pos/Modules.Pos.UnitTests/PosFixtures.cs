@@ -15,17 +15,18 @@ internal static class PosFixtures
         Guid.Parse("01910000-0000-7000-8000-000000000001"),
         "Origen Botánico SAS",
         "900123456-1",
+        "NIT",
         "Cra 50 # 10-20, Rionegro",
         "6045551234");
 
     public static CashSession OpenSession(
-        decimal openingFloat = 100_000m, MemberId? cashier = null, string currency = "COP") =>
+        decimal openingFloat = 100_000m, MemberId? cashier = null, string currency = "COP", bool chargesVat = true) =>
         CashSession.Open(
             CashSessionId.New(),
             TenantId,
             cashier ?? Cashier,
             "Laura Gómez",
-            Company,
+            Company with { ChargesVat = chargesVat },
             currency,
             openingFloat,
             Now);

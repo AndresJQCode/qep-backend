@@ -17,9 +17,10 @@ public sealed record PreviewOrderQuery(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
-    string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
-    ShippingRequest? Shipping = null) : IQuery<OrderDetailDto>, IOrderDraft;
+    ShippingRequest? Shipping = null,
+    Guid? BillingCompanyId = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null) : IQuery<OrderDetailDto>, IOrderDraft;
 
 public sealed class PreviewOrderValidator : OrderDraftValidator<PreviewOrderQuery>
 {
@@ -52,9 +53,8 @@ public sealed class PreviewOrderHandler(
         var order = await drafts.PreviewAsync(
             new OrderDraftInput(
                 query.TenantId, query.ClientId, advisorId, query.PaymentMethod, query.Notes, query.IsRetail,
-                query.GlobalScaleFloor, query.Parties, query.BillingAccount, query.Items,
-                Enum.Parse<OrderPaymentStatus>(query.PaymentStatus, ignoreCase: true), proofs,
-                AllowIncompleteCustomer: false, query.Shipping),
+                query.GlobalScaleFloor, query.Parties, query.BillingAccount, query.Items, proofs,
+                AllowIncompleteCustomer: false, query.Shipping, query.BillingCompanyId, query.Gifts),
             now,
             cancellationToken);
 

@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Catalog;
 using FluentValidation;
 using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
@@ -13,7 +14,10 @@ public sealed record CreateProductCommand(
     Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
-    IReadOnlyList<Guid>? Gallery) : ICommand<ProductDto>, IProductWriteCommand;
+    IReadOnlyList<Guid>? Gallery,
+    bool? VisibleInStore = null,
+    ProductKind? Kind = null,
+    SalesUnit? SalesUnit = null) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
 // validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes. En el POST el precio de
@@ -50,6 +54,7 @@ public sealed class CreateProductHandler(
         // revisión de riesgo de CAT-02.
         CatalogAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CatalogPermissions.ProductManage);
+        CatalogCostAccess.EnsureCanWrite(executionContext, command.Variants);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         // Antes de construir el agregado: la FK garantiza que la tasa exista, no que sea de este
@@ -80,6 +85,7 @@ public sealed class CreateProductHandler(
                 Pricing = variant.Pricing!.ToDomain(),
                 GalleryFileId = variant.GalleryFileId,
                 IsActive = variant.IsActive ?? true,
+                Costs = variant.Costs?.ToDomainCosts(),
             })
             .ToArray();
 
@@ -96,12 +102,18 @@ public sealed class CreateProductHandler(
             {
                 Description = command.Description,
                 TaxRateId = taxRateId,
-                CategoryId = categoryId
+                CategoryId = categoryId,
+                // Ausentes, el valor de siempre: un cliente que no los conoce crea un producto físico
+                // por unidad (spec 2026-11-18 §3.3).
+                Kind = command.Kind ?? ProductKind.Physical,
+                SalesUnit = command.SalesUnit ?? SalesUnit.Unit
             },
             optionIds,
             variants,
             gallery,
-            now);
+            now,
+            // null en el POST es oculto: publicar es una decisión explícita.
+            visibleInStore: command.VisibleInStore ?? false);
 
         repository.Add(product);
         auditPublisher.Publish(
@@ -115,7 +127,8 @@ public sealed class CreateProductHandler(
 
         // Sin consulta de uso: ninguna línea puede vender una variante que nació en esta petición.
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, usageChecker: null, command.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker: null, command.TenantId,
+            CatalogCostAccess.CanRead(executionContext), cancellationToken);
         return dtos[0];
     }
 }

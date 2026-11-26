@@ -41,7 +41,8 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IStockReadQueries>(provider => provider.GetRequiredService<StockReadQueries>());
         services.AddScoped<IMovementReader>(provider => provider.GetRequiredService<StockReadQueries>());
         services.AddSingleton<WmsMetrics>();
-        services.AddSingleton<IWmsConfirmMetrics>(provider => provider.GetRequiredService<WmsMetrics>());
+        // Fábrica tipada con el concreto: el inventario multi-réplica (spec 2026-10-29 D-6) así ve el tipo.
+        services.AddSingleton<IWmsConfirmMetrics, WmsMetrics>(provider => provider.GetRequiredService<WmsMetrics>());
         services.AddScoped<IAdjustmentRepository, AdjustmentRepository>();
         services.AddScoped<IWmsEventPublisher, WmsEventPublisher>();
         services.AddScoped<AdjustmentDtoComposer>();

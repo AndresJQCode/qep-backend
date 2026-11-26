@@ -457,6 +457,9 @@ public sealed class ShopifyCustomerResolverTests
             documentKey,
             documentTypeKey,
             defaultIdentificationType,
+            null,
+            ShopifyEditSync.Manual,
+            ShopifyPaymentStatuses.All,
             AdvisorId,
             Now.AddDays(-1));
         return store;

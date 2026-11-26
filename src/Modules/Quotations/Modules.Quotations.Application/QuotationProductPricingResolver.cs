@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -36,17 +37,21 @@ internal static class QuotationProductPricingResolver
     /// consulta. No rechaza nada: quien la llama pasa cada variante por <see cref="Resolve"/>, línea por
     /// línea, y así los rechazos no se adelantan ni cambian de orden.
     /// </summary>
+    /// <param name="channel">Spec 2026-11-22 (D-5): la lista con que se precia; por defecto la de cotizaciones.</param>
     public static async Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindVariantsAsync(
         IQuotationProductPricingLookup lookup,
         Guid tenantId,
         IEnumerable<Guid> variantIds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        QuotationPriceChannel channel = QuotationPriceChannel.Quotations)
     {
         var distinct = variantIds.Distinct().ToArray();
 
         return distinct.Length == 0
             ? new Dictionary<Guid, QuotationVariantPricingRef>()
-            : await lookup.FindManyAsync(tenantId, distinct, cancellationToken);
+            : channel == QuotationPriceChannel.Quotations
+                ? await lookup.FindManyAsync(tenantId, distinct, cancellationToken)
+                : await lookup.FindManyAsync(tenantId, distinct, channel, cancellationToken);
     }
 
     /// <summary>
@@ -79,7 +84,8 @@ internal static class QuotationProductPricingResolver
         }
 
         return new QuotationPricedProduct(
-            product.ProductId, product.Code, product.Name, PriceFor(product, quantity, currency, isRetail));
+            product.ProductId, product.Code, product.Name, PriceFor(product, quantity, currency, isRetail),
+            product.Kind, product.SalesUnit);
     }
 
     /// <summary>
@@ -170,7 +176,8 @@ internal static class QuotationProductPricingResolver
 /// <summary>La variante ya valorizada, con su producto, su código y su nombre visible: ninguno entra
 /// en el cálculo. El nombre lo usa el resumen del historial ("Agregó Camiseta – M x3"), el producto
 /// lo guarda la línea junto a la variante (la petición sólo trae <c>variantId</c>) y el código lo
-/// usa el pedido para tomar la foto; los tres salen de la misma consulta que el precio.
+/// usa el pedido para tomar la foto; los tres salen de la misma consulta que el precio. El tipo y la unidad los fija la
+/// línea nueva al nacer (spec 2026-11-18 §3.4).
 /// </summary>
 internal sealed record QuotationPricedProduct(
-    Guid ProductId, string Code, string Name, QuotationItemPricing Pricing);
+    Guid ProductId, string Code, string Name, QuotationItemPricing Pricing, ProductKind Kind, SalesUnit SalesUnit);

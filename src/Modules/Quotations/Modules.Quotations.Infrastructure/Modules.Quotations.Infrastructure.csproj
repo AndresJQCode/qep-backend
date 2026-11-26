@@ -11,6 +11,7 @@
     <ProjectReference Include="..\Modules.Quotations.Application\Modules.Quotations.Application.csproj" />
     <ProjectReference Include="..\Modules.Quotations.Domain\Modules.Quotations.Domain.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Infrastructure\BuildingBlocks.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" />

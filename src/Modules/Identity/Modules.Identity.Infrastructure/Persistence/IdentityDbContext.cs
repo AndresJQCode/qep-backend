@@ -18,6 +18,10 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
 
+    public DbSet<EmailChallenge> EmailChallenges => Set<EmailChallenge>();
+
+    public DbSet<TermsAcceptance> TermsAcceptances => Set<TermsAcceptance>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IdentityInboxMessage> Inbox => Set<IdentityInboxMessage>();
@@ -31,6 +35,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ConfigureSession(modelBuilder);
         ConfigurePasswordCredential(modelBuilder);
         ConfigureEmailToken(modelBuilder);
+        ConfigureEmailChallenge(modelBuilder);
+        ConfigureTermsAcceptance(modelBuilder);
         ConfigureUserPreference(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías de emisión/revocación de sesión
@@ -99,6 +105,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .HasColumnName("message_sound")
             .HasDefaultValue(true);
         preference.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Nullable a propósito: null es «el del tenant» (spec 2026-11-22, i18n).
+        preference.Property(value => value.Language).HasColumnName("language").HasMaxLength(10);
 
         preference.HasOne<User>()
             .WithMany()
@@ -151,6 +159,61 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         token.Property(value => value.CreatedAt).HasColumnName("created_at");
         token.HasIndex(value => new { value.UserId, value.Purpose, value.UsedAt });
         token.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(value => value.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-19 (onboarding por link): sin clave foránea a <c>users</c> porque el correo todavía no es de nadie. Los
+    /// nombres de columna van a mano porque <c>EmailChallengeRepository.TryConsumeAsync</c> los escribe en SQL crudo.
+    /// <c>code_hash</c> no es único: dos correos pueden recibir el mismo código de seis dígitos.
+    /// </summary>
+    private static void ConfigureEmailChallenge(ModelBuilder modelBuilder)
+    {
+        var challenge = modelBuilder.Entity<EmailChallenge>();
+        challenge.ToTable("email_challenges", "identity");
+        challenge.HasKey(value => value.Id);
+        challenge.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new EmailChallengeId(value))
+            .ValueGeneratedNever();
+        challenge.Property(value => value.EmailHash)
+            .HasColumnName("email_hash")
+            .HasMaxLength(64);
+        challenge.Property(value => value.CodeHash)
+            .HasColumnName("code_hash")
+            .HasMaxLength(64);
+        challenge.Property(value => value.Attempts).HasColumnName("attempts");
+        challenge.Property(value => value.ExpiresAt).HasColumnName("expires_at");
+        challenge.Property(value => value.UsedAt).HasColumnName("used_at");
+        challenge.Property(value => value.CreatedAt).HasColumnName("created_at");
+        challenge.HasIndex(value => new { value.EmailHash, value.UsedAt });
+    }
+
+    /// <summary>
+    /// Spec 2026-11-19 (onboarding por link): única en <c>(user_id, version)</c>; <c>TermsAcceptanceRepository</c> la usa en
+    /// un <c>ON CONFLICT</c> de SQL crudo, por eso los nombres de columna van a mano. Se borra con el usuario, como sus
+    /// credenciales.
+    /// </summary>
+    private static void ConfigureTermsAcceptance(ModelBuilder modelBuilder)
+    {
+        var acceptance = modelBuilder.Entity<TermsAcceptance>();
+        acceptance.ToTable("terms_acceptances", "identity");
+        acceptance.HasKey(value => value.Id);
+        acceptance.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new TermsAcceptanceId(value))
+            .ValueGeneratedNever();
+        acceptance.Property(value => value.UserId)
+            .HasColumnName("user_id")
+            .HasConversion(id => id.Value, value => new UserId(value));
+        acceptance.Property(value => value.Version)
+            .HasColumnName("version")
+            .HasMaxLength(TermsAcceptance.VersionMaxLength);
+        acceptance.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
+        acceptance.HasIndex(value => new { value.UserId, value.Version }).IsUnique();
+        acceptance.HasOne<User>()
             .WithMany()
             .HasForeignKey(value => value.UserId)
             .OnDelete(DeleteBehavior.Cascade);

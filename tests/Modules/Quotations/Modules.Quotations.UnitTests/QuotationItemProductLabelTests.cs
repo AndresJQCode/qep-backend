@@ -165,7 +165,7 @@ public sealed class QuotationItemProductLabelTests
                 Currency = "COP",
             },
             "COP",
-            false, false, AdvisorId, Now);
+            false, [], MunicipalContext.None, AdvisorId, Now);
         quotation.AddItem(
             QuotationItemId.New(), CamisetaM, ProductId, quantity: 1m, unitPrice: 1_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -182,7 +182,10 @@ public sealed class QuotationItemProductLabelTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(catalog),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            new FixedTenantClock(DateTimeOffset.UtcNow));
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -201,7 +204,10 @@ public sealed class QuotationItemProductLabelTests
                 [ProductId] = new(ProductId, ProductId, liveName, liveCode, ImageUrl: null, Scales: []),
             }),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            new FixedTenantClock(DateTimeOffset.UtcNow));
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -220,7 +226,7 @@ public sealed class QuotationItemProductLabelTests
                 Currency = "COP",
             },
             "COP",
-            false, false, AdvisorId, Now);
+            false, [], MunicipalContext.None, AdvisorId, Now);
         quotation.AddItem(
             QuotationItemId.New(), ProductId, ProductId, quantity: 1m, unitPrice: 1_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);

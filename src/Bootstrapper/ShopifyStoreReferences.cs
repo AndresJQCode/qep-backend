@@ -16,4 +16,12 @@ internal sealed class ShopifyStoreReferences(ICompanyRepository companies, IClie
 
     public async Task<string?> ClassificationNameAsync(Guid tenantId, Guid classificationId, CancellationToken cancellationToken) =>
         (await classifications.FindAsync(tenantId, new ClientClassificationId(classificationId), cancellationToken))?.Name;
+
+    // Spec 2026-11-17 (onboarding) §4.1: las opciones del paso «Compradores»; una inactiva no se puede elegir.
+    public async Task<IReadOnlyList<ShopifyNamedRef>> ListClassificationsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await classifications.ListAsync(tenantId, cancellationToken))
+            .Where(classification => classification.IsActive)
+            .OrderBy(classification => classification.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(classification => new ShopifyNamedRef(classification.Id.Value, classification.Name))
+            .ToArray();
 }

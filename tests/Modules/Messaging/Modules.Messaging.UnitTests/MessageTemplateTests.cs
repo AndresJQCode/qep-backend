@@ -128,6 +128,19 @@ public sealed class MessageTemplateTests
         Assert.Equal(MessagingErrorCodes.TemplateQuotationConflict, exception.Code);
     }
 
+    // Spec 2026-11-09 D1 y D3: la plantilla de pedido se adopta igual que la de cotización, sólo desde una externa.
+    [Fact]
+    public void AdoptAsOrderOnlyWorksOnAnExternalTemplate()
+    {
+        var external = External(MessageTemplateName.OrderName);
+        external.AdoptAsOrder(Now.AddMinutes(1));
+        Assert.Equal(MessageTemplateKind.Order, external.Kind);
+
+        var free = Pending();
+        var exception = Assert.Throws<MessagingDomainException>(() => free.AdoptAsOrder(Now));
+        Assert.Equal(MessagingErrorCodes.TemplateOrderConflict, exception.Code);
+    }
+
     [Theory]
     [InlineData("PENDING", true)]
     [InlineData("APPROVED", true)]
@@ -175,4 +188,92 @@ public sealed class MessageTemplateTests
     [InlineData("qep_cotizaciones", false)]
     [InlineData("cotizacion", false)]
     public void TheQuotationNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
+
+    // Spec 2026-11-09 D1: qep_pedido y sus versiones también son del sistema.
+    [Theory]
+    [InlineData("qep_pedido", true)]
+    [InlineData("qep_pedido_v2", true)]
+    [InlineData("qep_pedidos", false)]
+    [InlineData("pedido", false)]
+    public void TheOrderNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
+    // Spec 2026-11-21: qep_factura y sus versiones también son del sistema.
+    [Theory]
+    [InlineData("qep_factura", true)]
+    [InlineData("qep_factura_v2", true)]
+    [InlineData("qep_facturas", false)]
+    [InlineData("factura", false)]
+    public void TheInvoiceNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
+
+    [Fact]
+    public void AFreeTemplateCannotTakeTheInvoiceName()
+    {
+        var exception = Assert.Throws<MessagingDomainException>(() => Pending(MessageTemplateKind.Free, MessageTemplateName.InvoiceName));
+        Assert.Equal(MessagingErrorCodes.TemplateNameReserved, exception.Code);
+        Assert.Equal("qep_factura_", MessageTemplateName.InvoicePrefix);
+    }
+
+    // Spec 2026-11-17: la imagen fija del encabezado es dato de QEP, no de Meta.
+    private const string ImageUrl = "https://public.test/imagen.png";
+
+    [Fact]
+    public void AttachHeaderImageStoresIdAndUrl()
+    {
+        var template = Pending();
+        var fileId = Guid.CreateVersion7();
+        var later = Now.AddMinutes(1);
+
+        template.AttachHeaderImage(fileId, ImageUrl, later);
+
+        Assert.Equal((fileId, ImageUrl, later), (template.HeaderImageFileId, template.HeaderImageUrl, template.UpdatedAt));
+    }
+
+    [Fact]
+    public void ATemplateStartsWithoutAHeaderImage()
+    {
+        Assert.Equal((null, null), (Pending().HeaderImageFileId, Pending().HeaderImageUrl));
+        Assert.Equal((null, null), (External().HeaderImageFileId, External().HeaderImageUrl));
+    }
+
+    [Fact]
+    public void AttachHeaderImageRejectsAnEmptyIdABlankUrlAndATooLongUrl()
+    {
+        Assert.Throws<ArgumentException>(() => Pending().AttachHeaderImage(Guid.Empty, ImageUrl, Now));
+        Assert.Throws<ArgumentException>(() => Pending().AttachHeaderImage(Guid.CreateVersion7(), " ", Now));
+        Assert.Throws<ArgumentException>(() =>
+            Pending().AttachHeaderImage(Guid.CreateVersion7(), "https://x.test/" + new string('a', MessageTemplate.HeaderImageUrlMaxLength), Now));
+    }
+
+    [Fact]
+    public void AHeaderImageIsAttachedOnlyOnce()
+    {
+        var template = Pending();
+        template.AttachHeaderImage(Guid.CreateVersion7(), ImageUrl, Now);
+
+        Assert.Throws<ArgumentException>(() => template.AttachHeaderImage(Guid.CreateVersion7(), "https://public.test/otra.png", Now));
+    }
+
+    // Review Focus 2: el refresco reescribe components, y el header_handle de Meta no es nuestra URL.
+    [Fact]
+    public void SyncFromKeepsTheHeaderImage()
+    {
+        var template = Pending();
+        var fileId = Guid.CreateVersion7();
+        template.AttachHeaderImage(fileId, ImageUrl, Now);
+
+        template.SyncFrom("APPROVED", null, "MARKETING", "NAMED", "[]", Now.AddHours(1));
+
+        Assert.Equal((fileId, ImageUrl), (template.HeaderImageFileId, template.HeaderImageUrl));
+    }
+
+    [Fact]
+    public void ApplyStatusKeepsTheHeaderImage()
+    {
+        var template = Pending();
+        var fileId = Guid.CreateVersion7();
+        template.AttachHeaderImage(fileId, ImageUrl, Now);
+
+        template.ApplyStatus("REJECTED", "INVALID_FORMAT", Now.AddHours(1));
+
+        Assert.Equal((fileId, ImageUrl), (template.HeaderImageFileId, template.HeaderImageUrl));
+    }
 }

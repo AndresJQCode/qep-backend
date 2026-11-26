@@ -55,6 +55,8 @@ internal sealed class QuotationProductLookup(
                 pair.Variant.Code,
                 CatalogVariantReads.ImageUrlOf(
                     CatalogVariantReads.ImageFileIdOf(pair.Product, pair.Variant), images, tenantId),
-                pair.Variant.ToQuotationRefs()));
+                pair.Variant.ToQuotationRefs(),
+                pair.Product.Kind,
+                pair.Product.SalesUnit));
     }
 }

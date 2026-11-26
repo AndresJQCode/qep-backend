@@ -35,6 +35,20 @@ public sealed class RunUnitLogTests
     }
 
     [Fact]
+    public void ASendMediaIsLoggedAsMedia()
+    {
+        var log = new RunUnitLog();
+        var clientId = Guid.NewGuid();
+        log.Record(
+            new StepResult(State, [new Effect.SendMedia("n1", "image", Guid.NewGuid(), "Mira", null)]) { Steps = [Record(1, 0)] },
+            new EngineInput.Start());
+
+        log.Sent(0, clientId, null);
+
+        Assert.Equal(new RunStepSend("Media", clientId, null), Assert.Single(log.Steps[0].Sends));
+    }
+
+    [Fact]
     public void ASendNoRecordClaimsIsIgnored()
     {
         var log = new RunUnitLog();

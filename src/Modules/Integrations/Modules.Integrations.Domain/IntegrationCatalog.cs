@@ -14,6 +14,9 @@ public enum IntegrationCategory
 
     /// <summary>Spec 2026-10-21 D-H1: APIs externas del tenant que el bloque HTTP de los chatbots consume.</summary>
     Automation,
+
+    /// <summary>Spec 2026-11-18 (integración Siigo): software contable donde se emite la factura electrónica de un pedido.</summary>
+    Accounting,
 }
 
 public enum FieldKind
@@ -59,7 +62,9 @@ public sealed class FieldDefinition
         int maxLength,
         string? pattern,
         string invalidMessage,
-        bool isInternal = false)
+        bool isInternal = false,
+        int revealSuffix = 0,
+        bool isPrivate = false)
     {
         if (!IsValidKey(key))
         {
@@ -69,6 +74,16 @@ public sealed class FieldDefinition
         ArgumentException.ThrowIfNullOrWhiteSpace(label);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLength);
         ArgumentException.ThrowIfNullOrWhiteSpace(invalidMessage);
+        ArgumentOutOfRangeException.ThrowIfNegative(revealSuffix);
+        if (revealSuffix > 0 && kind != FieldKind.Secret)
+        {
+            throw new ArgumentException("Only a secret field reveals a suffix: a public field already travels whole.", nameof(revealSuffix));
+        }
+
+        if (isPrivate && !isInternal)
+        {
+            throw new ArgumentException("Only an internal field is private: a field the tenant writes has to come back.", nameof(isPrivate));
+        }
 
         Key = key;
         Label = label;
@@ -78,6 +93,8 @@ public sealed class FieldDefinition
         Pattern = pattern is null ? null : new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant);
         InvalidMessage = invalidMessage;
         Internal = isInternal;
+        RevealSuffix = revealSuffix;
+        Private = isPrivate;
     }
 
     public string Key { get; }
@@ -97,6 +114,14 @@ public sealed class FieldDefinition
     /// <summary>Spec 2026-10-09 §6.1: lo llena el backend (Embedded Signup o el probador). No sale en
     /// <c>GET /catalog</c>, sí en <c>ConnectionResponse</c>, y <c>POST</c>/<c>PUT</c> lo rechazan.</summary>
     public bool Internal { get; }
+
+    /// <summary>Spec 2026-10-29 D-A23: cuántos caracteres del final de un secreto ve la pantalla para reconocerlo (los últimos 4 de
+    /// una clave de API). <c>0</c>, el resto: nunca se ve nada. Se calcula al leer, de la clave descifrada; no hay copia en claro.</summary>
+    public int RevealSuffix { get; }
+
+    /// <summary>Spec 2026-11-17 (onboarding Shopify) §2: un campo interno que guarda datos personales (el perfil de la tienda trae
+    /// el correo y el teléfono del comerciante). Tampoco sale en <c>ConnectionResponse</c>: sólo lo leen los adaptadores del backend.</summary>
+    public bool Private { get; }
 
     public bool IsSecret => Kind == FieldKind.Secret;
 
@@ -177,6 +202,7 @@ public sealed class IntegrationProvider
         ConsumingModules = consumingModules.ToArray();
         Fields = fields.ToArray();
         PublicFields = Fields.Where(field => !field.IsSecret).ToArray();
+        ResponseFields = PublicFields.Where(field => !field.Private).ToArray();
         SecretFields = Fields.Where(field => field.IsSecret).ToArray();
         MaxConnections = maxConnections;
         Onboarding = onboarding;
@@ -197,6 +223,9 @@ public sealed class IntegrationProvider
 
     /// <summary>Los que van a <c>fields</c> (jsonb).</summary>
     public IReadOnlyList<FieldDefinition> PublicFields { get; }
+
+    /// <summary>Los de <c>fields</c> que salen en <c>ConnectionResponse</c>: todos menos los privados.</summary>
+    public IReadOnlyList<FieldDefinition> ResponseFields { get; }
 
     /// <summary>Los que van a <c>connection_secrets</c>, cifrados.</summary>
     public IReadOnlyList<FieldDefinition> SecretFields { get; }

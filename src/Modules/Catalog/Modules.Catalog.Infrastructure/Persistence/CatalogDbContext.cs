@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Domain;
 
@@ -9,6 +11,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<Product> Products => Set<Product>();
 
     public DbSet<TaxRate> TaxRates => Set<TaxRate>();
+
+    public DbSet<TaxUnitValue> TaxUnitValues => Set<TaxUnitValue>();
 
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
 
@@ -32,6 +36,20 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     internal DbSet<CatalogOutboxMessage> Outbox => Set<CatalogOutboxMessage>();
 
+    /// <summary>Spec 2026-11-22: las listas de precios. Públicos para el lector cruzado de Bootstrapper (Mayorista).</summary>
+    public DbSet<PriceList> PriceLists => Set<PriceList>();
+
+    public DbSet<PriceListOverride> PriceListOverrides => Set<PriceListOverride>();
+
+    public DbSet<ChannelPriceList> ChannelPriceLists => Set<ChannelPriceList>();
+
+    /// <summary>La llave del índice único del nombre de una lista: <c>lower(name)</c>, calculada por la base.</summary>
+    internal const string PriceListNormalizedName = "NormalizedName";
+
+    internal const string PriceListNameIndex = "IX_price_lists_tenant_normalized_name";
+
+    internal const string ChannelPriceListForeignKey = "FK_channel_price_lists_price_lists_price_list_id";
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureProduct(modelBuilder);
@@ -40,10 +58,95 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         ConfigureOptionDefinition(modelBuilder);
         ConfigureOptionValue(modelBuilder);
         ConfigureTaxRate(modelBuilder);
+        ConfigureTaxUnitValue(modelBuilder);
         ConfigureProductCategory(modelBuilder);
         ConfigurePriceScale(modelBuilder);
         ConfigureProductPriceChange(modelBuilder);
+        ConfigurePriceLists(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
+    }
+
+    // Spec 2026-11-22. Calca el mapeo de wholesale.price_lists (enums como texto de 16, arreglos uuid[], version bigint a mano),
+    // más el ajuste con signo y las dos tablas nuevas.
+    private static void ConfigurePriceLists(ModelBuilder modelBuilder)
+    {
+        const string categoryIds = "_categoryIds";
+        const string excludedCategoryIds = "_excludedCategoryIds";
+        const string excludedProductIds = "_excludedProductIds";
+
+        var list = modelBuilder.Entity<PriceList>();
+        list.ToTable("price_lists", "catalog");
+        list.HasKey(value => value.Id);
+        list.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new PriceListId(value))
+            .ValueGeneratedNever();
+        list.Property(value => value.TenantId).HasColumnName("tenant_id");
+        list.Property(value => value.Name).HasColumnName("name").HasMaxLength(PriceList.NameMaxLength);
+        list.Property<string>(PriceListNormalizedName)
+            .HasColumnName("normalized_name")
+            .HasMaxLength(PriceList.NameMaxLength)
+            .HasComputedColumnSql("lower(name)", stored: true);
+        list.Property(value => value.AdjustmentPercent).HasColumnName("adjustment_percent").HasPrecision(5, 2);
+        list.Property(value => value.Visibility).HasColumnName("visibility").HasConversion<string>().HasMaxLength(16);
+        list.Ignore(value => value.CategoryIds);
+        list.Property<List<Guid>>(categoryIds)
+            .HasField(categoryIds)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("category_ids")
+            .HasColumnType("uuid[]");
+        list.Ignore(value => value.Exclusions);
+        list.Ignore(value => value.ExcludedCategoryIds);
+        list.Ignore(value => value.ExcludedProductIds);
+        list.Property<List<Guid>>(excludedCategoryIds)
+            .HasField(excludedCategoryIds)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("excluded_category_ids")
+            .HasColumnType("uuid[]");
+        list.Property<List<Guid>>(excludedProductIds)
+            .HasField(excludedProductIds)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("excluded_product_ids")
+            .HasColumnType("uuid[]");
+        list.Property(value => value.ShowPrices).HasColumnName("show_prices");
+        list.Property(value => value.CreatedAt).HasColumnName("created_at");
+        list.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        list.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        list.HasIndex(nameof(PriceList.TenantId), PriceListNormalizedName).IsUnique().HasDatabaseName(PriceListNameIndex);
+
+        var item = modelBuilder.Entity<PriceListOverride>();
+        item.ToTable("price_list_overrides", "catalog", table =>
+            table.HasCheckConstraint("CK_price_list_overrides_amount_positive", "amount > 0"));
+        item.HasKey(value => new { value.PriceListId, value.VariantId, value.Currency });
+        item.Property(value => value.PriceListId)
+            .HasColumnName("price_list_id")
+            .HasConversion(id => id.Value, value => new PriceListId(value));
+        item.Property(value => value.TenantId).HasColumnName("tenant_id");
+        item.Property(value => value.VariantId)
+            .HasColumnName("variant_id")
+            .HasConversion(id => id.Value, value => new VariantId(value));
+        item.Property(value => value.Currency).HasColumnName("currency").HasColumnType("character(3)");
+        item.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
+        // CASCADE en las dos: borrar la lista o la variante se lleva sus precios fijos, como el historial de precios.
+        item.HasOne<PriceList>().WithMany().HasForeignKey(value => value.PriceListId).OnDelete(DeleteBehavior.Cascade);
+        item.HasOne<ProductVariant>().WithMany().HasForeignKey(value => value.VariantId).OnDelete(DeleteBehavior.Cascade);
+        item.HasIndex(value => value.VariantId).HasDatabaseName("IX_price_list_overrides_variant_id");
+
+        var channel = modelBuilder.Entity<ChannelPriceList>();
+        channel.ToTable("channel_price_lists", "catalog");
+        channel.HasKey(value => new { value.TenantId, value.Channel });
+        channel.Property(value => value.TenantId).HasColumnName("tenant_id");
+        channel.Property(value => value.Channel).HasColumnName("channel").HasConversion<string>().HasMaxLength(16);
+        channel.Property(value => value.PriceListId)
+            .HasColumnName("price_list_id")
+            .HasConversion(id => id.Value, value => new PriceListId(value));
+        // RESTRICT: una lista asignada a un canal no se borra; el handler lo dice antes con 409 y la FK cierra la carrera.
+        channel.HasOne<PriceList>()
+            .WithMany()
+            .HasForeignKey(value => value.PriceListId)
+            .OnDelete(DeleteBehavior.Restrict)
+            .HasConstraintName(ChannelPriceListForeignKey);
+        channel.HasIndex(value => value.PriceListId).HasDatabaseName("IX_channel_price_lists_price_list_id");
     }
 
     private static void ConfigureProduct(ModelBuilder modelBuilder)
@@ -60,6 +163,31 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("name")
             .HasMaxLength(Product.NameMaxLength);
         product.Property(value => value.IsActive).HasColumnName("is_active");
+        // Oculto por defecto, también para las filas de antes de la tienda: publicar es decisión del
+        // tenant. El default de base es lo que hace que la migración no publique nada.
+        product.Property(value => value.VisibleInStore)
+            .HasColumnName("visible_in_store")
+            .HasDefaultValue(false);
+        // Productos desde Shopify (spec 2026-11-17 §5.4). Nullable: null es un producto propio, que
+        // es lo que son todos los de antes de la importación.
+        product.Property(value => value.ExternalSource)
+            .HasColumnName("external_source")
+            .HasMaxLength(Product.ExternalSourceMaxLength);
+        // Spec 2026-11-18 §3.1-§3.2: por nombre, text not null. El default de la base es el valor de
+        // todo producto de antes, y coincide con el default CLR: no hace falta sentinel.
+        product.Property(value => value.Kind)
+            .HasColumnName("kind")
+            .HasConversion<string>()
+            .HasDefaultValue(ProductKind.Physical);
+        product.Property(value => value.SalesUnit)
+            .HasColumnName("sales_unit")
+            .HasConversion<string>()
+            .HasDefaultValue(SalesUnit.Unit);
+        // El predicado de las lecturas de la tienda: sólo los publicados y activos. Incluye el nombre
+        // porque la tienda ordena por él; con sólo tenant_id EF lo fundiría con IX_products_tenant.
+        product.HasIndex(value => new { value.TenantId, value.Name })
+            .HasDatabaseName("IX_products_tenant_store_visible")
+            .HasFilter("visible_in_store AND is_active");
         // CAT-04. Nullable: hay productos ya cargados y una columna NOT NULL sin default los
         // rompe.
         product.Property(value => value.Description)
@@ -168,6 +296,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // en el lugar y dos filas intercambian posición en el mismo guardado. La unicidad la
         // garantiza el agregado (catalog.product.gallery_duplicate) bajo la Version del producto.
         image.HasIndex("ProductId").HasDatabaseName("IX_product_gallery_images_product");
+        // Para ProductGalleryFileReferenceProbe: saber si algún producto todavía tiene el archivo.
+        image.HasIndex(value => value.FileId).HasDatabaseName("IX_product_gallery_images_file");
     }
 
     private static void ConfigureProductVariant(ModelBuilder modelBuilder)
@@ -231,6 +361,26 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             price.HasKey("VariantId", nameof(ProductPrice.Currency));
         });
         variant.Navigation(value => value.Prices).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // Costo unitario manual (spec 2026-11-10): tabla propia y no una columna de product_prices,
+        // porque no es parte del precio y su ausencia (sin fila) significa «costo desconocido». El
+        // CHECK es > 0: un cero se confundiría con «gratis» en el reporte de margen.
+        variant.OwnsMany(value => value.Costs, cost =>
+        {
+            cost.ToTable("product_variant_costs", "catalog", table =>
+                table.HasCheckConstraint("CK_product_variant_costs_amount_positive", "amount > 0"));
+            cost.WithOwner().HasForeignKey("VariantId");
+            cost.Property<VariantId>("VariantId")
+                .HasColumnName("variant_id")
+                .HasConversion(id => id.Value, value => new VariantId(value));
+            cost.Property(value => value.Currency)
+                .HasColumnName("currency")
+                .HasColumnType("character(3)")
+                .HasMaxLength(3);
+            cost.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+            cost.HasKey("VariantId", nameof(ProductVariantCost.Currency));
+        });
+        variant.Navigation(value => value.Costs).UsePropertyAccessMode(PropertyAccessMode.Field);
 
         // Mismo criterio que product_options: FK RESTRICT a option_values, para que un valor en
         // uso no se borre ni por SQL; y el índice por valor sirve la pregunta «¿está en uso?».
@@ -353,7 +503,32 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(TaxRate.NameMaxLength);
-        taxRate.Property(value => value.Percentage).HasColumnName("percentage");
+        taxRate.Property(value => value.Percentage)
+            .HasColumnName("percentage")
+            .HasPrecision(6, 3);
+        taxRate.Property(value => value.Type)
+            .HasColumnName("type")
+            .HasMaxLength(TaxRate.TypeMaxLength);
+        taxRate.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(TaxRate.CountryLength)
+            .IsFixedLength();
+        taxRate.Property(value => value.MinimumBase)
+            .HasColumnName("minimum_base")
+            .HasPrecision(14, 2);
+        // Sin FK a geography.cities a propósito: Catalog migra antes que Geography (spec ReteICA por empresa, A9). Que la
+        // ciudad exista lo revisa CreateTaxRateHandler.
+        taxRate.Property(value => value.CityId).HasColumnName("city_id");
+        // Spec 2026-11-18 §4.2: por nombre, text not null. El default es el de toda tasa de antes y coincide con el
+        // default CLR, así que no hace falta sentinel.
+        taxRate.Property(value => value.AppliesTo)
+            .HasColumnName("applies_to")
+            .HasConversion<string>()
+            .HasDefaultValue(WithholdingScope.All);
+        taxRate.Ignore(value => value.Behavior);
+        taxRate.Ignore(value => value.Scope);
+        taxRate.Ignore(value => value.Withholds);
+        taxRate.Ignore(value => value.VatPercentage);
         taxRate.Property(value => value.IsActive).HasColumnName("is_active");
         taxRate.Property(value => value.Version)
             .HasColumnName("version")
@@ -365,9 +540,37 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // de la violación de unicidad discrimina por nombre de índice, no sólo por SqlState.
         // Con dos índices únicos en el mismo esquema, confundirlos manda al llamador a corregir
         // el campo equivocado — la lección de SDD-CT-06.
-        taxRate.HasIndex(value => new { value.TenantId, value.Name })
+        //
+        // Owner, 2026-11-15: el nombre se puede repetir; lo que no se repite es nombre + porcentaje + base mínima.
+        // NULLS NOT DISTINCT porque minimum_base es nullable: sin él, dos tasas iguales sin base no chocarían.
+        // Spec 2026-11-18 §4.2: el alcance también distingue. Cambiar el alcance es crear otra tasa, así que la misma
+        // Retefuente para bienes y para servicios tiene que poder convivir. El nombre del índice no cambia: es el que
+        // CatalogUnitOfWork traduce a catalog.tax_rate.name_taken.
+        taxRate.HasIndex(value => new { value.TenantId, value.Name, value.Percentage, value.MinimumBase, value.AppliesTo })
             .IsUnique()
-            .HasDatabaseName("IX_tax_rates_tenant_name");
+            .AreNullsDistinct(false)
+            .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
+        // No único: un municipio puede tener varias tarifas (una por actividad CIIU) y la empresa elige una.
+        taxRate.HasIndex(value => new { value.TenantId, value.Type, value.CityId })
+            .HasDatabaseName("IX_tax_rates_tenant_type_city");
+    }
+
+    // Sin tenant_id a propósito: la UVT es un dato de la plataforma, como las ciudades de Geography.
+    private static void ConfigureTaxUnitValue(ModelBuilder modelBuilder)
+    {
+        var unit = modelBuilder.Entity<TaxUnitValue>();
+        unit.ToTable("tax_unit_values", "catalog");
+        unit.HasKey(value => new { value.Country, value.Year });
+        unit.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(TaxUnitValue.CountryLength)
+            .IsFixedLength();
+        unit.Property(value => value.Year).HasColumnName("year");
+        unit.Property(value => value.Value)
+            .HasColumnName("value")
+            .HasPrecision(14, 2);
+        unit.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        unit.Property(value => value.UpdatedBy).HasColumnName("updated_by");
     }
 
     private static void ConfigureProductCategory(ModelBuilder modelBuilder)

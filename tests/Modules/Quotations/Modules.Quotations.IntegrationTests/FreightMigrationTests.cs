@@ -57,7 +57,7 @@ public sealed class FreightMigrationTests
     [Fact]
     public async Task ExistingDocumentsKeepTheirTotals()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -86,7 +86,7 @@ public sealed class FreightMigrationTests
     [Fact]
     public async Task TheMigrationCreatesTheCarrierTablesAndTheSettingsColumn()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
 

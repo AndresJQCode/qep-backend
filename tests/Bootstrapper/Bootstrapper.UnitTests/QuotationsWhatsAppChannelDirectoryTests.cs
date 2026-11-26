@@ -15,6 +15,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
 {
     private const string TemplateId = "d0e79149-ed61-4784-9883-d86807f46ce5";
     private const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    private const string InvoiceTemplateId = "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e";
 
     private static readonly Guid TenantId = Guid.CreateVersion7();
 
@@ -151,8 +152,81 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         Assert.Null(channels[0].Phone);
     }
 
-    private static QuotationsWhatsAppChannelDirectory NewDirectory(StubConnections connections, StubReadiness? readiness = null) =>
-        new(connections, readiness ?? new StubReadiness());
+    // Spec 2026-11-09 D6: para un pedido, Meta cuenta con plantilla Order aprobada y Zenvia sólo con orderTemplateId.
+    [Fact]
+    public async Task ForAnOrderMetaNeedsTheOrderTemplateAndZenviaTheOrderTemplateId()
+    {
+        var meta = Guid.CreateVersion7();
+        var zenviaWithOrder = Guid.CreateVersion7();
+        var zenviaWithout = Guid.CreateVersion7();
+        var withOrder = Fields("573001234567", TemplateId);
+        withOrder[ZenviaFieldKeys.OrderTemplateId] = OrderTemplateId;
+        var connections = new StubConnections()
+            .WithMeta(meta, "Cuenta de Meta", null)
+            .With(zenviaWithOrder, withOrder)
+            .With(zenviaWithout, Fields("573009999999", TemplateId));
+        var readiness = new StubReadiness().Approve(meta, new ApprovedTemplate("qep_cotizacion", "es", "UTILITY", "NAMED", "[]"));
+
+        // Con la de cotización aprobada y sin la de pedido: para pedidos Meta no cuenta, y sólo entra la Zenvia con orderTemplateId.
+        Assert.Equal([zenviaWithOrder], (await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, WhatsAppDocument.Order, Ct)).Select(channel => channel.ConnectionId));
+        // Para la cotización nada cambia: las tres.
+        Assert.Equal([meta, zenviaWithOrder, zenviaWithout], (await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct)).Select(channel => channel.ConnectionId));
+
+        readiness.ApproveOrder(meta, new ApprovedTemplate("qep_pedido", "es", "UTILITY", "NAMED", "[]"));
+        Assert.Equal([meta, zenviaWithOrder], (await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, WhatsAppDocument.Order, Ct)).Select(channel => channel.ConnectionId));
+    }
+
+    // Spec 2026-11-21: para una factura, Meta cuenta con la fila Invoice aprobada y Zenvia sólo con invoiceTemplateId.
+    [Fact]
+    public async Task AMetaConnectionWithoutAnApprovedInvoiceTemplateIsNotAvailableForInvoices()
+    {
+        var meta = Guid.CreateVersion7();
+        var connections = new StubConnections().WithMeta(meta, "Cuenta de Meta", null);
+        // Con la de cotización y la de pedido aprobadas, y sin la de factura.
+        var readiness = new StubReadiness()
+            .Approve(meta, new ApprovedTemplate("qep_cotizacion", "es", "UTILITY", "NAMED", "[]"))
+            .ApproveOrder(meta, new ApprovedTemplate("qep_pedido", "es", "UTILITY", "NAMED", "[]"));
+
+        Assert.Empty(await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, WhatsAppDocument.Invoice, Ct));
+
+        readiness.ApproveInvoice(meta, new ApprovedTemplate("qep_factura", "es", "UTILITY", "NAMED", "[]"));
+        var channel = Assert.IsType<MetaWhatsAppChannel>(
+            Assert.Single(await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, WhatsAppDocument.Invoice, Ct)));
+        Assert.Equal(meta, channel.ConnectionId);
+    }
+
+    [Fact]
+    public async Task AZenviaConnectionWithoutInvoiceTemplateIdIsNotAvailableForInvoices()
+    {
+        var withOrderOnly = Fields("573001234567", TemplateId);
+        withOrderOnly[ZenviaFieldKeys.OrderTemplateId] = OrderTemplateId;
+        var connections = new StubConnections().With(Guid.CreateVersion7(), withOrderOnly);
+
+        Assert.Empty(await NewDirectory(connections).ListAvailableAsync(TenantId, WhatsAppDocument.Invoice, Ct));
+    }
+
+    [Fact]
+    public async Task AZenviaConnectionWithItIsAvailable()
+    {
+        var id = Guid.CreateVersion7();
+        var fields = Fields("573001234567", TemplateId);
+        fields[ZenviaFieldKeys.InvoiceTemplateId] = InvoiceTemplateId;
+        var connections = new StubConnections().With(id, fields);
+
+        var channel = Assert.IsType<ZenviaWhatsAppChannel>(
+            Assert.Single(await NewDirectory(connections).ListAvailableAsync(TenantId, WhatsAppDocument.Invoice, Ct)));
+
+        Assert.Equal((id, InvoiceTemplateId), (channel.ConnectionId, channel.InvoiceTemplateId));
+        // Para cotización y pedido la misma conexión sigue como estaba: la cotización la ve, el pedido no (no tiene orderTemplateId).
+        Assert.Single(await NewDirectory(connections).ListAvailableAsync(TenantId, Ct));
+        Assert.Empty(await NewDirectory(connections).ListAvailableAsync(TenantId, WhatsAppDocument.Order, Ct));
+    }
+
+    private static QuotationsWhatsAppChannelDirectory NewDirectory(StubConnections connections, StubReadiness? readiness = null)
+    {
+        var stub = readiness ?? new StubReadiness();
+        return new(connections, stub, stub, stub);
+    }
 
     private static Dictionary<string, string> Fields(string fromNumber, string? templateId)
     {
@@ -165,9 +239,20 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         return fields;
     }
 
-    private sealed class StubReadiness : IQuotationTemplateReadiness
+    private sealed class StubReadiness : IQuotationTemplateReadiness, IOrderTemplateReadiness, IInvoiceTemplateReadiness
     {
         private readonly Dictionary<Guid, ApprovedTemplate> approved = [];
+        private readonly Dictionary<Guid, ApprovedTemplate> approvedOrders = [];
+        private readonly Dictionary<Guid, ApprovedTemplate> approvedInvoices = [];
+
+        public StubReadiness ApproveInvoice(Guid connectionId, ApprovedTemplate template)
+        {
+            approvedInvoices[connectionId] = template;
+            return this;
+        }
+
+        Task<ApprovedTemplate?> IInvoiceTemplateReadiness.FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(tenantId == TenantId ? approvedInvoices.GetValueOrDefault(connectionId) : null);
 
         public StubReadiness Approve(Guid connectionId, ApprovedTemplate template)
         {
@@ -175,8 +260,17 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             return this;
         }
 
-        public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        public StubReadiness ApproveOrder(Guid connectionId, ApprovedTemplate template)
+        {
+            approvedOrders[connectionId] = template;
+            return this;
+        }
+
+        Task<ApprovedTemplate?> IQuotationTemplateReadiness.FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult(tenantId == TenantId ? approved.GetValueOrDefault(connectionId) : null);
+
+        Task<ApprovedTemplate?> IOrderTemplateReadiness.FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(tenantId == TenantId ? approvedOrders.GetValueOrDefault(connectionId) : null);
     }
 
     private sealed class StubConnections : IIntegrationConnections
@@ -217,6 +311,9 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             return this;
         }
 
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult(tenantId == TenantId && resolved.GetValueOrDefault(connectionId) is { } connection
                 ? ConnectionResolution.Resolved(connection)
@@ -228,7 +325,29 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             return Task.FromResult<IReadOnlyList<ConnectionSummary>>(active.Where(summary => summary.ProviderKey == providerKey).ToList());
         }
 
+        // Como el real: la que no se resuelve no viene.
+        public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken)
+        {
+            Listed.Add((tenantId, providerKey));
+            return Task.FromResult<IReadOnlyList<ResolvedConnection>>(tenantId == TenantId
+                ? [.. active.Where(summary => summary.ProviderKey == providerKey)
+                    .Select(summary => resolved.GetValueOrDefault(summary.Id))
+                    .OfType<ResolvedConnection>()]
+                : []);
+        }
+
+        public Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+            Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
+}
+
+/// <summary>Las pruebas de la cotización preguntan sin documento: es el default del contrato (spec 2026-11-09 D6).</summary>
+internal static class WhatsAppChannelDirectoryTestExtensions
+{
+    public static Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(this IWhatsAppChannelDirectory directory, Guid tenantId, CancellationToken cancellationToken) =>
+        directory.ListAvailableAsync(tenantId, WhatsAppDocument.Quotation, cancellationToken);
 }

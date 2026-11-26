@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -199,6 +199,10 @@ public sealed class ProductCategoryPersistenceTests
         Assert.Equal("catalog.category.has_products", error.Code);
     }
 
+    // The same race on the hierarchy FK: a child hung from the parent between DeleteCategoryHandler's
+    // load (and its tracked has_children check) and the commit. The child has to be created after the
+    // load: a child already tracked by the deleting context is refused by the repository's Remove
+    // (DeletingAParentWhoseChildIsTrackedIsHasChildrenAndKeepsTheChild), before any save.
     [Fact]
     public async Task DeletingAParentThatHasAChildIsHasChildrenOnSave()
     {
@@ -206,11 +210,39 @@ public sealed class ProductCategoryPersistenceTests
         using var factory = new QepApiFactory(database.GetConnectionString());
 
         var drinks = await SaveCategoryAsync(factory, Tenant, "Bebidas", null);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>();
+        var tracked = await repository.ListForUpdateAsync(Tenant, TestContext.Current.CancellationToken);
         await SaveCategoryAsync(factory, Tenant, "Gaseosas", drinks.Id);
+        repository.Remove(tracked.Single(category => category.Id == drinks.Id));
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(
+            () => scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("catalog.category.has_children", error.Code);
+    }
+
+    // A delete that skips DeleteCategoryHandler's check, with the child tracked by the same context:
+    // DeleteBehavior.Restrict would let EF null the child's parent_id before the DELETE, so the
+    // RESTRICT never fires and the child silently becomes a root. The repository refuses instead.
+    [Fact]
+    public async Task DeletingAParentWhoseChildIsTrackedIsHasChildrenAndKeepsTheChild()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var drinks = await SaveCategoryAsync(factory, Tenant, "Bebidas", null);
+        var sodas = await SaveCategoryAsync(factory, Tenant, "Gaseosas", drinks.Id);
 
         var error = await Assert.ThrowsAsync<CatalogDomainException>(
             () => RemoveCategoryAsync(factory, drinks.Id));
         Assert.Equal("catalog.category.has_children", error.Code);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var stored = await scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>()
+            .ListForUpdateAsync(Tenant, TestContext.Current.CancellationToken);
+        Assert.Contains(stored, category => category.Id == drinks.Id);
+        Assert.Equal(drinks.Id, stored.Single(category => category.Id == sodas.Id).ParentId);
     }
 
     // The other side of the hierarchy FK: hanging a child from a parent deleted meanwhile.
@@ -274,23 +306,14 @@ public sealed class ProductCategoryPersistenceTests
             .SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

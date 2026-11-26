@@ -58,7 +58,8 @@ public sealed class ShopifyLayerTests
         Assert.DoesNotContain(references, name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -88,6 +89,25 @@ public sealed class ShopifyLayerTests
         {
             Assert.DoesNotContain(ReferenceNamesOf(assembly), name =>
                 name is not null && name.StartsWith(forbiddenPrefix, StringComparison.Ordinal));
+        }
+    }
+
+    // Spec 2026-11-17 §5.4: escribir en Catalog y subir a Storage son adaptadores del composition root; si alguien los moviera a
+    // Infrastructure, tendría que referenciar Catalog o Storage, y esta prueba y la de arriba se pondrían rojas.
+    [Theory]
+    [InlineData(typeof(IShopifyCatalogWriter))]
+    [InlineData(typeof(IShopifyProductImageStore))]
+    [InlineData(typeof(IShopifyReauthorization))]
+    // Spec 2026-11-17 (onboarding) §4.2: la empresa del asistente se crea con el caso de uso de Companies, desde Bootstrapper.
+    [InlineData(typeof(IShopifySetupCompanies))]
+    public void TheCatalogWriterAndImageStoreLiveInBootstrapper(Type port)
+    {
+        var bootstrapper = typeof(Bootstrapper.QepServiceCollectionExtensions).Assembly;
+
+        Assert.Contains(bootstrapper.GetTypes(), type => type is { IsClass: true, IsAbstract: false } && port.IsAssignableFrom(type));
+        foreach (var assembly in ModuleAssemblies)
+        {
+            Assert.DoesNotContain(assembly.GetTypes(), type => type is { IsClass: true, IsAbstract: false } && port.IsAssignableFrom(type));
         }
     }
 

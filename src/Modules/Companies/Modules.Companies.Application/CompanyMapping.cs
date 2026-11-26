@@ -8,8 +8,15 @@ internal static class CompanyMapping
     /// Del agregado al DTO, con la ciudad ya resuelta por el llamador. No la resuelve esta
     /// funcion: cada handler decide como (una consulta puntual en Get/Create/Update, un lote en
     /// List) y esto solo ensambla — mismo criterio que <c>CustomerMapping.ToDto</c>.
+    ///
+    /// <paramref name="withholdingTaxRates"/> llega ya resuelto (ver <see cref="ResolveWithholdingTaxRatesAsync"/>); el
+    /// listado no lo pide porque la grilla no lo pinta, y ahí queda vacío.
     /// </summary>
-    public static CompanyDto ToDto(this Company company, CompanyCityRef city) => new(
+    public static CompanyDto ToDto(
+        this Company company,
+        CompanyCityRef? city,
+        IReadOnlyList<CompanyWithholdingTaxRateDto>? withholdingTaxRates = null,
+        CompanyRegionRef? region = null) => new(
         company.Id.Value,
         company.Name,
         company.BankAccounts
@@ -19,18 +26,26 @@ internal static class CompanyMapping
                 account.Currency))
             .ToArray(),
         company.TaxId,
+        company.Country,
+        company.DocumentType.ToWire(),
         company.IsActive,
         company.Phone,
         company.Email,
         company.Address,
-        new CompanyCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
-        new CompanyDepartmentDto(
-            city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+        city is null ? null : new CompanyCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
+        city is null
+            ? null
+            : new CompanyDepartmentDto(
+                city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+        company.CityName,
         company.CreatedAt,
-        company.UpdatedAt);
+        company.UpdatedAt,
+        withholdingTaxRates ?? [],
+        company.ChargesVat,
+        region is null ? null : new CompanyRegionDto(region.Id, region.Name));
 
     /// <summary>
-    /// La version de una sola empresa: resuelve su ciudad y arma el DTO. Para
+    /// La version de una sola empresa: resuelve su ciudad y sus tasas municipales y arma el DTO. Para
     /// <c>GetCompanyHandler</c>, <c>DeactivateCompanyHandler</c> y <c>ActivateCompanyHandler</c>,
     /// que ya tienen la <c>Company</c> en mano y no necesitan resolver nada mas antes.
     ///
@@ -42,13 +57,72 @@ internal static class CompanyMapping
     public static async Task<CompanyDto> ToDtoAsync(
         this Company company,
         ICompanyGeographyLookup geographyLookup,
+        ICompanyTaxRateLookup taxRateLookup,
         CancellationToken cancellationToken)
     {
-        var city = await geographyLookup.FindCityAsync(company.CityId, cancellationToken)
+        var rates = await taxRateLookup.FindManyAsync(
+            company.TenantId, company.WithholdingTaxRateIds, cancellationToken);
+        var withholdingTaxRates = await ResolveWithholdingTaxRatesAsync(
+            company.WithholdingTaxRateIds, rates, geographyLookup, cancellationToken);
+
+        // Spec 2026-11-23: una región que Geography ya no devuelve se omite en vez de tirar la ficha (referencia blanda).
+        CompanyRegionRef? region = null;
+        if (company.RegionId is { } regionId)
+        {
+            (await geographyLookup.FindRegionsAsync([regionId], cancellationToken)).TryGetValue(regionId, out region);
+        }
+
+        // Fuera de Colombia no hay CityId que resolver: la ciudad es texto libre en CityName.
+        if (company.CityId is not { } cityId)
+        {
+            return company.ToDto(null, withholdingTaxRates, region);
+        }
+
+        var city = await geographyLookup.FindCityAsync(cityId, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"City '{company.CityId}' referenced by company '{company.Id}' was not found.");
 
-        return company.ToDto(city);
+        return company.ToDto(city, withholdingTaxRates, region);
+    }
+
+    /// <summary>
+    /// Las tasas municipales de la empresa con sus municipios, resueltos en una sola consulta a Geography. Ordenadas por
+    /// departamento, municipio y tipo (Ordinal), como las pinta la ficha. Un id que el catálogo ya no tiene no se pinta.
+    /// </summary>
+    public static async Task<IReadOnlyList<CompanyWithholdingTaxRateDto>> ResolveWithholdingTaxRatesAsync(
+        IReadOnlyCollection<Guid> taxRateIds,
+        IReadOnlyDictionary<Guid, CompanyTaxRateRef> found,
+        ICompanyGeographyLookup geographyLookup,
+        CancellationToken cancellationToken)
+    {
+        var rates = taxRateIds.Distinct()
+            .Where(found.ContainsKey)
+            .Select(id => found[id])
+            .ToArray();
+        if (rates.Length == 0)
+        {
+            return [];
+        }
+
+        var cityIds = rates.Where(rate => rate.CityId is not null).Select(rate => rate.CityId!.Value).Distinct().ToArray();
+        var cities = await geographyLookup.FindCitiesAsync(cityIds, cancellationToken);
+
+        return rates
+            .Select(rate => new CompanyWithholdingTaxRateDto(
+                rate.Id,
+                rate.Name,
+                rate.Type,
+                rate.Country,
+                rate.Percentage,
+                rate.IsActive,
+                rate.CityId is { } cityId && cities.TryGetValue(cityId, out var city)
+                    ? new CompanyMunicipalityDto(city.CityId, city.CityName, city.DepartmentId, city.DepartmentName)
+                    : null,
+                rate.AppliesTo.ToString()))
+            .OrderBy(rate => rate.City?.DepartmentName ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(rate => rate.City?.Name ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(rate => rate.Type, StringComparer.Ordinal)
+            .ToArray();
     }
 
     /// <summary>

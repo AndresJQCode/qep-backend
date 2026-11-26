@@ -111,6 +111,31 @@ internal static class PosApiHarness
             CreateClient(factory, registered.OwnerUserId, registered.TenantId, SeedPermissions));
     }
 
+    // Politica de campos del cliente del tenant (document/city x al guardar/al facturar); mismo SQL que
+    // CustomersApiHarness. Va despues de RegisterTenantAsync.
+    public static Task SetTenantCustomerFieldPolicyAsync(
+        PostgreSqlContainer database,
+        Guid tenantId,
+        bool documentOnSave,
+        bool documentOnBilling,
+        bool cityOnSave,
+        bool cityOnBilling) =>
+        ExecuteSqlAsync(
+            database,
+            """
+            UPDATE tenancy.tenants SET
+                customer_document_required_on_save = @documentOnSave,
+                customer_document_required_on_billing = @documentOnBilling,
+                customer_city_required_on_save = @cityOnSave,
+                customer_city_required_on_billing = @cityOnBilling
+            WHERE id = @tenantId
+            """,
+            ("documentOnSave", documentOnSave),
+            ("documentOnBilling", documentOnBilling),
+            ("cityOnSave", cityOnSave),
+            ("cityOnBilling", cityOnBilling),
+            ("tenantId", tenantId));
+
     public static Task EnablePosAsync(PostgreSqlContainer database, Guid tenantId) =>
         ExecuteSqlAsync(
             database,
@@ -198,7 +223,8 @@ internal static class PosApiHarness
 
     internal sealed record CompanyRef(Guid Id, string Name, string TaxId);
 
-    public static async Task<CompanyRef> CreateCompanyAsync(HttpClient client, Guid tenantId)
+    /// <param name="chargesVat">Spec 2026-11-17 §5.1: si la empresa cobra IVA; la caja lo congela al abrir (R4).</param>
+    public static async Task<CompanyRef> CreateCompanyAsync(HttpClient client, Guid tenantId, bool chargesVat = true)
     {
         var cityId = await EnsureCityIdAsync(client);
         var taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2";
@@ -211,7 +237,10 @@ internal static class PosApiHarness
                 {
                     new { bankName = "Bancolombia", accountNumber = $"{Random.Shared.Next(100000000, 999999999)}", currency = "COP" },
                 },
+                chargesVat,
                 taxId,
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "6045551234",
                 email = "caja@origen.example.co",
@@ -294,10 +323,13 @@ internal static class PosApiHarness
 
     internal sealed record InvitedCashier(Guid MembershipId, Guid UserId, HttpClient Client);
 
-    /// <summary>Copia de ReportingApiHarness.InviteActiveAdvisorAsync con el rol `cashier`.</summary>
+    /// <summary>Copia de ReportingApiHarness.InviteActiveAdvisorAsync con el rol `cashier`. Prende `pos`
+    /// antes de invitar: sin él Cajero no concede nada y la invitación responde 422
+    /// `tenancy.membership.role_unavailable` (spec 2026-11-15).</summary>
     public static async Task<InvitedCashier> InviteCashierAsync(
         QepApiFactory factory, PostgreSqlContainer database, PosTenant tenant, params string[] permissions)
     {
+        await EnablePosAsync(database, tenant.TenantId);
         // Sin X-Permissions el stub concede los de tenancy, que traen advisorship.invite.
         using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId);
         var email = $"cashier-{Guid.CreateVersion7():N}@example.com";
@@ -359,6 +391,8 @@ internal static class PosApiHarness
 
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

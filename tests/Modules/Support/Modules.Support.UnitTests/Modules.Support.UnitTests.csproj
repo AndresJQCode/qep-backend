@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Support\Modules.Support.Domain\Modules.Support.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Support\Modules.Support.Application\Modules.Support.Application.csproj" />
+    <!-- SupportHtmlSanitizerTests runs the real HtmlSupportSanitizer (plan 2026-11-15, Task 1). -->
+    <ProjectReference Include="..\..\..\..\src\Modules\Support\Modules.Support.Infrastructure\Modules.Support.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

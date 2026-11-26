@@ -63,7 +63,18 @@ public sealed class ShopifyInstall
     /// <summary>El token offline cifrado con <c>ISecretProtector</c>; <c>null</c> hasta el canje.</summary>
     public byte[]? ProtectedToken { get; private set; }
 
-    /// <summary>La llave que cifró <see cref="ProtectedToken"/>; el worker de re-cifrado la recorre.</summary>
+    /// <summary>Spec 2026-11-12 §6.1: el refresh token cifrado, con AAD <c>installId + "refreshToken"</c>; <c>null</c> hasta el
+    /// canje, y en una fila canjeada antes de este cambio.</summary>
+    public byte[]? ProtectedRefreshToken { get; private set; }
+
+    /// <summary>Cuándo vence el token de acceso (1 hora tras el canje o el refresco).</summary>
+    public DateTimeOffset? AccessTokenExpiresAt { get; private set; }
+
+    /// <summary>Cuándo vence el refresh token (90 días tras emitirse).</summary>
+    public DateTimeOffset? RefreshTokenExpiresAt { get; private set; }
+
+    /// <summary>La llave que cifró <see cref="ProtectedToken"/> y <see cref="ProtectedRefreshToken"/>: los dos se sellan
+    /// siempre juntos (D4), así que una sola columna basta; el worker de re-cifrado la recorre.</summary>
     public string? KeyId { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -137,14 +148,30 @@ public sealed class ShopifyInstall
     /// <summary>Vigente y todavía sin token: el <c>state</c> es de un solo uso.</summary>
     public bool CanBeExchanged(DateTimeOffset now) => !IsExchanged && now < ExpiresAt;
 
-    /// <summary>El canje: guarda la tienda y el token cifrado, y mueve el vencimiento a +7 días desde
-    /// <paramref name="now"/>.</summary>
-    public void MarkExchanged(string shopId, string shopName, string scopes, ProtectedSecret token, DateTimeOffset now)
+    /// <summary>
+    /// Spec 2026-11-12 §6.1: la instalación vive 7 días y su token, 1 hora. El enlace refresca el token de la instalación
+    /// antes de usarlo si le queda <see cref="ShopifyTokenRefresh.Margin"/> o menos. Una fila sin vencimiento (canjeada antes
+    /// de este cambio) no se refresca: no tiene refresh token y el enlace la rechaza.
+    /// </summary>
+    public bool NeedsTokenRefresh(DateTimeOffset now) =>
+        AccessTokenExpiresAt is { } expiresAt && expiresAt - now <= ShopifyTokenRefresh.Margin;
+
+    /// <summary>El canje: guarda la tienda, los dos tokens cifrados y sus vencimientos, y mueve el vencimiento de la
+    /// instalación a +7 días desde <paramref name="now"/>.</summary>
+    public void MarkExchanged(
+        string shopId,
+        string shopName,
+        string scopes,
+        ProtectedSecret token,
+        ProtectedSecret refreshToken,
+        DateTimeOffset accessTokenExpiresAt,
+        DateTimeOffset refreshTokenExpiresAt,
+        DateTimeOffset now)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(shopId);
         ArgumentNullException.ThrowIfNull(shopName);
         ArgumentNullException.ThrowIfNull(scopes);
-        ArgumentNullException.ThrowIfNull(token);
+        EnsureSameKey(token, refreshToken);
         // El nombre sólo se muestra y se recorta; el id y los scopes no se pueden recortar sin mentir. El gateway ya los
         // rechaza antes (ShopifyGatewayException Invalid): esto es la última defensa contra un 500 de la base.
         if (shopId.Length > ShopIdMaxLength)
@@ -166,22 +193,68 @@ public sealed class ShopifyInstall
         ShopName = shopName.Length > ShopNameMaxLength ? shopName[..ShopNameMaxLength] : shopName;
         Scopes = scopes;
         ProtectedToken = token.Ciphertext;
+        ProtectedRefreshToken = refreshToken.Ciphertext;
         KeyId = token.KeyId;
+        AccessTokenExpiresAt = accessTokenExpiresAt;
+        RefreshTokenExpiresAt = refreshTokenExpiresAt;
         ExpiresAt = now + ExchangedLifetime;
     }
 
-    /// <summary>El mismo token, cifrado con otra llave (el worker de re-cifrado, §9: una fila canjeada vive hasta 7 días).
-    /// No cambia el vencimiento ni nada más.</summary>
-    public void Reprotect(ProtectedSecret token)
+    /// <summary>Spec 2026-11-12 §6.1: el par que devolvió un refresco. Shopify rota los dos tokens a la vez; la instalación
+    /// conserva su propio vencimiento (<see cref="ExpiresAt"/>).</summary>
+    public void ApplyRefreshedToken(
+        ProtectedSecret token,
+        ProtectedSecret refreshToken,
+        DateTimeOffset accessTokenExpiresAt,
+        DateTimeOffset refreshTokenExpiresAt)
+    {
+        EnsureSameKey(token, refreshToken);
+        if (!IsExchanged)
+        {
+            throw new InvalidOperationException("Only an exchanged install carries a token to refresh.");
+        }
+
+        ProtectedToken = token.Ciphertext;
+        ProtectedRefreshToken = refreshToken.Ciphertext;
+        KeyId = token.KeyId;
+        AccessTokenExpiresAt = accessTokenExpiresAt;
+        RefreshTokenExpiresAt = refreshTokenExpiresAt;
+    }
+
+    /// <summary>Los mismos tokens, cifrados con otra llave (el worker de re-cifrado, §9: una fila canjeada vive hasta 7
+    /// días). <paramref name="refreshToken"/> es <c>null</c> sólo en una fila canjeada antes de que existiera. No cambia
+    /// los vencimientos ni nada más.</summary>
+    public void Reprotect(ProtectedSecret token, ProtectedSecret? refreshToken)
     {
         ArgumentNullException.ThrowIfNull(token);
+        if (refreshToken is not null)
+        {
+            EnsureSameKey(token, refreshToken);
+        }
+
         if (!IsExchanged)
         {
             throw new InvalidOperationException("Only an exchanged install carries a token to re-encrypt.");
         }
 
+        if (refreshToken is null && ProtectedRefreshToken is not null)
+        {
+            throw new ArgumentException("An install with a refresh token re-encrypts both tokens with the same key.", nameof(refreshToken));
+        }
+
         ProtectedToken = token.Ciphertext;
+        ProtectedRefreshToken = refreshToken?.Ciphertext;
         KeyId = token.KeyId;
+    }
+
+    private static void EnsureSameKey(ProtectedSecret token, ProtectedSecret refreshToken)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ArgumentNullException.ThrowIfNull(refreshToken);
+        if (!string.Equals(token.KeyId, refreshToken.KeyId, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Both Shopify tokens of an install are sealed with the same key.", nameof(refreshToken));
+        }
     }
 
     // Sin token ni state: el ToString por defecto de una clase no imprime nada, pero se deja explícito.

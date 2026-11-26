@@ -63,7 +63,10 @@ public sealed record QuotationListItemDto(
     /// <c>null</c> cuando no hay pedido.</summary>
     string? OrderStatus,
     /// <summary>La entrega por envío, misma forma que en el detalle (ver <see cref="ShippingDto"/>).</summary>
-    ShippingDto Shipping);
+    ShippingDto Shipping,
+    /// <summary>Ver <see cref="Quotation.RequiresShipping"/> (spec 2026-11-18 §5). Lo resuelve el handler con una consulta
+    /// por página, por la misma razón que <see cref="IsComplete"/>: la fila no trae las líneas.</summary>
+    bool RequiresShipping);
 
 /// <summary>Una página del listado y el total que la UI necesita para paginar. Mismo criterio
 /// que <c>CustomerPage</c> en Customers.</summary>
@@ -165,6 +168,12 @@ public sealed class ListQuotationsHandler(
             : await repository.FindIdsWithItemsAsync(
                 query.TenantId, quotationIds, cancellationToken);
 
+        // Cuáles requieren envío (spec 2026-11-18 §5), con el mismo criterio: una consulta por página.
+        var requiringShipping = quotations.Count == 0
+            ? new HashSet<Guid>()
+            : await repository.FindIdsRequiringShippingAsync(
+                query.TenantId, quotationIds, cancellationToken);
+
         // El pedido de cada cotizacion --1:1-- para que la fila sepa si ya se convirtio y si ese
         // pedido sigue esperando el visto bueno. Otra ida por pagina, mismo criterio que los
         // nombres de cliente y los de las asesoras.
@@ -183,6 +192,7 @@ public sealed class ListQuotationsHandler(
                 clientNames.GetValueOrDefault(quotation.ClientId),
                 advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Label,
                 withItems.Contains(quotation.Id.Value),
+                requiringShipping.Contains(quotation.Id.Value),
                 orders.GetValueOrDefault(quotation.Id.Value)))
             .ToArray();
         return new QuotationPage(items, total, page, pageSize);

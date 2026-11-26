@@ -99,6 +99,8 @@ public sealed class QueueMetricsSourceTests
     [InlineData(QueueNames.Campaign)]
     [InlineData(QueueNames.Outbox)]
     [InlineData(QueueNames.ShopifyWebhook)]
+    [InlineData(QueueNames.SupportSurvey)]
+    [InlineData(QueueNames.AiModel)]
     public async Task AnEmptyQueueReadsZero(string queue)
     {
         await using var database = await StartDatabaseAsync();
@@ -111,6 +113,27 @@ public sealed class QueueMetricsSourceTests
         Assert.Equal(0, reading.Retrying);
         // La campaña no tiene columna de edad: no publica, no dice cero.
         Assert.Equal(queue == QueueNames.Campaign ? null : 0d, reading.OldestAgeSeconds);
+    }
+
+    // Plan 2026-11-12, Tarea 7: los trabajos de modelo de los agentes. Un Pending vencido cuenta su edad desde que venció; un Running en
+    // reintento es backlog y reintentando, sin edad; un Done no cuenta.
+    [Fact]
+    public async Task TheAiModelQueueCountsPendingAndRunningJobs()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        await ExecuteAsync(f.ConnectionString, """
+            INSERT INTO ai.model_jobs (id, tenant_id, session_id, up_to_seq, status, attempts, next_attempt_at, created_at)
+            VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'Pending', 0, now() - interval '30 seconds', now() - interval '32 seconds'),
+                   (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'Running', 2, now() - interval '10 minutes', now() - interval '10 minutes'),
+                   (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'Done', 1, now() - interval '1 hour', now() - interval '1 hour')
+            """);
+
+        var reading = await ReadAsync(f, QueueNames.AiModel);
+
+        Assert.Equal(2, reading.Backlog);
+        Assert.Equal(1, reading.Retrying);
+        Assert.InRange(reading.OldestAgeSeconds!.Value, 29, 120);
     }
 
     [Fact]
@@ -235,6 +258,34 @@ public sealed class QueueMetricsSourceTests
         Assert.Equal(1, reading.Backlog);
         Assert.InRange(reading.OldestAgeSeconds!.Value, 40, 90);
     }
+
+    // Soporte fase 4b (Tarea 11): la encuesta pendiente es backlog; la edad mira sólo las que nadie intentó; las procesadas no cuentan.
+    [Fact]
+    public async Task TheSupportSurveyQueueIsMeasured()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        await SurveyAsync(f, "Pending", attempts: 0, secondsAgo: 75);
+        await SurveyAsync(f, "Pending", attempts: 2, secondsAgo: 600);
+        await SurveyAsync(f, "Sent", attempts: 0, secondsAgo: 900);
+
+        var reading = await ReadAsync(f, QueueNames.SupportSurvey);
+
+        Assert.Equal((2, 1), (reading.Backlog, reading.Retrying));
+        Assert.InRange(reading.OldestAgeSeconds!.Value, 70, 120);
+    }
+
+    // La fila de la encuesta exige su ticket (FK); con session_replication_role = replica la base no revisa las FK (el usuario del
+    // contenedor es superusuario), y la lectura no mira el ticket.
+    private static Task<int> SurveyAsync(Fixture f, string status, int attempts, int secondsAgo) =>
+        ExecuteAsync(f.ConnectionString, """
+            SET session_replication_role = replica;
+            INSERT INTO support.ticket_surveys (id, tenant_id, ticket_id, resolution_number, status, channel, attempts, next_attempt_at,
+                created_at, updated_at)
+            VALUES (gen_random_uuid(), @tenant, gen_random_uuid(), 1, @status, CASE WHEN @status = 'Sent' THEN 'Portal' END, @attempts,
+                now(), now() - make_interval(secs => @ago), now());
+            SET session_replication_role = DEFAULT;
+            """, ("tenant", f.TenantId), ("status", status), ("attempts", attempts), ("ago", (double)secondsAgo));
 
     [Fact]
     public async Task ShopifyWebhookAgeUsesReceivedAt()

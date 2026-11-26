@@ -72,6 +72,11 @@ public sealed class StorageDbContext(DbContextOptions<StorageDbContext> options)
         // y el tipo antes del id por ser el de menor cardinalidad.
         file.HasIndex(value => new { value.TenantId, value.OwnerType, value.OwnerId })
             .HasDatabaseName("IX_file_resources_tenant_owner");
+        // Soporte fase 3 (Block E, E-3): el tope de subidas anónimas del formulario público cuenta las de un tenant y un dueño en las
+        // últimas 24 h (SupportAttachmentStorage.CountPendingAsync, SQL crudo en Bootstrapper). Sin la hora en el índice recorrería todos
+        // los adjuntos que el tenant tuvo alguna vez, también los reclamados, que siguen Available para siempre.
+        file.HasIndex(value => new { value.TenantId, value.OwnerType, value.CreatedAt })
+            .HasDatabaseName("IX_file_resources_tenant_owner_created");
 
         var variant = modelBuilder.Entity<FileVariant>();
         variant.ToTable("file_variants", "storage");

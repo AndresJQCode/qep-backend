@@ -11,9 +11,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Modules.Storage.Application;
+using Modules.Storage.Infrastructure.ChatbotMedia;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
+using Modules.Storage.Infrastructure.ProductImages;
+using Modules.Storage.Infrastructure.TemplateImages;
+using Modules.Storage.Infrastructure.UnreferencedFiles;
 using Npgsql;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -287,6 +291,67 @@ internal static class PaymentProofStorageHarness
             TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Escribe en el outbox el evento que Catalog escribe al soltar fotos de producto (spec
+    /// 2026-11-08), con el nombre y los campos del contrato escritos a mano, igual que
+    /// <see cref="AddDetachedEventAsync"/>. Devuelve el id del mensaje.</summary>
+    public static Task<Guid> AddImagesReleasedEventAsync(
+        StorageApiFactory factory, Guid tenantId, params Guid[] fileIds) =>
+        AddImagesReleasedPayloadAsync(factory, JsonSerializer.Serialize(new { tenantId, fileIds }));
+
+    /// <summary>El evento de fotos soltadas con el payload tal cual, para ejercer mensajes mal formados.</summary>
+    public static async Task<Guid> AddImagesReleasedPayloadAsync(StorageApiFactory factory, string payloadJson)
+    {
+        var id = Guid.CreateVersion7();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        dbContext.Outbox.Add(new StorageOutboxMessage
+        {
+            Id = id,
+            EventName = "catalog.product.images-released.v1",
+            PayloadJson = payloadJson,
+            CorrelationId = id.ToString(),
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return id;
+    }
+
+    /// <summary>Un lote de las fotos soltadas, a mano: el hosted service no corre en este host (ver
+    /// <see cref="StorageApiFactory"/>).</summary>
+    public static async Task<int> RunImageReleaseAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IProductImageReleaseProcessor>()
+            .ProcessPendingAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static async Task<bool> IsProcessedByImageReleaseAsync(StorageApiFactory factory, Guid messageId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        return await dbContext.Inbox.AnyAsync(
+            entry => entry.Consumer == "storage.product-image-release" && entry.MessageId == messageId,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Las claves de las variantes de un archivo, leídas con SQL.</summary>
+    public static async Task<IReadOnlyList<string>> VariantKeysAsync(string connectionString, Guid fileId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT storage_key FROM storage.file_variants WHERE file_resource_id = @id", connection);
+        command.Parameters.AddWithValue("id", fileId);
+        var keys = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            keys.Add(reader.GetString(0));
+        }
+
+        return keys;
+    }
+
     /// <summary>La fila de storage.file_resources y cuántas variantes tiene, leída con SQL para no
     /// depender de lo que expone la API.</summary>
     public static async Task<FileRow> ReadFileAsync(string connectionString, Guid fileId)
@@ -380,6 +445,16 @@ internal sealed class FixedPublicObjectReferenceProbe : IPublicObjectReferencePr
         Task.FromResult(_referenced.ContainsKey(publicStorageKey));
 }
 
+/// <summary>Spec 2026-11-18: el puerto del sniffer y el compresor de Mensajería, que implementa el Bootstrapper. Acá deja pasar todo y
+/// no comprime: las pruebas de Storage no prueban a Mensajería, y con él el host resuelve <see cref="IChatbotMediaProcessing"/>.</summary>
+internal sealed class PassThroughChatbotMediaProcessing : IChatbotMediaProcessing
+{
+    public bool Matches(string name, ReadOnlySpan<byte> header) => true;
+
+    public Task<ProcessedChatbotImage?> ShrinkAsync(byte[] content, CancellationToken cancellationToken) =>
+        Task.FromResult<ProcessedChatbotImage?>(new ProcessedChatbotImage(content, "image/jpeg", ".jpg"));
+}
+
 /// <summary>El host de la API con los dos buckets en memoria.</summary>
 internal sealed class StorageApiFactory(string connectionString, bool orphanCleanupDryRun = true)
     : WebApplicationFactory<Program>
@@ -400,6 +475,8 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
     {
         builder.UseEnvironment("Development");
         builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+        // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+        builder.UseSetting("Seed:Enabled", "false");
         builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
         builder.UseSetting("Storage:R2:AccountId", "test-account");
         builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -424,6 +501,8 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
             services.AddSingleton<IPublicObjectStorage>(PublicObjectStorage);
             services.AddSingleton<IFileReferenceProbe>(FileReferences);
             services.AddSingleton<IPublicObjectReferenceProbe>(PublicReferences);
+            services.RemoveAll<IChatbotMediaProcessing>();
+            services.AddSingleton<IChatbotMediaProcessing>(new PassThroughChatbotMediaProcessing());
 
             // El worker de movimiento consulta el outbox cada 3 s: competiría con el lote que la
             // prueba corre a mano (RunMoveAsync) y la volvería no determinista.
@@ -432,6 +511,46 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
                     && descriptor.ImplementationType == typeof(PaymentProofMoveWorker))
                 .ToList();
             foreach (var descriptor in moveWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Igual el de las fotos de producto: la prueba corre el lote a mano (RunImageReleaseAsync).
+            var imageReleaseWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(ProductImageReleaseWorker))
+                .ToList();
+            foreach (var descriptor in imageReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Y el de las imágenes de encabezado de plantillas (spec 2026-11-17): TemplateHeaderImageReleaseTests corre el lote a mano.
+            var templateImageReleaseWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(TemplateHeaderImageReleaseWorker))
+                .ToList();
+            foreach (var descriptor in templateImageReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Y el de los archivos de un chatbot borrado (spec 2026-11-18): ChatbotMediaReleaseTests corre el lote a mano.
+            var chatbotMediaReleaseWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(ChatbotMediaReleaseWorker))
+                .ToList();
+            foreach (var descriptor in chatbotMediaReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Y el barrido diario (spec 2026-11-17, «Closing the residual gaps»): TemplateHeaderImageSweepTests lo corre a mano.
+            var unreferencedFileSweepWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(UnreferencedFileSweepWorker))
+                .ToList();
+            foreach (var descriptor in unreferencedFileSweepWorkers)
             {
                 services.Remove(descriptor);
             }
@@ -521,6 +640,8 @@ internal sealed class InMemoryObjectStorage : IObjectStorage
 /// S3: borrar lo ya listado no corre las páginas siguientes.</summary>
 internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets.qep.test";
 
     private readonly ConcurrentDictionary<string, DateTimeOffset> _objects = new(StringComparer.Ordinal);
@@ -538,6 +659,8 @@ internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
     /// <summary>La clave cuya verificación de existencia falla, para ejercer un error transitorio de R2
     /// en el movimiento (revisión final, I1); null si ninguna.</summary>
     public string? FailingExistsKey { get; set; }
+
+    public IReadOnlyCollection<string> Keys => _objects.Keys.ToArray();
 
     public bool IsConfigured => true;
 

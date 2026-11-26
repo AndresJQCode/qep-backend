@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Modules.Catalog.Application;
@@ -18,11 +19,15 @@ public sealed record ProductDto(
     Guid Id,
     string Name,
     bool IsActive,
+    bool VisibleInStore,
+    string? ExternalSource,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    string Kind,
+    string SalesUnit,
     IReadOnlyList<ProductOptionResponse> Options,
     IReadOnlyList<ProductVariantResponse> Variants,
     IReadOnlyList<ProductGalleryImageResponse> Gallery,
@@ -34,6 +39,13 @@ public sealed record ProductResponse(
     Guid Id,
     string Name,
     bool IsActive,
+    // Si la tienda pública lo publica. Aparte de IsActive: lo cambia el PUT o el lote
+    // POST /products/store-visibility, no /deactivate.
+    bool VisibleInStore,
+    // Quién administra el producto fuera de QEP: null si es propio, "shopify" si lo creó la
+    // importación (spec 2026-11-17 §5.5). Viaja para que el formulario bloquee los campos que el
+    // PUT rechazaría con catalog.product.managed_externally, en vez de descubrirlo al guardar.
+    string? ExternalSource,
     string? Description,
     // La imagen principal: el archivo de la primera foto de Gallery. Derivada; se cambia
     // reordenando Gallery en el PUT.
@@ -43,6 +55,10 @@ public sealed record ProductResponse(
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    // Spec 2026-11-18 §3.3: "Physical" | "Service" y la unidad de venta ("Unit", "Hour"…), por nombre.
+    // La etiqueta la pone la pantalla, que tiene el diccionario.
+    string Kind,
+    string SalesUnit,
     // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
     IReadOnlyList<ProductOptionResponse> Options,
     // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
@@ -90,6 +106,9 @@ public sealed record ProductOptionValueResponse(Guid Id, string Name);
 /// entretanto, alguien la vendió (la respuesta lo muestra). Con false, pedir su borrado la
 /// desactiva. No mira la regla de «al menos una variante activa»: esa la responde el PUT con su
 /// propio código.</param>
+/// <param name="Costs">El costo unitario manual por moneda, en orden de catálogo. <c>null</c> = el
+/// llamador no puede verlo (sin <c>catalog.product_cost.read</c> ni <c>.manage</c>); <c>{}</c> = no
+/// tiene costo. BFF: la pantalla distingue «no puedes verlo» de «no tiene» sin adivinar.</param>
 public sealed record ProductVariantResponse(
     Guid Id,
     string Name,
@@ -103,7 +122,8 @@ public sealed record ProductVariantResponse(
     Guid? GalleryFileId,
     string? ImageUrl,
     bool IsActive,
-    bool CanDelete);
+    bool CanDelete,
+    IReadOnlyDictionary<string, decimal>? Costs);
 
 /// <param name="Url">Null si el archivo no está publicado o no es del tenant, igual que
 /// <c>ImageUrl</c>; <c>FileId</c> viaja siempre porque es lo que el PUT manda de vuelta.</param>
@@ -132,11 +152,15 @@ public sealed record ProductListItemDto(
     string Name,
     string? Code,
     bool IsActive,
+    bool VisibleInStore,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    // Por nombre, como en el detalle: la grilla y el selector distinguen productos de servicios.
+    string Kind,
+    string SalesUnit,
     int VariantCount,
     IReadOnlyDictionary<string, PriceRangeResponse> PriceRange,
     long Version,
@@ -163,6 +187,10 @@ public sealed record PriceRangeResponse(decimal Min, decimal Max);
 /// <c>packaging_unit</c> se explica con los empaques de **esta** variante.</param>
 /// <param name="ImageUrl">La foto de la variante o, sin ella, la principal del producto; null si
 /// el archivo no está publicado o no es del tenant.</param>
+/// <param name="Costs">El costo unitario sin IVA por moneda, con la semántica de
+/// <see cref="ProductVariantResponse.Costs"/>: <c>null</c> = quien llama no puede verlo, <c>{}</c> = no tiene costo
+/// (spec 2026-11-19 catalogo-lista-costos-de-variantes). BFF: el catálogo de la orden de compra lo pinta en la tarjeta y
+/// prellena el costo de la línea sin pedir el detalle de cada producto. El selector de cotizaciones lo ignora.</param>
 public sealed record ProductSellableVariantDto(
     Guid Id,
     string Name,
@@ -171,7 +199,8 @@ public sealed record ProductSellableVariantDto(
     IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     IReadOnlyList<int> PackagingUnits,
-    string? ImageUrl);
+    string? ImageUrl,
+    IReadOnlyDictionary<string, decimal>? Costs = null);
 
 /// <summary>
 /// Precio y escalas de un producto (CAT-09), tal como los manda el cliente.
@@ -251,6 +280,10 @@ public sealed record ProductsResponse(
 // Description/TaxRateId son opcionales, y en el PUT mandarlos en null los **limpia** — el verbo
 // reemplaza el recurso entero. Lo mismo OptionIds y Gallery: null es lista vacía.
 //
+// Kind y SalesUnit (spec 2026-11-18 §3.3) viajan por nombre ("Service", "Hour") y son opcionales:
+// ausentes en el POST son "Physical" y "Unit"; en el PUT conservan los guardados, como VisibleInStore.
+// Un nombre que no existe es 422 validation.failed.
+//
 // Con las variantes, Code y Pricing salieron del producto hacia cada variante, y ImageFileId hacia
 // Gallery (la primera foto es la principal). Un producto sin opciones manda una sola variante, sin
 // OptionValueIds.
@@ -261,7 +294,10 @@ public sealed record CreateProductRequest(
     Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
-    IReadOnlyList<Guid>? Gallery);
+    IReadOnlyList<Guid>? Gallery,
+    bool? VisibleInStore = null,
+    string? Kind = null,
+    string? SalesUnit = null);
 
 /// <summary>
 /// Una variante como la manda el formulario. En el PUT se empareja por <paramref name="Id"/>
@@ -277,6 +313,9 @@ public sealed record CreateProductRequest(
 /// <param name="GalleryFileId">La foto de la variante, por id de archivo: una foto que se sube en el
 /// mismo PUT todavía no tiene fila de galería. Tiene que estar en <c>Gallery</c>.</param>
 /// <param name="IsActive">Null es activa en una variante nueva y «como está» en una guardada.</param>
+/// <param name="Costs">Null o ausente conserva el costo guardado (un cliente que no lo conoce no lo
+/// borra); un mapa lo reemplaza entero, y <c>{}</c> lo quita. Exige
+/// <c>catalog.product_cost.manage</c>: sin él, 403 <c>catalog.product_cost.forbidden</c>.</param>
 public sealed record ProductVariantRequest(
     Guid? Id,
     string? Code,
@@ -284,7 +323,8 @@ public sealed record ProductVariantRequest(
     IReadOnlyList<Guid>? OptionValueIds,
     ProductPricingRequest? Pricing,
     Guid? GalleryFileId,
-    bool? IsActive);
+    bool? IsActive,
+    IReadOnlyDictionary<string, decimal>? Costs = null);
 
 /// <summary>
 /// El cuerpo de la copia de escalas: de qué variante salen y a cuáles van. No lleva las escalas
@@ -300,6 +340,10 @@ public sealed record ProductVariantRequest(
 /// **contadas en variantes** contra el tope de 200 (<see cref="PriceScaleCopyLimits.MaxTargets"/>):
 /// la pantalla de copia deja marcar variantes sueltas de productos distintos, y un tope por
 /// productos dejaría pasar un lote de miles de filas. Sin repetidos ni el origen.</param>
+public sealed record SetProductsStoreVisibilityRequest(
+    IReadOnlyList<Guid>? ProductIds,
+    bool Visible);
+
 public sealed record CopyPriceScalesRequest(
     Guid SourceVariantId,
     IReadOnlyList<Guid> TargetVariantIds);
@@ -335,34 +379,110 @@ public sealed record UpdateProductRequest(
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
-    IReadOnlyList<Guid>? DeletedVariantIds = null);
+    IReadOnlyList<Guid>? DeletedVariantIds = null,
+    bool? VisibleInStore = null,
+    string? Kind = null,
+    string? SalesUnit = null);
 
+// Scope viaja como texto ("National" | "Municipal"), como Behavior. CityId es null sólo en una tasa nacional; City trae el
+// municipio resuelto (backend for frontend): la lista de tasas pinta «Bogotá, D.C.» sin preguntarle a Geography. City es
+// null en una tasa nacional o si la ciudad ya no se encontró (spec ReteICA por empresa §9.1).
 public sealed record TaxRateDto(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string Type,
+    string Country,
+    string Behavior,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    string Scope,
+    Guid? CityId,
+    TaxRateCityDto? City,
+    string AppliesTo);
 
 public sealed record TaxRateResponse(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string Type,
+    string Country,
+    string Behavior,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    string Scope,
+    Guid? CityId,
+    TaxRateCityDto? City,
+    // Spec 2026-11-18 §4.2: "All" | "Goods" | "Services", por nombre. Sólo una retención vale distinto de "All".
+    string AppliesTo);
+
+/// <summary>La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y
+/// documentos.</summary>
+public sealed record TaxRateCityDto(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
 
 public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items);
 
-// Percentage es int, no decimal: P-008, decidido por el owner el 2026-08-10, fija el porcentaje
-// en 0 decimales. Encaja con el IVA colombiano —19, 5 o 0— y el gate CAT-00 lo declara como
-// límite de alcance del módulo, o sea que no admite retenciones con fracción.
+// Percentage es decimal: el IVA sigue entero, pero las retenciones admiten hasta tres decimales
+// (0,966 % del ReteICA, D15 del spec de impuestos por tipo, que reabrió P-008). Qué forma admite cada
+// tipo lo decide el dominio, no el contrato.
 //
-// IsActive tampoco viaja acá, por la misma razón que en producto.
-public sealed record CreateTaxRateRequest(string Name, int Percentage);
+// Type y Country son opcionales sólo por compatibilidad con el frontend viejo: sin Type la tasa es IVA
+// y sin Country es CO (spec §9.2). IsActive no viaja acá, por la misma razón que en producto.
+//
+// CityId: obligatorio en un tipo municipal (ReteICA), prohibido en uno nacional (spec ReteICA por empresa §9.1).
+//
+// AppliesTo (spec 2026-11-18 §4.2): "All" | "Goods" | "Services". Ausente es "All", el valor de toda tasa de antes; distinto
+// de "All" sólo en una retención (422 catalog.tax_rate.applies_to_invalid).
+public sealed record CreateTaxRateRequest(
+    string Name,
+    decimal Percentage,
+    string? Type = null,
+    string? Country = null,
+    decimal? MinimumBase = null,
+    Guid? CityId = null,
+    string? AppliesTo = null);
 
-public sealed record UpdateTaxRateRequest(string Name, int Percentage);
+// Type, Country y CityId no se editan: si el cuerpo los trae, se ignoran. MinimumBase es un JsonElement porque
+// un decimal? no distingue «ausente» (conservar la base) de null (quitarla, «siempre aplica»).
+//
+// AppliesTo tampoco se edita, pero no se ignora: el formulario lo reenvía, y uno distinto del guardado es 422
+// catalog.tax_rate.applies_to_immutable en vez de un cambio perdido en silencio. Ausente o igual, pasa.
+public sealed record UpdateTaxRateRequest(
+    string Name,
+    decimal Percentage)
+{
+    public string? AppliesTo { get; init; }
+
+    // Propiedad y no parámetro del constructor: con `JsonElement MinimumBase = default` el esquema de OpenAPI
+    // (JsonSchemaExporter) intentaba escribir ese valor por defecto y /openapi/v1.json entero respondía 500.
+    // Ausente queda en default (ValueKind Undefined), igual que antes.
+    public JsonElement MinimumBase { get; init; }
+}
+
+/// <summary>
+/// Lo que la pantalla de tasas puede elegir: sólo los países donde el tenant tiene empresa y que además
+/// tienen tipos definidos. Backend for Frontend: la pantalla no conoce la tabla de países ni sus
+/// unidades tributarias (anti objetivo del frontend), así que no la duplica ni la deduce.
+/// </summary>
+public sealed record TaxRateOptionsDto(IReadOnlyList<TaxRateCountryOptionDto> Countries);
+
+/// <param name="TaxUnit">"UVT", o null si el país no tiene unidad tributaria.</param>
+/// <param name="Currency">La moneda en la que el país discrimina impuestos.</param>
+public sealed record TaxRateCountryOptionDto(
+    string Country,
+    string? TaxUnit,
+    string Currency,
+    IReadOnlyList<TaxRateTypeOptionDto> Types);
+
+/// <param name="Scope">"National" o "Municipal": la pantalla pide el municipio sólo en un tipo municipal.</param>
+public sealed record TaxRateTypeOptionDto(
+    string Type, string Behavior, bool AllowsFraction, bool AllowsMinimumBase, string Scope);
 
 public sealed record CategoryDto(
     Guid Id,

@@ -259,6 +259,44 @@ public sealed class InvitationServiceTests
         Assert.Equal(1, uow.Saves);
     }
 
+    // ---- Versión de acceso del tenant (spec 2026-11-13, D-5) ----
+
+    [Fact]
+    public async Task AcceptingByTokenBumpsTheTenantVersionBeforeAndAfterSaving()
+    {
+        var userId = Guid.CreateVersion7();
+        var tenantId = TenantId.New();
+        var membership = InvitedMembership(userId, tenantId, invitedAt: Now.AddHours(-1));
+        membership.PullDomainEvents();
+        var steps = new List<string>();
+        var service = new InvitationService(
+            new MembershipRepo(membership), new TenantRepo(TenantNamed(tenantId, "Acme SAS")), new StepsUnitOfWork(steps),
+            new Audit(), new Outbox(), new StubClock(), new RecordingTenantAccessVersion(steps));
+
+        await service.AcceptAsync(Token, userId, CorrelationId, TestContext.Current.CancellationToken);
+
+        Assert.Equal([$"bump:{tenantId.Value}", "save", $"bump:{tenantId.Value}"], steps);
+    }
+
+    // Una invitación vencida no concede nada: no hay entradas que invalidar.
+    [Fact]
+    public async Task AcceptingALapsedInvitationByTokenDoesNotBump()
+    {
+        var userId = Guid.CreateVersion7();
+        var tenantId = TenantId.New();
+        var membership = InvitedMembership(userId, tenantId, invitedAt: Now.AddHours(-100));
+        membership.PullDomainEvents();
+        var steps = new List<string>();
+        var service = new InvitationService(
+            new MembershipRepo(membership), new TenantRepo(TenantNamed(tenantId, "Acme SAS")), new StepsUnitOfWork(steps),
+            new Audit(), new Outbox(), new StubClock(), new RecordingTenantAccessVersion(steps));
+
+        await Assert.ThrowsAsync<TenantDomainException>(() =>
+            service.AcceptAsync(Token, userId, CorrelationId, TestContext.Current.CancellationToken));
+
+        Assert.Equal(["save"], steps);
+    }
+
     // ---- Fixtures ----
 
     private static Membership InvitedMembership(
@@ -294,7 +332,8 @@ public sealed class InvitationServiceTests
             uow ?? new Uow(),
             audit ?? new Audit(),
             outbox ?? new Outbox(),
-            new StubClock());
+            new StubClock(),
+            new RecordingTenantAccessVersion([]));
 
     private sealed class MembershipRepo(params Membership[] memberships) : IMembershipRepository
     {

@@ -8,22 +8,23 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
-public sealed class TenantSettingsApiTests
+public sealed class TenantSettingsApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string TenantId = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string OtherTenantId = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     [Fact]
     public async Task PutChangesDefaultCurrencyAndNumberFormat()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -43,8 +44,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithoutCurrencyAndNumberFormatKeepsTheStoredValues()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -79,8 +79,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PersonTypeRequirementRoundTripsAndDefaultsToNever()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var settings = await client.GetFromJsonAsync<JsonElement>(
@@ -103,11 +102,135 @@ public sealed class TenantSettingsApiTests
         Assert.Equal("OnCustomerSave", kept.GetProperty("personTypeRequirement").GetString());
     }
 
+    private static readonly object RelaxedPolicyBody = new
+    {
+        document = new { onCustomerSave = false, onBilling = true },
+        city = new { onCustomerSave = false, onBilling = false },
+    };
+
+    private const string SettingsOutboxCountSql =
+        "SELECT count(*)::text FROM platform.outbox_messages WHERE event_name = 'tenancy.tenant-settings-updated.v1'";
+
     [Fact]
-    public async Task GetReturnsColombiaAndPutChangesTheCountry()
+    public async Task CustomerFieldPolicyRoundTripsAndDefaultsToRequired()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        var policy = settings.GetProperty("customerFieldPolicy");
+        Assert.True(policy.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onBilling").GetBoolean());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var put = await PutAsync(client, TenantId, etag, NewDisplayName(), customerFieldPolicy: RelaxedPolicyBody);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.NotEqual(etag, put.Headers.ETag?.Tag);
+        var again = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        var stored = again.GetProperty("customerFieldPolicy");
+        Assert.False(stored.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(stored.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.False(stored.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.False(stored.GetProperty("city").GetProperty("onBilling").GetBoolean());
+    }
+
+    [Fact]
+    public async Task PutWithoutCustomerFieldPolicyKeepsTheStoredValue()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, NewDisplayName(), customerFieldPolicy: RelaxedPolicyBody);
+        first.EnsureSuccessStatusCode();
+
+        var second = await PutAsync(client, TenantId, first.Headers.ETag!.Tag, NewDisplayName());
+
+        second.EnsureSuccessStatusCode();
+        var body = await second.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        var kept = body.GetProperty("customerFieldPolicy");
+        Assert.False(kept.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.False(kept.GetProperty("city").GetProperty("onBilling").GetBoolean());
+    }
+
+    [Fact]
+    public async Task PutWithAnInconsistentPolicyIsA422WithTheDomainCode()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(
+            client, TenantId, etag, NewDisplayName(),
+            customerFieldPolicy: new
+            {
+                document = new { onCustomerSave = true, onBilling = true },
+                city = new { onCustomerSave = true, onBilling = false },
+            });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(
+            "tenancy.settings.customer_field_policy.invalid", problem.GetProperty("code").GetString());
+    }
+
+    // Review Focus 5: reenviar la política guardada no es un cambio.
+    [Fact]
+    public async Task PutResendingTheStoredPolicyDoesNotBumpTheVersion()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var displayName = NewDisplayName();
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, displayName, customerFieldPolicy: RelaxedPolicyBody);
+        first.EnsureSuccessStatusCode();
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var before = await QueryRowAsync(connection, SettingsOutboxCountSql);
+
+        var second = await PutAsync(
+            client, TenantId, first.Headers.ETag!.Tag, displayName, customerFieldPolicy: RelaxedPolicyBody);
+
+        second.EnsureSuccessStatusCode();
+        Assert.Equal(first.Headers.ETag!.Tag, second.Headers.ETag?.Tag);
+        var after = await QueryRowAsync(connection, SettingsOutboxCountSql);
+        Assert.Equal(before![0], after![0]);
+    }
+
+    [Fact]
+    public async Task TheRegionalSettingsCarryThePolicy()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        (await PutAsync(client, TenantId, etag, NewDisplayName(), customerFieldPolicy: RelaxedPolicyBody))
+            .EnsureSuccessStatusCode();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<Modules.Tenancy.Application.ITenantDirectory>();
+        var regional = await directory.GetRegionalSettingsAsync(
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new CustomerFieldPolicy(new FieldRequirement(false, true), new FieldRequirement(false, false)),
+            regional!.EffectiveCustomerFieldPolicy);
+    }
+
+    [Fact]
+    public async Task GetReturnsColombiaAndPutChangesTheCountry()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var settings = await client.GetFromJsonAsync<JsonElement>(
@@ -128,8 +251,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithoutCountryKeepsTheStoredValue()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -159,11 +281,69 @@ public sealed class TenantSettingsApiTests
         Assert.Equal("MX", body.GetProperty("country").GetString());
     }
 
+    // Spec 2026-11-22 (i18n): un tenant existente arranca en español latinoamericano y el PUT lo cambia.
+    [Fact]
+    public async Task GetReturnsLatinAmericanSpanishAndPutChangesTheLanguage()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("es-419", settings.GetProperty("language").GetString());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), language: "es-es");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("es-ES", body.GetProperty("language").GetString());
+        var reread = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("es-ES", reread.GetProperty("language").GetString());
+    }
+
+    // Ventana de despliegue: un frontend anterior al idioma no lo manda (language: null en el
+    // cuerpo). El PUT no lo pisa.
+    [Fact]
+    public async Task PutWithoutLanguageKeepsTheStoredValue()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, NewDisplayName(), language: "es-ES");
+        first.EnsureSuccessStatusCode();
+
+        var response = await PutAsync(client, TenantId, first.Headers.ETag!.Tag, NewDisplayName());
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("es-ES", body.GetProperty("language").GetString());
+    }
+
+    [Fact]
+    public async Task PutWithAnUnsupportedLanguageIsA422WithTheDomainCode()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), language: "es-CO");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.settings.language.invalid", problem.GetProperty("code").GetString());
+    }
+
     [Fact]
     public async Task PutWithAMalformedCountryIsA422WithTheDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -179,8 +359,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutAcceptsEurNowThatTheCatalogueHasIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -195,8 +374,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task GetCurrenciesReturnsTheCatalogueToAnyAuthenticatedCaller()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -215,8 +393,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithUnsupportedCurrencyIsA422WithTheDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -232,8 +409,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task GetAndPutWithCurrentEtagUpdatesSettings()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -249,8 +425,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task TenantCannotReadOrUpdateAnotherTenantSettings()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
 
         // Autenticado como OtherTenant, intentando alcanzar el tenant sembrado.
@@ -268,8 +443,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task MemberWithReadButWithoutUpdateCanReadButNotUpdate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
 
         using var client = CreateClient(factory, SubjectId, TenantId);
@@ -291,8 +465,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task StaleEtagOnSecondUpdateYieldsPreconditionFailed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -387,15 +560,15 @@ public sealed class TenantSettingsApiTests
     /// prueba tiene que crear el suyo. El <c>ownerMembershipId</c> es nuevo y nunca se persiste
     /// como membership, así que no hace falta un usuario dueño real para estas pruebas.
     /// </summary>
-    private static async Task SeedSeededTenantAsync(QepApiFactory factory)
+    private async Task SeedSeededTenantAsync(QepApiFactory factory)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
-        // Nombre completo del struct: el campo constante `TenantId` de esta clase tapa el tipo
+        // Nombre completo del struct: el campo `TenantId` de esta clase tapa el tipo
         // `Modules.Tenancy.Domain.TenantId` para cualquier referencia sin calificar.
         dbContext.Tenants.Add(Tenant.Create(
             new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
-            "qcode-demo",
+            $"t-{Guid.NewGuid():N}",
             "QCode Demo",
             "es-CO",
             "America/Bogota",
@@ -418,17 +591,6 @@ public sealed class TenantSettingsApiTests
         return response.Headers.ETag!.Tag;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private static HttpClient CreateClient(
         QepApiFactory factory,
         string subjectId,
@@ -448,7 +610,9 @@ public sealed class TenantSettingsApiTests
         string defaultCurrency = "COP",
         string numberFormat = "1.234,56",
         string country = "CO",
-        string? personTypeRequirement = null)
+        string? personTypeRequirement = null,
+        object? customerFieldPolicy = null,
+        string? language = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put,
@@ -463,7 +627,9 @@ public sealed class TenantSettingsApiTests
                 defaultCurrency,
                 numberFormat,
                 country,
-                personTypeRequirement
+                personTypeRequirement,
+                customerFieldPolicy,
+                language
             })
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
@@ -481,6 +647,8 @@ public sealed class TenantSettingsApiTests
             // demasiado tarde para esa lectura ansiosa y la app caería en silencio a
             // appsettings.json.
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

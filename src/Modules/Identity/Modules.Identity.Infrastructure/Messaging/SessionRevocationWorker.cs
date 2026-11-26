@@ -1,8 +1,10 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Modules.Audit.Domain;
+using Modules.Identity.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 
@@ -45,7 +47,9 @@ namespace Modules.Identity.Infrastructure.Messaging;
 // intento ErrorAfterAttempts —el primero que deja por delante la espera de 5 minutos— la falla
 // va en Error.
 internal sealed partial class SessionRevocationWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
+    ISessionCache sessionCache,
     ILogger<SessionRevocationWorker> logger) : BackgroundService
 {
     /// <summary>
@@ -99,24 +103,38 @@ internal sealed partial class SessionRevocationWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Outbox);
+        await DoorbellPolling.RunAsync(
+            listener,
+            PollInterval,
+            DoorbellQueues.SafetyNet(DoorbellQueues.Outbox),
+            async _ =>
             {
-                await Claims.ProcessBatchAsync(RevokeAsync, LogFailure, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    return await TickAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
+
+    /// <summary>Un tick: un lote. Interno para que las pruebas lo corran cuando lo necesitan en vez de
+    /// esperar el del timer, que tarda <see cref="PollInterval"/>. Correrlo a la vez que el del timer es
+    /// seguro: es el mismo caso que dos réplicas, y el reclamo deja procesar a una sola.</summary>
+    internal Task<bool> TickAsync(CancellationToken cancellationToken) =>
+        Claims.ProcessBatchAsync(RevokeAsync, LogFailure, cancellationToken);
 
     // Corre ya reclamado y en su propio scope (ClaimedOutboxConsumer). La hora es la del IClock
     // del reclamo: la misma para el revoked_at, la auditoría y el inbox.
@@ -150,8 +168,21 @@ internal sealed partial class SessionRevocationWorker(
                 now));
         }
 
+        // La caché de sesión (spec 2026-11-13, D-4): antes del guardado y otra vez después.
+        var revoked = activeSessions
+            .Select(session => new RevokedSession(session.Id.Value, session.TokenHash))
+            .ToArray();
+        if (revoked.Length > 0)
+        {
+            await sessionCache.RemoveAsync(revoked, cancellationToken);
+        }
+
         await Claims.MarkProcessedAsync(message, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+        if (revoked.Length > 0)
+        {
+            await sessionCache.RemoveAsync(revoked, cancellationToken);
+        }
     }
 
     // Sin intento (attempts en null) es que falló el reclamo mismo: no se contó nada y el mensaje

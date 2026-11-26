@@ -271,8 +271,9 @@ public sealed class ExportQuotationsHandlerTests
             QuotationParties.Empty,
             billingAccount: null,
             defaultCurrency: "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

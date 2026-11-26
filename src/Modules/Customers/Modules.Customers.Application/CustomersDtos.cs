@@ -14,25 +14,45 @@ public sealed record CustomerDepartmentDto(Guid Id, string DivipolaCode, string 
 /// <summary>Una direccion del cliente. `Address` es la calle; `Name` es a quien pertenece
 /// ("Bodega Norte"). El departamento no viaja: es el de la ciudad, y el frontend ya lo resuelve
 /// contra `geography` para filtrar el combobox.</summary>
+/// <summary>
+/// La region (provincia) guardada de un domicilio de afuera de Colombia, ya resuelta: la ficha la preselecciona sin pedirle
+/// nada mas a Geography. <c>null</c> para Colombia (su departamento sale de la ciudad) y para lo que no tiene region guardada.
+/// </summary>
+public sealed record CustomerRegionDto(Guid Id, string Name);
+
 public sealed record CustomerAddressDto(
     Guid Id,
     string Name,
     string Address,
     string? Phone,
-    Guid CityId,
+    /// <summary>Null en una dirección de afuera de Colombia: no tiene ciudad DIVIPOLA.</summary>
+    Guid? CityId,
     string CityName,
     /// <summary>El departamento **no** se guarda —es el de la ciudad— pero sí viaja: el
-    /// formulario lo necesita para filtrar el combobox de ciudad al editar la dirección.</summary>
-    Guid DepartmentId,
-    string DepartmentName,
-    bool IsPrincipal);
+    /// formulario lo necesita para filtrar el combobox de ciudad al editar la dirección. Null (y
+    /// <c>DepartmentName</c> null) en una dirección de afuera.</summary>
+    Guid? DepartmentId,
+    string? DepartmentName,
+    bool IsPrincipal,
+    /// <summary>ISO-3166-1 alfa-2. Toda dirección anterior al campo es <c>CO</c>.</summary>
+    string Country = "CO",
+    /// <summary>La region guardada de una direccion de afuera; <c>null</c> en Colombia o sin region.</summary>
+    CustomerRegionDto? Region = null);
 
 public sealed record CustomerAddressRequest(
     string Name,
     string Address,
-    Guid CityId,
+    Guid? CityId,
     string? Phone,
-    bool IsPrincipal);
+    bool IsPrincipal,
+    /// <summary>Opcional: sin país la dirección es colombiana, como antes del campo. El mismo cuerpo
+    /// sirve al POST y al PUT de una dirección.</summary>
+    string? Country = null,
+    /// <summary>La ciudad escrita a mano de una dirección de afuera; en <c>CO</c> va <c>CityId</c>.</summary>
+    string? CityName = null,
+    /// <summary>La region (provincia) de una direccion de afuera con catalogo de regiones; en <c>CO</c> se rechaza. Ausente
+    /// la borra: el PUT reemplaza.</summary>
+    Guid? RegionId = null);
 
 public sealed record CustomerDto(
     Guid Id,
@@ -80,7 +100,135 @@ public sealed record CustomerDto(
     /// los demás handlers devuelven <c>null</c> porque un fusionado no se escribe.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; <c>null</c> es «sin tipo».</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec 2026-11-10: la empresa de la que este cliente es contacto; <c>null</c> si no tiene. Siempre se llena por
+    /// <c>CustomerMapping.ToDtoAsync</c>, el camino que comparten todos los handlers que responden la ficha.</summary>
+    CustomerCompanyDto? Company = null,
+    /// <summary>Spec 2026-11-10 §4.2: cuántos contactos sin fusionar tiene la empresa (0 si no es empresa). Lo llenan el listado y
+    /// <c>CustomerMapping.ToDtoAsync</c>.</summary>
+    int ContactCount = 0,
+    /// <summary>Los contactos de la empresa, hasta <see cref="CustomerContactsLimits.MaxInDetail"/>, por nombre. Sólo lo llena
+    /// <c>CustomerMapping.ToDtoAsync</c> (la ficha); el listado no los trae y deja <c>null</c>.</summary>
+    IReadOnlyList<CustomerContactDto>? Contacts = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención asignadas, con lo que la ficha pinta. <c>null</c> se
+    /// lee como vacío. <see cref="WithRetention"/> se deriva de ellas.</summary>
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
+    /// <summary>Spec ReteICA por empresa §9.3: los municipios donde el cliente es agente retenedor. <c>null</c> se lee como
+    /// vacío; el listado no lo trae.</summary>
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
+    /// <summary>La region (provincia) del domicilio, resuelta. Solo el detalle la llena; el listado y el Excel dejan <c>null</c>.</summary>
+    CustomerRegionDto? Region = null,
+    /// <summary>Spec 2026-11-24 §3.6: la libreta de perfiles de facturación, la principal primero y el resto por nombre.
+    /// <c>null</c> se lee como vacío; el listado y el Excel no los traen.</summary>
+    IReadOnlyList<CustomerBillingProfileDto>? BillingProfiles = null)
+{
+    /// <summary>Nunca <c>null</c>: un llamador que no conoce el campo recibe la lista vacía.</summary>
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+
+    /// <summary>Nunca <c>null</c>, por lo mismo que <see cref="WithholdingTaxRates"/>.</summary>
+    public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
+
+    /// <summary>Nunca <c>null</c>, por lo mismo que <see cref="WithholdingTaxRates"/>.</summary>
+    public IReadOnlyList<CustomerBillingProfileDto> BillingProfiles { get; init; } = BillingProfiles ?? [];
+
+    /// <summary>Cuántos perfiles admite un cliente. Viaja para que la pantalla no ofrezca guardar uno más sin escribir el
+    /// número en el frontend (BFF).</summary>
+    public int BillingProfileLimit { get; init; } = Domain.CustomerBillingProfile.MaxPerCustomer;
+}
+
+/// <summary>
+/// Un perfil de facturación del cliente como lo pintan la ficha y el documento que lo copia (BFF): ciudad y departamento
+/// resueltos también en <c>CO</c>, la región con nombre y las tasas con lo que se muestra, para no pedir nada más.
+/// </summary>
+public sealed record CustomerBillingProfileDto(
+    Guid Id,
+    string Name,
+    string? PersonType,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string Address,
+    string Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    CustomerRegionDto? Region,
+    IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates,
+    bool VatSurplus,
+    bool IsPrincipal);
+
+/// <summary>
+/// El cuerpo de <c>POST</c> y <c>PUT …/billing-profiles</c> (spec 2026-11-24 §3.1). El <c>PUT</c> reemplaza: lo que no
+/// venga se borra, salvo <c>IsPrincipal</c> en <c>false</c>, que no desmarca.
+/// </summary>
+public sealed record CustomerBillingProfileRequest(
+    string? Name,
+    string? PersonType,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string? Address,
+    string? Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? RegionId,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds,
+    bool VatSurplus,
+    bool IsPrincipal);
+
+/// <summary>
+/// La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y documentos.
+/// No reusa <see cref="CustomerCityDto"/>, que trae el código DIVIPOLA y no el departamento.
+/// </summary>
+public sealed record CustomerMunicipalityDto(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+/// <summary>
+/// Un municipio donde el cliente es agente retenedor de un impuesto municipal (spec ReteICA por empresa §9.3), con el
+/// municipio resuelto (BFF): la ficha lo pinta sin preguntarle a Geography.
+/// </summary>
+public sealed record CustomerWithholdingAgentCityDto(string Type, string Country, CustomerMunicipalityDto City);
+
+/// <summary>
+/// Un municipio donde el cliente es agente retenedor, como llega en el cuerpo de crear y editar (spec ReteICA por empresa
+/// §9.3). <c>Type</c> tiene que ser un tipo municipal de <c>Country</c>.
+/// </summary>
+public sealed record WithholdingAgentCityRequest(string Type, string Country, Guid CityId);
+
+/// <summary>
+/// Una tasa de retención asignada a un cliente, con los datos del catálogo que la ficha necesita para pintarla sin otra
+/// llamada (BFF). Desde el spec ReteICA por empresa (A15) sólo son tasas nacionales (<c>"Retefuente"</c>).
+/// </summary>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> de la tasa: <c>All</c>, <c>Goods</c> o <c>Services</c> (spec
+/// 2026-11-18 servicios pendientes §2). Un cliente puede tener una Retefuente de bienes y otra de servicios, y la ficha
+/// dice cuál es cuál con este campo, aunque la tasa ya no esté en el catálogo activo; sin él tendrías que cruzar el id con
+/// ese catálogo. Va al final y con default para no tocar las construcciones existentes.</param>
+public sealed record CustomerWithholdingTaxRateDto(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    bool IsActive,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
+
+/// <summary>Spec 2026-11-10 §4.2: un contacto como lo pinta la ficha de su empresa.</summary>
+public sealed record CustomerContactDto(Guid Id, string Name, string? Phone, string? Email, bool IsComplete, bool IsActive);
+
+/// <summary>G12: la ficha de una empresa trae a lo sumo estos contactos; <c>contactCount</c> sigue contando todos.</summary>
+public static class CustomerContactsLimits
+{
+    public const int MaxInDetail = 100;
+}
+
+/// <summary>Spec 2026-11-10 §4.1: la empresa de un contacto, ya con su etiqueta (<c>BusinessName ?? Name</c>, A4). Es un objeto
+/// y no un id suelto (BFF): la ficha pinta el nombre, el aviso de «incompleta» y «inactiva» sin un segundo <c>GET</c>.</summary>
+public sealed record CustomerCompanyDto(Guid Id, string Name, bool IsComplete, bool IsActive);
+
+/// <summary>El cuerpo de <c>PUT /customers/{id}/company</c>: <c>null</c> desvincula.</summary>
+public sealed record SetCustomerCompanyRequest(Guid? CompanyId);
 
 /// <summary>
 /// A dónde fue un cliente fusionado. Es un objeto y no un id suelto (BFF): la ficha del fusionado muestra «Fusionado con
@@ -118,7 +266,31 @@ public sealed record CustomerResponse(
     /// no existe». <c>CustomerMergeResponse</c> lo copia; una prueba de paridad amarra que los dos records tengan los mismos campos.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>null</c> es «sin tipo» y viaja igual (sin <c>JsonIgnore</c>).</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec 2026-11-10: viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>), como <c>MergedInto</c>.</summary>
+    CustomerCompanyDto? Company = null,
+    /// <summary>Spec 2026-11-10 §4.2: los contactos de la empresa por nombre (hasta 100); <c>[]</c> para quien no tiene.</summary>
+    IReadOnlyList<CustomerContactDto>? Contacts = null,
+    /// <summary>Todos los contactos sin fusionar, aunque <c>Contacts</c> venga recortada.</summary>
+    int ContactCount = 0,
+    /// <summary>Spec impuestos por tipo §9.2: viaja siempre, vacía si el cliente no retiene.</summary>
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
+    /// <summary>Spec ReteICA por empresa §9.3: viaja siempre, vacía si el cliente no es agente en ningún municipio.</summary>
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
+    /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): sin region guardada la ficha no preselecciona nada.</summary>
+    CustomerRegionDto? Region = null,
+    /// <summary>Spec 2026-11-24 §3.6: viaja siempre, vacía si el cliente no tiene perfiles.</summary>
+    IReadOnlyList<CustomerBillingProfileDto>? BillingProfiles = null)
+{
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+
+    public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
+
+    public IReadOnlyList<CustomerBillingProfileDto> BillingProfiles { get; init; } = BillingProfiles ?? [];
+
+    /// <summary>El tope de perfiles (BFF): la pantalla no escribe el número, ver <see cref="CustomerDto"/>.</summary>
+    public int BillingProfileLimit { get; init; } = Domain.CustomerBillingProfile.MaxPerCustomer;
+}
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -150,7 +322,14 @@ public sealed record CustomerListItemResponse(
     bool IsComplete,
     /// <summary>Spec 2026-10-24 (B4): «Fusionar con…» propone como el que queda al cliente más viejo, y la pantalla lo elige con
     /// esta fecha sin pedir la ficha de cada candidato.</summary>
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    /// <summary>Spec 2026-11-10 §4.1: la razón social, para que la grilla distinga a una empresa de una persona sin pedir la ficha.</summary>
+    string? BusinessName,
+    string? PersonType,
+    /// <summary>La empresa de un contacto (<c>null</c> si no lo es), resuelta en lote para toda la página.</summary>
+    CustomerCompanyDto? Company,
+    /// <summary>Cuántos contactos sin fusionar tiene la fila (0 si no es empresa), contados en lote para toda la página.</summary>
+    int ContactCount);
 
 /// <summary>
 /// El sobre del listado, con el total que la paginacion necesita.
@@ -198,10 +377,23 @@ public sealed record CreateCustomerRequest(
     /// ignorada si lo es.</summary>
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención del cliente (a lo sumo una por país y tipo). Ausente o
+    /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
+    bool? WithRetention = null,
+    /// <summary>Spec ReteICA por empresa §9.3: los municipios donde el cliente es agente retenedor. Ausente o <c>null</c> no
+    /// toca lo guardado (en el alta, ninguno); una lista vacía los quita.</summary>
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    /// <summary>Spec 2026-11-15 «Contacto de» en el alta: la empresa de la que el cliente nace como contacto. Ausente o
+    /// <c>null</c> lo crea sin empresa. Sólo en el alta: editar no lo toca, el vínculo va por <c>PUT …/company</c>.</summary>
+    Guid? CompanyId = null,
+    /// <summary>La region (provincia) del domicilio de un pais con catalogo de regiones distinto de Colombia; con <c>CO</c> se
+    /// rechaza (422 con la clave <c>RegionId</c>). Ausente la deja en blanco.</summary>
+    Guid? RegionId = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,
@@ -215,10 +407,18 @@ public sealed record UpdateCustomerRequest(
     Guid? CityId,
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención del cliente (a lo sumo una por país y tipo). Ausente o
+    /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
+    bool? WithRetention = null,
+    /// <summary>Spec ReteICA por empresa §9.3: ausente o <c>null</c> conserva; una lista vacía quita.</summary>
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    /// <summary>Como en el alta. El PUT reemplaza: ausente borra la region guardada, igual que <c>CityName</c>.</summary>
+    Guid? RegionId = null);
 
 /// <summary>
 /// Una fila que se importo con exito: su numero de fila en el Excel (2-based; la fila 1 es la
@@ -253,8 +453,15 @@ public sealed record CustomerImportRowData(
     string Department,
     string City,
     string Classification,
-    string? WithRetention,
-    string? VatSurplus);
+    string? Retefuente,
+    /// <summary>Heredado (spec ReteICA por empresa, P9): la columna «ReteICA» salió del Excel. Se queda en el record para no
+    /// romper al frontend que reenvía la fila; viaja siempre <c>null</c> y se ignora al recibirlo.</summary>
+    string? ReteIca,
+    string? VatSurplus,
+    /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Opcional: el frontend viejo no lo manda.</summary>
+    string? CompanyIdentificationNumber = null,
+    /// <summary>Spec 2026-11-17: la celda «Etiquetas» tal como vino, para que la fila a corregir la conserve. Última y opcional.</summary>
+    string? Tags = null);
 
 /// <summary>
 /// Una fila que NO se importo, con lo que la persona que subio el archivo necesita para
@@ -444,18 +651,21 @@ public sealed record CustomerMergePartyDto(
 public sealed record CustomerMergeMoveDto(string Kind, int Count);
 
 /// <summary>
-/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las ocho clases siempre, en el orden del enum y también
+/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las nueve clases siempre (<c>Contacts</c> al final), en el orden del enum y también
 /// en cero, para que la confirmación dibuje en gris la que está en cero sin conocer el enum; <c>Tags</c> son las que el que
 /// queda gana de verdad (sin repetir y dentro del tope), no las que traen los fusionados. <c>FilledFields</c> son nombres
 /// de <c>CustomerMergeField</c> (B2): lo que la ficha del que queda recibe. <c>DocumentsDiffer</c> avisa que algún
 /// fusionado tiene un número distinto del que queda al normalizar ambos; si a uno de los dos le falta el número, no cuenta.
+/// <c>CompanyConflict</c> avisa que el que queda seguiría siendo contacto y además tendría contactos: la vista previa responde 200
+/// y el POST de la fusión de esa misma selección responde 422 <c>customers.customer.merge_company_conflict</c>.
 /// </summary>
 public sealed record CustomerMergePreviewResponse(
     CustomerMergePartyDto Survivor,
     IReadOnlyList<CustomerMergePartyDto> Merged,
     bool DocumentsDiffer,
     IReadOnlyList<CustomerMergeMoveDto> Moves,
-    IReadOnlyList<string> FilledFields);
+    IReadOnlyList<string> FilledFields,
+    bool CompanyConflict = false);
 
 /// <summary>D-F5: una etiqueta que no cupo en el que queda. Sólo lo que el aviso nombra: el color y el conteo no hacen falta
 /// para decir cuáles no cupieron.</summary>
@@ -464,6 +674,10 @@ public sealed record CustomerMergeDroppedTagDto(Guid Id, string Name);
 /// <summary>El cuerpo de <c>POST /customers/{survivorId}/merge</c>. Opcional en el binding para que una lista ausente sea un
 /// 422 con <c>errors.MergedCustomerIds</c> del validador y no un 400 del deserializador.</summary>
 public sealed record MergeCustomersRequest(IReadOnlyList<Guid>? MergedCustomerIds);
+
+/// <summary>El cuerpo de <c>POST /customers/bulk-delete</c>. Opcional en el binding para que una lista ausente sea un 422 con
+/// <c>errors.CustomerIds</c> del validador y no un 400 del deserializador.</summary>
+public sealed record BulkDeleteCustomersRequest(IReadOnlyList<Guid>? CustomerIds);
 
 /// <summary>
 /// La respuesta de la fusión (B3). BFF: los mismos campos que <see cref="CustomerResponse"/>, en el mismo objeto, para que
@@ -498,4 +712,21 @@ public sealed record CustomerMergeResponse(
     MarketingConsentDto MarketingConsent,
     CustomerMergedIntoDto? MergedInto,
     string? PersonType,
-    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);
+    CustomerCompanyDto? Company,
+    IReadOnlyList<CustomerContactDto> Contacts,
+    int ContactCount,
+    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags,
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
+    /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): sin region guardada la ficha no preselecciona nada.</summary>
+    CustomerRegionDto? Region = null,
+    IReadOnlyList<CustomerBillingProfileDto>? BillingProfiles = null)
+{
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+
+    public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
+
+    public IReadOnlyList<CustomerBillingProfileDto> BillingProfiles { get; init; } = BillingProfiles ?? [];
+
+    public int BillingProfileLimit { get; init; } = Domain.CustomerBillingProfile.MaxPerCustomer;
+}

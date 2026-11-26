@@ -16,6 +16,7 @@ namespace Modules.Messaging.Infrastructure.Webhook;
 /// vencer el lease; a los <see cref="MaxAttempts"/> se marca procesada con <c>last_error</c>.
 /// </summary>
 internal sealed partial class WebhookDeliveryWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     IOptions<MessagingWorkerOptions> options,
     ILogger<WebhookDeliveryWorker> logger) : BackgroundService
@@ -68,23 +69,31 @@ internal sealed partial class WebhookDeliveryWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, options.Value.DeliveryPollSeconds)));
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Webhook);
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(Math.Max(1, options.Value.DeliveryPollSeconds)),
+            DoorbellQueues.SafetyNet(DoorbellQueues.Webhook),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    return await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
     /// <summary>Tope de lotes llenos seguidos en una pasada: con 50 por lote son 1000 entregas por tick. Sin
@@ -94,15 +103,18 @@ internal sealed partial class WebhookDeliveryWorker(
     /// <summary>Una pasada: internal para las pruebas (P10). Mientras el lote vuelve lleno hay más esperando, y
     /// se sigue en el acto: con un lote por tick, una ráfaga de 1000 entregas iría a ≈ 16 por segundo.
     /// Lo reclamado y no procesado queda con su lease vivo y no vuelve a salir en la misma pasada.</summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         for (var batch = 0; batch < MaxFullBatchesPerTick; batch++)
         {
             if (await DrainBatchAsync(cancellationToken) < BatchSize)
             {
-                return;
+                return false;
             }
         }
+
+        // Spec 2026-11-13, D-7: se cortó en el tope con lotes llenos; quedan más y el bucle repite sin esperar.
+        return true;
     }
 
     /// <summary>Un lote: devuelve cuántas entregas trajo, para saber si quedan más.</summary>

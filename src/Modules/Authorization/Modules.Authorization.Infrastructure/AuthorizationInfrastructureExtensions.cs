@@ -26,6 +26,7 @@ public static class AuthorizationInfrastructureExtensions
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<ICustomRoleReader, CustomRoleReader>();
         services.AddScoped<IAuthorizationUnitOfWork, AuthorizationUnitOfWork>();
+        services.AddScoped<ITenantRoleSeedStore, TenantRoleSeedStore>();
 
         return services;
     }

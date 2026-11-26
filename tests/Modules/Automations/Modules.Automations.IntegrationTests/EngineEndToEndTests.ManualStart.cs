@@ -320,14 +320,16 @@ public sealed partial class EngineEndToEndTests
             """
             SELECT coalesce(string_agg(coalesce(inbox.outcome, '-'), ',' ORDER BY inbox.created_at, inbox.message_id), '')
               FROM messaging.automation_inbox AS inbox
-             WHERE NOT EXISTS (SELECT 1 FROM messaging.messages AS message WHERE message.id = inbox.message_id)
+             WHERE inbox.kind = 'Engine'
+               AND NOT EXISTS (SELECT 1 FROM messaging.messages AS message WHERE message.id = inbox.message_id)
             """);
 
     private static Task<long> ManualRowsEverAsync(Fixture f) =>
         CountAsync(f.ConnectionString,
             """
             SELECT count(*) FROM messaging.automation_inbox AS inbox
-             WHERE NOT EXISTS (SELECT 1 FROM messaging.messages AS message WHERE message.id = inbox.message_id)
+             WHERE inbox.kind = 'Engine'
+               AND NOT EXISTS (SELECT 1 FROM messaging.messages AS message WHERE message.id = inbox.message_id)
             """);
 
     private static Task<long> RunCountAsync(Fixture f) => CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.conversation_runs");
@@ -401,7 +403,7 @@ public sealed partial class EngineEndToEndTests
         await ExecuteAsync(f.ConnectionString,
             """
             UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = coalesce(automation_started_at, now()),
-                   automation_chatbot_id = @chatbot, automation_paused_at = now(), automation_pause_reason = @reason, version = version + 1
+                   automation_chatbot_id = @chatbot, automation_bot_kind = 1, automation_paused_at = now(), automation_pause_reason = @reason, version = version + 1
             """,
             ("chatbot", f.ChatbotId), ("reason", reason));
 
@@ -445,6 +447,26 @@ public sealed partial class EngineEndToEndTests
         Assert.Contains("¿Cuál es tu número de documento?", f.Meta.Sends()[^1], StringComparison.Ordinal);
     }
 
+    /// <summary>Review Focus 2 (spec 2026-11-03): la señal <c>ReleaseRun</c> pendiente no es un arranque manual pendiente. Tomar y devolver
+    /// al asistente sin drenar el worker dejan filas de señal sin procesar, y el inicio no debe rechazarse por ellas (<c>StartPending</c>).</summary>
+    [Fact]
+    [Trait("Slice", "ManualStart")]
+    public async Task APendingReleaseRowIsNotAPendingManualStart()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database, trigger: "Keyword", keywords: [PrecioKeyword]);
+        await InboundAsync(f, "w1", PrecioKeyword);
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "take")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "automation/resume")).StatusCode);
+        Assert.Equal(2L, await ReleaseRowsAsync(f));
+
+        var response = await StartAsync(f);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await ManualRowsEverAsync(f));
+    }
+
     /// <summary>«Devolver al asistente» la deja Active sin corrida: iniciar arranca desde el primer nodo.</summary>
     [Fact]
     [Trait("Slice", "ManualStart")]
@@ -453,7 +475,7 @@ public sealed partial class EngineEndToEndTests
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeStartableAsync(database);
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, version = version + 1",
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, version = version + 1",
             ("c", f.ChatbotId));
 
         var response = await StartAsync(f);

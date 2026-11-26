@@ -55,16 +55,36 @@ public interface IQuotationCustomerLookup
     /// </summary>
     Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El contacto <paramref name="contactId"/> de la empresa <paramref name="clientId"/> (spec 2026-11-10 §4.6): null salvo
+    /// que sea un cliente del tenant, sin fusionar, cuya empresa sea <paramref name="clientId"/>. Un contacto de otra
+    /// empresa, de otro tenant, fusionado o el propio cliente dan null: quien llama no distingue entre ellos.
+    /// </summary>
+    Task<QuotationClientContact?> FindContactAsync(
+        Guid tenantId, Guid clientId, Guid contactId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los contactos sin fusionar de <paramref name="clientId"/>, por nombre, hasta 100 (para el diálogo de envío). Vacío si el
+    /// cliente no tiene o si él mismo es un contacto.
+    /// </summary>
+    Task<IReadOnlyList<QuotationClientContact>> ListContactsAsync(
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken);
 }
+
+/// <summary>Un contacto de la empresa de un documento: lo que el envío por WhatsApp necesita (a quién y a qué número).</summary>
+public sealed record QuotationClientContact(Guid Id, string Name, string? Phone);
 
 // Name/Phone/Address se agregaron para el envío por WhatsApp (SendQuotation.cs): son los
 // mismos tres campos que ya resuelve el frontend para armar el `wa.me` — se traen acá para
 // que el backend pueda mandar la plantilla de Zenvia sin una segunda ida y vuelta al módulo
 // Customers. Phone/Address quedan nullable porque lo son en el agregado `Customer` — el
 // llamador decide qué hacer si faltan (SendQuotation.cs lo trata como "no se puede enviar").
-// WithRetention/VatSurplus se agregan para el snapshot de totales al crear la cotizacion
-// (Quotation.CustomerWithRetention/CustomerVatSurplus): igual criterio que Name/Phone/Address
-// arriba, un pass-through desde Customer para no ir y volver al modulo por dos booleanos.
+// VatSurplus es el excedente de IVA que la cotizacion congela al crearse (Quotation.CustomerVatSurplus):
+// igual criterio que Name/Phone/Address arriba, un pass-through desde Customer. WithRetention ya no es un
+// dato del cliente: el adaptador lo deriva de sus tasas asignadas (alguna Retefuente) y sólo lo lee la
+// respuesta (client.withRetention, para el frontend viejo). Ningún cálculo lo usa: las retenciones salen de las
+// tasas congeladas en el documento.
 // Cuc es nulo en un cliente incompleto (spec 2026-10-10 §6.2); QuotationCustomerEligibility lo rechaza.
 public sealed record QuotationCustomerRef(
     Guid Id,
@@ -102,8 +122,36 @@ public sealed record QuotationCustomerRef(
     string? PersonType = null,
     /// <summary>País del cliente (ISO alfa-2). Con él se decide a qué país se factura: el del cliente, o el del tenant si no lo tiene.</summary>
     string? Country = null,
-    /// <summary>Tipo del documento de la ficha ("NIT" | "CC" | "CE" | "PASAPORTE"), el tipo de <see cref="IdentificationNumber"/>.</summary>
-    string? IdentificationType = null);
+    /// <summary>Tipo del documento de la ficha (uno de los siete códigos: NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID), el tipo de <see cref="IdentificationNumber"/>.</summary>
+    string? IdentificationType = null,
+    /// <summary>The region of a foreign customer (provincia guardada, spec 2026-11-23); null when it has none.</summary>
+    QuotationRegionDto? Region = null,
+    /// <summary>La libreta de perfiles de facturación (spec 2026-11-24), la principal primero. Sólo la trae
+    /// <see cref="IQuotationCustomerLookup.FindAsync"/> (el detalle); <c>FindManyAsync</c> (el Excel) la deja vacía.</summary>
+    IReadOnlyList<QuotationCustomerBillingProfileRef>? BillingProfiles = null,
+    /// <summary>Cuántos perfiles admite un cliente; lo dice Customers.</summary>
+    int BillingProfileLimit = 0);
+
+/// <summary>Un perfil de facturación de la ficha del cliente, resuelto, para que la cotización y el pedido lo copien en su
+/// facturación. Ningún documento guarda su id.</summary>
+public sealed record QuotationCustomerBillingProfileRef(
+    Guid Id,
+    string Name,
+    string? PersonType,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string Address,
+    string Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    QuotationRegionDto? Region,
+    IReadOnlyList<QuotationClientWithholdingRateResponse> WithholdingTaxRates,
+    bool VatSurplus,
+    bool IsPrincipal);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
 /// cotizacion.</summary>
@@ -112,8 +160,13 @@ public sealed record QuotationCustomerAddressRef(
     string Name,
     string Address,
     string? Phone,
-    Guid CityId,
-    string CityName,
-    Guid DepartmentId,
-    string DepartmentName,
-    bool IsPrincipal);
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    bool IsPrincipal,
+    /// <summary>ISO alfa-2. Fuera de Colombia <see cref="CityId"/> y <see cref="DepartmentId"/> son null y la ciudad
+    /// es el texto de <see cref="CityName"/>.</summary>
+    string Country = "CO",
+    /// <summary>The region of a foreign address; null when it has none.</summary>
+    QuotationRegionDto? Region = null);

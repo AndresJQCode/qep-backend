@@ -1,8 +1,10 @@
 using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Persistence;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -73,6 +75,7 @@ public sealed class MessageTemplatePersistenceTests
             Assert.Equal(mirroredId, (await repository.FindByNameAsync(f.TenantId, f.ConnectionId, "aviso", "es", Ct))!.Id);
             Assert.Single(await repository.ListApprovedAsync(f.TenantId, f.ConnectionId, Ct));
             Assert.Null(await repository.FindQuotationAsync(f.TenantId, f.ConnectionId, Ct));
+            Assert.Null(await repository.FindOrderAsync(f.TenantId, f.ConnectionId, Ct));
             // Otro tenant con los mismos ids no ve nada.
             Assert.Empty(await repository.ListAsync(Guid.CreateVersion7(), f.ConnectionId, Ct));
             return 0;
@@ -189,6 +192,72 @@ public sealed class MessageTemplatePersistenceTests
         Assert.Equal(4L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.TenantId)));
     }
 
+    // Spec 2026-11-09 D1: la misma regla para la plantilla de pedido, por UX_message_templates_order → order_exists.
+    [Fact]
+    public async Task ASecondOrderTemplateInTheSameConnectionIs422OrderExistsByIndexName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Order(f.TenantId, f.ConnectionId, "1", "qep_pedido"));
+            // Una Quotation en la misma conexión no choca con la Order.
+            repository.Add(Quotation(f.TenantId, f.ConnectionId, "2", "qep_cotizacion"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        });
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Order(f.TenantId, f.ConnectionId, "3", "qep_pedido_v2"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        }));
+
+        Assert.Equal(MessagingErrorCodes.TemplateOrderExists, exception.Code);
+        await InScopeAsync(f.Factory, async (repository, _) =>
+        {
+            var order = await repository.FindOrderAsync(f.TenantId, f.ConnectionId, Ct);
+            Assert.Equal("qep_pedido", order!.Name);
+            return 0;
+        });
+    }
+
+    // Spec 2026-11-21: la misma regla para la plantilla de factura, por UX_message_templates_invoice → invoice_exists.
+    [Fact]
+    public async Task ASecondInvoiceTemplateInTheSameConnectionIs422InvoiceExistsByIndexName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Invoice(f.TenantId, f.ConnectionId, "1", "qep_factura"));
+            // Una Order en la misma conexión no choca con la Invoice.
+            repository.Add(Order(f.TenantId, f.ConnectionId, "2", "qep_pedido"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        });
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Invoice(f.TenantId, f.ConnectionId, "3", "qep_factura_v2"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        }));
+
+        Assert.Equal(MessagingErrorCodes.TemplateInvoiceExists, exception.Code);
+        await InScopeAsync(f.Factory, async (repository, _) =>
+        {
+            var invoice = await repository.FindInvoiceAsync(f.TenantId, f.ConnectionId, Ct);
+            Assert.Equal("qep_factura", invoice!.Name);
+            return 0;
+        });
+    }
+
+    private static MessageTemplate Invoice(Guid tenantId, Guid connectionId, string metaId, string name) =>
+        MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "NAMED", "PENDING", "[]", MessageTemplateKind.Invoice, null, Now);
+
+    private static MessageTemplate Order(Guid tenantId, Guid connectionId, string metaId, string name) =>
+        MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "NAMED", "PENDING", "[]", MessageTemplateKind.Order, null, Now);
+
     [Fact]
     public async Task TheSyncMarkerIsNullUntilMarkedAndThenUpserts()
     {
@@ -269,5 +338,79 @@ public sealed class MessageTemplatePersistenceTests
             Assert.False(await repository.IsReferencedByActiveCampaignAsync(f.TenantId, f.ConnectionId, "promo", "en_US", Ct));
             return 0;
         });
+    }
+    // Spec 2026-11-17: las dos columnas de la imagen fija del encabezado.
+    [Fact]
+    public async Task TheHeaderImageColumnsRoundTrip()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var fileId = Guid.CreateVersion7();
+        var url = $"https://public.test/{fileId}.png";
+
+        var (withImageId, withoutImageId) = await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            var withImage = MessageTemplate.Pending(f.TenantId, f.ConnectionId, "900", "promo", "es", "MARKETING", "NAMED", "PENDING",
+                """[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Hola"}]""", MessageTemplateKind.Free, null, Now);
+            withImage.AttachHeaderImage(fileId, url, Now);
+            var withoutImage = Mirrored(f, "901", "aviso");
+            repository.Add(withImage);
+            repository.Add(withoutImage);
+            await unitOfWork.SaveChangesAsync(Ct);
+            return (withImage.Id, withoutImage.Id);
+        });
+
+        await InScopeAsync(f.Factory, async (repository, _) =>
+        {
+            var withImage = await repository.FindAsync(f.TenantId, f.ConnectionId, withImageId, Ct);
+            Assert.NotNull(withImage);
+            Assert.Equal<(Guid?, string?)>((fileId, url), (withImage.HeaderImageFileId, withImage.HeaderImageUrl));
+            var withoutImage = await repository.FindAsync(f.TenantId, f.ConnectionId, withoutImageId, Ct);
+            Assert.NotNull(withoutImage);
+            Assert.Equal<(Guid?, string?)>((null, null), (withoutImage.HeaderImageFileId, withoutImage.HeaderImageUrl));
+            return 0;
+        });
+    }
+
+    [Fact]
+    public async Task RetiredHeaderImageRoundTripsAndCascadesWithItsTemplate()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var oldFileId = Guid.CreateVersion7();
+        var templateId = Guid.Empty;
+
+        using (var scope = f.Factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            var template = MessageTemplate.Pending(f.TenantId, f.ConnectionId, "930", "con_imagen", "es", "MARKETING", "NAMED", "APPROVED",
+                "[]", MessageTemplateKind.Free, null, Now);
+            template.AttachHeaderImage(oldFileId, "https://public.test/old.png", Now);
+            var retired = template.ReplaceHeaderImage(Guid.CreateVersion7(), "https://public.test/new.png", Now.AddHours(1));
+            dbContext.MessageTemplates.Add(template);
+            dbContext.MessageTemplateRetiredHeaderImages.Add(retired!);
+            await dbContext.SaveChangesAsync(Ct);
+            templateId = template.Id;
+        }
+
+        using (var scope = f.Factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            var row = await dbContext.MessageTemplateRetiredHeaderImages.AsNoTracking().SingleAsync(Ct);
+            Assert.Equal((f.TenantId, templateId, oldFileId, "https://public.test/old.png", Now.AddHours(1)),
+                (row.TenantId, row.TemplateId, row.FileId, row.PublicUrl, row.RetiredAt));
+
+            var template = await dbContext.MessageTemplates.SingleAsync(value => value.Id == templateId, Ct);
+            dbContext.MessageTemplates.Remove(template);
+            await dbContext.SaveChangesAsync(Ct);
+        }
+
+        using (var scope = f.Factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            Assert.False(await dbContext.MessageTemplateRetiredHeaderImages.AsNoTracking().AnyAsync(Ct));
+        }
     }
 }

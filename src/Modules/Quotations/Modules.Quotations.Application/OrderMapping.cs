@@ -15,6 +15,8 @@ internal static class OrderMapping
         order.AdvisorId.Value,
         order.Status.ToString(),
         order.PaymentStatus.ToString(),
+        order.FulfillmentStatus.ToString(),
+        order.IsInvoiced,
         order.PaymentMethod,
         order.Currency,
         order.IsRetail,
@@ -22,7 +24,10 @@ internal static class OrderMapping
         order.BillingUsesBusinessName,
         order.IsStorePickup,
         order.BillsToFinalConsumer,
-        order.PartyWithRetention,
+        // Derivado para el frontend viejo (spec impuestos por tipo §9.3): con parte propia, billingWithholdingTaxRates no
+        // vacía (las tasas vigentes, apliquen o no); sin ella, null. Nunca null con parte propia: el frontend viejo
+        // bloquea con null (qep-frontend/src/features/quotes/utils/quote-actions.ts:104-106).
+        order.Billing is null ? null : order.Withholdings.Count > 0,
         order.PartyVatSurplus,
         order.AppliesVatSurplus,
         order.Subtotal,
@@ -34,14 +39,16 @@ internal static class OrderMapping
         order.NetTotal,
         order.Notes,
         order.BillingAccount is { } account
-            ? new QuotationBillingAccountDto(account.CompanyId, account.BankName, account.AccountNumber, account.Currency)
+            ? new QuotationBillingAccountDto(
+                account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country, account.CityId,
+                account.ChargesVat)
             : null,
         order.Parties.Select(ToDto).ToArray(),
         order.Items.OrderBy(item => item.Position).Select(item => ToDto(item, order.PriceRounding)).ToArray(),
         order.ConvertedAt,
         order.ConvertedBy.Value,
-        order.ApprovedAt,
-        order.ApprovedBy?.Value,
+        order.PaidMarkedAt,
+        order.PaidMarkedBy?.Value,
         order.CancelledAt,
         order.CancelledBy?.Value,
         order.CancellationReason,
@@ -55,7 +62,42 @@ internal static class OrderMapping
         order.ShippingDtoOf(),
         order.FreightSubtotal,
         order.FreightTaxAmount,
-        order.ExternalShippingTitle);
+        order.ExternalShippingTitle,
+        [.. order.AppliedWithholdings.Select(QuotationMapping.ToDto)],
+        [],
+        [.. order.Withholdings.OrderBy(withholding => withholding.Position).Select(QuotationMapping.ToRateDto)],
+        order.PreparedAt,
+        order.PreparedBy?.Value,
+        order.ArchivedAt,
+        order.ArchivedBy?.Value,
+        order.Balance,
+        order.OperationCityId,
+        order.BuyerNotes,
+        order.BuyerAccountId,
+        [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)],
+        order.OrderDate,
+        order.RequiresShipping,
+        WholesaleOf(order),
+        order.InvoiceProvider,
+        order.InvoiceNumber,
+        order.IsEditable);
+
+    /// <summary>Mayorista fase 3: el vínculo del pedido con la orden del distribuidor; null fuera de un pedido mayorista.</summary>
+    public static OrderWholesaleState? WholesaleOf(Order order) =>
+        order is { Source: OrderSource.Wholesale, BuyerTenantId: { } buyerTenantId, PurchaseOrderId: { } purchaseOrderId }
+            ? new OrderWholesaleState(
+                buyerTenantId,
+                purchaseOrderId,
+                order.ExternalReference ?? string.Empty,
+                ApprovalOf(order),
+                order.WholesaleApprovedAt,
+                order.WholesaleApprovedBy?.Value,
+                order.CancelledByBuyer)
+            : null;
+
+    // D-1: la marca, no un estado. Un anulado sin aprobar sigue diciendo Pending; el estado del pedido dice que se anuló.
+    private static string ApprovalOf(Order order) =>
+        order.WholesaleApprovedAt is null ? WholesaleApprovals.Pending : WholesaleApprovals.Approved;
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
@@ -71,8 +113,10 @@ internal static class OrderMapping
         order.FreightTaxAmount,
         order.CashOnDelivery);
 
+    // requiresShipping llega resuelto por página: la búsqueda del listado no trae las líneas, así que order.Items acá
+    // está vacía y order.RequiresShipping diría siempre true.
     public static OrderListItemDto ToListItemDto(
-        this Order order, string? quotationNumber, string? clientName, string? advisorName) => new(
+        this Order order, string? quotationNumber, string? clientName, string? advisorName, bool requiresShipping) => new(
         order.Id.Value,
         order.OrderNumber,
         order.QuotationId?.Value,
@@ -83,13 +127,18 @@ internal static class OrderMapping
         advisorName,
         order.Status.ToString(),
         order.PaymentStatus.ToString(),
+        order.FulfillmentStatus.ToString(),
+        order.IsInvoiced,
         order.PaymentMethod,
         order.ConvertedAt,
         order.Currency,
         order.Total,
         order.Source.ToString(),
         order.ExternalReference,
-        order.ShippingDtoOf());
+        order.ShippingDtoOf(),
+        order.OrderDate,
+        requiresShipping,
+        WholesaleOf(order) is { } wholesale ? new OrderListWholesaleDto(wholesale.PurchaseOrderNumber, wholesale.Approval) : null);
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
         entry.Id.Value,
@@ -109,7 +158,11 @@ internal static class OrderMapping
         party.DepartmentId,
         party.CityId,
         party.PersonType?.ToWireValue(),
-        party.IdentificationType?.ToWireValue());
+        party.IdentificationType?.ToWireValue(),
+        party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
+        party.CityName,
+        party.RegionId,
+        party.PostalCode);
 
     private static QuotationItemDto ToDto(OrderItem item, PriceRounding rounding) => new(
         item.Id.Value,
@@ -126,7 +179,11 @@ internal static class OrderMapping
         item.Position,
         item.DiscountOrigin.ToString(),
         item.ProductCode,
-        item.ProductName);
+        item.ProductName,
+        item.Kind.ToString(),
+        item.SalesUnit.ToString(),
+        item.SourcePurchaseOrderLineId,
+        item.IsGift);
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(
         proof.Id.Value, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn);

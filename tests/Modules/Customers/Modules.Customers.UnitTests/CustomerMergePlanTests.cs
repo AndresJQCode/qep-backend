@@ -50,6 +50,9 @@ public sealed class CustomerMergePlanTests
     private static Customer WhatsApp(string bsuid = "CO.1349120865530274") =>
         Customer.CreateIncomplete(CustomerId.New(), TenantId, "Laura", "+573001234567", "CO", bsuid, Created, new PlusNormalizer());
 
+    private static Customer WhatsAppFrom(string country, string phone, string bsuid) =>
+        Customer.CreateIncomplete(CustomerId.New(), TenantId, "Laura", phone, country, bsuid, Created, new PlusNormalizer());
+
     private static Customer Instagram(string igsid = "17841400000000001") =>
         Customer.CreateIncompleteFromInstagram(CustomerId.New(), TenantId, "Laura", igsid, "@laura", Created);
 
@@ -71,6 +74,37 @@ public sealed class CustomerMergePlanTests
 
     private static Customer Shopify(string? email = null) =>
         Customer.CreateIncompleteFromExternalSale(CustomerId.New(), TenantId, "Laura", null, email, null, Created, new PlusNormalizer());
+
+    [Fact]
+    public void ASurvivorWithoutCountryTakesTheDocumentAndTheCountryFromTheSameMerged()
+    {
+        var survivor = Instagram();
+        var spanish = WhatsAppFrom("ES", "+34600111222", "ES.1");
+        var register = Register("1020");
+
+        var plan = CustomerMergePlan.Create(survivor, [spanish, register]);
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Equal((IdentificationType.Cc, "CO"), (survivor.IdentificationType, survivor.Country));
+        Assert.Contains(CustomerMergeField.Identification, plan.FilledFields);
+        Assert.Contains(CustomerMergeField.Country, plan.FilledFields);
+    }
+
+    [Fact]
+    public void ASurvivorNeverTakesADocumentItsCountryDoesNotAllow()
+    {
+        var survivor = WhatsAppFrom("ES", "+34600111222", "ES.1");
+        var register = Register("1020");
+
+        var plan = CustomerMergePlan.Create(survivor, [register]);
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.DoesNotContain(CustomerMergeField.Identification, plan.FilledFields);
+        Assert.Null(survivor.IdentificationType);
+        Assert.Equal(IdentificationType.Cc, register.IdentificationType);
+    }
 
     [Fact]
     public void EmptyFieldsAreFilledFromTheFirstMergedThatHasThemAndNothingIsOverwritten()
@@ -412,5 +446,73 @@ public sealed class CustomerMergePlanTests
         var plan = CustomerMergePlan.Create(survivor, [second, first]);
 
         Assert.Equal([second.Id, first.Id], plan.Merged.Select(customer => customer.Id));
+    }
+
+    // ---- Spec 2026-11-10 §4.7: la fusión y el vínculo persona → empresa ----
+
+    [Fact]
+    public void TheSurvivorLosesItsCompanyWhenThatCompanyIsMerged()
+    {
+        var company = Complete();
+        var survivor = Complete(number: "1020");
+        survivor.LinkToCompany(company, hasContacts: false, Created);
+        var plan = CustomerMergePlan.Create(survivor, [company]);
+
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Null(survivor.CompanyId);
+        Assert.False(plan.SurvivorKeepsCompany);
+    }
+
+    [Fact]
+    public void TheSurvivorKeepsACompanyThatIsNotMerged()
+    {
+        var company = Complete();
+        var survivor = Complete(number: "1020");
+        survivor.LinkToCompany(company, hasContacts: false, Created);
+        var plan = CustomerMergePlan.Create(survivor, [Complete(number: "1030")]);
+
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Equal(company.Id, survivor.CompanyId);
+        Assert.True(plan.SurvivorKeepsCompany);
+    }
+
+    [Fact]
+    public void AMergedContactOfTheSurvivorBecomesATombstoneWithoutCompany()
+    {
+        var survivor = Complete();
+        var contact = Complete(number: "1020");
+        contact.LinkToCompany(survivor, hasContacts: false, Created);
+        var plan = CustomerMergePlan.Create(survivor, [contact]);
+
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Null(contact.CompanyId);
+        Assert.Equal(survivor.Id, contact.MergedIntoId);
+        Assert.Null(survivor.CompanyId);
+        Assert.False(plan.SurvivorKeepsCompany);
+    }
+
+    [Theory]
+    [InlineData(true, 0, 0, false)]
+    [InlineData(true, 0, 2, true)]
+    [InlineData(true, 1, 0, true)]
+    [InlineData(false, 3, 2, false)]
+    public void TheConflictIsKeepingACompanyWhileHavingContacts(bool keeps, int own, int moved, bool expected)
+    {
+        var survivor = Complete();
+        if (keeps)
+        {
+            survivor.LinkToCompany(Complete(number: "1020"), hasContacts: false, Created);
+        }
+
+        var plan = CustomerMergePlan.Create(survivor, [Complete(number: "1030")]);
+
+        Assert.Equal(keeps, plan.SurvivorKeepsCompany);
+        Assert.Equal(expected, plan.HasCompanyConflict(own, moved));
     }
 }

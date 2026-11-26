@@ -66,6 +66,16 @@ internal static class ChatbotEndpoints
             .WithActionContract()
             .Produces<ChatbotEditorDto>();
 
+        chatbots.MapGet("/{chatbotId:guid}/versions", ListVersionsAsync)
+            .RequireAuthorization(AutomationsPermissions.ChatbotRead)
+            .Produces<ChatbotVersionListResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        chatbots.MapPost("/{chatbotId:guid}/versions/{number:int}/restore", RestoreVersionAsync)
+            .WithActionContract()
+            .Produces<ChatbotEditorDto>();
+
         chatbots.MapPost("/{chatbotId:guid}/duplicate", DuplicateAsync)
             .RequireAuthorization(AutomationsPermissions.ChatbotManage)
             .Produces<ChatbotEditorDto>(StatusCodes.Status201Created)
@@ -92,6 +102,23 @@ internal static class ChatbotEndpoints
             .WithActionContract()
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status409Conflict);
+
+        // Spec 2026-11-18: el archivo de un bloque «Mensaje». Sin If-Match: subir un archivo no cambia el chatbot (el borrador guarda el
+        // id con su autoguardado).
+        chatbots.MapPost("/{chatbotId:guid}/media/upload-session", CreateMediaSessionAsync)
+            .RequireAuthorization(AutomationsPermissions.ChatbotManage)
+            .Accepts<CreateChatbotMediaSessionRequest>("application/json")
+            .Produces<ChatbotMediaSessionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        chatbots.MapPost("/{chatbotId:guid}/media/{fileId:guid}/complete", CompleteMediaAsync)
+            .RequireAuthorization(AutomationsPermissions.ChatbotManage)
+            .Produces<ChatbotMediaFileDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     /// <summary>Una acción sin cuerpo sobre un chatbot existente (publicar, pausar, reanudar, borrar): <c>If-Match</c> como en
@@ -258,6 +285,14 @@ internal static class ChatbotEndpoints
         Results.Ok(await dispatcher.SendAsync(
             new ResumeChatbotCommand(tenantId, chatbotId, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken));
 
+    private static async Task<IResult> ListVersionsAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListChatbotVersionsQuery(tenantId, chatbotId), cancellationToken));
+
+    private static async Task<IResult> RestoreVersionAsync(
+        Guid tenantId, Guid chatbotId, int number, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RestoreChatbotVersionCommand(tenantId, chatbotId, number, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken));
+
     // Sin Location, como crear: el editor abre con la copia que vuelve.
     private static async Task<IResult> DuplicateAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Created((string?)null, await dispatcher.SendAsync(new DuplicateChatbotCommand(tenantId, chatbotId), cancellationToken));
@@ -275,6 +310,17 @@ internal static class ChatbotEndpoints
             ? failure!
             : Results.Created((string?)null, await dispatcher.SendAsync(new ImportChatbotCommand(tenantId, request), cancellationToken));
     }
+
+    private static async Task<IResult> CreateMediaSessionAsync(
+        Guid tenantId, Guid chatbotId, CreateChatbotMediaSessionRequest request, IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new CreateChatbotMediaSessionCommand(tenantId, chatbotId, request.FileName, request.ContentType, request.SizeBytes),
+            cancellationToken));
+
+    private static async Task<IResult> CompleteMediaAsync(
+        Guid tenantId, Guid chatbotId, Guid fileId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new CompleteChatbotMediaCommand(tenantId, chatbotId, fileId), cancellationToken));
 
     private static async Task<IResult> DeleteAsync(
         Guid tenantId, Guid chatbotId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -301,3 +347,6 @@ public sealed record PublishChatbotRequest(IReadOnlyList<Guid>? TakeOverConnecti
 
 /// <summary>D-C2: el <c>flow</c> se valida en el servidor; el <c>layout</c> viaja aparte y no se valida.</summary>
 public sealed record SaveDraftRequest(JsonElement Flow, JsonElement Layout);
+
+/// <summary>Spec 2026-11-18: lo que el navegador declara del archivo antes de subirlo; el tipo y el tope los revisa la política.</summary>
+public sealed record CreateChatbotMediaSessionRequest(string? FileName, string? ContentType, long SizeBytes);

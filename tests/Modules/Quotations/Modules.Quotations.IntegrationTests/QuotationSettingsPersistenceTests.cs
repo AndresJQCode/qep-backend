@@ -12,15 +12,14 @@ namespace Modules.Quotations.IntegrationTests;
 /// a 500 with the constraint name inside. Same shape as
 /// OrdersExportLayoutPersistenceTests.TwoFirstSavesForTheSameTenantEndInAConcurrencyConflict.
 /// </summary>
-public sealed class QuotationSettingsPersistenceTests
+public sealed class QuotationSettingsPersistenceTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task TwoInsertsOfTheSameSettingsRowEndInAConcurrencyConflict(bool minimumTotal)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory);
         using var _ = client;
         await using var first = factory.Services.CreateAsyncScope();
@@ -44,6 +43,39 @@ public sealed class QuotationSettingsPersistenceTests
 
         Assert.Equal("concurrency.conflict", error.Code);
         Assert.Contains("quotation settings", error.Message, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-10 §6: sin fila, los valores por defecto; guardados, se leen igual.
+    [Fact]
+    public async Task OrderSettingsRoundTripAndDefaultWithoutRow()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory);
+        using var _ = client;
+
+        await using (var read = factory.Services.CreateAsyncScope())
+        {
+            Assert.Equal(
+                OrderSettings.Default,
+                await read.ServiceProvider.GetRequiredService<IQuotationSettingsStore>()
+                    .GetOrderSettingsAsync(tenantId, TestContext.Current.CancellationToken));
+        }
+
+        await using (var write = factory.Services.CreateAsyncScope())
+        {
+            var unitOfWork = write.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>();
+            await using var transaction = await unitOfWork.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await write.ServiceProvider.GetRequiredService<IQuotationSettingsStore>().SetOrderSettingsAsync(
+                tenantId, new OrderSettings(true, false, true), TestContext.Current.CancellationToken);
+            await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await transaction.CommitAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var reread = factory.Services.CreateAsyncScope();
+        Assert.Equal(
+            new OrderSettings(true, false, true),
+            await reread.ServiceProvider.GetRequiredService<IQuotationSettingsStore>()
+                .GetOrderSettingsAsync(tenantId, TestContext.Current.CancellationToken));
     }
 
     private static void Stage(AsyncServiceScope scope, Guid tenantId, bool minimumTotal)

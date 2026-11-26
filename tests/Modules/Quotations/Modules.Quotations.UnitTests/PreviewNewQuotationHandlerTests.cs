@@ -152,7 +152,9 @@ public sealed class PreviewNewQuotationHandlerTests
             settings,
             new FixedTenantPriceRounding(),
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
-            new FixedTenantDefaultCurrency());
+            new FixedTenantDefaultCurrency(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
     }
 
     private static PreviewNewQuotationHandler Handler(
@@ -170,7 +172,8 @@ public sealed class PreviewNewQuotationHandlerTests
         new(
             new StubQuotationRepository(Quotation.Create(
                 QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, new MemberId(MembershipId),
-                null, null, null, QuotationParties.Empty, null, "COP", false, false,
+                null, null, null, QuotationParties.Empty, null, "COP", false, [],
+                MunicipalContext.None,
                 new MemberId(MembershipId), Now)),
             new NoOpQuotationsUnitOfWork(),
             new NoOpQuotationAuditPublisher(),

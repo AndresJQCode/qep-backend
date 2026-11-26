@@ -2,7 +2,10 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Application;
 
-/// <summary>Una fila de <c>messaging.conversations</c> para leer, sin cargar el agregado.</summary>
+/// <summary>Una fila de <c>messaging.conversations</c> para leer, sin cargar el agregado. <c>DelegatedByChatbotId</c> (spec 2026-11-17
+/// §7) es el chatbot de la delegación viva cuando un agente atiende por un bloque del flujo; <c>null</c> en las demás.
+/// <c>AutomationDelegationId</c> es esa delegación: Ai la necesita para abrir la sesión del bloque si un entrante llega antes que la fila
+/// <c>Delegated</c>.</summary>
 public sealed record ConversationRow(
     Guid Id,
     Guid TenantId,
@@ -38,7 +41,11 @@ public sealed record ConversationRow(
     DateTimeOffset? BlockedAt = null,
     Guid? BlockedByMemberId = null,
     bool Imported = false,
-    string? LastInboundWamid = null);
+    string? LastInboundWamid = null,
+    BotKind? AutomationBotKind = null,
+    Guid? AutomationAgentId = null,
+    Guid? DelegatedByChatbotId = null,
+    Guid? AutomationDelegationId = null);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter
@@ -61,7 +68,9 @@ public sealed record ConversationListFilter(
     IReadOnlyCollection<Guid>? TagCustomerIds = null,
     bool UnreadOnly = false,
     ConversationSort Sort = ConversationSort.Newest,
-    AutomationFilter? Automation = null);
+    AutomationFilter? Automation = null,
+    /// <summary>Spec qep-frontend 2026-11-17 (chip y filtro por conexión): <c>null</c> = todos los números.</summary>
+    Guid? ConnectionId = null);
 
 /// <summary>Spec 2026-10-21 §4.5: <c>automation=any|active|paused|none</c>; <c>null</c> = sin filtro, <c>Any</c> = cualquiera distinta de <c>None</c>.</summary>
 public enum AutomationFilter

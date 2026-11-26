@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Application\Modules.Store.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Domain\Modules.Store.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Api\Modules.Store.Api.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

@@ -36,13 +36,21 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
 
     public DbSet<Department> Departments => Set<Department>();
 
+    public DbSet<Country> Countries => Set<Country>();
+
     public DbSet<City> Cities => Set<City>();
+
+    public DbSet<Region> Regions => Set<Region>();
+
+    public DbSet<RegionCity> RegionCities => Set<RegionCity>();
 
     public DbSet<CitySynonym> CitySynonyms => Set<CitySynonym>();
 
     public DbSet<UnresolvedCity> UnresolvedCities => Set<UnresolvedCity>();
 
     public DbSet<UnresolvedCityOccurrence> UnresolvedCityOccurrences => Set<UnresolvedCityOccurrence>();
+
+    internal DbSet<SeedState> SeedStates => Set<SeedState>();
 
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -53,13 +61,33 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureCountry(modelBuilder);
         ConfigureDepartment(modelBuilder);
         ConfigureCity(modelBuilder);
+        ConfigureRegion(modelBuilder);
+        ConfigureRegionCity(modelBuilder);
+        ConfigureSeedState(modelBuilder);
         ConfigureCitySynonym(modelBuilder);
         ConfigureUnresolvedCity(modelBuilder);
         ConfigureUnresolvedCityOccurrence(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+    }
+
+    private static void ConfigureCountry(ModelBuilder modelBuilder)
+    {
+        var country = modelBuilder.Entity<Country>();
+        country.ToTable("countries", "geography");
+        country.HasKey(value => value.Code);
+        country.Property(value => value.Code)
+            .HasColumnName("code")
+            .HasMaxLength(2)
+            .ValueGeneratedNever();
+        country.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(80)
+            .IsRequired();
+        country.HasIndex(value => value.Name).IsUnique();
     }
 
     private static void ConfigureDepartment(ModelBuilder modelBuilder)
@@ -115,6 +143,75 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
             .WithMany()
             .HasForeignKey(value => value.DepartmentId)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    // Países fuera de Colombia (spec 2026-11-20): Colombia vive en departments/cities con DIVIPOLA y no se copia acá.
+    private static void ConfigureRegion(ModelBuilder modelBuilder)
+    {
+        var region = modelBuilder.Entity<Region>();
+        region.ToTable("regions", "geography");
+        region.HasKey(value => value.Id);
+        region.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new RegionId(value))
+            .ValueGeneratedNever();
+        region.Property(value => value.CountryCode)
+            .HasColumnName("country_code")
+            .HasMaxLength(2)
+            .IsRequired();
+        region.Property(value => value.Code)
+            .HasColumnName("code")
+            .HasMaxLength(10)
+            .IsRequired();
+        region.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(120)
+            .IsRequired();
+        region.HasIndex(value => new { value.CountryCode, value.Code }).IsUnique();
+    }
+
+    private static void ConfigureRegionCity(ModelBuilder modelBuilder)
+    {
+        var city = modelBuilder.Entity<RegionCity>();
+        city.ToTable("region_cities", "geography");
+        city.HasKey(value => value.Id);
+        city.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new RegionCityId(value))
+            .ValueGeneratedNever();
+        city.Property(value => value.RegionId)
+            .HasColumnName("region_id")
+            .HasConversion(id => id.Value, value => new RegionId(value));
+        city.Property(value => value.Code)
+            .HasColumnName("code")
+            .HasMaxLength(10)
+            .IsRequired();
+        city.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(120)
+            .IsRequired();
+        city.HasIndex(value => new { value.RegionId, value.Code }).IsUnique();
+        city.HasOne<Region>()
+            .WithMany()
+            .HasForeignKey(value => value.RegionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    // La huella del último archivo aplicado por cada importador de datos de referencia (RegionSeeder): con ella el
+    // arranque se salta un país que ya está al día sin leer sus tablas.
+    private static void ConfigureSeedState(ModelBuilder modelBuilder)
+    {
+        var state = modelBuilder.Entity<SeedState>();
+        state.ToTable("seed_state", "geography");
+        state.HasKey(value => value.Key);
+        state.Property(value => value.Key)
+            .HasColumnName("key")
+            .HasMaxLength(64)
+            .ValueGeneratedNever();
+        state.Property(value => value.ContentHash)
+            .HasColumnName("content_hash")
+            .HasMaxLength(64)
+            .IsRequired();
     }
 
     private static void ConfigureCitySynonym(ModelBuilder modelBuilder)

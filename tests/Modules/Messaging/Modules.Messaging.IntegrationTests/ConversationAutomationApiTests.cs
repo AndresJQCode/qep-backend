@@ -276,4 +276,272 @@ public sealed class ConversationAutomationApiTests
         Assert.True(sent.IsSuccessStatusCode);
         Assert.Equal(1L, await EventsAsync(f, "AutomationPaused"));
     }
+
+    // Spec 2026-11-03 D-6: una persona que toma, transfiere, resuelve, devuelve al asistente o responde sobre una conversación con asistente
+    // deja una señal ReleaseRun en la misma transacción; el worker de Automations cierra con ella la corrida viva.
+    private static Task<long> ReleaseRowsAsync(Fixture f) =>
+        CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.automation_inbox WHERE kind = 'ReleaseRun' AND conversation_id = @id", ("id", f.ConversationId));
+
+    private static async Task ClearAssistantAsync(Fixture f) =>
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_status='None', automation_started_at=NULL, automation_paused_at=NULL, automation_paused_by_member_id=NULL, automation_pause_reason=NULL, version=version+1 WHERE id = @id",
+            ("id", f.ConversationId));
+
+    [Fact]
+    public async Task ResolvingAnAssistedConversationQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var response = await ActAsync(f, f.Client, "resolve", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            """
+            SELECT count(*) FROM messaging.automation_inbox AS inbox
+             JOIN messaging.messages AS event ON event.direction = 3 AND event.details->>'type' = 'Resolved'
+             WHERE inbox.kind = 'ReleaseRun' AND inbox.created_at = event.occurred_at
+            """));
+    }
+
+    // Revisión final de agentes de IA, hallazgo 5: la señal de una conversación de un agente va a la cola de los agentes (bot_kind = 2), que
+    // es la que cierra su sesión; con el default la reclamaba el motor de chatbots. Resolver borra el bot, así que se lee antes del cambio.
+    private static async Task HandToAnAgentAsync(Fixture f) =>
+        Assert.Equal(1, await ExecuteAsync(
+            f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_chatbot_id = NULL, automation_bot_kind = 2, automation_agent_id = @agent, version = version + 1 WHERE id = @id",
+            ("id", f.ConversationId), ("agent", Guid.CreateVersion7())));
+
+    private static Task<string> ReleaseBotKindsAsync(Fixture f) =>
+        ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(bot_kind::text, ',') FROM messaging.automation_inbox WHERE kind = 'ReleaseRun' AND conversation_id = @id",
+            ("id", f.ConversationId));
+
+    [Theory]
+    [InlineData("take")]
+    [InlineData("resolve")]
+    public async Task TheSignalOfAnAgentConversationGoesToTheAgentQueue(string action)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await HandToAnAgentAsync(f);
+
+        var response = await ActAsync(f, f.Client, action, await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("2", await ReleaseBotKindsAsync(f));
+    }
+
+    [Fact]
+    public async Task TheSignalOfAChatbotConversationStaysInTheChatbotQueue()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        Assert.Equal("1", await ReleaseBotKindsAsync(f));
+    }
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots): la conversación como la deja el chatbot al delegar en un agente (Mensajería, §5.3).</summary>
+    private static async Task<Guid> DelegateToAnAgentAsync(Fixture f)
+    {
+        var delegationId = Guid.CreateVersion7();
+        var chatbotId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT automation_chatbot_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId));
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.bot_delegations (id, tenant_id, conversation_id, connection_id, chatbot_id, run_id, node_id, agent_id, brief, status, started_at)
+            SELECT @d, tenant_id, id, connection_id, @chatbot, gen_random_uuid(), 'ai-agent-1', gen_random_uuid(), '{"objective":"x"}', 'Live', now()
+              FROM messaging.conversations WHERE id = @id
+            """,
+            ("d", delegationId), ("chatbot", chatbotId), ("id", f.ConversationId));
+        Assert.Equal(1, await ExecuteAsync(
+            f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_chatbot_id = NULL, automation_bot_kind = 2, automation_agent_id = @agent, automation_delegation_id = @d, version = version + 1 WHERE id = @id",
+            ("id", f.ConversationId), ("agent", Guid.CreateVersion7()), ("d", delegationId)));
+        return delegationId;
+    }
+
+    // Spec 2026-11-17 §6.4: con una delegación viva la toma avisa a los dos bots (el agente cierra la sesión, el chatbot la corrida que espera en
+    // el bloque), limpia la delegación de la conversación (o CK_conversations_delegation fallaría) y la interrumpe en el mismo guardado. Pausar
+    // a mano no suelta la corrida sin delegación (D-6a); con ella, sí.
+    [Theory]
+    [InlineData("take")]
+    [InlineData("resolve")]
+    [InlineData("automation/pause")]
+    public async Task TakingADelegatedConversationSignalsTheAgentAndTheChatbot(string action)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var delegationId = await DelegateToAnAgentAsync(f);
+
+        var response = await ActAsync(f, f.Client, action, await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("1,2", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(bot_kind::text, ',' ORDER BY bot_kind) FROM messaging.automation_inbox WHERE kind = 'ReleaseRun' AND conversation_id = @id",
+            ("id", f.ConversationId)));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.conversations WHERE automation_delegation_id IS NOT NULL"));
+        Assert.Equal("Interrupted", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status FROM messaging.bot_delegations WHERE id = @d", ("d", delegationId)));
+    }
+
+    // Spec 2026-11-17 §7: el chip dice «Agente IA · desde el chatbot X». Un chatbot que ya no existe sale con el nombre de borrado.
+    [Fact]
+    public async Task ADelegatedConversationShowsTheChatbotThatDelegated()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var chatbotId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT automation_chatbot_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId));
+        await DelegateToAnAgentAsync(f);
+
+        var response = await SendAsync(f.Client, HttpMethod.Get, ConversationUrl(f.Tenant.TenantId, f.ConversationId));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var bot = (await ReadAsync(response)).GetProperty("automationBot");
+        Assert.Equal("agent", bot.GetProperty("kind").GetString());
+        Assert.Equal(chatbotId, bot.GetProperty("delegatedBy").GetProperty("chatbotId").GetGuid());
+        Assert.Equal("Chatbot", bot.GetProperty("delegatedBy").GetProperty("name").GetString());
+
+        // Sin delegación (un agente que atiende la conexión por su cuenta) no hay «desde».
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET automation_delegation_id = NULL WHERE id = @id", ("id", f.ConversationId));
+        var plain = await SendAsync(f.Client, HttpMethod.Get, ConversationUrl(f.Tenant.TenantId, f.ConversationId));
+        Assert.Equal(JsonValueKind.Null, (await ReadAsync(plain)).GetProperty("automationBot").GetProperty("delegatedBy").ValueKind);
+    }
+
+    [Fact]
+    public async Task TakingQueuesTheSignalAndTakingAgainDoesNot()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+        var again = await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task TransferringQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var response = await ActAsync(f, f.Client, "transfer", await VersionAsync(f), new { memberId = f.Beatriz });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task ResumingQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        var response = await ActAsync(f, f.Client, "automation/resume", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2L, await ReleaseRowsAsync(f));
+    }
+
+    // D-6a: pausar a mano no suelta la corrida; la pausa ya la deja esperando y el motor no la toca.
+    [Fact]
+    public async Task PausingDoesNotQueueTheReleaseSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
+
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task TakingAManuallyPausedConversationQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task ActionsWithoutAssistantQueueNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ClearAssistantAsync(f);
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+        await ActAsync(f, f.Client, "release", await VersionAsync(f));
+        await ActAsync(f, f.Client, "transfer", await VersionAsync(f), new { memberId = f.Beatriz });
+        var resolved = await ActAsync(f, f.Client, "resolve", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, resolved.StatusCode);
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task AutoAssigningQueuesTheSignalInItsTransaction()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, MetaSendOk);
+
+        var sent = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.True(sent.IsSuccessStatusCode, await sent.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    // Review Focus 4: el asistente pausado a mano sigue siendo un asistente; responder la autoasigna y debe soltar la corrida.
+    [Fact]
+    public async Task AutoAssigningAManuallyPausedConversationQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, MetaSendOk);
+        await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
+
+        var sent = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.True(sent.IsSuccessStatusCode, await sent.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task AutoAssigningWithoutAssistantQueuesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, MetaSendOk);
+        await ClearAssistantAsync(f);
+
+        var sent = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.True(sent.IsSuccessStatusCode, await sent.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+    }
 }

@@ -46,7 +46,13 @@ public static class TenancyInfrastructureExtensions
         services.AddScoped<IMembershipActivation, MembershipActivationService>();
         services.AddScoped<IInvitationService, InvitationService>();
         services.AddScoped<ITenantSlugAvailability, TenantSlugAvailability>();
+        services.AddScoped<ITenantSlugDirectory, TenantSlugDirectory>();
         services.AddScoped<ITenantRegistration, TenantRegistrationService>();
+        // Spec 2026-11-17 (mayorista): prender módulos al vincular un tenant y listar los que el usuario administra.
+        services.AddScoped<ITenantModuleGrants, TenantModuleGrantService>();
+        services.AddScoped<ITenantOwnership, TenantOwnershipQuery>();
+        // Spec 2026-11-19 (onboarding por link): el slug del tenant del distribuidor lo genera el servidor.
+        services.AddScoped<ITenantSlugSuggestions, TenantSlugSuggestions>();
         // Spec 2026-10-07: ValidateOnStart, como Notifications, para que un valor que no es
         // booleano tumbe el arranque en vez del primer signup.
         services.AddOptions<EntitlementsOptions>()

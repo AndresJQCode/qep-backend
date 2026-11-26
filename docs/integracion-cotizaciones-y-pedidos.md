@@ -23,6 +23,8 @@ diferencia con la respuesta real de la API, **gana la API** y este documento se 
 Quotation.status: Draft → Sent → Converted
                               ↘ Voided (desde Draft o Sent)
                               ↘ Expired (job automático, sólo desde Sent)
+                  Draft → Sent por dos caminos: `/send` (QEP la manda por WhatsApp; historial `Sent`)
+                                                o `/mark-sent` (el asesor ya la mandó por fuera; historial `MarkedSent`)
 
 Order.status:        Pending → Approved → Invoiced
                      Invoiced → Approved (revertir la facturación; no anula nada fuera de QEP)
@@ -70,6 +72,7 @@ Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización
 | `PUT` | `/quotations/{id}/items/{itemId}` | `UpdateQuotationItemRequest` | Re-resuelve el descuento para la nueva cantidad |
 | `DELETE` | `/quotations/{id}/items/{itemId}` | — | |
 | `POST` | `/quotations/{id}/send` | `SendQuotationRequest` | El PDF ya se subió a Storage antes de este llamado (ver abajo) |
+| `POST` | `/quotations/{id}/mark-sent` | — (sin body) | 200 `QuotationResponse` en `Sent`. Marca como enviada una cotización que el asesor ya le hizo llegar al cliente por fuera de QEP (su propio WhatsApp, un correo). Genera y guarda el PDF, pero no lo publica ni manda nada. Deja en el historial `eventType: "MarkedSent"` (no `Sent`) y publica el mismo evento de envío para el embudo. Exige `quotations.quotation.manage`. 422 `quotation.quotation.not_draft`, `quotation.quotation.valid_until_required`, `quotation.billing.account_required`, `quotation.billing.identification_required`, `quotation.billing.person_type_required` y los del cliente (`quotation.quotation.client_not_found`, `client_incomplete`, `client_cuc_missing`, `client_inactive`) |
 | `POST` | `/quotations/{id}/void` | — (sin body) | |
 | `GET` | `/quotations/{id}/order` | — | 200 `OrderDetailResponse`, el mismo de `GET /orders/{orderId}`. 404 si no se convirtió todavía |
 | `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | 201 `OrderDetailResponse` (el mismo de `GET /orders/{orderId}`: la pantalla dibuja el resumen sin pedir nada después) + `Location`. Copia la cotización a un pedido en `Pending` (`source: "Quotation"`) y la deja en `Converted`, en una sola operación. Las notas del pedido son un solo campo: `notes` las reemplaza tal cual; `null` u omitido hereda las de la cotización; `""` (o en blanco) deja el pedido sin notas |
@@ -89,7 +92,7 @@ Y los del pedido, siempre por su `orderId` (el `id` que devuelve la conversión,
 | `POST` | `/orders/{orderId}/uninvoice` | — (sin body) | 200 `OrderResponse` de vuelta en `Approved`, con `invoicedAt`/`invoicedBy` en `null`. Sólo desde `Invoiced`; mismo permiso que facturar. No anula nada fuera de QEP |
 | `POST` | `/orders/{orderId}/proofs` | `AddOrderPaymentProofsRequest` | 200 `OrderResponse`. Suma comprobantes y corrige monto o archivo de los ya cargados. Sólo con el pedido en `Pending` |
 | `DELETE` | `/orders/{orderId}/proofs/{proofId}` | — | 200 `OrderResponse`. Quita un comprobante y recalcula `paymentStatus`. Sólo con el pedido en `Pending` |
-| `POST` | `/orders/{orderId}/send` | `SendOrderRequest` **opcional**: `{ "recipient": "Customer" \| "Billing" }`; sin cuerpo o sin `recipient`, `Customer` | 200 `OrderDetailResponse`, con la entrada nueva en `history` (`eventType: "Sent"`, `details`: «Enviado por WhatsApp al cliente.» o «… a facturación.»). Manda el PDF del pedido por WhatsApp: al teléfono del cliente o al de la facturación propia del pedido. En `Pending`, `Approved` o `Invoiced`; no cambia el pedido (ni estado ni `version`). Exige `quotations.order.manage`. No exige cliente completo: basta que exista y tenga teléfono |
+| `POST` | `/orders/{orderId}/send` | `SendOrderRequest` **opcional**: `{ "recipient": "Customer" \| "Billing", "connectionId": uuid? }`; sin cuerpo o sin `recipient`, `Customer`; `connectionId` elige la conexión cuando hay varias disponibles para pedidos (spec 2026-11-09 D8), con las mismas reglas que la cotización | 200 `OrderDetailResponse`, con la entrada nueva en `history` (`eventType: "Sent"`, `details`: «Enviado por WhatsApp al cliente.» o «… a facturación.»). Manda el PDF del pedido por WhatsApp: al teléfono del cliente o al de la facturación propia del pedido. En `Pending`, `Approved` o `Invoiced`; no cambia el pedido (ni estado ni `version`). Exige `quotations.order.manage`. No exige cliente completo: basta que exista y tenga teléfono |
 | `POST` | `/orders/{orderId}/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas al pedido y recalcula `paymentStatus` contra el total nuevo |
 | `PUT` | `/orders/{orderId}` | `SaveOrderEditsRequest` + header `If-Match: "<order.version>"` | 200 `OrderDetailResponse` + `ETag`. Guarda de una vez productos (lista completa), comprobantes (`add`/`update`/`removeIds`) y notas; `paymentStatus` lo deriva el servidor. Sin cambios reales responde 200 con la misma `version`. Sin `If-Match` → 428; versión vieja → 412 |
 | `POST` | `/orders/{orderId}/preview` | `SaveOrderEditsRequest` (sin `fileId` en `add`) | 200 `OrderDetailResponse` recalculado **sin persistir**. `order.version` es la guardada; los comprobantes nuevos vuelven con `id`/`fileId` sintéticos que no se deben usar |
@@ -283,7 +286,7 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 |---|---|---|
 | `quotation.quotation.client_not_found` / `client_incomplete` / `client_inactive` / `client_cuc_missing` | 422 | Cliente inválido al crear (también en `/quotations/preview`) o al convertir |
 | `quotation.quotation.not_editable` | 422 | La cotización no está en `Draft`/`Sent` |
-| `quotation.quotation.not_draft` | 422 | `send` sobre algo que no es `Draft` |
+| `quotation.quotation.not_draft` | 422 | `send` o `mark-sent` sobre algo que no es `Draft` |
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
@@ -307,10 +310,12 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `order.order.recipient_invalid` | 422 | `POST /orders/{orderId}/send` con un `recipient` que no es `Customer` ni `Billing` |
 | `order.order.billing_phone_missing` | 422 | `POST /orders/{orderId}/send` con `recipient: "Billing"` y el pedido factura a los datos del cliente (o su parte de facturación no tiene teléfono). No ofrezcas «facturación» sin una parte de facturación propia |
 | `order.whatsapp.recipient_missing` | 422 | `POST /orders/{orderId}/send`: el destinatario elegido no tiene un teléfono utilizable. Completa el teléfono del cliente o elige otro destinatario |
-| `order.whatsapp.no_channel` | 422 | `POST /orders/{orderId}/send` en un tenant sin conexión de Zenvia disponible (activa, habilitada por el operador y con plantilla). Se arregla en Integraciones, no en el pedido. Llega antes de generar el PDF |
-| `order.whatsapp.channel_required` | 422 | `POST /orders/{orderId}/send` con más de una conexión de Zenvia disponible: elegir el canal todavía no existe (plan 3 del spec 2026-10-21). Llega antes de generar el PDF |
-| `order.whatsapp.not_configured` | 422 | `POST /orders/{orderId}/send` con la conexión de Zenvia del tenant sin plantilla de pedido (`orderTemplateId`). Se completa en Integraciones; llega antes de generar el PDF |
-| `order.whatsapp.send_failed` | 422 | `POST /orders/{orderId}/send`: Zenvia rechazó el mensaje. Se puede reintentar |
+| `order.whatsapp.no_channel` | 422 | `POST /orders/{orderId}/send` en un tenant sin conexión disponible para pedidos (spec 2026-11-09 D6): Meta con plantilla `qep_pedido` aprobada, o Zenvia activa, habilitada por el operador y con `templateId` **y** `orderTemplateId`. Se arregla en Integraciones, no en el pedido. Llega antes de generar el PDF |
+| `order.whatsapp.channel_required` | 422 | `POST /orders/{orderId}/send` con más de una conexión disponible para pedidos y sin elección guardada ni `connectionId`: hay que mandar `connectionId` (la lista sale de `GET /quotations/whatsapp-channels?document=order`). Llega antes de generar el PDF |
+| `order.whatsapp.channel_already_set` | 422 | `POST /orders/{orderId}/send` con un `connectionId` distinto de la elección guardada del tenant (el mismo id se acepta). Se cambia desde Configuración |
+| `order.whatsapp.channel_unavailable` | 422 | `POST /orders/{orderId}/send` con un `connectionId` que no está entre las conexiones disponibles para pedidos |
+| `order.whatsapp.not_configured` | 422 | Chequeo defensivo del sender de Zenvia (la conexión llegó sin `orderTemplateId`); la selección ya no lo produce, esa conexión simplemente no está disponible para pedidos |
+| `order.whatsapp.send_failed` | 422 | `POST /orders/{orderId}/send`: Zenvia o Meta rechazó el mensaje (`template_not_approved` si la plantilla de pedido de Meta dejó de estar aprobada). Se puede reintentar |
 | `order.send.failed` | 422 | `POST /orders/{orderId}/send` falló por algo que no es de dominio (PDF, publicación, red, base); el mensaje nombra el paso. Se puede reintentar; si el paso es `Persistence`, el WhatsApp ya salió |
 | `order.order.cancellation_reason_required` | 422 | `POST /orders/{orderId}/cancel` con el campo `reason` ausente, `null`, vacío o en blanco. Código de dominio, sin `errors`. Un request sin body no llega hasta acá: el binding lo rechaza con `400` |
 | `order.order.cancellation_reason_too_long` | 422 | `POST /orders/{orderId}/cancel` con `reason` de más de 500 caracteres ya recortado. Código de dominio, sin `errors` |

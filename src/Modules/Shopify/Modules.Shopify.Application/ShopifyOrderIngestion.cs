@@ -25,6 +25,7 @@ public sealed class ShopifyOrderIngestion(
     IShopifyOrderMirrorRepository mirrors,
     IShopifyOrderImporter importer,
     IShopifyOrderChangeReaction reaction,
+    IShopifyOrderEditDetector editDetector,
     IShopifyUnitOfWork unitOfWork,
     IClock clock)
 {
@@ -32,17 +33,48 @@ public sealed class ShopifyOrderIngestion(
 
     private const string ConcurrencyConflict = "concurrency.conflict";
 
+    // Los nombres en el payload (camelCase) de la dirección de envío y su zip.
+    private const string ShippingAddressKey = "shippingAddress";
+
+    private const string ZipKey = "zip";
+
     // §5.4: el payload del espejo es el snapshot normalizado, en camelCase como los DTO de la API.
     private static readonly JsonSerializerOptions PayloadJson = new(JsonSerializerDefaults.Web);
 
-    /// <summary>El payload del espejo de un snapshot (§5.4).</summary>
-    public static string WritePayload(ShopifyOrderSnapshot snapshot) => JsonSerializer.Serialize(snapshot, PayloadJson);
+    /// <summary>El payload del espejo de un snapshot (§5.4). Un zip desconocido (<see cref="ShopifyAddress.ZipUnrecorded"/>) se
+    /// escribe como estaba, sin la clave: reescribir un payload viejo no lo convierte en uno que dice que no tenía zip.</summary>
+    public static string WritePayload(ShopifyOrderSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.ShippingAddress is not { ZipUnrecorded: true })
+        {
+            return JsonSerializer.Serialize(snapshot, PayloadJson);
+        }
+
+        var node = JsonSerializer.SerializeToNode(snapshot, PayloadJson)!;
+        node[ShippingAddressKey]!.AsObject().Remove(ZipKey);
+        return node.ToJsonString(PayloadJson);
+    }
 
     /// <summary>El snapshot que guardó <see cref="WritePayload"/>: con él la conciliación reintenta una fila en espera (§6.4) por
-    /// el mismo camino que un pedido recién traído.</summary>
-    public static ShopifyOrderSnapshot ReadPayload(string payload) =>
-        JsonSerializer.Deserialize<ShopifyOrderSnapshot>(payload, PayloadJson)
-        ?? throw new ShopifyPayloadException("payload", "The mirror payload is empty.");
+    /// el mismo camino que un pedido recién traído. Una dirección de envío sin la clave <c>zip</c> sale con
+    /// <see cref="ShopifyAddress.ZipUnrecorded"/>.</summary>
+    public static ShopifyOrderSnapshot ReadPayload(string payload)
+    {
+        var snapshot = JsonSerializer.Deserialize<ShopifyOrderSnapshot>(payload, PayloadJson)
+            ?? throw new ShopifyPayloadException("payload", "The mirror payload is empty.");
+        return snapshot.ShippingAddress is { Zip: null } address && LacksShippingZipKey(payload)
+            ? snapshot with { ShippingAddress = address with { ZipUnrecorded = true } }
+            : snapshot;
+    }
+
+    private static bool LacksShippingZipKey(string payload)
+    {
+        using var document = JsonDocument.Parse(payload);
+        return document.RootElement.TryGetProperty(ShippingAddressKey, out var address)
+            && address.ValueKind == JsonValueKind.Object
+            && !address.TryGetProperty(ZipKey, out _);
+    }
 
     public async Task<ShopifyOrderMirror> ApplyAsync(
         ShopifyConnectionRef connection, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
@@ -90,6 +122,7 @@ public sealed class ShopifyOrderIngestion(
 
         var row = await mirrors.FindAsync(connection.TenantId, connection.ConnectionId, snapshot.OrderId, cancellationToken);
         ShopifyMirrorState? previous = null;
+        string? previousPayload = null;
         bool applied;
         if (row is null)
         {
@@ -102,18 +135,30 @@ public sealed class ShopifyOrderIngestion(
         {
             // ApplySnapshot pisa FinancialStatus y CancelledAt; lo que §6.3 compara se lee antes.
             previous = ShopifyMirrorState.Of(row);
+            // Spec 2026-11-14 (plan D6): la base de una fila importada antes de la sincronización es el payload que tenía.
+            previousPayload = row.Payload;
             var existing = row;
             applied = Guarded(() => existing.ApplySnapshot(payload, snapshot.UpdatedAt, header));
         }
 
-        // La reacción va antes del guardado, en la misma unidad de trabajo. Si falla no se guarda el snapshot, la
-        // entrega vuelve con su lease y el reintento ve el mismo estado anterior: el cambio no se pierde.
+        // La detección de ediciones (spec 2026-11-14 §3) y la reacción de §6.3 van antes del guardado, en la misma unidad de
+        // trabajo y con el mismo cambio. Si fallan no se guarda el snapshot, la entrega vuelve con su lease y el reintento ve el
+        // mismo estado anterior: el cambio no se pierde. El detector no escribe en el pedido de QEP: eso va después del guardado.
         if (applied && previous is not null)
         {
-            await reaction.ReactAsync(new ShopifyOrderChange(connection, store, row, previous, snapshot), cancellationToken);
+            var change = new ShopifyOrderChange(connection, store, row, previous, snapshot);
+            await editDetector.DetectAsync(change, previousPayload!, cancellationToken);
+            await reaction.ReactAsync(change, cancellationToken);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Con el cambio ya guardado, la tienda automática lo aplica. Corre también cuando el snapshot no es nuevo: si el guardado de
+        // un intento anterior cayó después de que Quotations confirmó el pedido, el reintento termina ese cambio (review I-1).
+        if (previous is not null && await editDetector.ApplyPendingAsync(store, row, cancellationToken))
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         if (applied && connection.IsOperational && row.ImportState == ShopifyImportState.Waiting)
         {

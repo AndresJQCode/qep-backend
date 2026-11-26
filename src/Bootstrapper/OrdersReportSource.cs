@@ -69,7 +69,7 @@ internal sealed class OrdersReportSource(
                    r.freight_tax_amount AS "FreightTaxAmount", r.total AS "Total", r.is_void AS "IsVoid",
                    r.snapshot_client_name AS "SnapshotClientName"
             FROM r
-            ORDER BY r.occurred_at DESC, r.number, r.id
+            ORDER BY r.occurred_on DESC, r.occurred_at DESC, r.number, r.id
             LIMIT @page_limit OFFSET @page_offset
             """,
             [
@@ -194,7 +194,8 @@ internal sealed class OrdersReportSource(
 
         // La serie mensual va en el mes del tenant (spec 2026-09-17, punto 5): el pedido o la venta
         // de las 20:00 del último día en Bogotá es de ese mes, aunque en UTC ya sea el siguiente. Se
-        // agrupa en SQL con `AT TIME ZONE` y el ID IANA del tenant, nunca en el huso de la sesión de
+        // agrupa sobre occurred_on (spec 2026-11-16 §5): la fecha del pedido, o el día de la venta POS
+        // calculado con `AT TIME ZONE` y el ID IANA del tenant, nunca en el huso de la sesión de
         // PostgreSQL, que haría depender el resultado de la conexión.
         //
         // Solo vuelven los meses con filas: rellenar los huecos con cero depende del rango que el eje
@@ -202,14 +203,14 @@ internal sealed class OrdersReportSource(
         var monthRows = await QueryAsync<MonthRow>(
             criteria,
             """
-            SELECT extract(year FROM r.occurred_at AT TIME ZONE @time_zone)::int AS "Year",
-                   extract(month FROM r.occurred_at AT TIME ZONE @time_zone)::int AS "Month",
+            SELECT extract(year FROM r.occurred_on)::int AS "Year",
+                   extract(month FROM r.occurred_on)::int AS "Month",
                    r.currency AS "Currency", count(*)::int AS "Count", sum(r.total) AS "Total"
             FROM r
             WHERE NOT r.is_void
             GROUP BY 1, 2, 3
             """,
-            [new NpgsqlParameter("time_zone", NpgsqlDbType.Text) { Value = criteria.Period.TimeZone.Id }],
+            [],
             cancellationToken);
 
         // Se pliega en memoria: un punto por mes, con sus totales por moneda.
@@ -402,22 +403,37 @@ internal sealed class OrdersReportSource(
             new("sale_voided", NpgsqlDbType.Text) { Value = PosSaleStatus.Voided.ToString() },
             new("sale_source", NpgsqlDbType.Text) { Value = OrderSourceFilter.Pos.ToString() },
             new("sale_payment_status", NpgsqlDbType.Text) { Value = OrderPaymentStatus.FullPaymentReceived.ToString() },
+            // La zona IANA del tenant: el día local de una venta POS (occurred_on) y la serie mensual. Va siempre porque la
+            // rama de ventas la usa en el SELECT, no sólo en un filtro.
+            new("time_zone", NpgsqlDbType.Text) { Value = criteria.Period.TimeZone.Id },
         };
         var orderFilters = new StringBuilder();
         var saleFilters = new StringBuilder();
 
-        // Instantes ya cortados en el día del tenant (spec 2026-09-17, punto 4): acá no se decide huso.
+        // Spec 2026-11-16 §5: el pedido corta por su fecha (un día del tenant, inclusiva en las dos puntas) y la venta POS por
+        // su instante, cortado en el día del tenant (spec 2026-09-17, punto 4). Para la venta es lo mismo que comparar su
+        // occurred_on con los días, pero sobre created_at, que tiene índice.
+        if (criteria.Period.From is { } from)
+        {
+            parameters.Add(new NpgsqlParameter("period_from", NpgsqlDbType.Date) { Value = from });
+            orderFilters.Append(" AND o.order_date >= @period_from");
+        }
+
+        if (criteria.Period.To is { } to)
+        {
+            parameters.Add(new NpgsqlParameter("period_to", NpgsqlDbType.Date) { Value = to });
+            orderFilters.Append(" AND o.order_date <= @period_to");
+        }
+
         if (criteria.Period.Start is { } start)
         {
             parameters.Add(new NpgsqlParameter("period_start", NpgsqlDbType.TimestampTz) { Value = start.UtcDateTime });
-            orderFilters.Append(" AND o.converted_at >= @period_start");
             saleFilters.Append(" AND s.created_at >= @period_start");
         }
 
         if (criteria.Period.EndExclusive is { } end)
         {
             parameters.Add(new NpgsqlParameter("period_end", NpgsqlDbType.TimestampTz) { Value = end.UtcDateTime });
-            orderFilters.Append(" AND o.converted_at < @period_end");
             saleFilters.Append(" AND s.created_at < @period_end");
         }
 
@@ -474,7 +490,8 @@ internal sealed class OrdersReportSource(
     // por posición. Los textos van a ::text para que la unión no dependa del largo de cada varchar.
     private const string OrdersBranch = """
         SELECT o.id AS id, o.order_number::text AS number, o.source::text AS source,
-               o.quotation_id AS quotation_id, o.converted_at AS occurred_at, o.advisor_id AS advisor_id,
+               o.quotation_id AS quotation_id, o.converted_at AS occurred_at, o.order_date AS occurred_on,
+               o.advisor_id AS advisor_id,
                o.client_id AS client_id, o.status::text AS status, o.payment_status::text AS payment_status,
                o.currency::text AS currency, o.subtotal AS subtotal, o.tax_amount AS tax_amount,
                o.freight_subtotal AS freight_subtotal, o.freight_tax_amount AS freight_tax_amount,
@@ -485,7 +502,8 @@ internal sealed class OrdersReportSource(
 
     private const string SalesBranch = """
         SELECT s.id AS id, s.sale_number::text AS number, @sale_source::text AS source,
-               NULL::uuid AS quotation_id, s.created_at AS occurred_at, s.cashier_id AS advisor_id,
+               NULL::uuid AS quotation_id, s.created_at AS occurred_at,
+               (s.created_at AT TIME ZONE @time_zone)::date AS occurred_on, s.cashier_id AS advisor_id,
                s.customer_id AS client_id, s.status::text AS status, @sale_payment_status::text AS payment_status,
                s.currency::text AS currency, s.subtotal AS subtotal, s.tax_amount AS tax_amount,
                0::numeric(14, 2) AS freight_subtotal, 0::numeric(14, 2) AS freight_tax_amount,
@@ -496,7 +514,8 @@ internal sealed class OrdersReportSource(
 
     private const string EmptyBranch = """
         SELECT NULL::uuid AS id, NULL::text AS number, NULL::text AS source, NULL::uuid AS quotation_id,
-               NULL::timestamptz AS occurred_at, NULL::uuid AS advisor_id, NULL::uuid AS client_id,
+               NULL::timestamptz AS occurred_at, NULL::date AS occurred_on, NULL::uuid AS advisor_id,
+               NULL::uuid AS client_id,
                NULL::text AS status, NULL::text AS payment_status, NULL::text AS currency,
                NULL::numeric(14, 2) AS subtotal, NULL::numeric(14, 2) AS tax_amount,
                NULL::numeric(14, 2) AS freight_subtotal, NULL::numeric(14, 2) AS freight_tax_amount,
@@ -578,20 +597,23 @@ internal sealed class OrdersReportSource(
         OrderPaymentStatusFilter.FullPaymentReceived => OrderPaymentStatus.FullPaymentReceived,
         OrderPaymentStatusFilter.PartialPaymentReceived => OrderPaymentStatus.PartialPaymentReceived,
         OrderPaymentStatusFilter.PaymentPending => OrderPaymentStatus.PaymentPending,
+        OrderPaymentStatusFilter.PendingVerification => OrderPaymentStatus.PendingVerification,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown payment status.")
     };
 
     // Mismo criterio que MapPaymentStatus. Pos no tiene equivalente en OrderSource: es una venta.
-    private static OrderSource? MapSource(OrderSourceFilter value) => value switch
+    internal static OrderSource? MapSource(OrderSourceFilter value) => value switch
     {
         OrderSourceFilter.Quotation => OrderSource.Quotation,
         OrderSourceFilter.Manual => OrderSource.Manual,
         OrderSourceFilter.Shopify => OrderSource.Shopify,
         OrderSourceFilter.Pos => null,
+        OrderSourceFilter.Store => OrderSource.Store,
+        OrderSourceFilter.Wholesale => OrderSource.Wholesale,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown order source.")
     };
 
-    // Las cuatro entradas siempre, en el orden del enum, con cero donde no hubo nada.
+    // Todas las entradas del enum siempre, en el orden del enum, con cero donde no hubo nada.
     private static ReportSourceSliceDto[] CompleteBySource(
         IReadOnlyList<(string Source, string Currency, int Count, decimal Total)> rows) =>
         Enum.GetValues<OrderSourceFilter>()

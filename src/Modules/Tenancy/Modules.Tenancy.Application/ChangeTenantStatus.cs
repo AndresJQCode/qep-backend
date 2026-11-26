@@ -37,7 +37,8 @@ public sealed class ChangeTenantStatusHandler(
     IOperatorTenant operatorTenant,
     IOperatorTenantReader reader,
     IClock clock,
-    IValidator<ChangeTenantStatusCommand> validator)
+    IValidator<ChangeTenantStatusCommand> validator,
+    ITenantAccessVersion tenantAccessVersion)
     : ICommandHandler<ChangeTenantStatusCommand, OperatorTenantDetailDto>
 {
     public async Task<OperatorTenantDetailDto> HandleAsync(ChangeTenantStatusCommand command, CancellationToken cancellationToken)
@@ -88,7 +89,11 @@ public sealed class ChangeTenantStatusHandler(
             now);
         // Version es token de concurrencia: un choque entre la lectura y el SaveChanges sale 412 por
         // TenancyUnitOfWork (concurrency.conflict).
+        // Spec 2026-11-13, D-5: un tenant que deja de estar Active niega todo; la caché de permisos se invalida alrededor del
+        // guardado.
+        await tenantAccessVersion.BumpAsync(tenant.Id.Value, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await tenantAccessVersion.BumpAsync(tenant.Id.Value, cancellationToken);
 
         return await OperatorTenantDetails.LoadAsync(reader, operatorTenant, tenant.Id, cancellationToken);
     }

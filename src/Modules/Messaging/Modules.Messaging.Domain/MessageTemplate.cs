@@ -14,6 +14,32 @@ public enum MessageTemplateKind
 
     /// <summary>Cobros recurrentes §5: la plantilla del aviso de cobros vencidos que QEP aprovisiona por conexión.</summary>
     BillingOverdue,
+
+    /// <summary>Spec 2026-11-09 D1: la plantilla del pedido que QEP aprovisiona por conexión, hermana de <see cref="Quotation"/>.</summary>
+    Order,
+
+    /// <summary>Soporte fase 2: la plantilla «Aviso de respuesta» que QEP aprovisiona por conexión (se guarda por nombre: va al final).</summary>
+    SupportReply,
+
+    /// <summary>Soporte fase 4b (H10): la plantilla «Respuesta formal», con el PDF como encabezado de documento. Es un tipo aparte de
+    /// <see cref="SupportReply"/> porque Meta no admite un encabezado opcional.</summary>
+    SupportFormalReply,
+
+    /// <summary>Soporte fase 4b (H16): la encuesta de satisfacción, con tres botones de respuesta rápida fijos.</summary>
+    SupportSurvey,
+
+    /// <summary>Mayorista: el aviso por WhatsApp de una invitación de distribuidor, sólo cuerpo (se guarda por nombre: va al final).</summary>
+    WholesaleInvitationNotice,
+
+    /// <summary>Spec 2026-11-21: la plantilla de la factura de Siigo, hermana de <see cref="Order"/> con el PDF como encabezado de documento
+    /// (se guarda por nombre: va al final).</summary>
+    Invoice,
+
+    /// <summary>Agenda: el recordatorio de una cita por WhatsApp, sólo cuerpo (se guarda por nombre: va al final).</summary>
+    AppointmentReminder,
+    /// <summary>Support task notices: the WhatsApp notice that a ticket or internal task was assigned to a member, body only (stored by name:
+    /// it goes at the end).</summary>
+    TaskNotice,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -86,11 +112,67 @@ public static partial class MessageTemplateName
     /// <summary>Cobros recurrentes §5: <c>qep_cobro_recordatorio</c>, <c>qep_cobro_vencido</c> y sus versiones (<c>_v2</c>…).</summary>
     public const string BillingPrefix = "qep_cobro_";
 
+    /// <summary>Spec 2026-11-09 D1: <c>qep_pedido</c> y sus versiones (<c>qep_pedido_v2</c>…).</summary>
+    public const string OrderName = "qep_pedido";
+
+    public const string OrderPrefix = "qep_pedido_";
+
+    /// <summary>Soporte fase 2: <c>qep_soporte_respuesta</c> y sus versiones (<c>qep_soporte_respuesta_v2</c>…).</summary>
+    public const string SupportReplyName = "qep_soporte_respuesta";
+
+    public const string SupportReplyPrefix = "qep_soporte_respuesta_";
+
+    /// <summary>Soporte fase 4b: <c>qep_soporte_formal</c> y sus versiones (<c>qep_soporte_formal_v2</c>…).</summary>
+    public const string SupportFormalReplyName = "qep_soporte_formal";
+
+    public const string SupportFormalReplyPrefix = "qep_soporte_formal_";
+
+    /// <summary>Soporte fase 4b: <c>qep_soporte_encuesta</c> y sus versiones (<c>qep_soporte_encuesta_v2</c>…).</summary>
+    public const string SupportSurveyName = "qep_soporte_encuesta";
+
+    public const string SupportSurveyPrefix = "qep_soporte_encuesta_";
+
+    /// <summary>Mayorista: <c>qep_mayorista_invitacion</c> y sus versiones (<c>qep_mayorista_invitacion_v2</c>…).</summary>
+    public const string WholesaleInvitationNoticeName = "qep_mayorista_invitacion";
+
+    public const string WholesaleInvitationNoticePrefix = "qep_mayorista_invitacion_";
+
+    /// <summary>Spec 2026-11-21: <c>qep_factura</c> y sus versiones (<c>qep_factura_v2</c>…).</summary>
+    public const string InvoiceName = "qep_factura";
+
+    public const string InvoicePrefix = "qep_factura_";
+
+    /// <summary>Support task notices: <c>qep_tarea_asignada</c> and its versions (<c>qep_tarea_asignada_v2</c>…).</summary>
+    public const string TaskNoticeName = "qep_tarea_asignada";
+
+    public const string TaskNoticePrefix = "qep_tarea_asignada_";
+
+    /// <summary>Agenda: <c>qep_agenda_recordatorio</c> y sus versiones (<c>qep_agenda_recordatorio_v2</c>…).</summary>
+    public const string AppointmentReminderName = "qep_agenda_recordatorio";
+
+    public const string AppointmentReminderPrefix = "qep_agenda_recordatorio_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
             || name.StartsWith(QuotationPrefix, StringComparison.Ordinal)
-            || name.StartsWith(BillingPrefix, StringComparison.Ordinal));
+            || name.StartsWith(BillingPrefix, StringComparison.Ordinal)
+            || string.Equals(name, OrderName, StringComparison.Ordinal)
+            || name.StartsWith(OrderPrefix, StringComparison.Ordinal)
+            || string.Equals(name, SupportReplyName, StringComparison.Ordinal)
+            || name.StartsWith(SupportReplyPrefix, StringComparison.Ordinal)
+            || string.Equals(name, SupportFormalReplyName, StringComparison.Ordinal)
+            || name.StartsWith(SupportFormalReplyPrefix, StringComparison.Ordinal)
+            || string.Equals(name, SupportSurveyName, StringComparison.Ordinal)
+            || name.StartsWith(SupportSurveyPrefix, StringComparison.Ordinal)
+            || string.Equals(name, WholesaleInvitationNoticeName, StringComparison.Ordinal)
+            || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal)
+            || string.Equals(name, InvoiceName, StringComparison.Ordinal)
+            || name.StartsWith(InvoicePrefix, StringComparison.Ordinal)
+            || string.Equals(name, TaskNoticeName, StringComparison.Ordinal)
+            || name.StartsWith(TaskNoticePrefix, StringComparison.Ordinal)
+            || string.Equals(name, AppointmentReminderName, StringComparison.Ordinal)
+            || name.StartsWith(AppointmentReminderPrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -109,6 +191,13 @@ public sealed class MessageTemplate
     public const int CategoryMaxLength = 32;
     public const int ParameterFormatMaxLength = 16;
     public const int StatusReasonMaxLength = 64;
+
+    /// <summary>La columna guarda el nombre del <see cref="MessageTemplateKind"/>: tiene que alcanzar para el más largo
+    /// (<c>WholesaleInvitationNotice</c>, 25; <c>AppointmentReminder</c> mide 19). Con 16 <c>SupportFormalReply</c> (18) no se podía guardar.</summary>
+    public const int KindMaxLength = 32;
+
+    /// <summary>Spec 2026-11-17: el ancho de <c>header_image_url</c>, la URL pública de la imagen fija del encabezado.</summary>
+    public const int HeaderImageUrlMaxLength = 2048;
 
     private MessageTemplate()
     {
@@ -148,6 +237,12 @@ public sealed class MessageTemplate
     /// <summary><c>null</c> hasta que un refresco la confirme contra Meta.</summary>
     public DateTimeOffset? SyncedAt { get; private set; }
 
+    /// <summary>Spec 2026-11-17: el archivo de Storage de la imagen fija del encabezado, si la plantilla se creó con una desde QEP.</summary>
+    public Guid? HeaderImageFileId { get; private set; }
+
+    /// <summary>Spec 2026-11-17: la URL pública de esa imagen. Es la que se manda en cada envío desde el chat y las campañas.</summary>
+    public string? HeaderImageUrl { get; private set; }
+
     public bool IsApproved => Status == MessageTemplateStatuses.Approved;
 
     public bool IsLive => MessageTemplateStatuses.IsLive(Status);
@@ -160,7 +255,7 @@ public sealed class MessageTemplate
     {
         if (kind == MessageTemplateKind.External)
         {
-            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation or Billing.");
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation, Order, Billing or a Support kind.");
         }
 
         if (!MessageTemplateName.IsValid(name))
@@ -170,7 +265,7 @@ public sealed class MessageTemplate
 
         if (kind == MessageTemplateKind.Free && MessageTemplateName.IsReserved(name))
         {
-            throw new MessagingDomainException(MessagingErrorCodes.TemplateNameReserved, "That name is reserved for the quotation template QEP provisions.");
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateNameReserved, "That name is reserved for a template QEP provisions.");
         }
 
         var template = New(tenantId, connectionId, metaTemplateId, name, language, category, parameterFormat, componentsJson, now);
@@ -193,9 +288,73 @@ public sealed class MessageTemplate
         return template;
     }
 
+    /// <summary>Spec 2026-11-17: la imagen fija del encabezado, publicada antes de crear la plantilla en Meta. Se fija una sola vez.</summary>
+    public void AttachHeaderImage(Guid fileId, string publicUrl, DateTimeOffset now)
+    {
+        if (fileId == Guid.Empty)
+        {
+            throw new ArgumentException("The header image needs a file id.", nameof(fileId));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(publicUrl);
+        if (publicUrl.Length > HeaderImageUrlMaxLength)
+        {
+            throw new ArgumentException($"The header image URL takes at most {HeaderImageUrlMaxLength} characters.", nameof(publicUrl));
+        }
+
+        if (HeaderImageFileId is not null)
+        {
+            throw new ArgumentException("The template already has a header image.", nameof(fileId));
+        }
+
+        HeaderImageFileId = fileId;
+        HeaderImageUrl = publicUrl;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Spec 2026-11-20: cambia la imagen fija del encabezado y devuelve la anterior ya retirada (<c>null</c> si no había), para
+    /// que quien guarda la persista: el historial de mensajes de QEP enlaza a ella (el encabezado guardado de lo ya enviado), así que no se libera. Misma imagen es un error de quien llama.</summary>
+    public MessageTemplateRetiredHeaderImage? ReplaceHeaderImage(Guid fileId, string publicUrl, DateTimeOffset now)
+    {
+        if (fileId == Guid.Empty)
+        {
+            throw new ArgumentException("The header image needs a file id.", nameof(fileId));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(publicUrl);
+        if (publicUrl.Length > HeaderImageUrlMaxLength)
+        {
+            throw new ArgumentException($"The header image URL takes at most {HeaderImageUrlMaxLength} characters.", nameof(publicUrl));
+        }
+
+        if (HeaderImageFileId == fileId)
+        {
+            throw new ArgumentException("The template already uses that header image.", nameof(fileId));
+        }
+
+        MessageTemplateRetiredHeaderImage? retired = null;
+        if (HeaderImageFileId is { } previousId)
+        {
+            // Id y URL se asignan siempre juntos (AttachHeaderImage / ReplaceHeaderImage). Un id sin URL es una fila inconsistente:
+            // retirarla con una URL vacía escondería el dato roto y el historial enlazaría a la nada, así que se falla fuerte.
+            if (HeaderImageUrl is null)
+            {
+                throw new InvalidOperationException("The template has a header image file id but no URL; the stored state is inconsistent.");
+            }
+
+            retired = MessageTemplateRetiredHeaderImage.Create(TenantId, Id, previousId, HeaderImageUrl, now);
+        }
+
+        HeaderImageFileId = fileId;
+        HeaderImageUrl = publicUrl;
+        UpdatedAt = now;
+        return retired;
+    }
+
     /// <summary>El webhook <c>message_template_status_update</c>: estado nuevo y su motivo («NONE» = ninguno).</summary>
     public void ApplyStatus(string? status, string? reason, DateTimeOffset now)
     {
+        // La imagen del encabezado no se toca: es dato de QEP, no de Meta.
         Status = MessageTemplateStatuses.Normalize(status);
         StatusReason = Reason(reason);
         UpdatedAt = now;
@@ -205,6 +364,8 @@ public sealed class MessageTemplate
     public void SyncFrom(string? status, string? reason, string category, string parameterFormat, string componentsJson, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(componentsJson);
+        // HeaderImageFileId/HeaderImageUrl no se tocan: son dato de QEP, no de Meta. El header_handle que Meta devuelve en los
+        // components es una URL suya, no la imagen publicada que se manda en cada envío.
         Status = MessageTemplateStatuses.Normalize(status);
         StatusReason = Reason(reason);
         Category = Truncate(category ?? string.Empty, CategoryMaxLength);
@@ -223,6 +384,104 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.Quotation;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Spec 2026-11-09 D3: lo mismo que <see cref="AdoptAsQuotation"/> para una <c>qep_pedido</c> creada en la consola de Meta.</summary>
+    public void AdoptAsOrder(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateOrderConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.Order;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Spec 2026-11-21: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_factura</c> creada en la consola de Meta.</summary>
+    public void AdoptAsInvoice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateInvoiceConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.Invoice;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Soporte fase 2: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_soporte_respuesta</c> creada en la consola de Meta.</summary>
+    public void AdoptAsSupportReply(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateSupportReplyConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.SupportReply;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Soporte fase 4b: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_soporte_formal</c> creada en la consola de Meta.</summary>
+    public void AdoptAsSupportFormalReply(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateSupportFormalReplyConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.SupportFormalReply;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Soporte fase 4b: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_soporte_encuesta</c> creada en la consola de Meta.</summary>
+    public void AdoptAsSupportSurvey(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateSupportSurveyConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.SupportSurvey;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Mayorista: lo mismo que <see cref="AdoptAsSupportReply"/> para una <c>qep_mayorista_invitacion</c> creada en la consola de Meta.</summary>
+    public void AdoptAsWholesaleInvitationNotice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateWholesaleInvitationNoticeConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.WholesaleInvitationNotice;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Support task notices: the same as <see cref="AdoptAsWholesaleInvitationNotice"/> for a <c>qep_tarea_asignada</c> created in Meta's console.</summary>
+    public void AdoptAsTaskNotice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateTaskNoticeConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.TaskNotice;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Agenda: lo mismo que <see cref="AdoptAsSupportReply"/> para una <c>qep_agenda_recordatorio</c> creada en la consola de Meta.</summary>
+    public void AdoptAsAppointmentReminder(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateAppointmentReminderConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.AppointmentReminder;
         UpdatedAt = now;
     }
 

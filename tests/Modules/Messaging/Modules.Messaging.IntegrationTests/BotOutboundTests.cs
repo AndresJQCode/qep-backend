@@ -90,6 +90,130 @@ public sealed class BotOutboundTests
         Assert.Equal("Opción 2", interactive.GetProperty("buttons")[1].GetProperty("title").GetString());
     }
 
+    // Spec 2026-11-18: el archivo de un chatbot sale por link (la URL pública de Storage) y la fila sólo lo referencia: sin copia en R2.
+    private static readonly Uri Catalog = new("https://public.test/7d2f0c55/catalogo.jpg");
+
+    private static BotMediaSend Media(Modules.Messaging.Domain.MessageKind kind, Uri link, string fileName, string mimeType) =>
+        new(kind, link, fileName, mimeType, 2048, Guid.CreateVersion7());
+
+    private static async Task<BotSendResult> SendMediaAsync(
+        Fixture f, BotMediaSend media, string? caption, InteractiveSend? interactive = null, Guid? clientId = null)
+    {
+        using var scope = f.Factory.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<IBotOutbound>()
+            .SendAsync(new BotSend(f.Tenant.TenantId, f.ConversationId, f.ChatbotId, clientId ?? Guid.CreateVersion7(), caption, interactive, media), Ct);
+    }
+
+    private static JsonElement MetaBody(Fixture f)
+    {
+        var post = Assert.Single(f.Factory.MetaHandler.Requests, r => r.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && !IsReadReceipt(r));
+        return JsonDocument.Parse(post.Body!).RootElement.Clone();
+    }
+
+    private static async Task<JsonElement> ThreadMessageAsync(Fixture f, Guid messageId)
+    {
+        using var client = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        var page = await client.GetFromJsonAsync<JsonElement>(MessagesUrl(f.Tenant.TenantId, f.ConversationId), Ct);
+        return page.GetProperty("items").EnumerateArray().Single(m => m.GetProperty("id").GetGuid() == messageId).Clone();
+    }
+
+    [Fact]
+    public async Task ABotImageGoesByLinkWithCaption()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var media = Media(Modules.Messaging.Domain.MessageKind.Image, Catalog, "catalogo.jpg", "image/jpeg");
+
+        var sent = Assert.IsType<BotSendResult.Sent>(await SendMediaAsync(f, media, "Catálogo"));
+
+        var body = MetaBody(f);
+        Assert.Equal("image", body.GetProperty("type").GetString());
+        Assert.Equal((Catalog.AbsoluteUri, "Catálogo"), (body.GetProperty("image").GetProperty("link").GetString(), body.GetProperty("image").GetProperty("caption").GetString()));
+        Assert.Equal($"Image|Catálogo|{Catalog.AbsoluteUri}|NULL|{media.StorageFileId}|image/jpeg|2048", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT CASE m.kind WHEN 2 THEN 'Image' ELSE m.kind::text END || '|' || m.caption || '|' || mm.public_url || '|' || coalesce(mm.storage_key, 'NULL')
+                || '|' || mm.storage_file_id || '|' || mm.mime_type || '|' || mm.size_bytes
+            FROM messaging.messages m JOIN messaging.message_media mm ON mm.message_id = m.id WHERE m.id = @id
+            """, ("id", sent.MessageId)));
+        var message = await ThreadMessageAsync(f, sent.MessageId);
+        Assert.Equal("Image", message.GetProperty("kind").GetString());
+        Assert.Equal(Catalog.AbsoluteUri, message.GetProperty("media").GetProperty("url").GetString());
+        Assert.Equal("Catálogo", message.GetProperty("media").GetProperty("caption").GetString());
+    }
+
+    [Fact]
+    public async Task AMediaWithButtonIsOneInteractiveWithAMediaHeader()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var cta = new CtaUrlSend(
+            "Mira el catálogo", "Ver", new Uri("https://qcode.co/catalogo"), MediaHeader: new InteractiveMediaHeader("image", Catalog, null));
+
+        var sent = Assert.IsType<BotSendResult.Sent>(
+            await SendMediaAsync(f, Media(Modules.Messaging.Domain.MessageKind.Image, Catalog, "catalogo.jpg", "image/jpeg"), null, cta));
+
+        var body = MetaBody(f);
+        Assert.Equal("cta_url", body.GetProperty("interactive").GetProperty("type").GetString());
+        Assert.Equal(Catalog.AbsoluteUri, body.GetProperty("interactive").GetProperty("header").GetProperty("image").GetProperty("link").GetString());
+        var message = await ThreadMessageAsync(f, sent.MessageId);
+        Assert.Equal(("Interactive", "Mira el catálogo"), (message.GetProperty("kind").GetString(), message.GetProperty("text").GetString()));
+        Assert.Equal(Catalog.AbsoluteUri, message.GetProperty("media").GetProperty("url").GetString());
+        Assert.Equal("https://qcode.co/catalogo", message.GetProperty("interactive").GetProperty("cta").GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public async Task ABotDocumentCarriesItsFileName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var link = new Uri("https://public.test/7d2f0c55/lista.pdf");
+
+        var sent = Assert.IsType<BotSendResult.Sent>(await SendMediaAsync(
+            f, Media(Modules.Messaging.Domain.MessageKind.Document, link, "Lista de precios.pdf", "application/pdf"), null));
+
+        var document = MetaBody(f).GetProperty("document");
+        Assert.Equal((link.AbsoluteUri, "Lista de precios.pdf"), (document.GetProperty("link").GetString(), document.GetProperty("filename").GetString()));
+        Assert.DoesNotContain("caption", document.EnumerateObject().Select(property => property.Name));
+        var message = await ThreadMessageAsync(f, sent.MessageId);
+        Assert.Equal("Lista de precios.pdf", message.GetProperty("media").GetProperty("fileName").GetString());
+    }
+
+    [Fact]
+    public async Task RepeatingTheClientIdDoesNotResendMedia()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var clientId = Guid.CreateVersion7();
+        var media = Media(Modules.Messaging.Domain.MessageKind.Image, Catalog, "catalogo.jpg", "image/jpeg");
+
+        var first = Assert.IsType<BotSendResult.Sent>(await SendMediaAsync(f, media, "Catálogo", clientId: clientId));
+        var second = Assert.IsType<BotSendResult.Sent>(await SendMediaAsync(f, media, "Catálogo", clientId: clientId));
+
+        Assert.Equal((false, true, first.MessageId), (first.AlreadySent, second.AlreadySent, second.MessageId));
+        Assert.Equal(1, SendCalls(f));
+    }
+
+    [Fact]
+    public async Task ABotAudioWithACaptionIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var audio = Media(Modules.Messaging.Domain.MessageKind.Audio, new Uri("https://public.test/7d2f0c55/saludo.mp3"), "saludo.mp3", "audio/mpeg");
+
+        var withCaption = await SendMediaAsync(f, audio, "Escucha");
+        var overHttp = await SendMediaAsync(f, Media(Modules.Messaging.Domain.MessageKind.Image, new Uri("http://public.test/x.jpg"), "x.jpg", "image/jpeg"), null);
+
+        Assert.Equal("messaging.message.rejected", Assert.IsType<BotSendResult.Rejected>(withCaption).Code);
+        Assert.Equal("messaging.message.rejected", Assert.IsType<BotSendResult.Rejected>(overHttp).Code);
+        Assert.Equal(0, SendCalls(f));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
     [Fact]
     public Task ANullCharacterIsRejectedWithoutARow() => AssertRejectedWithoutARowAsync("Hola\u0000");
 

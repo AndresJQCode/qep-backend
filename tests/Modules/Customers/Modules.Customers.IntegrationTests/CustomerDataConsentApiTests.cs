@@ -7,7 +7,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -54,7 +53,7 @@ public sealed class CustomerDataConsentApiTests
     }
 
     private sealed class Fixture(
-        PostgreSqlContainer database, QepApiFactory factory, HttpClient client, Guid customerId, Guid cityId, Guid classificationId)
+        TestDatabase database, QepApiFactory factory, HttpClient client, Guid customerId, Guid cityId, Guid classificationId)
         : IAsyncDisposable
     {
         public HttpClient Client { get; } = client;

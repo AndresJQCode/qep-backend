@@ -17,7 +17,9 @@ public sealed class CampaignApiTests
           {"id":"1","name":"promo","language":"es","status":"APPROVED","category":"MARKETING",
            "components":[{"type":"BODY","text":"Hola {{1}}, tu código es {{2}}"}]},
           {"id":"2","name":"aviso","language":"es","status":"APPROVED","category":"UTILITY",
-           "components":[{"type":"BODY","text":"Tu pedido salió"}]}
+           "components":[{"type":"BODY","text":"Tu pedido salió"}]},
+          {"id":"3","name":"promo_imagen","language":"es","status":"APPROVED","category":"MARKETING",
+           "components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Mira"}]}
         ]}
         """;
 
@@ -192,6 +194,19 @@ public sealed class CampaignApiTests
 
         Assert.Equal("messaging.template.parameters_mismatch", (await ProblemAsync(mismatch)).Code);
         Assert.Equal("messaging.template.not_available", (await ProblemAsync(missing)).Code);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaigns"));
+    }
+
+    [Fact]
+    public async Task AnImageHeaderTemplateIsStillNotAvailableForACampaign()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        var response = await SendAsync(f.Client, HttpMethod.Post, CampaignsUrl(f.Tenant.TenantId), Input(f, template: "promo_imagen"));
+
+        Assert.Equal("messaging.template.not_available", (await ProblemAsync(response)).Code);
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaigns"));
     }
 
@@ -380,6 +395,26 @@ public sealed class CampaignApiTests
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal("messaging.campaign.nothing_to_retry", (await ProblemAsync(response)).Code);
         Assert.Equal("Completed", await ScalarAsync<string>(f.ConnectionString, "SELECT status FROM messaging.campaigns"));
+    }
+
+    [Fact]
+    public async Task ARecipientWithoutACustomerIsListedWithANullCustomerId()
+    {
+        // P10: al borrar el cliente se anula customer_id; el listado debe seguir mostrando la fila, no reventar con un 500.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f)).GetProperty("id").GetGuid();
+        await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/launch", new { expectedVersion = 1 });
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Skipped", name: "Ana", failureCode: "unreachable");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET customer_id = NULL WHERE customer_name = 'Ana'");
+
+        var response = await SendAsync(f.Client, HttpMethod.Get, $"{CampaignUrl(f, id)}/recipients");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var item = (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("items")[0];
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("customerId").ValueKind);
+        Assert.Equal("Ana", item.GetProperty("customerName").GetString());
     }
 
     [Fact]

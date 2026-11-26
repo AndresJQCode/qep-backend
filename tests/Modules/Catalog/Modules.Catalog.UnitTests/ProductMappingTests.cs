@@ -271,4 +271,55 @@ public sealed class ProductMappingTests
         Assert.Equal(200, ProductPaging.NormalizePageSize(500));
         Assert.Equal(200, ProductPaging.NormalizePageSize(200));
     }
+
+    // BFF: the screen tells «you cannot see it» (null) from «it has none» ({}), so the map is
+    // never null for a reader and never present for anyone else.
+    [Fact]
+    public void CostsAreNullWithoutReadAndAMapWithIt()
+    {
+        var noCosts = ProductWithCosts(null);
+        var withCosts = ProductWithCosts(new Dictionary<string, decimal> { ["USD"] = 3m, ["COP"] = 12_000m });
+
+        Assert.Null(Assert.Single(withCosts.ToDto(ProductReadLookups.Empty(TenantId)).Variants).Costs);
+
+        var empty = Assert.Single(noCosts.ToDto(ProductReadLookups.Empty(TenantId) with { IncludeCosts = true }).Variants).Costs;
+        Assert.NotNull(empty);
+        Assert.Empty(empty);
+
+        var costs = Assert.Single(withCosts.ToDto(ProductReadLookups.Empty(TenantId) with { IncludeCosts = true }).Variants).Costs;
+        Assert.Equal(["COP", "USD"], costs!.Keys);
+    }
+
+    // Spec 2026-11-19: the list variant carries costs with the detail's semantics — null without
+    // read (even if the reading loaded them), {} without costs, catalogue order with them.
+    [Fact]
+    public void SellableVariantCostsFollowTheDetailSemantics()
+    {
+        var names = new Dictionary<Guid, string>();
+        var reader = ProductReadLookups.Empty(TenantId) with { IncludeCosts = true };
+        var withCosts = Sellable() with
+        {
+            Costs = new Dictionary<string, decimal> { ["USD"] = 3m, ["COP"] = 12_000m }
+        };
+
+        Assert.Null(withCosts.ToSellableDto("Camiseta", names, null, ProductReadLookups.Empty(TenantId)).Costs);
+
+        var empty = Sellable().ToSellableDto("Camiseta", names, null, reader).Costs;
+        Assert.NotNull(empty);
+        Assert.Empty(empty);
+
+        var costs = withCosts.ToSellableDto("Camiseta", names, null, reader).Costs;
+        Assert.Equal(["COP", "USD"], costs!.Keys);
+        Assert.Equal(12_000m, costs["COP"]);
+    }
+
+    private static Product ProductWithCosts(IReadOnlyDictionary<string, decimal>? costs) =>
+        Product.Create(
+            ProductId.New(), TenantId, "Vela", ProductDetails.Empty,
+            new ProductVariantInput
+            {
+                Code = "VS-001",
+                Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 1m } },
+                Costs = costs,
+            }, [], Now);
 }

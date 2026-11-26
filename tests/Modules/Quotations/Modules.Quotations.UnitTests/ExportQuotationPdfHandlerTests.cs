@@ -1,3 +1,4 @@
+using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Domain;
@@ -61,6 +62,7 @@ public sealed class ExportQuotationPdfHandlerTests
             QuotationParties.Empty,
             billingAccount: null,
             repricing: null, isRetail: false, globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now.AddHours(1));
 
@@ -78,6 +80,36 @@ public sealed class ExportQuotationPdfHandlerTests
         await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Cotizacion-QUO-2026-0001.pdf", storage.RequestedFileName);
+    }
+
+    // Spec 2026-11-22 (i18n): cambiar el idioma del tenant vence el PDF guardado (por la huella) y la descarga se llama como
+    // el documento en ese idioma.
+    [Fact]
+    public async Task ChangingTheTenantLanguageRegeneratesAndRenamesTheDownload()
+    {
+        var directory = new StubTenantDirectory();
+        var (handler, renderer, storage, _, _, _) = NewHandler(tenantDirectory: directory);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        directory.Regional = directory.Regional! with { Language = "es-ES" };
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, renderer.Calls);
+        Assert.Equal("es-ES", renderer.Last!.Language);
+        Assert.Equal("Presupuesto-QUO-2026-0001.pdf", storage.RequestedFileName);
+    }
+
+    [Fact]
+    public async Task ExportingTwiceInSpainDoesNotRegenerate()
+    {
+        var directory = new StubTenantDirectory();
+        directory.Regional = directory.Regional! with { Language = "es-ES" };
+        var (handler, renderer, _, _, _, _) = NewHandler(tenantDirectory: directory);
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, renderer.Calls);
     }
 
     // El logo del tenant invalida la caché igual que un cambio de la cotización (spec 2026-09-19,
@@ -186,6 +218,36 @@ public sealed class ExportQuotationPdfHandlerTests
         Assert.Equal(TenantNumberFormats.CommaDecimal, repository.Pdf!.NumberFormat);
     }
 
+    // El contenido configurable del PDF vence el caché por su huella (spec 2026-11-16 §5.4): cambiar una sección que sale en la
+    // cotización regenera el documento en el siguiente export.
+    [Fact]
+    public async Task ChangingThePdfContentRegeneratesTheCachedPdf()
+    {
+        var contentStore = new StubPdfContentStore { Content = PdfContent.Empty with { Terms = TermsSection("<p>Texto</p>") } };
+        var (handler, renderer, _, _, _, _) = NewHandler(contentStore: contentStore);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        contentStore.Content = PdfContent.Empty with { Terms = TermsSection("<p>Otro texto</p>") };
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, renderer.Calls);
+    }
+
+    [Fact]
+    public async Task UnchangedPdfContentReusesTheCachedPdf()
+    {
+        var contentStore = new StubPdfContentStore { Content = PdfContent.Empty with { Terms = TermsSection("<p>Texto</p>") } };
+        var (handler, renderer, _, _, _, _) = NewHandler(contentStore: contentStore);
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, renderer.Calls);
+    }
+
+    private static PdfSection TermsSection(string contentHtml) =>
+        new(PdfSectionKey.Terms, Enabled: true, InQuotation: true, InOrder: false, "Términos", contentHtml);
+
     private static ExportQuotationPdfCommand NewCommand(Guid? quotationId = null) =>
         new(TenantId, quotationId ?? CurrentQuotationId);
 
@@ -197,7 +259,7 @@ public sealed class ExportQuotationPdfHandlerTests
         RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
         StubQuotationLogoLookup LogoLookup,
-        Quotation Quotation) NewHandler(StubTenantDirectory? tenantDirectory = null)
+        Quotation Quotation) NewHandler(StubTenantDirectory? tenantDirectory = null, StubPdfContentStore? contentStore = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -211,8 +273,9 @@ public sealed class ExportQuotationPdfHandlerTests
             QuotationParties.Empty,
             billingAccount: null,
             defaultCurrency: "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
         CurrentQuotationId = quotation.Id.Value;
@@ -232,9 +295,12 @@ public sealed class ExportQuotationPdfHandlerTests
                 storage,
                 new FixedTenantClock(Now),
                 logoLookup,
-                tenantDirectory ?? new StubTenantDirectory()),
+                tenantDirectory ?? new StubTenantDirectory(),
+                contentStore ?? new StubPdfContentStore(),
+                new RichTextHtmlReader()),
             storage,
-            new StubExecutionContext(SubjectId, TenantId));
+            new StubExecutionContext(SubjectId, TenantId),
+            tenantDirectory ?? new StubTenantDirectory());
 
         return (handler, renderer, storage, repository, logoLookup, quotation);
     }

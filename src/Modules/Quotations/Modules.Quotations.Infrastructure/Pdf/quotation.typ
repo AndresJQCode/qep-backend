@@ -17,7 +17,11 @@
 // documento —membrete y pie— y el renglón de vigencia, que un pedido no tiene. `kind` llega como texto
 // ("Quotation" / "Order", `QuotationPdfKind`); cualquier otro valor se imprime como cotización.
 #let es-pedido = data.kind == "Order"
-#let documento = if es-pedido { "Pedido" } else { "Cotización" }
+// Spec 2026-11-22 (i18n): el idioma del tenant. En España la cotización es «Presupuesto» —masculino, como el pedido— y el
+// asesor, «Comercial» (owner). Cualquier otro valor se imprime como Latinoamérica.
+#let espana = data.language == "es-ES"
+#let documento = if es-pedido { "Pedido" } else if espana { "Presupuesto" } else { "Cotización" }
+#let masculino = es-pedido or espana
 
 #let tinta = rgb("#14181F")
 // 5.8:1 sobre blanco. Los rótulos van en 7pt y a esa medida un gris "de diseño" deja de leerse.
@@ -133,6 +137,59 @@
 // ya lee en la cotización que el owner fijó.
 #let renglon(etiqueta, valor) = [#etiqueta: #valor]
 
+// ---------------------------------------------------------------------------- secciones
+
+// Las secciones que configura el tenant (aviso de pago, términos, proceso de entrega; spec 2026-11-16 §5.3) llegan como un árbol
+// de bloques ya resuelto en C#, nunca como markup. El texto de cada tramo se inserta como cadena (`[#run.text]`): un `#`, un `*`,
+// un `$` o un `[` que escriba el tenant sale literal. Nada de lo que trae `data` pasa por una evaluación ni se convierte en markup.
+#let runs(lista) = {
+  for run in lista {
+    if run.break {
+      linebreak()
+    } else {
+      let tramo = [#run.text]
+      if run.bold { tramo = strong(tramo) }
+      if run.italic { tramo = emph(tramo) }
+      if run.underline { tramo = underline(tramo) }
+      if run.strike { tramo = strike(tramo) }
+      // El saneador sólo deja `https`, `mailto` y `tel`: el enlace llega ya filtrado.
+      if run.href != none { tramo = link(run.href, tramo) }
+      tramo
+    }
+  }
+}
+
+// Los títulos del contenido son texto en negrita y no `heading()`: un `heading` entraría al esquema del PDF y a la numeración, y
+// el documento no tiene índice. El tamaño baja con el nivel (2, 3, 4).
+#let bloques(lista) = {
+  for bloque in lista {
+    if bloque.kind == "paragraph" {
+      par[#runs(bloque.runs)]
+    } else if bloque.kind == "heading" {
+      let tamano = if bloque.level == 2 { 10pt } else if bloque.level == 3 { 9.5pt } else { 9pt }
+      par(text(weight: "bold", size: tamano)[#runs(bloque.runs)])
+    } else if bloque.kind == "list" {
+      // Cada ítem es a su vez una lista de bloques: así una lista se anida dentro de otra.
+      let elementos = bloque.items.map(elemento => [#bloques(elemento)])
+      if bloque.ordered { enum(..elementos) } else { list(..elementos) }
+    } else if bloque.kind == "quote" {
+      pad(left: 8pt, text(fill: apagado)[#bloques(bloque.children)])
+    } else if bloque.kind == "rule" {
+      line(length: 100%, stroke: 0.4pt + filete)
+    }
+  }
+}
+
+// Un documento sin secciones trae `data.sections` en `none`; cada sección, en `none` si no sale en este tipo de documento.
+#let aviso = if data.sections == none { none } else { data.sections.paymentNotice }
+#let terminos = if data.sections == none { none } else { data.sections.terms }
+#let proceso = if data.sections == none { none } else { data.sections.deliveryProcess }
+// El tenant decide por tipo de documento si salen las líneas de la cuenta para el pago (spec 2026-11-16 pdf-payment-account).
+#let mostrar-cuenta = data.sections != none and data.sections.showPaymentAccount
+// Una empresa sin cuenta (spec 2026-11-17 §4.2) trae `bankName` en `none`: no hay a dónde pagar y el bloque no sale; el
+// membrete sigue.
+#let cuenta-visible = data.billingAccount != none and data.billingAccount.bankName != none and mostrar-cuenta
+
 // ---------------------------------------------------------------------------- página
 
 // El pie repite el número en cada hoja: una cotización de varias páginas se imprime, se separa
@@ -181,7 +238,7 @@
     #if hay-emisor [
       #text(size: 13pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
       #if data.billingAccount.companyTaxId != none [
-        \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+        \ #text(size: 9pt, fill: apagado)[#data.billingAccount.companyDocumentLabel #data.billingAccount.companyTaxId]
       ]
       #if data.billingAccount.companyAddress != "" [
         \ #text(size: 8.5pt, fill: apagado)[Dirección empresa: #data.billingAccount.companyAddress]
@@ -202,16 +259,16 @@
     #v(3pt, weak: true)
     #par(leading: 0.6em)[
       #if hay-emisor [#renglon("N.°", data.quotationNumber) \ ]
-      // Concuerda con el documento: «la cotización», emitida; «el pedido», emitido.
-      #renglon(if es-pedido { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
+      // Concuerda con el documento: «la cotización», emitida; «el pedido» y «el presupuesto», emitido.
+      #renglon(if masculino { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
       // Un pedido no vence: "Sin vencimiento" se leería como una condición comercial que nadie pactó.
       #if not es-pedido [
         #renglon(
-          "Válida hasta",
+          if masculino { "Válido hasta" } else { "Válida hasta" },
           if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
         ) \
       ]
-      #renglon("Asesor", if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
+      #renglon(if espana { "Comercial" } else { "Asesor" }, if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
       #renglon("Cliente", if data.customerName == "" { vacio } else { data.customerName })
       #if data.customerCuc != "" [ \ #renglon("NIT / CUC", data.customerCuc)]
       #if data.customerContact != "" [ \ #renglon("Contacto", data.customerContact)]
@@ -225,7 +282,8 @@
 
 // El recuadro de condiciones de pago va arriba y no al pie, como en la referencia: es lo que el
 // comprador necesita antes de decidir, no una nota final.
-#if data.paymentMethod != none or data.billingAccount != none or data.cashOnDelivery [
+#let hay-recuadro = data.paymentMethod != none or data.cashOnDelivery or cuenta-visible
+#if hay-recuadro [
   #block(
     breakable: false,
     width: 100%,
@@ -240,7 +298,7 @@
       ] else if data.paymentMethod != none [
         #renglon("Forma de pago", data.paymentMethod) \
       ]
-      #if data.billingAccount != none [
+      #if cuenta-visible [
         #renglon("Cuenta para el pago", data.billingAccount.companyName) \
         #data.billingAccount.bankName \
         #text(weight: "bold")[
@@ -249,19 +307,17 @@
       ]
     ]
   ]
-  // Aviso fijo del pie de pago, como en la referencia: no es un dato de la cotización —no hay
-  // dónde guardarlo hoy, ni varía de una a otra— sino la política bancaria del negocio que usa
-  // esta plantilla, igual para todos sus documentos.
-  #if data.billingAccount != none [
-    #v(6pt, weak: true)
-    #text(size: 7.5pt, fill: naranja)[
-      #text(weight: "bold")[Ten en cuenta:] \
-      no aceptamos pagos por corresponsal bancario, \
-      ni depósitos en entidades bancarias, ni cajeros. \
-      Solo debes pagar el valor de tu pedido, el valor a pagar \
-      debe de ser libre de toda comisión bancaria.
-    ]
+]
+// El aviso de pago del tenant, pegado al recuadro, como en la referencia. Sale por sus propias banderas aunque no haya recuadro
+// (spec 2026-11-16 pdf-payment-account, decisión 4): ya no depende de la cuenta para el pago.
+#if aviso != none [
+  #v(6pt, weak: true)
+  #text(size: 7.5pt, fill: naranja)[
+    #if aviso.title != "" [#text(weight: "bold")[#aviso.title]]
+    #bloques(aviso.blocks)
   ]
+]
+#if hay-recuadro or aviso != none [
   #v(12pt)
 ]
 
@@ -323,12 +379,19 @@
 // el cliente lee para decidir.
 #let hay-descuento = data.items.any(item => item.discountPercentage > 0)
 
-#let columnas = if hay-descuento {
+// El pedido imprime otra tabla (owner 2026-11-23): # Item, Código, Descripción, Cantidad, Vr. unitario, Vr. total. El
+// unitario es el que ya trae el descuento, así que unitario × cantidad = total de la fila y no hace falta una columna
+// de valor público.
+#let columnas = if es-pedido {
+  (auto, auto, 1fr, auto, auto, auto)
+} else if hay-descuento {
   (1fr, auto, auto, auto, auto)
 } else {
   (1fr, auto, auto, auto)
 }
-#let titulos = if hay-descuento {
+#let titulos = if es-pedido {
+  ("# Item", "Código", "Descripción", "Cantidad", "Vr. unitario", "Vr. total")
+} else if hay-descuento {
   ("Producto", "Valor público", "Valor con descuento", "Cantidad", "Subtotal")
 } else {
   ("Producto", "Valor unitario", "Cantidad", "Subtotal")
@@ -336,7 +399,11 @@
 
 #table(
   columns: columnas,
-  align: (left, ..titulos.slice(1).map(_ => right)),
+  align: if es-pedido {
+    (center, left, left, right, right, right)
+  } else {
+    (left, ..titulos.slice(1).map(_ => right))
+  },
   inset: (x: 8pt, y: 7.5pt),
   // Fila 0 oscura para el encabezado; el resto alterna blanco y panel, como en la referencia
   // — la cebra ayuda a leer una fila completa en una tabla ancha, sin depender del color.
@@ -344,15 +411,29 @@
   stroke: (x, y) => (bottom: if y == 0 { none } else { 0.4pt + filete }),
   table.header(..titulos.map(titulo => rotulo(titulo, color: white))),
   ..data.items
-    .map(item => {
-      let celdas = ([#item.productName],)
+    .enumerate()
+    .map(((posicion, item)) => {
+      let celdas = if es-pedido {
+        ([#str(posicion + 1)], [#if item.productCode == none { "" } else { item.productCode }], [#item.productName])
+      } else {
+        ([#item.productName],)
+      }
+      if es-pedido {
+        celdas.push([#if item.unit == none { cantidad(item.quantity) } else { cantidad(item.quantity) + " " + item.unit }])
+        celdas.push([#importe(item.discountedUnitPrice)])
+        celdas.push([#importe(item.lineTotal)])
+        return celdas
+      }
       if hay-descuento {
         celdas.push([#importe(item.unitPrice)])
         celdas.push([#importe(item.discountedUnitPrice)])
       } else {
         celdas.push([#importe(item.unitPrice)])
       }
-      celdas.push([#cantidad(item.quantity)])
+      // La unidad («2 horas», spec 2026-11-18 §6) llega en español y con el plural resuelto, como texto: se concatena a
+      // la cadena de la cantidad y se inserta como cadena, nunca como markup. Sin unidad (todas las líneas en «unidad»)
+      // la celda es la de antes.
+      celdas.push([#if item.unit == none { cantidad(item.quantity) } else { cantidad(item.quantity) + " " + item.unit }])
       celdas.push([#importe(item.lineTotal)])
       celdas
     })
@@ -368,12 +449,15 @@
 // cifra que importa, que no siempre es el total: con retención, lo que el cliente gira es el
 // neto.
 //
-// La retención va entre el IVA y el total, como en la referencia, y se imprime siempre —incluso
-// en cero— porque ahí es donde el comprador espera verla. Lo que sigue siendo cierto es que no
-// resta del total: `Total inversión` es lo facturado, y sólo cuando hay retención de verdad
-// aparece además `Neto a pagar`, que es lo que el cliente gira. Sin eso, una retención distinta
-// de cero se leería como si ya estuviera descontada del total de arriba, que es falso.
-#let hay-retencion = data.retentionAmount > 0
+// Cada retención que aplicó va en su propio renglón, rotulado con el nombre de la tasa y su porcentaje efectivo entre
+// paréntesis («ReteICA Bogotá (0,966 %):», owner 2026-11-15), entre el IVA y el total (spec impuestos por tipo §9.3).
+// El porcentaje es el del documento, no el del nombre: si un asesor lo edita, el PDF dice el que se aplicó. Por eso las
+// tasas se nombran sin porcentaje. Llega ya escrito con el separador del tenant: la plantilla no lo formatea.
+// Sin retenciones no hay renglón: no se imprime una fila en cero. Lo
+// que sigue siendo cierto es que no restan del total: `Total inversión` es lo facturado, y sólo cuando hay
+// retención de verdad aparece además `Neto a pagar`, que es lo que el cliente gira. Sin eso, una retención
+// se leería como si ya estuviera descontada del total de arriba, que es falso.
+#let hay-retencion = data.withholdings.len() > 0
 
 // Envío: el IVA del envío va en su propio renglón y el IVA de productos sigue siendo `taxAmount`.
 // `Charged` suma (base + IVA); `Free` y `OnDelivery` no suman nada al total: el renglón sólo
@@ -419,11 +503,11 @@
       0,
     ),
     ..filas-envio,
-    (
-      "Retención en la fuente:",
-      (if hay-retencion { "-" + moneda } else { moneda }) + importe(data.retentionAmount),
+    ..data.withholdings.map(retencion => (
+      retencion.name + " (" + retencion.percentageLabel + "):",
+      "-" + moneda + importe(retencion.amount),
       0,
-    ),
+    )),
     (
       "Total inversión (" + data.currency + "):",
       moneda + importe(data.total),
@@ -481,53 +565,26 @@
   )
 ]
 
+// ---------------------------------------------------------------------------- términos
+
+// Después de los totales, en la misma página si caben; si no, fluyen a la siguiente.
+#if terminos != none [
+  #v(14pt)
+  #if terminos.title != "" [
+    #text(size: 10pt, weight: "bold")[#terminos.title]
+    #v(4pt, weak: true)
+  ]
+  #text(size: 8.5pt)[#bloques(terminos.blocks)]
+]
+
 // ---------------------------------------------------------------------------- proceso
-//
-// Segunda página fija, igual que el logo y el aviso de pago: no es un dato de la cotización —no
-// cambia de una a otra— sino la política de logística del negocio que emite el documento, así
-// que va escrita acá y no armada desde `data`.
-#pagebreak()
 
-#text(size: 11pt, weight: "bold")[Proceso de Alistamiento y Recepción de Pedidos.]
-
-#v(10pt)
-
-#text(weight: "bold")[Alistamiento y Entrega:] \
-El proveedor preparará los pedidos bajo filmación y los entregará a la empresa transportadora
-dentro de los 8 días hábiles siguientes a la confirmación del pedido, siempre que estos hayan
-sido solicitados y pagados por el mayorista.
-
-#v(8pt)
-
-#text(weight: "bold")[Recepción de la Mercancía:] \
-Al recibir los productos de la transportadora, el mayorista deberá revisar el estado del
-paquete. No recibir en caso de detectar:
-
-\- Cinta contramarcada deteriorada \
-\- Cajas dañadas y/o abiertas \
-\- Cintas, zunchos o cajas diferentes a las del proveedor
-
-#v(4pt)
-
-Si decide recibir el paquete a pesar de alguna de estas irregularidades, lo hará bajo su
-responsabilidad. En este caso, deberá:
-
-\- Dejar constancia de la novedad en la guía de recepción de la transportadora. \
-\- Informar de inmediato al proveedor. \
-\- Enviar fotografías como evidencia.
-
-#v(8pt)
-
-#text(weight: "bold")[Verificación del Contenido:] \
-Una vez recibido el pedido, el mayorista deberá grabar un video al abrir las cajas o paquetes,
-evidenciando el estado y la cantidad de los productos.
-
-#v(8pt)
-
-#text(weight: "bold")[Reporte de Novedades:] \
-Si detecta daños, faltantes o deterioro en los productos, deberá informar al proveedor en un
-plazo máximo de 1 día hábil después de recibirlos. El reporte debe incluir:
-
-\- Video de la apertura del paquete. \
-\- Fotografías de las cajas. \
-\- Imágenes de los 3 stickers identificativos del proveedor.
+// El proceso de entrega del tenant va en su propia página al final, y sólo si está configurado para este documento.
+#if proceso != none [
+  #pagebreak()
+  #if proceso.title != "" [
+    #text(size: 11pt, weight: "bold")[#proceso.title]
+    #v(10pt)
+  ]
+  #bloques(proceso.blocks)
+]

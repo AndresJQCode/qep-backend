@@ -76,6 +76,8 @@ internal static class ProductVariantChanges
                 Pricing = pricing,
                 GalleryFileId = request.GalleryFileId,
                 IsActive = request.IsActive ?? savedVariant?.IsActive ?? true,
+                // Null keeps the saved cost (also for a new variant: it simply has none).
+                Costs = request.Costs?.ToDomainCosts(),
             });
         }
 
@@ -142,6 +144,8 @@ internal static class ProductVariantChanges
             .ToArray(),
         PackagingUnits = variant.PackagingUnits.ToArray(),
         KeepsIncompleteScales = true,
+        // Una variante que el sistema creó sin precio de venta (D-16) sigue sin él: es la copia de lo guardado (X3).
+        AllowsNoPrice = variant.Prices.Count == 0,
     };
 
     private static List<ProductVariantInput> DeactivateRepeatedCombinations(List<ProductVariantInput> inputs)

@@ -2,6 +2,8 @@ using System.Text.Json;
 
 namespace Modules.Geography.Infrastructure.Seed;
 
+internal sealed record CountryRecord(string Code, string Name);
+
 internal sealed record DivipolaDepartmentRecord(string Code, string Name);
 
 internal sealed record DivipolaCityRecord(string DivipolaCode, string Name, string DepartmentCode);
@@ -49,6 +51,39 @@ internal static class DivipolaDataParser
             }
 
             records.Add(new DivipolaDepartmentRecord(code, name));
+        }
+
+        return records;
+    }
+
+    /// <summary>
+    /// El catálogo de países (Seed/Data/countries.json): código ISO 3166-1 alfa-2 en mayúsculas y
+    /// nombre en español. Se mantiene a mano, no viene del DANE. Un código malformado o repetido
+    /// revienta el arranque, como en los demás archivos.
+    /// </summary>
+    public static IReadOnlyList<CountryRecord> ParseCountries(Stream stream)
+    {
+        var raw = JsonSerializer.Deserialize<List<CountryJsonEntry>>(stream, JsonOptions) ?? [];
+
+        var seenCodes = new HashSet<string>(StringComparer.Ordinal);
+        var records = new List<CountryRecord>(raw.Count);
+        foreach (var entry in raw)
+        {
+            var code = entry.Code;
+            if (code is not { Length: 2 } || !code.All(char.IsAsciiLetterUpper))
+            {
+                throw new InvalidOperationException(
+                    $"The country code must be exactly 2 uppercase letters, got '{code ?? "<null>"}'.");
+            }
+
+            var name = RequireName(entry.Name, "country");
+            if (!seenCodes.Add(code))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate country code '{code}' in the source file.");
+            }
+
+            records.Add(new CountryRecord(code, name));
         }
 
         return records;

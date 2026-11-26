@@ -8,4 +8,33 @@ namespace Modules.Identity.Application;
 public interface IUserDirectory
 {
     Task<string?> GetEmailAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista): el usuario de un correo, normalizado como lo guarda Identity (<c>User.NormalizeEmail</c>:
+    /// recortado y en minúsculas). Un correo que no es una dirección válida es <c>null</c>, no un error: quien pregunta sólo
+    /// quiere saber si ya hay cuenta.
+    /// </summary>
+    Task<Guid?> FindUserIdByEmailAsync(string email, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los correos de varios usuarios en un solo viaje a la base; los ids sin usuario no vienen. Un roster de doce miembros
+    /// resuelto de a uno son doce consultas en serie, y con la base en otro nodo cada una paga la red: por eso todo lector de
+    /// una lista pasa por acá y no por <see cref="GetEmailAsync"/> en un bucle. Lo de por defecto itera, para que un doble de
+    /// prueba que sólo conoce el método de a uno siga valiendo; <c>UserDirectory</c> lo reemplaza por una sola consulta.
+    /// </summary>
+    async Task<IReadOnlyDictionary<Guid, string>> GetEmailsAsync(
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken cancellationToken)
+    {
+        var emails = new Dictionary<Guid, string>();
+        foreach (var userId in userIds.Distinct())
+        {
+            if (await GetEmailAsync(userId, cancellationToken) is { } email)
+            {
+                emails[userId] = email;
+            }
+        }
+
+        return emails;
+    }
 }

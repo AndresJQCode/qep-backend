@@ -59,6 +59,9 @@ public sealed class PublishFileHandler(
         {
             throw new ResourceNotFoundException("storage.file.not_found", "The file resource was not found.");
         }
+
+        // Publicar y despublicar: un adjunto de Soporte nunca llega al bucket público.
+        SystemOwnedFileGuard.EnsureVisibleToMembers(resource);
         return resource;
     }
 }

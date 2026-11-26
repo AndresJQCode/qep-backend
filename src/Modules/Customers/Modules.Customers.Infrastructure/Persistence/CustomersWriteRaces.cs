@@ -46,4 +46,18 @@ public static class CustomersWriteRaces
             throw ToConflict(exception);
         }
     }
+
+    /// <summary>Lo mismo, para la escritura o la lectura con candados que devuelve algo (el borrado de clientes, spec 2026-11-10).</summary>
+    public static async Task<T> RunAsync<T>(Func<Task<T>> write)
+    {
+        ArgumentNullException.ThrowIfNull(write);
+        try
+        {
+            return await write();
+        }
+        catch (Exception exception) when (IsRace(exception))
+        {
+            throw ToConflict(exception);
+        }
+    }
 }

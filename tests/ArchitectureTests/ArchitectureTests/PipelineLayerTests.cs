@@ -35,7 +35,8 @@ public sealed class PipelineLayerTests
         Assert.DoesNotContain(ReferenceNamesOf(Application), name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
 
     // D9: Tenancy (ITenantModules, TenantModuleGuard, IExecutionContext, IMembershipDirectory, Currencies) y nada más.
     [Fact]

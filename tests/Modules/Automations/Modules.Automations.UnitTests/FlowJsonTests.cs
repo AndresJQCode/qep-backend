@@ -332,13 +332,71 @@ public sealed class FlowJsonTests
         Assert.Equal(["accepted", "rejected"], DataConsentButtons.All.Select(button => button.Id));
     }
 
+    // Spec 2026-11-18: un borrador de antes del multimedia no trae «media» y se lee como un mensaje de texto.
+    [Fact]
+    public void AMessageWithoutMediaReadsNull()
+    {
+        var flow = FlowJson.Parse(MessageJson("""{ "id": "m1", "kind": "message", "title": "Hola", "text": "Hola", "urlButton": null }"""));
+
+        Assert.Null(Assert.IsType<MessageNode>(Assert.Single(flow.Nodes)).Media);
+    }
+
+    [Fact]
+    public void AMessageWithMediaRoundTrips()
+    {
+        var json = MessageJson(
+            """{ "id": "m1", "kind": "message", "title": "Catálogo", "text": "Mira", "urlButton": null, "media": { "kind": "image", "fileId": "7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11" } }""");
+
+        var flow = FlowJson.Parse(json);
+        var serialized = FlowJson.Serialize(flow);
+
+        Assert.Equal(
+            new MessageMedia(ChatbotMediaKinds.Image, Guid.Parse("7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11")),
+            Assert.IsType<MessageNode>(Assert.Single(flow.Nodes)).Media);
+        Assert.Contains("\"media\":{\"kind\":\"image\",\"fileId\":\"7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11\"}", serialized, StringComparison.Ordinal);
+        Assert.Equal(serialized, FlowJson.Serialize(FlowJson.Parse(serialized)));
+    }
+
+    // Sin archivo, el mensaje escribe «media»: null, como «urlButton».
+    [Fact]
+    public void AMessageWithoutMediaWritesNull()
+    {
+        var serialized = FlowJson.Serialize(FlowJson.Parse(MessageJson("""{ "id": "m1", "kind": "message", "title": "Hola", "text": "Hola" }""")));
+
+        Assert.Contains("\"media\":null", serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnknownMediaKindIsMalformed()
+    {
+        var json = MessageJson(
+            """{ "id": "m1", "kind": "message", "title": "A", "text": "", "media": { "kind": "sticker", "fileId": "7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11" } }""");
+
+        Assert.Equal("flow.malformed", Assert.Throws<FlowFormatException>(() => FlowJson.Parse(json)).Code);
+    }
+
+    [Theory]
+    [InlineData("\"catalogo.png\"")]
+    [InlineData("null")]
+    [InlineData("7")]
+    public void ANonGuidFileIdIsMalformed(string fileId)
+    {
+        var json = MessageJson(
+            $$"""{ "id": "m1", "kind": "message", "title": "A", "text": "", "media": { "kind": "image", "fileId": {{fileId}} } }""");
+
+        Assert.Equal("flow.malformed", Assert.Throws<FlowFormatException>(() => FlowJson.Parse(json)).Code);
+    }
+
+    private static string MessageJson(string node) =>
+        $$"""{ "schema": 1, "start": { "firstNodeId": "m1" }, "variables": [], "nodes": [ {{node}} ] }""";
+
     private const string EveryKindJson = """
         {
           "schema": 1,
           "start": { "firstNodeId": "m1" },
           "variables": [ { "name": "doc", "type": "text" }, { "name": "foto", "type": "attachment" } ],
           "nodes": [
-            { "id": "m1", "kind": "message", "title": "Hola", "text": "Hola {nombre_contacto}", "urlButton": { "label": "Ver", "url": "https://www.example.com" }, "outputs": { "next": "q1" } },
+            { "id": "m1", "kind": "message", "title": "Hola", "text": "Hola {nombre_contacto}", "urlButton": { "label": "Ver", "url": "https://www.example.com" }, "media": { "kind": "document", "fileId": "22222222-2222-2222-2222-222222222222" }, "outputs": { "next": "q1" } },
             { "id": "q1", "kind": "openQuestion", "title": "Documento", "text": "¿Cuál es tu documento?", "saveTo": "doc", "validation": { "kind": "regex", "pattern": "^[0-9]{6,10}$", "keywords": null }, "maxAttempts": 2, "outputs": { "answered": "q2", "invalid": "h1" } },
             { "id": "q2", "kind": "openQuestion", "title": "Política", "text": "Escribe acepto", "saveTo": "acepta", "validation": { "kind": "keywords", "pattern": null, "keywords": [ "acepto", "sí" ] }, "maxAttempts": null, "outputs": { "answered": "b1", "invalid": "h1" } },
             { "id": "b1", "kind": "buttons", "title": "Motivo", "text": "¿Qué necesitas?", "buttons": [ { "id": "a", "label": "Uno" }, { "id": "b", "label": "Dos" } ], "saveTo": "motivo", "fallback": "otherOutput", "outputs": { "a": "l1", "b": "l1", "other": "h1" } },
@@ -348,6 +406,8 @@ public sealed class FlowJsonTests
             { "id": "bh", "kind": "businessHours", "title": "Horario", "outputs": { "open": "w1", "closed": "h1" } },
             { "id": "w1", "kind": "http", "title": "Crear cliente", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "POST", "path": "/customers/{doc}", "query": [ { "key": "source", "value": "bot" } ], "body": { "kind": "multipart", "template": null, "fields": [ { "key": "doc", "value": "{doc}" } ], "fileField": "file", "fileVariable": "foto" }, "timeoutSeconds": 5, "okWhen": [ 200, 201 ], "mapping": [ { "from": "data.id", "to": "orden" } ], "sampleResponse": { "data": { "id": 7, "tags": [ "a" ] } }, "outputs": { "ok": "r1", "error": "h1" } },
             { "id": "dc", "kind": "dataConsent", "title": "Datos", "text": "Lee https://empresa.co/datos y acepta.", "outputs": { "accepted": "r1", "rejected": "h1" } },
+            { "id": "ia", "kind": "aiAgent", "title": "Asesor IA", "agentId": "44444444-4444-4444-4444-444444444444", "objective": "Resuelve dudas.", "context": "Doc {doc}", "firstTurn": "lastMessage", "idleMinutes": 60, "saveTo": "asesor", "outputs": { "done": "r1", "human": "h1", "noAnswer": "h1", "idle": null, "error": "h1" } },
+            { "id": "cr", "kind": "crmAction", "title": "Etiquetar", "operation": "addTag", "tagId": "77777777-7777-7777-7777-777777777777", "stageId": null, "saveTo": "crm", "outputs": { "ok": "r1", "skipped": null, "error": "h1" } },
             { "id": "h1", "kind": "handoff", "title": "Asesor", "text": "Te paso con un asesor.", "outputs": {} },
             { "id": "r1", "kind": "resolve", "title": "Listo", "text": "Tu orden es la {orden.id}.", "reasonId": "33333333-3333-3333-3333-333333333333", "outputs": {} }
           ]

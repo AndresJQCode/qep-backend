@@ -8,7 +8,8 @@ namespace Modules.Integrations.Infrastructure.Shopify;
 /// <summary>
 /// Spec 2026-10-15 §4.1, probador de <c>shopify</c>, con el token guardado y sobre <see cref="IShopifyAdminGateway"/>:
 /// lee <c>shop { id name myshopifyDomain }</c>, luego las suscripciones de la app, y vuelve a crear los topics de
-/// <see cref="ShopifyWebhookTopics.Registered"/> que falten. Un 200 refresca <c>shopName</c> y repone
+/// <see cref="ShopifyWebhookTopics.Registered"/> que falten. Un 200 refresca <c>shopName</c> y <c>shopProfile</c> (spec
+/// 2026-11-17 §2), y repone
 /// <c>webhookSubscriptionIds</c> (D-S19). Clases:
 /// <list type="bullet">
 /// <item>la tienda responde 401, 402 (tienda congelada) u otro 4xx → <c>credentials_rejected</c>;</item>
@@ -17,8 +18,12 @@ namespace Modules.Integrations.Infrastructure.Shopify;
 /// le manda pedidos a QEP, así que la conexión no está sana aunque el token sirva.</item>
 /// </list>
 /// Sin <c>WebhookCallbackUrl</c> (local sin túnel) sólo se refresca el nombre.
+/// <para>Spec 2026-11-12 (D11): un token vencido según <c>tokenExpiresAt</c> espera al worker del refresco. Llamar con él daría
+/// 401 y marcaría <c>credentials_rejected</c> una tienda sana, así que responde «no pude verificar»
+/// (<c>token_refresh_pending</c>) sin llamar a Shopify. Sin la fecha se prueba como siempre.</para>
 /// </summary>
-internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, IShopifyAppSettings shopifyApp) : IProviderConnectionTester
+internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, IShopifyAppSettings shopifyApp, TimeProvider time)
+    : IProviderConnectionTester
 {
     public string ProviderKey => IntegrationProviders.Shopify.Key;
 
@@ -33,6 +38,11 @@ internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, ISho
             || !string.Equals(normalized, shop, StringComparison.Ordinal))
         {
             return ConnectionTestResult.RejectedWith(ConnectionFailureCodes.CredentialsRejected);
+        }
+
+        if (ShopifyTokenRefresh.IsExpired(fields.GetValueOrDefault(ShopifyFieldKeys.TokenExpiresAt), time.GetUtcNow()))
+        {
+            return ConnectionTestResult.Unreachable("token_refresh_pending");
         }
 
         ShopifyShopInfo info;
@@ -51,12 +61,20 @@ internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, ISho
             refreshed[ShopifyFieldKeys.ShopName] = info.Name;
         }
 
+        // Spec 2026-11-17 §2: el perfil se refresca con el nombre. Sin perfil no se pisa el guardado.
+        if (info.Profile is { } profile)
+        {
+            refreshed[ShopifyFieldKeys.ShopProfile] = profile.Serialize();
+        }
+
         if (shopifyApp.WebhookCallbackUrl is not { } callback)
         {
             return ConnectionTestResult.OkWith(refreshed);
         }
 
-        var registration = await ShopifyWebhookRegistration.EnsureAsync(gateway, shop, token, callback, cancellationToken);
+        // P10: los products/* sólo con read_products; una tienda instalada antes no pasa a NeedsAttention por ellos.
+        var registration = await ShopifyWebhookRegistration.EnsureAsync(
+            gateway, shop, token, callback, ShopifyWebhookTopics.ParseScopes(fields.GetValueOrDefault(ShopifyFieldKeys.Scopes)), cancellationToken);
         if (registration.Failure is { } failure)
         {
             return failure == ShopifyGatewayFailure.Unreachable

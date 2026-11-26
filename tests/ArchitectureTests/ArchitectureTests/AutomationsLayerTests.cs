@@ -35,7 +35,8 @@ public sealed class AutomationsLayerTests
         Assert.DoesNotContain(ReferenceNamesOf(Application), name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
 
     // §4.1: Tenancy (ITenantModules, TenantModuleGuard, IExecutionContext, IMembershipDirectory) y nada más.
     [Fact]
@@ -59,6 +60,8 @@ public sealed class AutomationsLayerTests
     [InlineData("Modules.Integrations")]
     [InlineData("Modules.Customers")]
     [InlineData("Modules.Identity")]
+    // Spec 2026-11-19 (chatbot CRM action): moving a deal goes through IAutomationCrm and its Bootstrapper adapter, never a reference.
+    [InlineData("Modules.Pipeline")]
     public void NoLayerReferencesMessagingIntegrationsCustomersOrIdentity(string forbiddenPrefix)
     {
         foreach (var assembly in new[] { Domain, Application, Infrastructure, Api })

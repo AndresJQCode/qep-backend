@@ -20,7 +20,7 @@ public sealed class ResolveImpactCalculatorTests
             ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true),
             ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true),
         };
-        var orders = occurrences.Select(occurrence => Order(occurrence, "Pending", hasShipping: false)).ToList();
+        var orders = occurrences.Select(occurrence => Order(occurrence, "Open", hasShipping: false)).ToList();
 
         var impact = ResolveImpactCalculator.Compute(Cali, occurrences, orders, [], Names);
 
@@ -38,9 +38,9 @@ public sealed class ResolveImpactCalculatorTests
         var occurrence = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: false);
 
         var impact = ResolveImpactCalculator.Compute(
-            Cali, [occurrence], [Order(occurrence, "Pending", hasShipping: false)], [], Names);
+            Cali, [occurrence], [Order(occurrence, "Open", hasShipping: false)], [], Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersMissingData);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersMissingData);
         Assert.Equal(0, impact.OrdersToFix.Count);
     }
 
@@ -50,9 +50,9 @@ public sealed class ResolveImpactCalculatorTests
         var occurrence = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true);
 
         var impact = ResolveImpactCalculator.Compute(
-            Cali, [occurrence], [Order(occurrence, "Pending", hasShipping: true)], [], Names);
+            Cali, [occurrence], [Order(occurrence, "Open", hasShipping: true)], [], Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersWithShipping);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersWithShipping);
         Assert.Equal(0, impact.OrdersToFix.Count);
     }
 
@@ -66,7 +66,7 @@ public sealed class ResolveImpactCalculatorTests
         var impact = ResolveImpactCalculator.Compute(
             Cali,
             [approved, cancelled, gone],
-            [Order(approved, "Approved", hasShipping: true, number: "PED-7"), Order(cancelled, "Cancelled", hasShipping: false, number: "PED-2")],
+            [Order(approved, "Archived", hasShipping: true, number: "PED-7"), Order(cancelled, "Cancelled", hasShipping: false, number: "PED-2")],
             [],
             Names);
 
@@ -74,7 +74,7 @@ public sealed class ResolveImpactCalculatorTests
         Assert.Equal(
             [
                 new ImpactOrderDto(TenantB, "Lulo", cancelled.OrderId, "PED-2", "Cancelled"),
-                new ImpactOrderDto(TenantA, "Ritual", approved.OrderId, "PED-7", "Approved"),
+                new ImpactOrderDto(TenantA, "Ritual", approved.OrderId, "PED-7", "Archived"),
             ],
             impact.OrdersNotPending.Orders);
         Assert.Equal(0, impact.OrdersWithShipping.Count);
@@ -90,7 +90,7 @@ public sealed class ResolveImpactCalculatorTests
         var impact = ResolveImpactCalculator.Compute(
             Cali,
             [pending, approved],
-            [Order(pending, "Pending", hasShipping: false, storePickup: true), Order(approved, "Approved", hasShipping: false, storePickup: true)],
+            [Order(pending, "Open", hasShipping: false, storePickup: true), Order(approved, "Archived", hasShipping: false, storePickup: true)],
             [],
             Names);
 
@@ -124,10 +124,10 @@ public sealed class ResolveImpactCalculatorTests
             ],
             Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.CustomersToComplete);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.CustomersToComplete);
         // Sólo los que la importación creó incompletos y les falta algo más que la ciudad, editados o no. El editado, el
         // fusionado y el inactivo que sólo necesitaban la ciudad no están en ningún grupo.
-        Assert.Equal(
+        ImpactAssert.Equal(
             new ImpactCountDto(2, [new ImpactTenantCountDto(TenantB, "Lulo", 1), new ImpactTenantCountDto(TenantA, "Ritual", 1)]),
             impact.CustomersStayIncomplete);
     }
@@ -152,9 +152,41 @@ public sealed class ResolveImpactCalculatorTests
         Assert.Empty(impact.OrdersNotPending.Orders);
     }
 
+    // Review Focus 5 (spec 2026-11-10): «editable» sale de los tres ejes, no del texto del estado.
+    [Fact]
+    public void AnOpenButPreparedOrderIsNotPending()
+    {
+        var prepared = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true);
+
+        var impact = ResolveImpactCalculator.Compute(
+            Cali, [prepared], [Order(prepared, "Open", hasShipping: false, number: "PED-9", editable: false)], [], Names);
+
+        Assert.Equal(0, impact.OrdersToFix.Count);
+        Assert.Equal(
+            [new ImpactOrderDto(TenantA, "Ritual", prepared.OrderId, "PED-9", "Open")],
+            impact.OrdersNotPending.Orders);
+    }
+
+    [Fact]
+    public void AnOpenUnpreparedOrderIsFixable()
+    {
+        var open = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true);
+
+        var impact = ResolveImpactCalculator.Compute(
+            Cali, [open], [Order(open, "Open", hasShipping: false, editable: true)], [], Names);
+
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersToFix);
+        Assert.Equal(0, impact.OrdersNotPending.Count);
+    }
+
     private static OrderInsight Order(
-        UnresolvedCityOccurrence occurrence, string status, bool hasShipping, string number = "PED-1", bool storePickup = false) =>
-        new(occurrence.TenantId, occurrence.OrderId, number, status, hasShipping, storePickup);
+        UnresolvedCityOccurrence occurrence,
+        string status,
+        bool hasShipping,
+        string number = "PED-1",
+        bool storePickup = false,
+        bool? editable = null) =>
+        new(occurrence.TenantId, occurrence.OrderId, number, status, hasShipping, storePickup, editable ?? status == "Open");
 }
 
 /// <summary><see cref="UnresolvedCityOccurrence"/> no tiene constructor público (la escribe el SQL del reporte, SC-03): las pruebas

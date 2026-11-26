@@ -27,6 +27,15 @@ public sealed class CreateUploadSessionHandler(
         StorageAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, StoragePermissions.FileUpload);
 
+        // Fix round 1 del Bloque D: un dueño de sistema sólo se crea por su camino (IStorageSystemUploads). Mismo 422 que un tipo que
+        // no existe.
+        if (SystemOwnedFiles.Includes(command.OwnerType))
+        {
+            throw new StorageDomainException(
+                "storage.file.owner_type_invalid",
+                "The owner type is not one of the supported values.");
+        }
+
         FileUploadPolicy.ValidateDeclaration(command.Name, command.MimeType, command.SizeBytes);
 
         var now = clock.UtcNow;

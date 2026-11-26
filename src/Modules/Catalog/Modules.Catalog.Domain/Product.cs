@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+
 namespace Modules.Catalog.Domain;
 
 /// <summary>
@@ -23,6 +25,11 @@ public sealed class Product
     public const int MaxOptions = 3;
     public const int MaxVariants = 2048;
     public const int MaxGalleryImages = 250;
+
+    // Productos desde Shopify (spec 2026-11-17 §5.4): el ancho de catalog.products.external_source y
+    // el único origen que existe hoy.
+    public const int ExternalSourceMaxLength = 20;
+    public const string ShopifySource = "shopify";
 
     private readonly List<ProductVariant> _variants = [];
     private readonly List<ProductGalleryImage> _gallery = [];
@@ -57,6 +64,22 @@ public sealed class Product
 
     public bool IsActive { get; private set; }
 
+    /// <summary>
+    /// Si el producto se publica en la tienda pública. Nace en <c>false</c>, y los productos de antes
+    /// de la tienda también quedan ocultos: publicar es una decisión del tenant, nunca un efecto de
+    /// la migración. Aparte de <see cref="IsActive"/> a propósito: desactivar un producto no debe
+    /// borrar lo que el tenant eligió mostrar.
+    /// </summary>
+    public bool VisibleInStore { get; private set; }
+
+    /// <summary>
+    /// Quién administra el producto fuera de QEP: <c>null</c> en un producto propio,
+    /// <see cref="ShopifySource"/> en uno que creó la importación de Shopify (spec 2026-11-17 §5.4).
+    /// Con origen, el PUT de la consola rechaza cambiar lo que la tienda administra (§5.5);
+    /// <see cref="ReleaseExternal"/> lo devuelve a propio.
+    /// </summary>
+    public string? ExternalSource { get; private set; }
+
     // --- CAT-04: propiedades opcionales. Nacen nullable porque hay productos ya cargados: una
     // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por los
     // precios por moneda, que desde 2026-10-20 son de cada variante.
@@ -74,6 +97,16 @@ public sealed class Product
     /// que sea del mismo tenant; eso lo verifica el handler antes de asignarla.
     /// </summary>
     public ProductCategoryId? CategoryId { get; private set; }
+
+    /// <summary>
+    /// Producto o servicio (spec 2026-11-18 §3.1). Vive en el producto y no en la variante: una talla
+    /// o un color no cambian la naturaleza de lo que se vende. Cambiarlo afecta sólo las líneas
+    /// nuevas: cada línea de cotización o pedido congela el suyo al crearse.
+    /// </summary>
+    public ProductKind Kind { get; private set; }
+
+    /// <summary>La unidad en la que se vende (spec 2026-11-18 §3.2). No depende de <see cref="Kind"/>.</summary>
+    public SalesUnit SalesUnit { get; private set; }
 
     /// <summary>
     /// Las opciones de la biblioteca del tenant (<see cref="OptionDefinition"/>) que arman las
@@ -144,6 +177,7 @@ public sealed class Product
         var product = new Product(id, tenantId, NormalizeName(name), details, occurredAt);
         product.ReplaceGallery(galleryFileIds);
         product.ReplaceVariants([defaultVariant with { Id = id.Value }], optionCount: 0, isCreate: true);
+        product.EnsureServiceHasNoPackaging();
         return product;
     }
 
@@ -154,6 +188,8 @@ public sealed class Product
     /// el resto nace con id nuevo. Los <c>Id</c> que traigan las variantes se ignoran: en un
     /// producto nuevo no hay ninguna guardada con la cual emparejar.
     /// </summary>
+    /// <param name="externalSource">Sólo el camino de sistema lo pasa (la importación de Shopify);
+    /// la consola siempre crea productos propios.</param>
     public static Product Create(
         ProductId id,
         Guid tenantId,
@@ -162,24 +198,32 @@ public sealed class Product
         IReadOnlyList<Guid> optionIds,
         IReadOnlyList<ProductVariantInput> variants,
         IReadOnlyList<Guid> galleryFileIds,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool visibleInStore = false,
+        string? externalSource = null)
     {
         ArgumentNullException.ThrowIfNull(optionIds);
         ArgumentNullException.ThrowIfNull(variants);
         ArgumentNullException.ThrowIfNull(galleryFileIds);
 
         var normalizedName = NormalizeName(name);
+        var normalizedSource = NormalizeExternalSource(externalSource);
         EnsureOptions(optionIds);
         EnsureGallery(galleryFileIds);
         EnsureVariantCount(variants);
 
-        var product = new Product(id, tenantId, normalizedName, details, occurredAt);
+        var product = new Product(id, tenantId, normalizedName, details, occurredAt)
+        {
+            VisibleInStore = visibleInStore,
+            ExternalSource = normalizedSource
+        };
         product.ReplaceOptions(optionIds);
         product.ReplaceGallery(galleryFileIds);
         product.ReplaceVariants(
             variants.Select((variant, index) => variant with { Id = index == 0 ? id.Value : null }).ToArray(),
             optionIds.Count,
             isCreate: true);
+        product.EnsureServiceHasNoPackaging();
         return product;
     }
 
@@ -205,7 +249,8 @@ public sealed class Product
         IReadOnlyList<ProductVariantInput> variants,
         IReadOnlyList<Guid> galleryFileIds,
         DateTimeOffset occurredAt,
-        IReadOnlyCollection<Guid>? deletedVariantIds = null)
+        IReadOnlyCollection<Guid>? deletedVariantIds = null,
+        bool? visibleInStore = null)
     {
         ArgumentNullException.ThrowIfNull(optionIds);
         ArgumentNullException.ThrowIfNull(variants);
@@ -229,6 +274,11 @@ public sealed class Product
         // mismo guardado.
         _variants.RemoveAll(variant => deleted.Contains(variant.Id.Value));
         ReplaceVariants(variants, optionIds.Count, isCreate: false);
+        EnsureServiceHasNoPackaging();
+        // null conserva el valor: el PUT reemplaza el recurso entero, pero la visibilidad la puede
+        // cambiar también el lote, y un cliente viejo que no la manda no debe ocultar el producto.
+        // Va en el mismo incremento de versión que el resto del guardado.
+        VisibleInStore = visibleInStore ?? VisibleInStore;
         Version++;
         UpdatedAt = occurredAt;
     }
@@ -243,6 +293,25 @@ public sealed class Product
         Description = normalized.Description;
         TaxRateId = normalized.TaxRateId;
         CategoryId = normalized.CategoryId;
+        Kind = normalized.Kind;
+        SalesUnit = normalized.SalesUnit;
+    }
+
+    // Después de aplicar las variantes, porque los empaques son de cada una. El empaque es de
+    // mercancía (spec 2026-11-18 §3.1): un servicio no lo lleva, y pasar a servicio un producto con
+    // empaques exige vaciarlos en el mismo guardado. La clave del mapa es la que el formulario marca.
+    private void EnsureServiceHasNoPackaging()
+    {
+        if (Kind == ProductKind.Service && _variants.Exists(variant => variant.PackagingUnits.Count > 0))
+        {
+            throw new CatalogDomainException(
+                "catalog.product.packaging_not_allowed_for_service",
+                "A service cannot have packaging units.",
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    ["PackagingUnits"] = ["Un servicio no lleva empaques."]
+                });
+        }
     }
 
     private static void EnsureOptions(IReadOnlyList<Guid> optionIds)
@@ -551,6 +620,100 @@ public sealed class Product
         IsActive = true;
         Version++;
         UpdatedAt = occurredAt;
+    }
+
+    /// <summary>
+    /// Publica u oculta el producto en la tienda. Devuelve <c>false</c> sin tocar nada si ya estaba así:
+    /// un lote que repite el valor no debe subir la versión ni invalidar a quien tiene el formulario
+    /// abierto. No exige que el producto esté activo; la tienda sólo lo muestra activo.
+    /// </summary>
+    public bool SetStoreVisibility(bool visible, DateTimeOffset occurredAt)
+    {
+        if (VisibleInStore == visible)
+        {
+            return false;
+        }
+
+        VisibleInStore = visible;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
+    /// <summary>
+    /// Devuelve el producto a propio de QEP (desvincular, spec 2026-11-17 §5.5): quita el origen y
+    /// con él la protección del PUT. Sin efecto, y sin subir la versión, si ya era propio: un
+    /// segundo «desvincular» no le da un 412 a quien tiene el formulario abierto. No exige activo.
+    /// </summary>
+    public void ReleaseExternal(DateTimeOffset occurredAt)
+    {
+        if (ExternalSource is null)
+        {
+            return;
+        }
+
+        ExternalSource = null;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
+    /// <summary>
+    /// Pone la imagen que trae la plataforma externa (spec 2026-11-17 §6 «imagen»): reemplaza
+    /// **sólo** la foto que puso la importación y deja el resto de la galería como la ordenó el asesor.
+    /// <list type="bullet">
+    /// <item><paramref name="previousFileId"/> sigue en la galería: el archivo nuevo toma su lugar en
+    /// la misma fila, así conserva la posición y las variantes que la usaban siguen apuntándole.</item>
+    /// <item><paramref name="previousFileId"/> es null y la galería está vacía: entra primera.</item>
+    /// <item>Cualquier otro caso (el asesor quitó la foto importada, o ya puso las suyas, o el archivo
+    /// ya está): no toca nada y devuelve <c>false</c>. Quien llama libera el archivo nuevo.</item>
+    /// </list>
+    /// No exige activo: la galería de un producto inactivo de la tienda también se mantiene.
+    /// </summary>
+    public bool ReplaceGalleryImage(Guid? previousFileId, Guid newFileId, DateTimeOffset occurredAt)
+    {
+        if (_gallery.Exists(image => image.FileId == newFileId))
+        {
+            return false;
+        }
+
+        if (previousFileId is { } previous)
+        {
+            var target = _gallery.Find(image => image.FileId == previous);
+            if (target is null)
+            {
+                return false;
+            }
+
+            target.FileId = newFileId;
+        }
+        else if (_gallery.Count == 0)
+        {
+            _gallery.Add(new ProductGalleryImage(Guid.CreateVersion7(), newFileId, 0));
+        }
+        else
+        {
+            return false;
+        }
+
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
+    private static string? NormalizeExternalSource(string? externalSource)
+    {
+        if (string.IsNullOrWhiteSpace(externalSource))
+        {
+            return null;
+        }
+
+        var trimmed = externalSource.Trim();
+        // Interno: sólo lo dispara el camino de sistema, nunca la consola.
+        return trimmed.Length > ExternalSourceMaxLength
+            ? throw new CatalogDomainException(
+                "catalog.product.external_source_too_long",
+                $"The external source cannot exceed {ExternalSourceMaxLength} characters.")
+            : trimmed;
     }
 
     private void EnsureActive()

@@ -44,8 +44,8 @@ public sealed class FindPosProductByCodeHandler(
         // 404 es correcto aquí: la búsqueda ya está acotada al tenant de la ruta.
         var product = await products.FindByCodeAsync(query.TenantId, query.Code, cancellationToken)
             ?? throw PosNotFound.ProductCode(query.Code);
-        var currency = await PosSellingCurrency.ResolveAsync(
+        var selling = await PosSellingCurrency.ResolveContextAsync(
             sessions, membershipDirectory, tenantDefaultCurrency, executionContext, query.TenantId, cancellationToken);
-        return PosProductMapping.ToResponse(product, currency);
+        return PosProductMapping.ToResponse(product, selling);
     }
 }

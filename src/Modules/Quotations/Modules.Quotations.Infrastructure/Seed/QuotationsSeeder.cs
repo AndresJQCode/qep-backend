@@ -231,6 +231,12 @@ public static class QuotationsSeeder
         "shipping_department",
         "shipping_phone",
         "shipping_email",
+        // Spec impuestos por tipo (P12): una columna por tipo de retención, que la hoja no usa.
+        "withholding_retefuente",
+        "withholding_reteica",
+        // Spec 2026-11-14: la nota del comprador, que la hoja no usa. Nace oculta y su encabezado
+        // («Notas del cliente») no choca con ninguno de la hoja.
+        "buyer_notes",
     ];
 
     /// <summary>

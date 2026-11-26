@@ -82,13 +82,40 @@ internal sealed class StubUserDirectory(IReadOnlyDictionary<Guid, string> emails
 {
     public Task<string?> GetEmailAsync(Guid userId, CancellationToken cancellationToken) =>
         Task.FromResult(emails.TryGetValue(userId, out var email) ? email : null);
+
+    public Task<Guid?> FindUserIdByEmailAsync(string email, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
-internal sealed class RosterReadExecutionContext(TenantId tenantId) : IExecutionContext
+internal sealed class RosterReadExecutionContext(TenantId tenantId, params string[] extraPermissions) : IExecutionContext
 {
     public Guid SubjectId { get; } = Guid.CreateVersion7();
 
     public TenantId TenantId { get; } = tenantId;
 
-    public bool HasPermission(string permission) => permission == TenancyPermissions.AdvisorshipRead;
+    public bool HasPermission(string permission) =>
+        permission == TenancyPermissions.AdvisorshipRead || extraPermissions.Contains(permission);
+}
+
+/// <summary>The HR fallback with nothing to lend: handlers that only need the reader to exist.</summary>
+internal sealed class NoHrPhones : IMemberPhoneDirectory
+{
+    public Task<IReadOnlyDictionary<Guid, string>> FindHrPhonesAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> memberIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
+}
+
+/// <summary>
+/// Anota cada subida de la versión de acceso del tenant (spec 2026-11-13, D-5) en la misma lista que la unidad de trabajo,
+/// para afirmar el orden: antes del guardado y otra vez después.
+/// </summary>
+internal sealed class RecordingTenantAccessVersion(List<string> steps) : ITenantAccessVersion
+{
+    public Task BumpAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        steps.Add($"bump:{tenantId}");
+        return Task.CompletedTask;
+    }
 }

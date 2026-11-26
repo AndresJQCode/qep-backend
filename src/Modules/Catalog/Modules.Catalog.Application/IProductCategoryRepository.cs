@@ -5,9 +5,21 @@ namespace Modules.Catalog.Application;
 /// <summary>Una categoría con la cantidad de productos que la tienen directamente asignada.</summary>
 public sealed record ProductCategoryListItem(ProductCategory Category, int ProductCount);
 
+/// <summary>Una categoría reducida a lo que arma el árbol público: id, nombre y padre.</summary>
+public sealed record ProductCategoryNode(ProductCategoryId Id, string Name, ProductCategoryId? ParentId);
+
 // Todo método recibe tenantId primero: el filtro de tenant es parte de la consulta.
 public interface IProductCategoryRepository
 {
+    /// <summary>
+    /// Todas las categorías del tenant como (id, nombre, padre), ordenadas por nombre y sin traer la
+    /// entidad. Lo usa la tienda pública para armar el árbol y expandir una categoría a sus
+    /// descendientes sin cargar posiciones de acceso rápido ni versiones.
+    /// </summary>
+    Task<IReadOnlyList<ProductCategoryNode>> ListCategoriesWithParentsAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Todas las categorías del tenant ordenadas por nombre, con el conteo **directo** de
     /// productos (los de las descendientes no suman). Con <paramref name="onlyActiveProducts"/>

@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+using BuildingBlocks.Domain.Taxes;
 using FluentValidation;
 using Modules.Customers.Domain;
 
@@ -16,9 +18,9 @@ public interface ICustomerWriteCommand
 {
     string Name { get; }
 
-    string IdentificationType { get; }
+    string? IdentificationType { get; }
 
-    string IdentificationNumber { get; }
+    string? IdentificationNumber { get; }
 
     string? Phone { get; }
 
@@ -31,6 +33,9 @@ public interface ICustomerWriteCommand
     Guid? CityId { get; }
 
     string? CityName { get; }
+
+    /// <summary>La region (provincia) del domicilio; solo para un pais con catalogo distinto de Colombia.</summary>
+    Guid? RegionId { get; }
 
     Guid? ClassificationId { get; }
 
@@ -65,8 +70,9 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         RuleFor(command => command.Name)
             .NotEmpty()
             .MaximumLength(Customer.NameMaxLength);
+        // El documento ya no es obligatorio aca: si hace falta lo decide la politica del tenant
+        // (CustomerFieldPolicyRequirement), que tambien exige que tipo y numero vengan juntos.
         RuleFor(command => command.IdentificationNumber)
-            .NotEmpty()
             .MaximumLength(CustomerIdentification.NumberMaxLength);
         // El telefono es obligatorio (CustomerContactInfo): se rechaza aca tambien para que el 422
         // lleve el mapa errors por campo y no solo el codigo de dominio.
@@ -85,11 +91,20 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         // valores validos que alguien puede ampliar por separado terminan discrepando, y la que
         // gana es la del dominio — con un 422 sin mapa de errores.
         RuleFor(command => command.IdentificationType)
-            .NotEmpty()
             .Must(IsSupportedIdentificationType)
             .WithMessage(command =>
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
+
+        // Regla aparte de la anterior, y no un Must más en la misma cadena: así un código desconocido
+        // sólo reporta la lista y un país mal formado sólo reporta el país. Corre cuando el código es
+        // conocido y el país tiene forma de ISO-3166-1 alpha-2.
+        RuleFor(command => command.IdentificationType)
+            .Must((command, type) => DocumentTypesByCountry.IsAllowed(type, command.Country))
+            .WithMessage("The identification type is not allowed for the country.")
+            .When(command => DocumentTypesByCountry.IsKnown(command.IdentificationType)
+                && command.Country is { Length: CustomerContactInfo.CountryLength } country
+                && country.All(char.IsAsciiLetter));
 
         // Spec 2026-10-26: el tipo de persona es opcional, pero uno que no se reconoce se rechaza aca para que el 422
         // lleve el mapa errors con la clave PersonType. Se comprueba contra la misma tabla que el dominio
@@ -116,25 +131,22 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
                 $"The country must be an ISO-3166-1 alpha-2 code ({CustomerContactInfo.CountryLength} letters).")
             .When(command => !string.IsNullOrWhiteSpace(command.Country));
 
-        // Cual de los dos carriles de ciudad hace falta lo decide el pais. DIVIPOLA solo describe
-        // Colombia, asi que un cliente de afuera no tiene CityId que mandar y escribe su ciudad.
-        // Marcar el campo correcto importa: el formulario pinta un combobox o un input de texto
-        // segun el pais, y un error apuntando al campo que no esta en pantalla no se ve.
-        // NotEmpty() en un Guid? solo rechaza null: un Guid.Empty explicito lo deja pasar y el
-        // rechazo llega despues, como customers.customer.city_not_found del dominio y sin el mapa
-        // errors -- el mismo hueco que register-tenant ya documenta para un campo obligatorio mal
-        // comprobado. Must() cubre los dos casos con el mismo codigo de campo.
-        RuleFor(command => command.CityId)
-            .Must(cityId => cityId is { } value && value != Guid.Empty)
-            .WithMessage("The city is required.")
-            .When(IsColombian);
-        RuleFor(command => command.CityName)
-            .NotEmpty()
-            .WithMessage("The city is required.")
-            .When(command => !IsColombian(command));
+        // La ciudad ya no es obligatoria aca: si hace falta (y cual de los dos carriles, CityId o CityName, segun el
+        // pais) lo decide la politica del tenant en CustomerFieldPolicyRequirement. Lo que se sigue rechazando aca es
+        // Guid.Empty, un id roto que no es una forma de decir "ninguna" (la ausencia se dice con null).
+        RuleFor(command => command.CityId).NotEqual(Guid.Empty);
         RuleFor(command => command.CityName)
             .MaximumLength(CustomerContactInfo.CityNameMaxLength)
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
+
+        // La region (provincia) solo existe fuera de Colombia, que deriva el departamento de la ciudad: con CO (o sin pais, que
+        // cuenta como CO) se rechaza por campo en vez de caer al dominio como un 422 sin el mapa errors. Que la region exista y
+        // sea de ese pais lo resuelve el handler contra Geography.
+        RuleFor(command => command.RegionId)
+            .Null()
+            .WithMessage("A Colombian customer takes its region from the city, not from a region id.")
+            .When(IsColombian);
+        RuleFor(command => command.RegionId).NotEqual(Guid.Empty);
 
         // El correo es opcional (CustomerContactInfo): vacio no es error, y el When() evita que un
         // correo vacio se reporte como "no es una direccion valida".
@@ -144,11 +156,7 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .When(command => !string.IsNullOrWhiteSpace(command.Email));
     }
 
-    // Un pais ausente cuenta como Colombia a los efectos de **cual** ciudad exigir. No es
-    // adivinar: el pais tiene su propia regla NotEmpty que ya marca el campo, y dejar los dos
-    // carriles apagados haria que un cuerpo sin pais tampoco reporte la ciudad — el formulario
-    // marcaria un solo campo por vez y el usuario corregiria de a uno. Ademas conserva el
-    // comportamiento anterior al pais para cualquier llamador que todavia no lo mande.
+    // Mismo criterio que CustomerAddressWriteRules.IsColombian: un pais en blanco es Colombia.
     private static bool IsColombian(ICustomerWriteCommand command) =>
         string.IsNullOrWhiteSpace(command.Country)
         || string.Equals(
@@ -184,4 +192,113 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
 
     private static string Join(IReadOnlyCollection<string> values) =>
         string.Join(", ", values.Order(StringComparer.Ordinal));
+}
+
+/// <summary>
+/// Las reglas de las retenciones de un cliente que no caben en una regla de forma: hay que preguntarle al catálogo (spec
+/// impuestos por tipo §7.4). Se llama después de autorizar y de validar la forma, y antes de escribir.
+///
+/// Cada id tiene que ser una tasa del tenant, activa y que retiene (un IVA, una tasa inactiva, una inexistente y una de otro
+/// tenant son el mismo error: <c>withholding_tax_rate_invalid</c>), y no puede haber dos del mismo tipo y país
+/// (<c>withholding_type_repeated</c>): dos Retefuente colombianas no se suman, se escoge una.
+/// </summary>
+internal static class CustomerWithholdingRules
+{
+    public static async Task ValidateAsync(
+        ICustomerTaxRateLookup lookup,
+        Guid tenantId,
+        IReadOnlyCollection<Guid> taxRateIds,
+        CancellationToken cancellationToken)
+    {
+        if (taxRateIds.Count == 0)
+        {
+            return;
+        }
+
+        var ids = taxRateIds.Distinct().ToArray();
+        var found = await lookup.FindManyAsync(tenantId, ids, cancellationToken);
+        Validate(found, ids);
+    }
+
+    /// <summary>
+    /// Las mismas reglas sobre tasas ya leidas del catalogo. El Excel carga las del tenant una sola vez por archivo y valida
+    /// cada fila contra ellas, sin una consulta por fila (spec impuestos por tipo §7.4).
+    /// </summary>
+    public static void Validate(
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> found, IReadOnlyCollection<Guid> taxRateIds)
+    {
+        var ids = taxRateIds.Distinct().ToArray();
+        var rates = new List<CustomerTaxRateRef>(ids.Length);
+        foreach (var id in ids)
+        {
+            if (!found.TryGetValue(id, out var rate) || !rate.IsActive || !rate.Withholds)
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.withholding_tax_rate_invalid",
+                    "The withholding tax rate does not exist, is inactive, or does not withhold.");
+            }
+
+            rates.Add(rate);
+        }
+
+        // Spec ReteICA por empresa §7.4 (A15): una tasa municipal es de la empresa facturadora y del municipio de la
+        // operación, nunca del cliente. Se revisa antes que los repetidos para decir lo que de verdad está mal.
+        if (rates.Any(rate => TaxCountries.IsMunicipal(rate.Country, rate.Type)))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_tax_rate_municipal",
+                "A municipal withholding tax rate cannot be assigned to a customer.");
+        }
+
+        // Spec 2026-11-18 §4.3: del mismo país y tipo conviven sólo una de bienes y una de servicios.
+        if (rates.GroupBy(rate => (rate.Country, rate.Type))
+            .Any(group => WithholdingScopes.AnyOverlap([.. group.Select(rate => rate.AppliesTo)])))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_type_repeated",
+                "A customer can have only one withholding tax rate per country, type and scope.");
+        }
+    }
+}
+
+/// <summary>
+/// Qué municipios puede guardar un cliente como agente retenedor (spec ReteICA por empresa §7.4): el tipo tiene que ser
+/// municipal en su país y la ciudad tiene que existir en Geography (que sólo tiene la DIVIPOLA, así que «existe» es «es de
+/// Colombia»). Los repetidos los colapsa el agregado.
+/// </summary>
+internal static class CustomerWithholdingAgentRules
+{
+    public static async Task<IReadOnlyList<WithholdingAgentCityEntry>> ValidateAsync(
+        ICustomerGeographyLookup geography,
+        IReadOnlyCollection<WithholdingAgentCityRequest> entries,
+        CancellationToken cancellationToken)
+    {
+        // Sin municipios no hay nada que preguntarle a Geography: el alta común no paga la consulta.
+        if (entries.Count == 0)
+        {
+            return [];
+        }
+
+        foreach (var entry in entries)
+        {
+            if (!TaxCountries.IsMunicipal(entry.Country, entry.Type))
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.withholding_agent_type_invalid",
+                    $"'{entry.Type}' is not a municipal tax type of country '{entry.Country}'.");
+            }
+        }
+
+        var cityIds = entries.Select(entry => entry.CityId).Distinct().ToArray();
+        var found = await geography.FindCitiesAsync(cityIds, cancellationToken);
+        var missing = cityIds.Where(id => !found.ContainsKey(id)).ToArray();
+        if (missing.Length > 0)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_agent_city_invalid",
+                $"The city '{missing[0]}' does not exist.");
+        }
+
+        return [.. entries.Select(entry => new WithholdingAgentCityEntry(entry.Country, entry.Type, entry.CityId))];
+    }
 }

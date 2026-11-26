@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -23,10 +25,6 @@ public sealed class OrdersExportProcessorTests
     private static readonly DateTimeOffset Now = new(2026, 9, 12, 15, 30, 0, TimeSpan.Zero);
     private static readonly DateOnly From = new(2026, 9, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
-
-    // El rango guardado en el job, cortado en el día de Bogotá al procesar (spec 2026-09-17, punto 3).
-    private static readonly DateTimeOffset FromUtc = new(2026, 9, 1, 5, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
 
     private static readonly QuotationCustomerRef DefaultCustomer = new(
         ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
@@ -141,7 +139,9 @@ public sealed class OrdersExportProcessorTests
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(90_000m, cells[ValorUnitIndex].Number);
         Assert.Null(cells[ValorUnitIndex].Text);
-        Assert.Equal(35_700m, cells[DescuentoIndex].Number);
+        Assert.Equal(30_000m, cells[DescuentoIndex].Number);
+        // La celda se lee junto a la base sin IVA: Cantidad × Valor Unit + Descuento = bruto sin IVA.
+        Assert.Equal(300_000m, 3m * cells[ValorUnitIndex].Number!.Value + cells[DescuentoIndex].Number!.Value);
     }
 
     private const int ValorUnitIndex = 3;
@@ -156,16 +156,18 @@ public sealed class OrdersExportProcessorTests
 
     private const int DocumentoIdentidadIndex = 42;
 
-    // Ajuste 2026-09-25: "Fecha Pedido" es el día en que nació el pedido (Order.CreatedAt), en el
-    // día del tenant y no en UTC — 22:00 de Bogotá ya es el día siguiente en UTC. Texto, como
-    // "Fecha Pago N", porque el ERP lo importa tal cual.
+    // Ajuste 2026-09-25: "Fecha Pedido" es texto, como "Fecha Pago N", porque el ERP lo importa tal cual. Desde el spec
+    // 2026-11-16 §5 es Order.OrderDate, que ya es un día del tenant: creado a las 22:00 del 11 en Bogotá (12 en UTC), el
+    // pedido nace con fecha 11 y el archivo dice 11, sin pasar por el calendario.
     [Fact]
-    public async Task FechaPedidoIsTheOrdersCreationDayInTheTenantsLocalTime()
+    public async Task FechaPedidoIsTheOrderDate()
     {
         var writer = new RecordingExportWorkbookWriter();
         var createdAt = new DateTimeOffset(2026, 9, 12, 3, 0, 0, TimeSpan.Zero); // 22:00 del 11 en Bogotá.
 
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", at: createdAt)), writer)
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", at: createdAt, orderDate: new DateOnly(2026, 9, 11))),
+                writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(new ExportColumn("Fecha Pedido", 14), writer.Columns[FechaPedidoIndex]);
@@ -196,7 +198,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
@@ -271,7 +272,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         Assert.Equal("Distribuciones Andinas S.A.S.", await BillingNameAsync(parties, DefaultCustomer));
@@ -395,7 +395,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
@@ -413,7 +412,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         Assert.Equal(string.Empty, await BillingNumberAsync(parties, legacy: row => typeof(OrderParty)
@@ -513,7 +511,7 @@ public sealed class OrdersExportProcessorTests
         };
         var companies = new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>
         {
-            [CompanyId] = new(CompanyId, "Raíces Orgánicas", "901.846.471-5", IsActive: true, Address: null, Phone: null, BankAccounts: []),
+            [CompanyId] = new(CompanyId, "Raíces Orgánicas", "901.846.471-5", DocumentType: "NIT", Country: "CO", IsActive: true, Address: null, Phone: null, BankAccounts: []),
         });
 
         await NewProcessor(
@@ -550,6 +548,32 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
+    }
+
+    // Spec 2026-11-14: «Notas del cliente» es la nota del comprador (Order.BuyerNotes); «Observaciones» sigue con Order.Notes.
+    [Fact]
+    public async Task BuyerNotesColumnReadsBuyerNotesAndObservacionesKeepsNotes()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, false, TestWithholdings.Customer(false)),
+            QuotationParties.Empty, DefaultBillingAccount,
+            [.. DefaultItems.Select(item => new OrderLineInput(
+                item.ProductId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))],
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "Sin cebolla");
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("notes", "Observaciones", visible: true),
+            OrdersExportColumnSetting.Catalog("buyer_notes", "Notas del cliente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Observaciones", "Notas del cliente"], writer.Columns.Take(2).Select(column => column.Header));
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(("Shopify #1001", "Sin cebolla"), (row[0].Text, row[1].Text));
     }
 
     [Fact]
@@ -760,7 +784,6 @@ public sealed class OrdersExportProcessorTests
         new(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S.") with { PersonType = personType },
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
     [Fact]
@@ -921,7 +944,6 @@ public sealed class OrdersExportProcessorTests
                 DepartmentId = BillingDepartmentId,
             },
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
     private static async Task<IReadOnlyList<ExportCell>> CustomerAndBillingCellsAsync(
@@ -978,7 +1000,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S.") with { PersonType = PartyPersonType.Juridica },
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         var cells = await CustomerAndBillingCellsAsync(parties, CustomerWithFullData);
@@ -1115,7 +1136,6 @@ public sealed class OrdersExportProcessorTests
         new(
             Billing: null,
             Shipping: CompleteShippingParty("Bodega Sur", ShippingCityId) with { DepartmentId = ShippingDepartmentId },
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
     private static async Task<IReadOnlyList<ExportCell>> ShippingCellsAsync(
@@ -1578,7 +1598,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(repository).ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new OrderExportCursor?[] { null, new OrderExportCursor(Now, "PED-2026-0002") },
+            new OrderExportCursor?[] { null, new OrderExportCursor(DateOnly.FromDateTime(Now.UtcDateTime), Now, "PED-2026-0002") },
             repository.ExportCursors);
     }
 
@@ -1614,39 +1634,34 @@ public sealed class OrdersExportProcessorTests
     public async Task FiltersWithWhatTheRequestStored()
     {
         var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
-        var job = NewJob(new OrdersExportFilters(ClientId, AdvisorId.Value, "approved", "fullpaymentreceived", From, To, null, "PED"));
+        var job = NewJob(new OrdersExportFilters(
+            ClientId, AdvisorId.Value, "open", "fullpaymentreceived", From, To, null, "PED",
+            FulfillmentStatus: "notprepared", Invoiced: "true"));
 
         await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
 
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, FromUtc, BeforeUtc, "PED"),
+                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.FullPaymentReceived, From, To, "PED",
+                FulfillmentStatus: OrderFulfillmentStatus.NotPrepared, Invoiced: true),
             repository.LastExportSearch);
     }
 
-    [Fact]
-    public async Task CutsTheRangeInTheStoredTimeZone()
+    // Spec 2026-11-16 §4: el rango corta por la fecha del pedido, que ya es un día del tenant; la zona guardada en el
+    // trabajo (o su ausencia, en uno viejo) no lo mueve.
+    [Theory]
+    [InlineData("Europe/Madrid")]
+    [InlineData(null)]
+    public async Task FiltersByTheStoredDaysWhateverTheStoredTimeZone(string? timeZone)
     {
         var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
-        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null, TimeZone: "Europe/Madrid"));
+        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null, TimeZone: timeZone));
 
         await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch!.ConvertedFrom);
-        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch.ConvertedBefore);
-    }
-
-    // Un job encolado antes de este cambio no trae zona: corta en el día del tenant, como siempre.
-    [Fact]
-    public async Task AJobWithoutATimeZoneCutsTheDayOfTheTenant()
-    {
-        var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
-        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null));
-
-        await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
-
-        Assert.Equal(FromUtc, repository.LastExportSearch!.ConvertedFrom);
-        Assert.Equal(BeforeUtc, repository.LastExportSearch.ConvertedBefore);
+        Assert.Equal(
+            ((DateOnly?)From, (DateOnly?)To),
+            (repository.LastExportSearch!.OrderDateFrom, repository.LastExportSearch.OrderDateTo));
     }
 
     [Fact]
@@ -1882,6 +1897,145 @@ public sealed class OrdersExportProcessorTests
         Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(4_300m), cells[TotalFacturadoIndex]));
     }
 
+    // Spec impuestos por tipo (P12): una columna por tipo, ocultas por defecto. La celda suma el monto de las
+    // retenciones aplicadas de ese tipo y es 0 si ninguna; «Retencion» sigue siendo la suma de todas.
+    [Fact]
+    public async Task ExportHasAmountPerWithholdingType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var reteIca = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000026"), "ReteICA 0,966 %", "ReteICA", "CO", 0.966m, null, null, null);
+        var both = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo, reteIca]);
+        var onlyRetefuente = NewRow("PED-2026-0002", customerWithRetention: true);
+        var none = NewRow("PED-2026-0003");
+        var retefuente = both.AppliedWithholdings.Single(w => w.Rate.Type == "Retefuente").Amount;
+        var ica = both.AppliedWithholdings.Single(w => w.Rate.Type == "ReteICA").Amount;
+        Assert.True(retefuente > 0m && ica > 0m);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente", "Retefuente", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica", "ReteICA", visible: true),
+            OrdersExportColumnSetting.Catalog("retention_amount", "Retencion", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(both, onlyRetefuente, none), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Pedido", "Retefuente", "ReteICA", "Retencion"], writer.Columns.Take(4).Select(c => c.Header));
+        var rows = writer.Rows.ToDictionary(cells => cells[0].Text!);
+        Assert.Equal(ExportCell.OfNumber(retefuente), rows["PED-2026-0001"][1]);
+        Assert.Equal(ExportCell.OfNumber(ica), rows["PED-2026-0001"][2]);
+        Assert.Equal(ExportCell.OfNumber(both.RetentionAmount), rows["PED-2026-0001"][3]);
+        Assert.Equal(ExportCell.OfNumber(onlyRetefuente.RetentionAmount), rows["PED-2026-0002"][1]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][1]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
+    }
+
+    // Spec 2026-11-16 (tarifa de retención): el import de facturación busca el impuesto por su tarifa. Las dos en
+    // porcentaje tal cual, sin escala (owner, 2026-11-16: la ReteICA ya no sale por mil). Sin retención aplicada del
+    // tipo, 0.
+    [Fact]
+    public async Task ExportHasRatePerWithholdingType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var bogota = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000027"), "ReteICA Bogotá 11,04 ‰", "ReteICA", "CO", 1.104m, null, null, null);
+        // Base mínima en UVT sin valor de UVT congelado: nunca aplica.
+        var notApplied = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000028"), "ReteICA con base", "ReteICA", "CO", 0.966m, 100m, "UVT", null);
+        var both = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo, bogota]);
+        var none = NewRow("PED-2026-0002");
+        var belowBase = NewRow("PED-2026-0003", withholdings: [notApplied]);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Retefuente", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica_rate", "ReteICA", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(both, none, belowBase), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Pedido", "Retefuente", "ReteICA"], writer.Columns.Take(3).Select(c => c.Header));
+        var rows = writer.Rows.ToDictionary(cells => cells[0].Text!);
+        Assert.Equal(ExportCell.OfNumber(2.5m), rows["PED-2026-0001"][1]);
+        Assert.Equal(ExportCell.OfNumber(1.104m), rows["PED-2026-0001"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][1]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
+    }
+
+    // Límite conocido del spec 2026-11-16: con dos aplicadas del mismo tipo sale la primera por orden del pedido.
+    [Fact]
+    public async Task RateUsesTheFirstAppliedWithholdingOfTheType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var first = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000029"), "ReteICA Bogotá", "ReteICA", "CO", 1.104m, null, null, null);
+        var second = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000030"), "ReteICA Medellín", "ReteICA", "CO", 0.966m, null, null, null);
+        var order = NewRow("PED-2026-0001", withholdings: [first, second]);
+        Assert.Equal(2, order.AppliedWithholdings.Count());
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica_rate", "ReteICA", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(1.104m), cells[1]));
+    }
+
+    // Spec 2026-11-18 §4: con tasas por alcance (Retefuente de bienes y de servicios) el monto del tipo es la suma y su base
+    // no es el subtotal; la tarifa que sale es la efectiva sobre el subtotal del pedido, para que el ERP que la multiplique
+    // por el subtotal llegue al mismo monto. 1.000.000 de bienes al 2,5 % (25.000) y 500.000 de servicios al 4 % (20.000):
+    // 45.000 sobre 1.500.000 es 3 %.
+    [Fact]
+    public async Task RateOfAScopedTypeIsTheEffectiveRateOnTheOrderSubtotal()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var goods = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000031"), "Retefuente compras", "Retefuente", "CO", 2.5m, null, null, null)
+        { AppliesTo = WithholdingScope.Goods };
+        var services = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000032"), "Retefuente servicios", "Retefuente", "CO", 4m, null, null, null)
+        { AppliesTo = WithholdingScope.Services };
+        var order = NewRow(
+            "PED-2026-0001",
+            items: [(ProductId, 1m, 1_000_000m, 0m, 0), (OtherProductId, 1m, 500_000m, 0m, 0)],
+            kinds: [ProductKind.Physical, ProductKind.Service],
+            withholdings: [goods, services]);
+        Assert.Equal(45_000m, order.AppliedWithholdings.Sum(withholding => withholding.Amount));
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente", "Retefuente", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Tasa Retefuente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells =>
+        {
+            Assert.Equal(ExportCell.OfNumber(45_000m), cells[1]);
+            Assert.Equal(ExportCell.OfNumber(3m), cells[2]);
+        });
+    }
+
+    // La tarifa es la efectiva, la que dio el monto: si el asesor la editó, sale la editada y no la del catálogo.
+    [Fact]
+    public async Task RateUsesTheOverriddenPercentage()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var order = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo with { Percentage = 3.5m }]);
+        Assert.True(order.AppliedWithholdings.Single().Overridden);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Retefuente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(3.5m), cells[1]));
+    }
+
     // Con retención en la fuente el cliente paga NetTotal, pero lo facturado sigue siendo Total: la
     // retención no es un descuento de la factura.
     [Fact]
@@ -2066,14 +2220,14 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(901851609m), Assert.Single(writer.Rows)[NitEmpresaIndex]);
     }
 
-    // Ajuste 2026-09-28: el ERP espera el NIT sin puntos, sin espacios y sin dígito de
-    // verificación. Se limpia sólo al exportar; la empresa conserva el NIT como se escribió.
+    // Decisión del dueño (D11): el ERP acepta el guion, así que el documento sale sin puntos ni
+    // espacios pero con el guion y el dígito de verificación. Se limpia sólo al exportar; la
+    // empresa conserva el valor como se escribió. Con guion deja de ser número y sale como texto.
     [Theory]
     [InlineData("901851609-1")]
     [InlineData("901.851.609-1")]
-    [InlineData("901 851 609")]
     [InlineData(" 901.851 609 - 1 ")]
-    public async Task NitEmpresaDropsDotsSpacesAndTheCheckDigit(string taxId)
+    public async Task NitEmpresaDropsDotsAndSpacesAndKeepsTheHyphen(string taxId)
     {
         var writer = new RecordingExportWorkbookWriter();
 
@@ -2083,7 +2237,37 @@ public sealed class OrdersExportProcessorTests
                 companies: CompanyWithTaxId(taxId))
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
+        Assert.Equal(ExportCell.OfText("901851609-1"), Assert.Single(writer.Rows)[NitEmpresaIndex]);
+    }
+
+    // Sin guion el valor sigue siendo sólo dígitos, así que sigue saliendo como número.
+    [Fact]
+    public async Task NitEmpresaWithoutHyphenStaysANumber()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: BillingAccountOfCompany())),
+                writer,
+                companies: CompanyWithTaxId("901 851 609"))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
         Assert.Equal(ExportCell.OfNumber(901851609m), Assert.Single(writer.Rows)[NitEmpresaIndex]);
+    }
+
+    // Un documento de otro tipo (NIF, RUT...) con letras y guion también conserva el guion.
+    [Fact]
+    public async Task NitEmpresaKeepsTheHyphenOfAForeignDocument()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: BillingAccountOfCompany())),
+                writer,
+                companies: CompanyWithTaxId("B-12345678"))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("B-12345678"), Assert.Single(writer.Rows)[NitEmpresaIndex]);
     }
 
     // Sin cuenta de facturación, o con una empresa que no resuelve, vacía — como "EMPRESA".
@@ -2211,7 +2395,7 @@ public sealed class OrdersExportProcessorTests
     private static StubQuotationCompanyLookup CompanyWithTaxId(string taxId) =>
         new(new Dictionary<Guid, QuotationCompanyRef>
         {
-            [CompanyId] = new(CompanyId, "Raíces Orgánicas", taxId, IsActive: true, Address: null, Phone: null, BankAccounts: []),
+            [CompanyId] = new(CompanyId, "Raíces Orgánicas", taxId, DocumentType: "NIT", Country: "CO", IsActive: true, Address: null, Phone: null, BankAccounts: []),
         });
 
     // Banco va justo después de "Cod. Asesor"; Cuenta, después de Banco.
@@ -2441,6 +2625,21 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(["2026-09-12", "PED-2026-0001", "2026-09-12", "2026-09-12"], cells.Take(4).Select(cell => cell.Text));
     }
 
+    // Spec 2026-11-16 §5: la celda de fecha es la fecha del pedido, no el día en que se creó.
+    [Fact]
+    public async Task TheExportDateColumnIsTheOrderDate()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(OrdersExportColumnSetting.Catalog("order_date", "FECHA", visible: true));
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", orderDate: new DateOnly(2026, 8, 31))), writer,
+                layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("2026-08-31", Assert.Single(writer.Rows)[0].Text);
+    }
+
     // El layout se resuelve una vez por job: no por lote ni por fila.
     [Fact]
     public async Task TheLayoutIsReadOnceForTheWholeJob()
@@ -2644,7 +2843,6 @@ public sealed class OrdersExportProcessorTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = CityId,
             },
-            BillingWithRetention: false,
             BillingVatSurplus: false);
         var row = NewRow(
             "PED-2026-0007",
@@ -2670,6 +2868,190 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(row.Total), cells[TotalFacturadoIndex]);
     }
 
+    // Spec 2026-11-25 indicativo: las cuatro columnas de teléfono del catálogo y, al final, una fija que
+    // parece un teléfono, para ver que el interruptor no la toca.
+    private static InMemoryOrdersExportLayoutRepository PhoneColumnsLayout(bool includePhoneDialCode)
+    {
+        var layouts = new InMemoryOrdersExportLayoutRepository();
+        var layout = OrdersExportLayout.CreateDefault(TenantId, Now);
+        Assert.True(layout.Replace(
+            [
+                OrdersExportColumnSetting.Catalog("phone", "Telefono", visible: true),
+                OrdersExportColumnSetting.Catalog("customer_phone", "Telefono cliente", visible: true),
+                OrdersExportColumnSetting.Catalog("billing_phone", "Telefono facturación", visible: true),
+                OrdersExportColumnSetting.Catalog("shipping_phone", "Telefono envío", visible: true),
+                OrdersExportColumnSetting.Fixed("Linea ERP", "+573001234567", visible: true),
+            ],
+            layout.SheetName,
+            includePhoneDialCode,
+            Now));
+        layouts.Add(layout);
+        return layouts;
+    }
+
+    private static Order NewPhoneRow(string billingPhone, string shippingPhone) =>
+        NewRow(
+            "PED-2026-0001",
+            parties: new QuotationParties(
+                Billing: CompleteBillingParty("Facturas SL") with { Phone = billingPhone },
+                Shipping: CompleteShippingParty("Bodega Norte", CityId) with { Phone = shippingPhone }));
+
+    private static StubQuotationPhoneNumbers SplittablePhones() =>
+        new(new Dictionary<string, string>
+        {
+            ["+573001234567"] = "3001234567",
+            ["+34612345678"] = "612345678",
+            ["+573009998877"] = "3009998877",
+        });
+
+    private static StubQuotationCustomerLookup CustomerWithPhone(string phone) =>
+        new(DefaultCustomer with { Phone = phone });
+
+    private static async Task<IReadOnlyList<ExportCell>> ExportPhoneRowAsync(
+        Order row,
+        InMemoryOrdersExportLayoutRepository layouts,
+        StubQuotationPhoneNumbers phones,
+        string customerPhone = "+573009998877")
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                customers: CustomerWithPhone(customerPhone),
+                layouts: layouts,
+                phoneNumbers: phones)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        return Assert.Single(writer.Rows).Take(5).ToArray();
+    }
+
+    [Fact]
+    public async Task WithTheDialCodeSwitchOnThePhonesAreWrittenAsStored()
+    {
+        var phones = SplittablePhones();
+
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("+34612345678", "+573001234567"), PhoneColumnsLayout(includePhoneDialCode: true), phones);
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("+573001234567"),
+                ExportCell.OfText("+573009998877"),
+                ExportCell.OfText("+34612345678"),
+                ExportCell.OfText("+573001234567"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+        Assert.Empty(phones.Calls);
+    }
+
+    // Sin layout guardado el interruptor está encendido: el archivo de siempre.
+    [Fact]
+    public async Task WithoutAStoredLayoutThePhoneKeepsItsDialCode()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var phones = SplittablePhones();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: CustomerWithPhone("+573009998877"),
+                phoneNumbers: phones)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("+573009998877"), Assert.Single(writer.Rows)[17]);
+        Assert.Empty(phones.Calls);
+    }
+
+    // Cada columna parte su propio valor; la fija sale como la escribió el tenant.
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffTheFourPhoneColumnsCarryTheNationalNumber()
+    {
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("+34612345678", "+573001234567"),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            SplittablePhones());
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("3001234567"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("612345678"),
+                ExportCell.OfText("3001234567"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+    }
+
+    // Sin parte de envío, «Telefono» y el de envío caen al cliente, y se parten igual.
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffTheCustomerFallbackAlsoLosesItsDialCode()
+    {
+        var cells = await ExportPhoneRowAsync(
+            NewRow("PED-2026-0001", parties: QuotationParties.Empty),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            SplittablePhones());
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+    }
+
+    // Sin «+» no se parte —aunque empiece por el código del país—, así que ni se pregunta.
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffAPhoneWithoutPlusIsWrittenAsStored()
+    {
+        var phones = new StubQuotationPhoneNumbers(
+            new Dictionary<string, string> { ["573001234567"] = "3001234567" });
+
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("573001234567", "601 555 0000"),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            phones,
+            customerPhone: "3001234567");
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("601 555 0000"),
+                ExportCell.OfText("3001234567"),
+                ExportCell.OfText("573001234567"),
+                ExportCell.OfText("601 555 0000"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+        Assert.Empty(phones.Calls);
+    }
+
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffAPhoneThatCannotBeSplitIsWrittenAsStored()
+    {
+        var phones = new StubQuotationPhoneNumbers();
+
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("+99912", "+57573001234567"),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            phones,
+            customerPhone: "+1");
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("+57573001234567"),
+                ExportCell.OfText("+1"),
+                ExportCell.OfText("+99912"),
+                ExportCell.OfText("+57573001234567"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+        Assert.Contains("+99912", phones.Calls);
+    }
+
     private static ExportJob NewJob(OrdersExportFilters? filters = null) =>
         ExportJob.Enqueue(
             Guid.CreateVersion7(),
@@ -2688,6 +3070,7 @@ public sealed class OrdersExportProcessorTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
     // Un pedido manual (spec 2026-10-15 §6.4): todo lo que el Excel lee vive en el pedido, así que
@@ -2702,6 +3085,7 @@ public sealed class OrdersExportProcessorTests
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
         IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null,
         bool customerWithRetention = false,
+        IReadOnlyList<WithholdingRate>? withholdings = null,
         // La fecha de pago de cada comprobante, por índice contra `proofs`; null o ausente deja el
         // comprobante sin fecha, como uno anterior al campo (2026-10-08).
         IReadOnlyList<DateOnly?>? paidOn = null,
@@ -2709,7 +3093,11 @@ public sealed class OrdersExportProcessorTests
         ShippingDetails? shipping = null,
         // Spec 2026-10-20 variantes: el producto dueño de las variantes de `items`. Ausente, cada línea se
         // arma como una variante por defecto (variante y producto con el mismo id), como hasta ahora.
-        Guid? ownerProductId = null)
+        Guid? ownerProductId = null,
+        // Spec 2026-11-16: la fecha del pedido, si no es el día de `at`.
+        DateOnly? orderDate = null,
+        // Spec 2026-11-18: el tipo de cada línea de `items`, por índice; ausente, físico.
+        IReadOnlyList<ProductKind>? kinds = null)
     {
         var occurredAt = at ?? Now;
         var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
@@ -2720,19 +3108,20 @@ public sealed class OrdersExportProcessorTests
             OrderId.New(),
             TenantId,
             orderNumber,
-            new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, customerWithRetention, false),
+            new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, false, withholdings ?? TestWithholdings.Customer(customerWithRetention)),
             parties ?? QuotationParties.Empty,
             billingAccount ?? DefaultBillingAccount,
             shipping ?? ShippingDetails.None,
             (items ?? DefaultItems)
-                .Select(item => new OrderLineInput(
-                    item.ProductId, ownerProductId ?? item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
+                .Select((item, index) => new OrderLineInput(
+                    item.ProductId, ownerProductId ?? item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage,
+                    Kind: kinds?.ElementAtOrDefault(index) ?? ProductKind.Physical))
                 .ToArray(),
-            OrderPaymentStatus.PaymentPending,
             orderNotes,
             AdvisorId,
             proofInputs,
-            occurredAt);
+            occurredAt,
+            orderDate: orderDate ?? DateOnly.FromDateTime(occurredAt.UtcDateTime));
     }
 
     private static OrdersExportProcessor NewProcessor(
@@ -2746,7 +3135,8 @@ public sealed class OrdersExportProcessorTests
         StubQuotationGeographyLookup? geography = null,
         StubQuotationAdvisorLookup? advisors = null,
         RecordingPaymentProofPublisher? publisher = null,
-        InMemoryOrdersExportLayoutRepository? layouts = null) =>
+        InMemoryOrdersExportLayoutRepository? layouts = null,
+        StubQuotationPhoneNumbers? phoneNumbers = null) =>
         new(repository,
             // Sin layout guardado por defecto: el archivo de siempre (spec 2026-09-24, D8).
             layouts ?? new InMemoryOrdersExportLayoutRepository(),
@@ -2763,7 +3153,8 @@ public sealed class OrdersExportProcessorTests
             publisher ?? new RecordingPaymentProofPublisher(),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
-            tenantClock ?? new FixedTenantClock(Now));
+            tenantClock ?? new FixedTenantClock(Now),
+            phoneNumbers ?? new StubQuotationPhoneNumbers());
 
     /// <summary>Un layout guardado para el tenant de las pruebas (spec 2026-09-24): lo que se
     /// pasa se completa con el catálogo, como hace Replace.</summary>

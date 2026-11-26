@@ -8,7 +8,7 @@ public sealed record CancelOrderCommand(Guid TenantId, Guid OrderId, string? Rea
     : ICommand<OrderDto>;
 
 /// <summary>
-/// Anula un pedido (spec 2026-09-16), calcado de <see cref="ApproveOrderHandler"/>: mismo orden
+/// Anula un pedido (spec 2026-09-16), calcado de <see cref="InvoiceOrderHandler"/>: mismo orden
 /// —permiso, pedido, membresía de quien actúa, dominio, auditoría— y la misma unidad de trabajo.
 ///
 /// Permiso propio (<see cref="OrdersPermissions.OrderCancel"/>) y no el de gestión: anular deshace
@@ -28,7 +28,8 @@ public sealed class CancelOrderHandler(
     IQuotationLifecycleEventPublisher lifecycleEvents,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IExternalInvoiceStatus externalInvoices)
     : ICommandHandler<CancelOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(
@@ -43,7 +44,16 @@ public sealed class CancelOrderHandler(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
 
-        // CancelledBy es un id de membresía, como ApprovedBy: el módulo nunca guarda el usuario.
+        // Spec 2026-11-18 §5.5: con una factura de Siigo viva (saliendo, sin resolver o creada), anular dejaría la factura sin pedido al que
+        // marcar. Es un 409, como la marca manual: se resuelve la factura de Siigo primero.
+        if (await externalInvoices.HasOpenInvoiceAsync(command.TenantId, command.OrderId, cancellationToken))
+        {
+            throw new ResourceConflictException(
+                OrderStateErrors.ExternalInvoicePending,
+                "An external invoice for this order is still being issued or exists; resolve it before cancelling the order.");
+        }
+
+        // CancelledBy es un id de membresía, como InvoicedBy: el módulo nunca guarda el usuario.
         var cancelledBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
@@ -65,6 +75,12 @@ public sealed class CancelOrderHandler(
             "success",
             now);
         lifecycleEvents.PublishOrderCancelled(order, now);
+        if (order.Source == OrderSource.Wholesale)
+        {
+            // Mayorista fase 3 (D-21): la orden de compra del distribuidor se anula con este evento.
+            lifecycleEvents.PublishWholesaleCancelled(order, byBuyer: false, now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return order.ToDto();

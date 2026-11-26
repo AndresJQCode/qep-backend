@@ -70,6 +70,66 @@ public sealed class FileOwnerModuleHandlersTests
             $"{handler} stopped on the module with orders on.");
     }
 
+    // Fix round 1 del Bloque D: un archivo de dueño de sistema (SupportTicket) no existe para la consola de Storage. Con todos los
+    // permisos y todos los módulos, cada handler responde el mismo 404 que a un id de otro tenant, sin tocar nada.
+    [Theory]
+    [MemberData(nameof(Handlers))]
+    public async Task ASystemOwnedFileIsNotFoundWithoutAnyEffect(string handler)
+    {
+        var effects = new Effects();
+        var modules = FixedTenantModules.AllBut();
+
+        var error = await Assert.ThrowsAsync<ResourceNotFoundException>(() => Run(
+            handler, SupportAttachmentFor(handler), TenantId, modules, effects));
+
+        Assert.Equal("storage.file.not_found", error.Code);
+        Assert.Empty(modules.Asked);
+        Assert.Empty(effects.Audit.Actions);
+        Assert.Equal(0, effects.UnitOfWork.Saves);
+        Assert.Empty(effects.PublicStorage.Copies);
+        Assert.Empty(effects.Probe.Asked);
+    }
+
+    [Fact]
+    public void SupportAttachmentsAndTemplateImagesAreTheSystemOwnedFiles()
+    {
+        Assert.Equal(
+            [FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia, FileOwnerType.HrDocument],
+            SystemOwnedFiles.OwnerTypes.Order());
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.SupportTicket));
+        Assert.False(SystemOwnedFiles.Includes(FileOwnerType.User));
+    }
+
+    [Fact]
+    public async Task AMemberCannotOpenAnUploadForASystemOwner()
+    {
+        var unitOfWork = new CountingStorageUnitOfWork();
+        var handler = new CreateUploadSessionHandler(
+            new InMemoryFileResourceRepository(), new UntouchableObjectStorage(), unitOfWork,
+            new AllowAllExecutionContext(TenantId), new FixedClock(Now));
+
+        var error = await Assert.ThrowsAsync<StorageDomainException>(() => handler.HandleAsync(
+            new CreateUploadSessionCommand(TenantId, Guid.NewGuid(), FileOwnerType.SupportTicket, "acta.pdf", "application/pdf", 10),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("storage.file.owner_type_invalid", error.Code);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
+    private static FileResource SupportAttachmentFor(string handler)
+    {
+        var attachment = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.NewGuid(), FileOwnerType.SupportTicket,
+            "acta.png", "image/png", 2048, $"staging/tenants/{TenantId:N}/acta", Now);
+        if (handler is not ("CompleteUpload" or "CancelUpload"))
+        {
+            attachment.CompleteUpload("checksum", 2048, Now);
+            attachment.Promote($"files/tenants/{TenantId:N}/acta", Now);
+        }
+
+        return attachment;
+    }
+
     private static FileResource PaymentProofFor(string handler)
     {
         var proof = FileResource.CreatePendingUpload(
@@ -101,7 +161,8 @@ public sealed class FileOwnerModuleHandlersTests
                 .HandleAsync(new IssueDownloadUrlCommand(tenantId, fileId), cancellationToken),
             "CompleteUpload" => new CompleteUploadHandler(
                     repository, modules, new UntouchableObjectStorage(), new UntouchableContentInspector(),
-                    new UntouchableVariantGenerator(), new UntouchablePaymentProofProcessor(), new UntouchableScanner(),
+                    new UntouchableVariantGenerator(), new UntouchablePaymentProofProcessor(),
+                    new UntouchableChatbotMediaProcessing(), new UntouchableScanner(),
                     effects.UnitOfWork, effects.Audit, context, clock)
                 .HandleAsync(new CompleteUploadCommand(tenantId, fileId), cancellationToken),
             "CancelUpload" => new CancelUploadHandler(

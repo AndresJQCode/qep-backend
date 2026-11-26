@@ -6,6 +6,8 @@
   <ItemGroup>
     <!-- WebhookBodyReaderTests: el corte de Kestrel no se reproduce en TestServer. -->
     <InternalsVisibleTo Include="Modules.Messaging.IntegrationTests" />
+    <!-- MessagingRealtimeAuthorizerTests: the authorizer is internal, like Support's. -->
+    <InternalsVisibleTo Include="Modules.Messaging.UnitTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Modules.Messaging.Application\Modules.Messaging.Application.csproj" />

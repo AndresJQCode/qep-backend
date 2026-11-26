@@ -64,6 +64,34 @@ internal sealed partial class CustomerPhoneDirectory(CustomersDbContext dbContex
         return result;
     }
 
+    public async Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchActiveAsync(
+        Guid tenantId, IReadOnlyCollection<string> e164, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(e164);
+
+        var result = new Dictionary<string, CustomerPhoneMatch>(StringComparer.Ordinal);
+        if (e164.Count == 0)
+        {
+            return result;
+        }
+
+        var phones = e164.Distinct(StringComparer.Ordinal).ToArray();
+        var rows = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 != null && phones.Contains(customer.PhoneE164)
+                && customer.IsActive && customer.MergedIntoId == null)
+            .OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
+            .Select(customer => new { customer.PhoneE164, customer.Id, customer.Name, customer.Completeness })
+            .ToListAsync(cancellationToken);
+        foreach (var row in rows)
+        {
+            // D-M7: el primero por created_at, id gana; los demás con el mismo número se ignoran.
+            result.TryAdd(row.PhoneE164!, new CustomerPhoneMatch(row.Id.Value, row.Name, row.Completeness == CustomerCompleteness.Complete));
+        }
+
+        return result;
+    }
+
     public async Task<IReadOnlyList<CustomerPhoneMatch>> ListByPhoneAsync(
         Guid tenantId, string e164, int take, CancellationToken cancellationToken)
     {

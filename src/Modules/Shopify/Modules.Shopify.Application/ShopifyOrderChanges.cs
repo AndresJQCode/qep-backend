@@ -11,7 +11,7 @@ namespace Modules.Shopify.Application;
 /// <item><b>Importada y cancelada en Shopify:</b> se anula en QEP a nombre del asesor de la tienda («Cancelado en Shopify:
 /// {cancel_reason}») y la fila pasa a <c>Cancelled</c>. Ya facturada: <c>Cancelled</c> con <c>invoiced_before_cancel</c> para
 /// anular a mano. Otro rechazo: queda importada con el código en <c>last_error</c> (decisión pendiente del owner).</item>
-/// <item><b>Importada con otro <c>financial_status</c></b> (también si la anulación del mismo aviso se rechazó): se sincroniza el pago; un rechazo (<c>not_pending</c>,
+/// <item><b>Importada con otro <c>financial_status</c></b> (también si la anulación del mismo aviso se rechazó): se sincroniza el pago; un rechazo (<c>not_editable</c>,
 /// <c>payment_has_proofs</c>) va a <c>last_error</c>; <c>refunded</c>, <c>partially_refunded</c> y <c>voided</c> no dejan
 /// rastro.</item>
 /// <item><b>En espera y cancelada:</b> <c>Ignored</c>, salvo que el pedido ya exista en QEP con su clave externa (el worker cayó

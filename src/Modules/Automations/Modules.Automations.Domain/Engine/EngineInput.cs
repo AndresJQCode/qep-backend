@@ -31,9 +31,23 @@ public abstract record EngineInput
 
     public sealed record BusinessHours(string NodeId, bool IsOpen) : EngineInput;
 
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the answer to <see cref="Effect.CrmAction"/>. <see cref="Code"/> is one of
+    /// <c>CrmResultCodes</c>; the engine stores it in <c>{saveTo}.result</c> and leaves by the output it maps to.</summary>
+    public sealed record CrmResult(string NodeId, string Code) : EngineInput;
+
     /// <summary>Spec 2026-10-26 D-2 y D-7: la respuesta a <see cref="Effect.CheckDataConsent"/>. <see cref="Accepted"/> dice si el cliente
     /// tiene hoy una aceptación vigente; <see cref="CanRecord"/> es <c>false</c> si no hay cliente al que registrarle la respuesta.</summary>
     public sealed record DataConsent(string NodeId, bool Accepted, bool CanRecord = true) : EngineInput;
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §6.3 y D-B4: el agente devolvió la conversación. <see cref="Output"/> es una de las
+    /// cinco salidas del bloque, o <c>null</c> si volvió sin salida (ventana cerrada, contacto bloqueado: §6.4). <see cref="Reason"/> es el
+    /// motivo cerrado de §6.3; <see cref="Summary"/> y <see cref="QuotationNumber"/>, lo que el motor guarda en <c>{saveTo}</c>.
+    /// <see cref="AssignToMemberId"/> (D-B13) es la asesora del borrador de cotización, a quien va la conversación si <c>human</c> no está
+    /// conectada. <see cref="DelegationId"/> no lo lee el motor: viaja para que el registro de la unidad lo cite.</summary>
+    public sealed record AgentResult(
+        string NodeId, Guid? DelegationId, string? Output, string? Reason, string? Summary = null, string? QuotationNumber = null,
+        Guid? AssignToMemberId = null)
+        : EngineInput;
 }
 
 /// <summary>El adjunto de un <see cref="EngineInput.CustomerMessage"/>; <see cref="Stored"/> dice si Messaging ya lo tiene guardado.

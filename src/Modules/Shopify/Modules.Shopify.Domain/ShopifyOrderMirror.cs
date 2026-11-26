@@ -78,6 +78,17 @@ public sealed class ShopifyOrderMirror
 
     public decimal? TotalDifference { get; private set; }
 
+    /// <summary>Spec 2026-11-14 §2: el snapshot de Shopify con el que QEP creó o actualizó el pedido por última vez (o el que
+    /// adoptó: eco, rechazo, revisión). <c>null</c> en una fila importada antes de este cambio.</summary>
+    public string? AppliedPayload { get; private set; }
+
+    /// <summary>Spec 2026-11-14 §2: lo que QEP escribió en el pedido a partir de <see cref="AppliedPayload"/>, leído del pedido
+    /// después de escribir. Si el pedido ya no coincide con esto en un grupo, lo cambió QEP (conflicto).</summary>
+    public string? AppliedProjection { get; private set; }
+
+    /// <summary>Spec 2026-11-14 §5: los atributos de Shopify como los corrigió QEP; <c>null</c> mientras nadie los corrija.</summary>
+    public string? QepAttributes { get; private set; }
+
     /// <summary>Concurrencia optimista de la fila: el worker de webhooks, la conciliación y el reintento manual pueden cargarla a
     /// la vez, y sin token el último en guardar pisaría un snapshot más nuevo o devolvería a <c>Waiting</c> una fila importada.
     /// Sube con cada cambio.</summary>
@@ -196,7 +207,7 @@ public sealed class ShopifyOrderMirror
         Touch();
     }
 
-    /// <summary>§6.3: un cambio posterior que Quotations rechazó (<c>order.order.not_pending</c>,
+    /// <summary>§6.3: un cambio posterior que Quotations rechazó (<c>order.order.not_editable</c>,
     /// <c>order.order.payment_has_proofs</c>, otro rechazo de la anulación) queda auditado en la fila, en cualquier estado, sin
     /// cambiarlo. Se recorta al ancho de la columna. El mismo error otra vez no es un cambio: la reacción se repite (bucle de
     /// concurrencia de la ingesta, reintento tras un guardado fallido) y no debe subir la versión.</summary>
@@ -224,6 +235,42 @@ public sealed class ShopifyOrderMirror
         }
 
         LastError = null;
+        Touch();
+    }
+
+    /// <summary>Spec 2026-11-14 §2: la importación o un cambio aplicado mueven la versión aplicada y la proyección juntas.</summary>
+    public void RecordApplied(string payloadJson, string projectionJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(payloadJson);
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectionJson);
+        AppliedPayload = payloadJson;
+        AppliedProjection = projectionJson;
+        Touch();
+    }
+
+    /// <summary>Spec 2026-11-14 §3 y §4: el snapshot pasa a ser la versión aplicada sin que QEP escriba nada (eco, rechazo,
+    /// revisión). La proyección no se mueve: lo que el pedido tiene lo sigue diciendo el pedido.</summary>
+    public void AdoptPayload(string payloadJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(payloadJson);
+        AppliedPayload = payloadJson;
+        Touch();
+    }
+
+    /// <summary>Spec 2026-11-14 §5: una corrección del sistema (la ciudad de un sinónimo) mueve la proyección: no la hizo el asesor
+    /// (plan D3).</summary>
+    public void RecordProjection(string projectionJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectionJson);
+        AppliedProjection = projectionJson;
+        Touch();
+    }
+
+    /// <summary>Spec 2026-11-14 §5: los atributos de Shopify como los corrigió el asesor.</summary>
+    public void SetQepAttributes(string attributesJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(attributesJson);
+        QepAttributes = attributesJson;
         Touch();
     }
 

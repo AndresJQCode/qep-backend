@@ -63,11 +63,49 @@ public sealed class QuotationFileLookupTests
         Assert.False(found.IsPaymentProof);
     }
 
-    private static FileResource AvailablePaymentProof()
+    // Fix round 1 del Bloque D: un adjunto del formulario público de Soporte no se adjunta a un pedido ni se descarga por Quotations.
+    [Fact]
+    public async Task ASupportAttachmentDoesNotExistForQuotations()
     {
+        var attachment = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.NewGuid(), FileOwnerType.SupportTicket, "acta.pdf",
+            "application/pdf", 1024, $"staging/{Guid.CreateVersion7():N}", Now);
+        attachment.CompleteUpload("checksum", 1024, Now);
+        attachment.Promote($"files/tenants/{TenantId:N}/{Guid.CreateVersion7():N}", Now);
+        var lookup = LookupWith(attachment);
+
+        Assert.Null(await lookup.FindAsync(TenantId, attachment.Id.Value, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<BuildingBlocks.Application.ResourceNotFoundException>(() => lookup.CreateDownloadUrlAsync(
+            TenantId, attachment.Id.Value, "acta.pdf", TestContext.Current.CancellationToken));
+    }
+
+    // Consultas por request, fase 2: los comprobantes de un cuerpo en una sola lectura. Lo de otro tenant y lo de Soporte no
+    // vienen, igual que un id que no existe.
+    [Fact]
+    public async Task FindManyReadsOnceAndLeavesOutOtherTenantsAndSupportFiles()
+    {
+        var proof = AvailablePaymentProof();
+        var foreign = AvailablePaymentProof(Guid.CreateVersion7());
+        var attachment = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.NewGuid(), FileOwnerType.SupportTicket, "acta.pdf",
+            "application/pdf", 1024, $"staging/{Guid.CreateVersion7():N}", Now);
+        var repository = new InMemoryFileResourceRepository(proof, foreign, attachment);
+        var lookup = new QuotationFileLookup(repository, new UnusedObjectStorage(), Options.Create(new QuotationsOptions()));
+
+        var found = await lookup.FindManyAsync(
+            TenantId, [proof.Id.Value, foreign.Id.Value, attachment.Id.Value, Guid.CreateVersion7()], TestContext.Current.CancellationToken);
+
+        Assert.Equal([proof.Id.Value], found.Keys);
+        Assert.True(found[proof.Id.Value].IsPaymentProof);
+        Assert.Equal((1, 0), (repository.ListByIdsCalls, repository.GetCalls));
+    }
+
+    private static FileResource AvailablePaymentProof(Guid? tenantId = null)
+    {
+        var owner = tenantId ?? TenantId;
         var proof = FileResource.CreatePendingUpload(
-            FileResourceId.New(), TenantId, Guid.CreateVersion7(), FileOwnerType.PaymentProof, "comprobante.webp",
-            "image/webp", 1024, $"staging/tenants/{TenantId:N}/{Guid.CreateVersion7():N}", Now);
+            FileResourceId.New(), owner, Guid.CreateVersion7(), FileOwnerType.PaymentProof, "comprobante.webp",
+            "image/webp", 1024, $"staging/tenants/{owner:N}/{Guid.CreateVersion7():N}", Now);
         proof.CompleteUpload("checksum", 1024, Now);
         proof.MarkClean(Now);
         return proof;

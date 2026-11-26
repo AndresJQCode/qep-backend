@@ -48,12 +48,26 @@ data:
   # *.qcode.co: bajo ese dominio corren otras apps, y cualquiera que entre a la lista puede mutar con
   # la sesión del usuario. Sin la clave no hay CORS y la SPA en ese dominio no puede llamar a la API.
   Cors__AllowedOrigins__0: "https://qep.qcode.co"
+  # Origen exacto de la página pública de Soporte (plan Soporte fase 3, F4), que llama al grupo anónimo
+  # /api/v1/public/support/… desde el navegador. Es otra política CORS, sin credenciales, que sólo pide ese grupo: este
+  # origen no recibe CORS en las rutas de la consola. En Production es obligatoria: sin ella el pod no arranca
+  # (SupportPublicFormOptionsValidator), porque la página quedaría sin API sin ningún error.
+  Support__PublicForm__AllowedOrigins__0: "https://soporte.lulocrm.com"
   # Variables OTLP estándar que el exportador del SDK lee directamente, no a través de
   # IConfiguration — ver src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
   # No definir OpenTelemetry__Endpoint acá: tendría precedencia sobre estas.
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
   OTEL_SERVICE_NAME: "qep-backend"
   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=qep"
+  # Valkey (spec 2026-11-13, § Despliegue paso 2): el cliente conecta con todas las áreas apagadas, y cada área usa
+  # las clases de antes. Se verifica que el log de arranque nombre ConnectionStrings:Valkey y que qep_valkey_connected
+  # valga 1. Recién entonces se prenden las áreas de a una, cada una en su commit y con un día de por medio
+  # (Valkey__Areas__Presence, RateLimiting, Sessions, Permissions, Doorbells, ApiKeyTouch; README § Valkey). La cadena,
+  # con la contraseña del usuario ACL qep, está en prod-secret.yaml. Apagarlo ("false") es el rollback.
+  Valkey__Enabled: "true"
+  Valkey__Areas__Presence: "true"
+  Valkey__Areas__RateLimiting: "true"
+  Valkey__Areas__Sessions: "true"
   # Authentication__Authority queda sin definir: por defecto toma el emisor propio de
   # Google (https://accounts.google.com) en QepServiceCollectionExtensions.AddAuthentication.
   # Sólo la audiencia (el client id de OAuth de Google) debe proveerse por entorno.
@@ -93,6 +107,16 @@ data:
   # —precios, cliente, totales— viaja en el cuerpo del POST. La API key es una credencial y vive
   # en prod-secret.yaml.
   Quotations__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
+  # Soporte y Compras usan el mismo qcode-pdf con sección propia (ningún módulo depende de la configuración de otro), pero el
+  # mismo token que cotizaciones (decisión del owner, 2026-11-17: una sola clave y una sola URL para todo el backend de QEP). Sus
+  # validadores exigen HTTPS en todo ambiente: la carta de Soporte y la orden de compra viajan enteras en el cuerpo del POST. La API
+  # key vive en prod-secret.yaml.
+  Support__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
+  Purchases__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
+  # Versión vigente de los términos (spec 2026-11-19, onboarding por link). Sin ella el servicio falla cerrado
+  # (identity.terms.unavailable) y la invitación de mayorista no deja crear cuenta. No es secreto. Cambiarla
+  # obliga a todos a aceptar de nuevo.
+  Terms__CurrentVersion: "#{TERMS_CURRENT_VERSION}#"
   # Spec 2026-10-08 (Integraciones): id (no secreto) de la llave con la que se cifran las credenciales
   # de las conexiones de cada tenant. Rotar = dos despliegues: declarar Keys__k2 con ésta todavía en
   # k1, y después cambiar ésta a k2 (README § Integraciones). La llave vive en prod-secret.yaml.
@@ -125,12 +149,17 @@ data:
   # topics en la URL nueva (ShopifyWebhookRegistration compara topic y URL) y las suscripciones de la vieja siguen ahí.
   Shopify__App__ClientId: "#{SHOPIFY_APP_CLIENT_ID}#"
   Shopify__App__ApiVersion: "2026-10"
-  Shopify__App__Scopes: "read_orders,read_customers"
+  # read_products (spec 2026-11-17): agrégalo antes en los scopes de la app del Partner Dashboard.
+  Shopify__App__Scopes: "read_orders,write_orders,read_customers,read_products"
   Shopify__App__WebhookCallbackUrl: "https://qep-api.qcode.co/api/webhooks/shopify"
   Shopify__App__AllowedRedirectOrigins__0: "https://qep.qcode.co"
   # Cada cuánto la conciliación trae de Shopify lo que el webhook no entregó y reintenta lo que espera (spec §5.3). Repite el
   # default de la imagen, como ApiVersion: es el tiempo que tarda en entrar un pedido cuyo producto se acaba de crear.
   Shopify__Reconcile__IntervalMinutes: "10"
+  # Partner-Id de QEP ante Siigo (spec 2026-11-18 §8): un valor global que Siigo pide en cada petición para identificar a la
+  # plataforma, no a un tenant. No es un secreto. En Production el pod no arranca sin él (SiigoOptionsValidator), y un token
+  # #{…}# sin reemplazar cuenta como ausente: define SIIGO_PARTNER_ID en el pipeline antes de desplegar.
+  Siigo__PartnerId: "#{SIIGO_PARTNER_ID}#"
   # Copia pública de cada comprobante de pago nuevo, para que el Excel de pedidos lo enlace (spec
   # 2026-09-15). Literal y no token: no es un secreto ni cambia por despliegue. Exige
   # Storage__R2__PublicBucket y Storage__R2__PublicBaseUrl, de arriba: sin ellos

@@ -8,7 +8,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Spec 2026-10-15 §5.2: un pedido creado desde Pedidos, sin cotización, con su cálculo previo.</summary>
-public sealed class ManualOrderApiTests
+public sealed class ManualOrderApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -19,7 +19,7 @@ public sealed class ManualOrderApiTests
         return new CreateOrderRequest(
             clientId, "Transferencia", "Pedido de mostrador", false, null, null,
             new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            [new OrderEditItemRequest(productId, 3m)], "PaymentPending", []);
+            [new OrderEditItemRequest(productId, 3m)], []);
     }
 
     private static async Task<string> CodeOfAsync(HttpResponseMessage response)
@@ -31,8 +31,7 @@ public sealed class ManualOrderApiTests
     [Fact]
     public async Task CreatesAPendingManualOrderWithItsOwnTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -45,7 +44,7 @@ public sealed class ManualOrderApiTests
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         Assert.Equal(
-            ("Pending", "Manual", (Guid?)null, "COP"),
+            ("Open", "Manual", (Guid?)null, "COP"),
             (detail.Order.Status, detail.Order.Source, detail.Order.QuotationId, detail.Order.Currency));
         Assert.StartsWith("PED-", detail.Order.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(3m, Assert.Single(detail.Items).Quantity);
@@ -62,11 +61,33 @@ public sealed class ManualOrderApiTests
         Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("quotationId").ValueKind);
     }
 
+    // Spec 2026-11-16 §3: el pedido manual nace con el día de su creación en el calendario del tenant (Bogotá en este
+    // harness). Contra convertedAt de la misma respuesta, para no depender de la hora en que corra la prueba.
+    [Fact]
+    public async Task AManualOrderIsDatedTodayInTheTenantCalendar()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var request = await ValidRequestAsync(client, tenantId, clientId, productId);
+
+        var response = await client.PostAsJsonAsync(OrdersUrl(tenantId), request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var order = body.RootElement.GetProperty("order");
+        var createdAt = order.GetProperty("convertedAt").GetDateTimeOffset();
+        var expected = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(createdAt, BogotaTimeZone).DateTime);
+        Assert.Equal(expected.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            order.GetProperty("orderDate").GetString());
+    }
+
     [Fact]
     public async Task PreviewReturnsTotalsWithoutSaving()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -127,8 +148,7 @@ public sealed class ManualOrderApiTests
     [Fact]
     public async Task PreviewWithABillingAccountPricesInTheAccountCurrency()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -159,8 +179,7 @@ public sealed class ManualOrderApiTests
     [Fact]
     public async Task CreatingWithoutABillingAccountIsStillAValidationError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -192,8 +211,8 @@ public sealed class ManualOrderApiTests
     [Fact]
     public async Task RejectsAnIncompleteCustomer()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var incompleteId = await CreateActiveCustomerAsync(client, tenantId);
@@ -211,8 +230,7 @@ public sealed class ManualOrderApiTests
     [Fact]
     public async Task RejectsACustomerOfAnotherTenantAsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         var (otherTenantId, _, otherClient) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
@@ -230,8 +248,7 @@ public sealed class ManualOrderApiTests
     [Fact]
     public async Task AValidationErrorNamesTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -250,8 +267,7 @@ public sealed class ManualOrderApiTests
     [Fact]
     public async Task RequiresTheOrderManagePermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, "quotations.order.read");
         using var _ = client;
 

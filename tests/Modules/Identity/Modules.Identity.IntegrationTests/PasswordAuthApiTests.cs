@@ -805,6 +805,15 @@ public sealed class PasswordAuthApiTests
 
         public Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken) =>
             inner.EnsureRegistrableAsync(data, cancellationToken);
+
+        public Task<bool> RegisterInvitedTenantAsync(
+            Modules.Tenancy.Domain.TenantId tenantId,
+            Guid ownerUserId,
+            TenantRegistrationData data,
+            IReadOnlyList<Modules.Tenancy.Domain.TenantModuleKey> modules,
+            string correlationId,
+            CancellationToken cancellationToken) =>
+            inner.RegisterInvitedTenantAsync(tenantId, ownerUserId, data, modules, correlationId, cancellationToken);
     }
 
     private sealed class SkipEnsureRegistration(ITenantRegistration inner) : ITenantRegistration
@@ -818,5 +827,14 @@ public sealed class PasswordAuthApiTests
 
         public Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task<bool> RegisterInvitedTenantAsync(
+            Modules.Tenancy.Domain.TenantId tenantId,
+            Guid ownerUserId,
+            TenantRegistrationData data,
+            IReadOnlyList<Modules.Tenancy.Domain.TenantModuleKey> modules,
+            string correlationId,
+            CancellationToken cancellationToken) =>
+            inner.RegisterInvitedTenantAsync(tenantId, ownerUserId, data, modules, correlationId, cancellationToken);
     }
 }

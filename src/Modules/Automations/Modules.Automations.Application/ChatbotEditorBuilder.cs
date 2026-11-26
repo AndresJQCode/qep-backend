@@ -1,7 +1,10 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Flow;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Automations.Application;
 
@@ -10,15 +13,24 @@ namespace Modules.Automations.Application;
 /// externa» y los horarios llegan por los puertos; el chatbot que ocupa cada conexión sale de una sola proyección
 /// (<see cref="IChatbotRepository.ListServingConnectionsAsync"/>), nunca uno por conexión. El validador recibe el contexto real del chatbot (D-C2).
 /// </summary>
-public sealed class ChatbotEditorBuilder(
+public sealed partial class ChatbotEditorBuilder(
     IAutomationConnections connections,
     IAutomationExternalApis externalApis,
     IAutomationMembers members,
     IAutomationBusinessHours businessHours,
-    IChatbotRepository chatbots,
     IConversationRunQueries runs,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IChatbotConnectionSlots slots,
+    IAutomationsAgentDirectory agents,
+    ITenantModules tenantModules,
+    IChatbotMediaStore media,
+    IAutomationsCrmDirectory crmDirectory,
+    ILogger<ChatbotEditorBuilder> logger)
 {
+    // Only the exception type: its message may carry customer data.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The CRM catalog of tenant {TenantId} could not be read for the chatbot editor ({ExceptionType}); it opens without it.")]
+    private static partial void LogCrmCatalogUnavailable(ILogger logger, Guid tenantId, string exceptionType);
+
     /// <summary>Canal que se supone mientras el chatbot no tiene conexiones: hoy el motor sólo atiende WhatsApp (D-M6).</summary>
     private const string DefaultChannel = "WhatsApp";
 
@@ -45,8 +57,14 @@ public sealed class ChatbotEditorBuilder(
         var servedBy = await ServedByAsync(chatbot.TenantId, cancellationToken);
         var today = await TodayAsync(chatbot.TenantId, [chatbot.Id], cancellationToken);
 
+        // Spec 2026-11-17 §7: el editor siempre trae los agentes (el selector del bloque), así que la misma lectura valida.
+        var ai = await AiOfAsync(chatbot.TenantId, cancellationToken);
+        // Spec 2026-11-19 (chatbot CRM action): the same for the «Acción de CRM» palette (tags and open stages): read once, validates too.
+        var crm = await EditorCrmAsync(chatbot.TenantId, cancellationToken);
+
         var (flow, problem) = ParseStored(chatbot);
-        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames);
+        var files = flow is null ? [] : await MediaOfAsync(chatbot.TenantId, flow, cancellationToken);
+        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames, ai, files, crm);
         var published = chatbot.PublishedVersionId is { } publishedId
             ? chatbot.Versions.FirstOrDefault(version => version.Id == publishedId)
             : null;
@@ -65,7 +83,15 @@ public sealed class ChatbotEditorBuilder(
             FlowValidator.KnownVariables(flow ?? EmptyFlow),
             chatbot.ExhaustedAction.ToString(),
             chatbot.ExhaustedMemberId,
-            [.. assignable.Select(member => new ChatbotMemberDto(member.Id, member.Name))]);
+            [.. assignable.Select(member => new ChatbotMemberDto(member.Id, member.Name))],
+            [.. ai.Agents.Select(agent => new ChatbotEditorAgentDto(agent.Id, agent.Name, agent.Status, agent.Provider, agent.Model))],
+            ai.Enabled,
+            [.. files.Select(ChatbotMediaFileDto.From)],
+            new ChatbotEditorCrmDto(
+                [.. crm.Tags.Select(tag => new ChatbotEditorCrmRefDto(tag.Id, tag.Name))],
+                [.. crm.OpenStages.Select(stage => new ChatbotEditorCrmRefDto(stage.Id, stage.Name))],
+                crm.CustomersEnabled,
+                crm.PipelineEnabled));
     }
 
     /// <summary>`GET /connections` (§4.4): las mismas conexiones que trae el editor, armadas por el mismo código.</summary>
@@ -77,10 +103,10 @@ public sealed class ChatbotEditorBuilder(
         return ToSelectable(tenantConnections, await ServedByAsync(tenantId, cancellationToken), scheduleNames);
     }
 
+    /// <summary>Spec 2026-10-29 §4.3: quién ocupa cada conexión sale de la tabla neutral de Mensajería, así que también se ve un agente IA.</summary>
     private async Task<IReadOnlyDictionary<Guid, ServedByDto>> ServedByAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        (await chatbots.ListServingConnectionsAsync(tenantId, cancellationToken))
-            .GroupBy(serving => serving.ConnectionId)
-            .ToDictionary(group => group.Key, group => new ServedByDto(group.First().ChatbotId, group.First().Name));
+        (await slots.ListAsync(tenantId, cancellationToken))
+            .ToDictionary(occupant => occupant.ConnectionId, occupant => new ServedByDto(occupant.Id, occupant.Name, occupant.Kind, occupant.Id));
 
     private static IReadOnlyList<SelectableConnectionDto> ToSelectable(
         IReadOnlyList<AutomationConnectionRef> tenantConnections,
@@ -109,7 +135,62 @@ public sealed class ChatbotEditorBuilder(
             chatbot.TenantId, [.. chatbot.Connections.Select(connection => connection.ConnectionId)], cancellationToken);
         var apis = await externalApis.ListAsync(chatbot.TenantId, cancellationToken);
         var assignable = await members.ListAsync(chatbot.TenantId, cancellationToken);
-        return Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames);
+        return Validate(
+            chatbot, flow, tenantConnections, apis, assignable, scheduleNames, await AiOfAsync(chatbot.TenantId, flow, cancellationToken),
+            await MediaOfAsync(chatbot.TenantId, flow, cancellationToken), await CrmOfAsync(chatbot.TenantId, flow, cancellationToken));
+    }
+
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the tenant's tags and open stages, read only when the flow has an «Acción de CRM» block
+    /// (as <see cref="AiOfAsync(Guid, FlowDefinition, CancellationToken)"/>): saving any other chatbot does not pay the reads.</summary>
+    private async Task<CrmCatalog> CrmOfAsync(Guid tenantId, FlowDefinition flow, CancellationToken cancellationToken) =>
+        flow.Nodes.Any(node => node is CrmActionNode) ? await crmDirectory.ReadAsync(tenantId, cancellationToken) : NoCrm;
+
+    private static readonly CrmCatalog NoCrm = new(false, false, [], []);
+
+    /// <summary>
+    /// The editor GET's catalog: a broken Customers or Pipeline never keeps the editor from opening. A failure that is not «not yet»
+    /// (<see cref="TransientFailures.MustPropagate"/>) degrades to <see cref="NoCrm"/>, as with both modules off, and is logged without
+    /// customer data. Saving and publishing still read through <see cref="CrmOfAsync"/> and fail: they must not validate against a
+    /// catalog that was not read.
+    /// </summary>
+    private async Task<CrmCatalog> EditorCrmAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await crmDirectory.ReadAsync(tenantId, cancellationToken);
+        }
+        catch (Exception exception) when (!TransientFailures.MustPropagate(exception))
+        {
+            LogCrmCatalogUnavailable(logger, tenantId, exception.GetType().Name);
+            return NoCrm;
+        }
+    }
+
+    /// <summary>Spec 2026-11-18: los archivos de los bloques «Mensaje», en una sola lectura y sólo si el flujo tiene alguno (como <see cref="AiOfAsync(Guid, FlowDefinition, CancellationToken)"/>).
+    /// La resolución es por tenant: un id de otro tenant (un flujo pegado o importado) no vuelve y el validador lo marca.</summary>
+    private async Task<IReadOnlyList<ChatbotMediaFile>> MediaOfAsync(Guid tenantId, FlowDefinition flow, CancellationToken cancellationToken)
+    {
+        var fileIds = FlowMedia.FileIdsOf(flow);
+        return fileIds.Count == 0 ? [] : await media.ResolveAsync(tenantId, fileIds, cancellationToken);
+    }
+
+    /// <summary>Spec 2026-11-17 §5.2: el módulo <c>ai</c> y los agentes del tenant, que sólo pregunta un flujo con un bloque «Agente IA»: el resto
+    /// de los chatbots no paga la lectura de Ai ni de Tenancy.</summary>
+    private async Task<AiContext> AiOfAsync(Guid tenantId, FlowDefinition flow, CancellationToken cancellationToken) =>
+        flow.Nodes.Any(node => node is AiAgentNode) ? await AiOfAsync(tenantId, cancellationToken) : AiContext.None;
+
+    private async Task<AiContext> AiOfAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        // null = el stub de desarrollo: no bloquea, como TenantModuleGuard y AutomationsModuleStatus.
+        var set = await tenantModules.FindAsync(tenantId, cancellationToken);
+        var enabled = set is null || set.IsEnabled(TenantModuleKeys.Ai);
+        return new AiContext(enabled, enabled ? await agents.ListAsync(tenantId, cancellationToken) : []);
+    }
+
+    /// <summary>Spec 2026-11-17 §7: sin el módulo <c>ai</c> no viaja ningún agente.</summary>
+    private sealed record AiContext(bool Enabled, IReadOnlyList<AutomationAgentRef> Agents)
+    {
+        public static readonly AiContext None = new(false, []);
     }
 
     /// <summary>La validación del borrador guardado (<c>/validate</c>): la misma que trae <see cref="BuildAsync(Chatbot, CancellationToken)"/>.</summary>
@@ -135,7 +216,28 @@ public sealed class ChatbotEditorBuilder(
         ArgumentNullException.ThrowIfNull(rows);
         var tenantConnections = await connections.ListAsync(tenantId, cancellationToken);
         var today = await TodayAsync(tenantId, [.. rows.Select(row => row.Id)], cancellationToken);
-        return new ChatbotListResponse([.. rows.Select(row => ToSummary(row, tenantConnections, today))]);
+        var usage = await AiUsageThisMonthAsync(tenantId, rows.Count, cancellationToken);
+        return new ChatbotListResponse([
+            .. rows.Select(row => ToSummary(row, tenantConnections, today) with
+            {
+                AiUsageThisMonth = usage.TryGetValue(row.Id, out var tokens) ? new ChatbotAiUsageDto(tokens.InputTokens, tokens.OutputTokens) : null,
+            }),
+        ]);
+    }
+
+    /// <summary>Spec 2026-11-17 D-B15: «este mes» es el del reloj del tenant, como «hoy» (§4.4), no el de UTC.</summary>
+    private async Task<IReadOnlyDictionary<Guid, (long InputTokens, long OutputTokens)>> AiUsageThisMonthAsync(
+        Guid tenantId, int rows, CancellationToken cancellationToken)
+    {
+        if (rows == 0)
+        {
+            return new Dictionary<Guid, (long, long)>();
+        }
+
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var first = new DateOnly(calendar.Today.Year, calendar.Today.Month, 1);
+        return await agents.UsageByChatbotAsync(
+            tenantId, calendar.StartOfDayUtc(first), calendar.StartOfDayUtc(first.AddMonths(1)), cancellationToken);
     }
 
     /// <summary>El borrador guardado siempre pasó por <see cref="FlowJson.Parse"/>, pero un dato viejo o un cambio de esquema puede
@@ -161,7 +263,10 @@ public sealed class ChatbotEditorBuilder(
         IReadOnlyList<AutomationConnectionRef> tenantConnections,
         IReadOnlyList<ExternalApiRef> apis,
         IReadOnlyList<AutomationMemberRef> assignable,
-        IReadOnlyDictionary<Guid, string?> scheduleNames)
+        IReadOnlyDictionary<Guid, string?> scheduleNames,
+        AiContext ai,
+        IReadOnlyList<ChatbotMediaFile> files,
+        CrmCatalog crm)
     {
         var own = chatbot.Connections.Select(connection => connection.ConnectionId).ToHashSet();
         var channels = tenantConnections.Where(connection => own.Contains(connection.Id)).Select(connection => connection.Channel).ToHashSet(StringComparer.Ordinal);
@@ -176,7 +281,14 @@ public sealed class ChatbotEditorBuilder(
             apis.Where(api => api.Status == Active).Select(api => api.Id).ToHashSet(),
             apis.Where(api => api.Status == Paused).Select(api => api.Id).ToHashSet(),
             own.All(id => scheduleNames.GetValueOrDefault(id) is not null),
-            replyingMembers);
+            replyingMembers,
+            ai.Enabled,
+            [.. ai.Agents.Select(agent => new FlowAgentRef(agent.Id, agent.Name, agent.Status))],
+            files.ToDictionary(file => file.FileId, file => file.Kind),
+            crm.CustomersEnabled,
+            crm.PipelineEnabled,
+            crm.Tags.Select(tag => tag.Id).ToHashSet(),
+            crm.OpenStages.Select(stage => stage.Id).ToHashSet());
         var issues = FlowValidator.Validate(flow, context)
             .Select(issue => new FlowIssueDto(issue.Severity.ToString(), issue.Code, issue.NodeId, issue.Message))
             .ToList();

@@ -48,9 +48,21 @@ internal sealed class OutboundGuards(
     }
 
     /// <summary>Paso 5: lo que ya salió, ya salió, antes de mirar estado, ventana o dueño (sin candado). Un
-    /// <c>Failed</c> no cuenta: se reenvía.</summary>
-    public async Task<ExistingOutbound?> FindAlreadySentAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
-        await outbound.FindByClientIdAsync(conversationId, clientId, cancellationToken) is { Status: not MessageStatus.Failed } sent ? sent : null;
+    /// <c>Failed</c> no cuenta: se reenvía, salvo que el asesor lo haya descartado (spec 2026-11-09 D8b): entonces es 409
+    /// <c>messaging.message.not_retriable</c>, antes de admitir y de llamar a Meta.</summary>
+    public async Task<ExistingOutbound?> FindAlreadySentAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken)
+    {
+        var found = await outbound.FindByClientIdAsync(conversationId, clientId, cancellationToken);
+        if (found is { Status: MessageStatus.Failed, RetryDisabled: true })
+        {
+            throw NotRetriable();
+        }
+
+        return found is { Status: not MessageStatus.Failed } ? found : null;
+    }
+
+    private static ResourceConflictException NotRetriable() =>
+        new(MessagingErrorCodes.MessageNotRetriable, "The message was discarded from the scheduled list and cannot be resent.");
 
     /// <summary>Pasos 6 a 9: status Open → ventana → el citado → dueño. Todo lo que puede fallar por validación va antes
     /// de la autoasignación: un request inválido no cambia estado.</summary>
@@ -128,6 +140,13 @@ internal sealed class OutboundGuards(
     public static async Task<ExistingOutbound?> TakeInFlightAsync(IOutboundClaim claim)
     {
         ArgumentNullException.ThrowIfNull(claim);
+        // Spec 2026-11-09 D8b: el descarte pudo llegar entre la consulta sin candado y el reclamo.
+        if (!claim.Inserted && claim.Existing is { Status: MessageStatus.Failed, RetryDisabled: true })
+        {
+            await claim.RollbackAsync(CancellationToken.None);
+            throw NotRetriable();
+        }
+
         if (!claim.Inserted && claim.Existing is { } existing && existing.Status != MessageStatus.Failed)
         {
             await claim.RollbackAsync(CancellationToken.None);
@@ -191,15 +210,16 @@ internal sealed class OutboundGuards(
     public async Task<MessageDto> ToDtoAsync(Guid tenantId, MessageRow row, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(row);
-        var names = row.SentByChatbotId is null && row.SentByMemberId is { } member
+        // Un mensaje de chatbot o de agente de IA no tiene miembro (spec 2026-10-29 §4.4): su nombre sale del mismo diccionario de bots.
+        var names = row.SentByChatbotId is null && row.SentByAgentId is null && row.SentByMemberId is { } member
             ? await memberNames.FindAsync(tenantId, [member], cancellationToken)
             : new Dictionary<Guid, string>();
         // §5.1: repetir un clientId devuelve el replyTo guardado, aunque el cuerpo traiga otro.
         var targets = row.ReplyToMessageId is { } quoted
             ? await messages.FindReplyTargetsAsync(tenantId, [quoted], cancellationToken)
             : new Dictionary<Guid, ReplyTargetRow>();
-        var chatbots = row.SentByChatbotId is { } chatbot
-            ? await chatbotNames.ResolveAsync(tenantId, [chatbot], cancellationToken)
+        var chatbots = (row.SentByChatbotId ?? row.SentByAgentId) is { } bot
+            ? await chatbotNames.ResolveAsync(tenantId, [bot], cancellationToken)
             : null;
         return MessageMapping.ToDto(row, tenantId, names, targets, chatbotNames: chatbots);
     }
@@ -215,6 +235,6 @@ internal sealed class OutboundGuards(
             isTemplate ? existing.DetailsJson : null,
             existing.Status, null, existing.OccurredAt, existing.SentByMemberId, clientId,
             existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, existing.MediaFileName) : null, existing.ReplyToMessageId, existing.SentByChatbotId,
-            SentByApiKeyId: existing.SentByApiKeyId, SentByApiKeyName: existing.SentByApiKeyName);
+            SentByApiKeyId: existing.SentByApiKeyId, SentByApiKeyName: existing.SentByApiKeyName, SentByAgentId: existing.SentByAgentId);
     }
 }

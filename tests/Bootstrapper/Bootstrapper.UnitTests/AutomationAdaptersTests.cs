@@ -236,7 +236,7 @@ public sealed class AutomationAdaptersTests
             TenantId, conversationId, chatbotId, clientId, new InteractiveMessage.CtaUrl("Paga aquí", "Pagar", "https://pagos.example.com/p/1"), Ct);
         await messenger.SendTextAsync(TenantId, conversationId, chatbotId, clientId, "Hola", Ct);
 
-        Assert.All(outbound.Sends, send => Assert.Equal((TenantId, conversationId, chatbotId, clientId), (send.TenantId, send.ConversationId, send.ChatbotId, send.ClientId)));
+        Assert.All(outbound.Sends, send => { Assert.Equal(Modules.Messaging.Domain.BotKind.Chatbot, send.Bot.Kind); Assert.Equal((TenantId, conversationId, chatbotId, clientId), (send.TenantId, send.ConversationId, send.Bot.Id, send.ClientId)); });
         var buttons = Assert.IsType<ButtonsSend>(outbound.Sends[0].Interactive);
         Assert.Null(outbound.Sends[0].Text);
         Assert.Equal("¿Qué necesitas?", buttons.Body);
@@ -250,6 +250,54 @@ public sealed class AutomationAdaptersTests
         var cta = Assert.IsType<CtaUrlSend>(outbound.Sends[2].Interactive);
         Assert.Equal(("Paga aquí", "Pagar", new Uri("https://pagos.example.com/p/1")), (cta.Body, cta.DisplayText, cta.Url));
         Assert.Equal(("Hola", (InteractiveSend?)null), (outbound.Sends[3].Text, outbound.Sends[3].Interactive));
+    }
+
+    // Spec 2026-11-18: el archivo del bloque «Mensaje», ya resuelto por RunEffects.
+    private static ChatbotMediaFile MediaFile(string kind, string fileName, string contentType) =>
+        new(Guid.CreateVersion7(), kind, fileName, contentType, 2048, new Uri($"https://public.test/f/{fileName}"));
+
+    [Theory]
+    [InlineData("image", null)]
+    [InlineData("document", "Lista.pdf")]
+    public async Task AnImageWithButtonBecomesACtaWithAMediaHeader(string kind, string? headerFileName)
+    {
+        var outbound = new RecordingBotOutbound(new BotSendResult.Sent(Guid.CreateVersion7(), AlreadySent: false));
+        var file = MediaFile(kind, "Lista.pdf", kind == "image" ? "image/jpeg" : "application/pdf");
+
+        var outcome = await new AutomationMessenger(outbound).SendMediaAsync(
+            TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            new BotMediaMessage(file, "Mira el catálogo", new Modules.Automations.Domain.Flow.UrlButton("Ver", "https://qcode.co/catalogo")), Ct);
+
+        Assert.IsType<BotSendOutcome.Sent>(outcome);
+        var send = Assert.Single(outbound.Sends);
+        Assert.Null(send.Text);
+        var cta = Assert.IsType<CtaUrlSend>(send.Interactive);
+        Assert.Equal(("Mira el catálogo", "Ver", new Uri("https://qcode.co/catalogo")), (cta.Body, cta.DisplayText, cta.Url));
+        Assert.Equal(new InteractiveMediaHeader(kind, file.Url, headerFileName), cta.MediaHeader);
+        var expectedKind = kind == "image" ? Modules.Messaging.Domain.MessageKind.Image : Modules.Messaging.Domain.MessageKind.Document;
+        Assert.Equal(new BotMediaSend(expectedKind, file.Url, file.FileName, file.ContentType, file.SizeBytes, file.FileId), send.Media);
+    }
+
+    [Fact]
+    public async Task AnAudioBecomesAPlainMediaSend()
+    {
+        var outbound = new RecordingBotOutbound(new BotSendResult.Sent(Guid.CreateVersion7(), AlreadySent: false));
+        var file = MediaFile("audio", "saludo.mp3", "audio/mpeg");
+        var image = MediaFile("image", "catalogo.jpg", "image/jpeg");
+        var messenger = new AutomationMessenger(outbound);
+
+        await messenger.SendMediaAsync(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), new BotMediaMessage(file, null, null), Ct);
+        await messenger.SendMediaAsync(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), new BotMediaMessage(image, "Mira", null), Ct);
+        var refused = await messenger.SendMediaAsync(
+            TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            new BotMediaMessage(image, "Mira", new Modules.Automations.Domain.Flow.UrlButton("Ver", "/p/1")), Ct);
+
+        Assert.Equal(2, outbound.Sends.Count);
+        Assert.Null(outbound.Sends[0].Text);
+        Assert.Null(outbound.Sends[0].Interactive);
+        Assert.Equal(new BotMediaSend(Modules.Messaging.Domain.MessageKind.Audio, file.Url, "saludo.mp3", "audio/mpeg", 2048, file.FileId), outbound.Sends[0].Media);
+        Assert.Equal(("Mira", (InteractiveSend?)null, Modules.Messaging.Domain.MessageKind.Image), (outbound.Sends[1].Text, outbound.Sends[1].Interactive, outbound.Sends[1].Media!.Kind));
+        Assert.Equal(new BotSendOutcome.Rejected("messaging.interactive.invalid"), refused);
     }
 
     [Fact]
@@ -290,6 +338,25 @@ public sealed class AutomationAdaptersTests
 
             Assert.Equal(expected, outcome);
         }
+    }
+
+    [Fact]
+    public async Task TheInboundQueueMapsTheKind()
+    {
+        var createdAt = DateTimeOffset.UtcNow;
+        var inbox = new StubAutomationInbox
+        {
+            Claimed =
+            [
+                new AutomationInboxItem(Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, createdAt, 1, AutomationInboxKinds.Engine),
+                new AutomationInboxItem(Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, createdAt, 1, AutomationInboxKinds.ReleaseRun),
+            ],
+        };
+        var queue = new AutomationInboundQueue(inbox);
+
+        var items = await queue.ClaimAsync(createdAt, 20, Ct);
+
+        Assert.Equal([false, true], items.Select(i => i.ReleaseRun));
     }
 
     [Fact]
@@ -404,7 +471,7 @@ public sealed class AutomationAdaptersTests
 
         public List<string> Calls { get; } = [];
 
-        public Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, Modules.Messaging.Domain.BotKind botKind, CancellationToken cancellationToken)
         {
             ClaimedWith = (now, batch);
             return Task.FromResult(Claimed);
@@ -429,6 +496,19 @@ public sealed class AutomationAdaptersTests
             throw new NotSupportedException();
 
         public void EnqueueManualStart(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now)
+        {
+        }
+
+        public void EnqueueDelegated(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+            throw new NotSupportedException();
+
+        public void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+            throw new NotSupportedException();
+
+        public Task<DateTimeOffset?> ReassignPendingEngineAsync(Guid tenantId, Guid conversationId, BotKind target, Guid? exceptMessageId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, Modules.Messaging.Domain.BotKind botKind, DateTimeOffset now)
         {
         }
 
@@ -522,6 +602,9 @@ public sealed class AutomationAdaptersTests
             return Task.FromResult(listings);
         }
 
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
         {
             Resolved = (tenantId, connectionId);
@@ -531,6 +614,11 @@ public sealed class AutomationAdaptersTests
         }
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+            Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     /// <summary>Mejor esfuerzo: el resumen se arma después del commit de varios cambios, así que si la evaluación falla el hilo sale sin

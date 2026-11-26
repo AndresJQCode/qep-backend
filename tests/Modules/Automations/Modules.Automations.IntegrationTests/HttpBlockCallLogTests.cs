@@ -62,4 +62,48 @@ public sealed class HttpBlockCallLogTests
         Assert.Equal(7, await ScalarAsync<int>(connectionString, $"SELECT step_number FROM automations.http_calls WHERE run_id = '{runId}'"));
         Assert.Equal(321, await ScalarAsync<int>(connectionString, $"SELECT response_bytes FROM automations.http_calls WHERE run_id = '{runId}'"));
     }
+
+    /// <summary>Spec 2026-11-03 D-4/D-5, sólo del lado de la base: no ejercita el ejecutor (el reintento lo prueban las unitarias de
+    /// <c>HttpBlockExecutorTests</c>). Prueba que la columna guarda tal cual el código detallado más largo realista (61 caracteres, con los dos
+    /// puntos) y que dos filas con el mismo <c>(run_id, node_id, step_number)</c> conviven sin columna nueva ni restricción que lo impida.</summary>
+    [Fact]
+    public async Task TheColumnTakesTheLongestNetworkCodeAndTwoRowsPerStep()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var runId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var calledAt = DateTimeOffset.UtcNow;
+        const string Detailed = "network:secure_connection_error:protocol_family_not_supported";
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var log = scope.ServiceProvider.GetRequiredService<IHttpCallLog>();
+            await log.RecordAsync(
+                new HttpCallEntry(
+                    tenantId, runId, null, "http1", connectionId, "GET", "/Drivers/external", null, 145, HttpCallOutcomes.Network, Detailed,
+                    calledAt, StepNumber: 3),
+                Ct);
+            await log.RecordAsync(
+                new HttpCallEntry(
+                    tenantId, runId, null, "http1", connectionId, "GET", "/Drivers/external", 200, 80, HttpCallOutcomes.Ok, null,
+                    calledAt.AddSeconds(1), StepNumber: 3, ResponseBytes: 12),
+                Ct);
+        }
+
+        var connectionString = database.GetConnectionString();
+        Assert.Equal(
+            2L,
+            await ScalarAsync<long>(
+                connectionString, $"SELECT count(*) FROM automations.http_calls WHERE run_id = '{runId}' AND node_id = 'http1' AND step_number = 3"));
+        Assert.Equal(
+            Detailed,
+            await ScalarAsync<string>(
+                connectionString, $"SELECT error_code FROM automations.http_calls WHERE run_id = '{runId}' ORDER BY called_at LIMIT 1"));
+        Assert.Equal(
+            "ok",
+            await ScalarAsync<string>(
+                connectionString, $"SELECT outcome FROM automations.http_calls WHERE run_id = '{runId}' ORDER BY called_at DESC LIMIT 1"));
+    }
 }

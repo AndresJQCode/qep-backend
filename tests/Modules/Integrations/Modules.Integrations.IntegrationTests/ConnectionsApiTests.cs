@@ -308,7 +308,9 @@ public sealed class ConnectionsApiTests
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         var created = await CreateConnectionAsync(client, tenant.TenantId);
 
+        // Zenvia lo consumen cotizaciones y pedidos: se apagan los dos (spec 2026-11-21).
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "inactive");
+        await SetModuleStatusAsync(connectionString, tenant.TenantId, "orders", "inactive");
 
         var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
         var list = await client.GetFromJsonAsync<ConnectionsResponse>(ConnectionsUrl(tenant.TenantId), Ct);
@@ -323,6 +325,7 @@ public sealed class ConnectionsApiTests
         Assert.Equal(1L, await CountConnectionsAsync(connectionString, tenant.TenantId));
 
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "active");
+        await SetModuleStatusAsync(connectionString, tenant.TenantId, "orders", "active");
 
         var back = await client.GetFromJsonAsync<ConnectionResponse>(ConnectionUrl(tenant.TenantId, created.Id), Ct);
         Assert.Equal(created.Version, back!.Version);

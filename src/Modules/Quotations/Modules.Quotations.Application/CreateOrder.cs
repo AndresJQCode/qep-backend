@@ -5,7 +5,8 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>Un pedido creado a mano desde Pedidos, sin cotización (spec 2026-10-15 §5.2).</summary>
+/// <summary>Un pedido creado a mano desde Pedidos, sin cotización (spec 2026-10-15 §5.2). El estado de pago no viaja
+/// (spec 2026-11-10 §3.2): sale calculado de los comprobantes y nunca nace pagado.</summary>
 public sealed record CreateOrderCommand(
     Guid TenantId,
     Guid ClientId,
@@ -16,9 +17,9 @@ public sealed record CreateOrderCommand(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
-    string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
-    ShippingRequest? Shipping = null) : ICommand<OrderDetailDto>, IOrderDraft;
+    ShippingRequest? Shipping = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null) : ICommand<OrderDetailDto>, IOrderDraft;
 
 /// <summary>Lo que comparten crear y previsualizar un pedido: el mismo cuerpo, las mismas reglas.</summary>
 public interface IOrderDraft
@@ -35,12 +36,14 @@ public interface IOrderDraft
 
     IReadOnlyList<OrderItemAddition> Items { get; }
 
-    string PaymentStatus { get; }
-
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs { get; }
 
     /// <summary>La entrega por envío (spec 2026-10-17 §5.4); null es "sin envío".</summary>
     ShippingRequest? Shipping { get; }
+
+    /// <summary>Los regalos (spec 2026-11-23): variante y cantidad, a precio de lista con el 100 % de descuento. Null es
+    /// «sin regalos». <see cref="Items"/> sigue siendo sólo las líneas pagadas.</summary>
+    IReadOnlyList<OrderItemAddition>? Gifts { get; }
 }
 
 /// <summary>
@@ -53,8 +56,6 @@ public interface IOrderDraft
 public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
     where TDraft : IOrderDraft
 {
-    private static readonly string[] ValidPaymentStatuses = Enum.GetNames<OrderPaymentStatus>();
-
     protected OrderDraftValidator(bool requireBillingAccount, bool requireBillingIdentification, bool requireFileIds)
     {
         RuleFor(draft => draft.ClientId).NotEmpty();
@@ -78,9 +79,15 @@ public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
             .Must(items => items.Select(line => line.VariantId).Distinct().Count() == items.Count)
             .WithMessage("La misma variante no puede aparecer más de una vez.")
             .When(draft => draft.Items is not null);
-        RuleFor(draft => draft.PaymentStatus)
-            .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
-            .WithMessage($"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
+        RuleForEach(draft => draft.Gifts).ChildRules(gift =>
+        {
+            gift.RuleFor(line => line.VariantId).NotEmpty();
+            gift.RuleFor(line => line.Quantity).GreaterThan(0m);
+        }).When(draft => draft.Gifts is not null);
+        RuleFor(draft => draft.Gifts)
+            .Must(gifts => gifts!.Select(line => line.VariantId).Distinct().Count() == gifts!.Count)
+            .WithMessage("La misma variante no puede ir más de una vez como regalo.")
+            .When(draft => draft.Gifts is not null);
         RuleFor(draft => draft.PaymentProofs).NotNull();
         RuleForEach(draft => draft.PaymentProofs).ChildRules(proof =>
         {
@@ -133,11 +140,14 @@ public sealed class CreateOrderHandler(
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        foreach (var proof in command.PaymentProofs)
-        {
-            await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, orderRepository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
-        }
+        // Todos los comprobantes del cuerpo en dos lecturas, no dos por comprobante, como al convertir.
+        await OrderPaymentProofResolver.ResolveManyAsync(
+            fileLookup,
+            orderRepository,
+            command.TenantId,
+            command.PaymentProofs.Select(proof => proof.FileId).ToArray(),
+            exceptProofId: null,
+            cancellationToken);
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
@@ -149,7 +159,6 @@ public sealed class CreateOrderHandler(
         var year = calendar.Today.Year;
         var format = await numberingFormats.GetAsync(command.TenantId, DocumentNumberType.Order, cancellationToken);
         var counterYear = format.IncludeYear ? year : 0;
-        var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
         // Las copias públicas de los comprobantes van antes de la transacción (I/O contra R2) y se
         // deshacen si el pedido no se guarda, como en la conversión.
@@ -167,7 +176,7 @@ public sealed class CreateOrderHandler(
                 new OrderDraftInput(
                     command.TenantId, command.ClientId, advisorId, command.PaymentMethod, command.Notes,
                     command.IsRetail, command.GlobalScaleFloor, command.Parties, command.BillingAccount,
-                    command.Items, paymentStatus, proofs, AllowIncompleteCustomer: false, command.Shipping),
+                    command.Items, proofs, AllowIncompleteCustomer: false, command.Shipping, Gifts: command.Gifts),
                 orderNumber,
                 now,
                 cancellationToken);

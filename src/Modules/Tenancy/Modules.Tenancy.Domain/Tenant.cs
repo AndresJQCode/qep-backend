@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Domain;
+using BuildingBlocks.Domain.Localization;
 
 namespace Modules.Tenancy.Domain;
 
@@ -18,6 +19,7 @@ public sealed class Tenant
     {
     }
 
+    /// <param name="slug">Ya validado y normalizado por <see cref="Create"/>, su único llamador.</param>
     private Tenant(
         TenantId id,
         string slug,
@@ -26,15 +28,25 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? country,
+        string? language)
     {
         Id = id;
         OwnerMembershipId = ownerMembershipId;
-        Slug = ValidateSlug(slug);
+        Slug = slug;
         DisplayName = ValidateDisplayName(displayName);
         DefaultCulture = ValidateCulture(defaultCulture);
         TimeZone = ValidateTimeZone(timeZone);
         DateFormat = ValidateDateFormat(dateFormat);
+        if (country is not null)
+        {
+            Country = NormalizeCountryCode(country);
+            // Spec 2026-11-23: con país, la moneda es la de ese país. Sin país (signup) queda la de la columna.
+            DefaultCurrency = TenantCurrencies.ForCountry(Country);
+        }
+
+        Language = language is null ? SupportedLanguages.Default : ValidateLanguage(language);
         Status = TenantStatus.Active;
         Version = 1;
         CreatedAt = createdAt;
@@ -67,12 +79,26 @@ public sealed class Tenant
     public string Country { get; private set; } = "CO";
 
     /// <summary>
-    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado**: sólo manda
-    /// si <see cref="Country"/> es <c>CO</c>; quien lo consulta pasa por
+    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado** y manda en
+    /// todos los países; quien lo consulta pasa por
     /// <see cref="PersonTypeRequirementPolicy.Effective"/>. Arranca en <c>Never</c> y la migración
     /// rellena con lo mismo.
     /// </summary>
     public PersonTypeRequirement PersonTypeRequirement { get; private set; } = PersonTypeRequirement.Never;
+
+    /// <summary>
+    /// Qué datos del cliente (documento, ciudad) exige el tenant al guardar la ficha y al facturar.
+    /// Arranca exigiéndolo todo, como era antes de que fuera configurable.
+    /// </summary>
+    public CustomerFieldPolicy CustomerFieldPolicy { get; private set; } = CustomerFieldPolicy.Default;
+
+    /// <summary>
+    /// El idioma con que el producto le habla a quien no eligió uno propio (spec 2026-11-22, i18n):
+    /// <c>es-419</c> o <c>es-ES</c>, de <see cref="SupportedLanguages"/>. Es idioma, no formato
+    /// regional: no cambia separadores ni fechas. Arranca en <c>es-419</c> y la migración rellena los
+    /// tenants existentes con lo mismo.
+    /// </summary>
+    public string Language { get; private set; } = SupportedLanguages.Default;
 
     /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
@@ -127,9 +153,19 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt) =>
-        new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
-            createdAt);
+        DateTimeOffset createdAt,
+        string? country = null,
+        string? language = null)
+    {
+        // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo. El constructor recibe el slug ya
+        // validado y normalizado, así que no lo vuelve a validar.
+        var normalizedSlug = ValidateSlug(slug);
+        EnsureNotReserved(normalizedSlug);
+
+        // Spec 2026-11-22: sin país el tenant conserva el default CO (signup); con país, el de la invitación del distribuidor.
+        return new(id, normalizedSlug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
+            createdAt, country, language);
+    }
 
     /// <summary>
     /// Aplica las mismas reglas y los mismos códigos que <see cref="Create"/> a los datos de un
@@ -140,13 +176,26 @@ public sealed class Tenant
         string displayName,
         string defaultCulture,
         string timeZone,
-        string dateFormat)
+        string dateFormat,
+        string? country = null,
+        string? language = null)
     {
         var normalizedSlug = ValidateSlug(slug);
+        EnsureNotReserved(normalizedSlug);
         ValidateDisplayName(displayName);
         ValidateCulture(defaultCulture);
         ValidateTimeZone(timeZone);
         ValidateDateFormat(dateFormat);
+        if (country is not null)
+        {
+            NormalizeCountryCode(country);
+        }
+
+        if (language is not null)
+        {
+            ValidateLanguage(language);
+        }
+
         return normalizedSlug;
     }
 
@@ -162,9 +211,20 @@ public sealed class Tenant
         string numberFormat,
         string country,
         PersonTypeRequirement personTypeRequirement,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        CustomerFieldPolicy? customerFieldPolicy = null,
+        // Null keeps the stored language: a frontend older than the field does not send it.
+        string? language = null)
     {
         EnsureActive();
+
+        var validatedPolicy = customerFieldPolicy ?? CustomerFieldPolicy;
+        if (!validatedPolicy.IsConsistent)
+        {
+            throw new TenantDomainException(
+                CustomerFieldPolicy.InvalidCode,
+                "A field required on customer save must also be required on billing.");
+        }
 
         var validatedDisplayName = ValidateDisplayName(displayName);
         var validatedCulture = ValidateCulture(defaultCulture);
@@ -173,6 +233,7 @@ public sealed class Tenant
         var validatedCurrency = NormalizeCurrencyCode(defaultCurrency);
         var validatedNumberFormat = TenantNumberFormats.Normalize(numberFormat);
         var validatedCountry = NormalizeCountryCode(country);
+        var validatedLanguage = language is null ? Language : ValidateLanguage(language);
         List<string> changedFields = [];
 
         TrackChange(nameof(DisplayName), DisplayName, validatedDisplayName, changedFields);
@@ -182,10 +243,16 @@ public sealed class Tenant
         TrackChange(nameof(DefaultCurrency), DefaultCurrency, validatedCurrency, changedFields);
         TrackChange(nameof(NumberFormat), NumberFormat, validatedNumberFormat, changedFields);
         TrackChange(nameof(Country), Country, validatedCountry, changedFields);
+        TrackChange(nameof(Language), Language, validatedLanguage, changedFields);
         TrackChange(
             nameof(PersonTypeRequirement),
             PersonTypeRequirement.ToString(),
             personTypeRequirement.ToString(),
+            changedFields);
+        TrackChange(
+            nameof(CustomerFieldPolicy),
+            CustomerFieldPolicy.ToString(),
+            validatedPolicy.ToString(),
             changedFields);
 
         if (changedFields.Count == 0)
@@ -200,7 +267,9 @@ public sealed class Tenant
         DefaultCurrency = validatedCurrency;
         NumberFormat = validatedNumberFormat;
         Country = validatedCountry;
+        Language = validatedLanguage;
         PersonTypeRequirement = personTypeRequirement;
+        CustomerFieldPolicy = validatedPolicy;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new TenantSettingsUpdatedDomainEvent(
@@ -355,6 +424,21 @@ public sealed class Tenant
         return normalized;
     }
 
+    /// <summary>
+    /// Un slug que es ruta fija del host de Soporte (<see cref="TenantSlugReservations"/>). Sólo
+    /// lo llaman <see cref="Create"/> y <see cref="EnsureValidRegistration"/>: un tenant que ya
+    /// existía con uno de estos slugs sigue cargando.
+    /// </summary>
+    private static void EnsureNotReserved(string normalizedSlug)
+    {
+        if (TenantSlugReservations.IsReserved(normalizedSlug))
+        {
+            throw new TenantDomainException(
+                TenantSlugReservations.ReservedCode,
+                "Tenant slug is reserved.");
+        }
+    }
+
     private static string ValidateDisplayName(string value)
     {
         var normalized = value.Trim();
@@ -427,6 +511,13 @@ public sealed class Tenant
 
     // Shape only, same as Customers (CustomerContactInfo.NormalizeCountry): there is no world
     // geography module to check the code against, and the frontend picks it from its own list.
+    private static string ValidateLanguage(string value) =>
+        SupportedLanguages.TryNormalize(value, out var language)
+            ? language
+            : throw new TenantDomainException(
+                "tenancy.settings.language.invalid",
+                $"Language must be one of: {string.Join(", ", SupportedLanguages.All)}.");
+
     private static string NormalizeCountryCode(string value)
     {
         var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;

@@ -25,6 +25,18 @@ public interface ICompanyRepository
         CompanyId companyId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Los países (ISO alfa-2) de las empresas del tenant, activas e inactivas: una empresa
+    /// desactivada sigue siendo prueba de que el tenant opera en ese país.
+    /// </summary>
+    Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Si alguna empresa del tenant tiene asignada la tasa municipal (spec ReteICA por empresa §7.2): Catalog no la deja
+    /// desactivar ni borrar. Sin FK entre los esquemas, esta consulta es la única barrera.
+    /// </summary>
+    Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken);
+
     void Add(Company company);
 
     // Borrado en duro, y con el agregado ya cargado por FindAsync: un Remove por id necesitaría

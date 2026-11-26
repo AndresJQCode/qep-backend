@@ -2,7 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Testcontainers.PostgreSql;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -15,11 +16,13 @@ namespace Modules.Tenancy.IntegrationTests;
 /// tenants. Sin eso un cliente sólo puede descubrir qué le está permitido intentándolo y
 /// leyendo el 403 — que no puede ocultar una acción antes de que se intente. Ver SDD-OD-10.
 /// </summary>
-public sealed class AuthorizationCatalogApiTests
+public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string TenantId = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string OtherTenantId = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ReadOnlyPermissions =
@@ -42,6 +45,23 @@ public sealed class AuthorizationCatalogApiTests
     private sealed record CatalogPermissionPayload(
         string Permission, string DisplayName, string Description, string Category, string RiskLevel);
 
+    // Spec 2026-11-16: lo que la matriz de roles lee del catálogo. Records aparte de CatalogPayload y
+    // CatalogPermissionPayload porque las pruebas viejas comparan esos por igualdad con listas escritas a
+    // mano: sumarles los campos de la matriz las ataría a la entidad y la acción de cada permiso.
+    private sealed record CatalogMatrixPayload(
+        IReadOnlyCollection<CatalogActionPayload> Actions,
+        IReadOnlyCollection<CatalogMatrixPermissionPayload> Permissions);
+
+    private sealed record CatalogActionPayload(string Key, string Label);
+
+    private sealed record CatalogMatrixPermissionPayload(
+        string Permission,
+        string CategoryLabel,
+        string Entity,
+        string EntityLabel,
+        string Action,
+        string ActionLabel);
+
     /// <summary>
     /// Lo que la pantalla de roles muestra de los permisos de pedidos (spec 2026-09-14): códigos
     /// nuevos, textos en masculino y con tilde, y los mismos permisos efectivos en los tres roles
@@ -52,8 +72,8 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task TheCatalogNamesTheOrderPermissions()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedRolesAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
 
@@ -63,12 +83,15 @@ public sealed class AuthorizationCatalogApiTests
         Assert.NotNull(catalog);
         CatalogPermissionPayload[] expected =
         [
-            new("quotations.order.approve", "Aprobar pedidos",
-                "Permite dar el visto bueno a un pedido pendiente.", "Quotations", "medium"),
+            new("quotations.order.approve", "Marcar pedidos como pagados",
+                "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
+                "Quotations", "medium"),
             new("quotations.order.cancel", "Anular pedidos",
-                "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.", "Quotations", "high"),
+                "Permite anular un pedido abierto que no esté preparado ni facturado, con un motivo obligatorio.",
+                "Quotations", "high"),
             new("quotations.order.invoice", "Facturar pedidos",
-                "Permite marcar como facturado un pedido aprobado y revertir esa marca.", "Quotations", "medium"),
+                "Permite marcar un pedido como facturado y revertir esa marca. Si antes debe estar pagado lo decide el ajuste del pedido de cada tenant.",
+                "Quotations", "medium"),
             new("quotations.order.manage", "Gestionar pedidos",
                 "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.", "Quotations", "medium"),
             new("quotations.order.read", "Leer pedidos",
@@ -79,8 +102,9 @@ public sealed class AuthorizationCatalogApiTests
         Assert.Equal(
             expected,
             catalog.Permissions
-                // `wms.purchase_order.manage` también dice «order», pero es de Bodegas y no un permiso de pedidos de venta.
+                // Los pedidos de venta; las órdenes de compra (`purchases.order.*` y `wms.purchase_order.*`) son de otros módulos.
                 .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal)
+                    && !permission.Permission.StartsWith("purchases.", StringComparison.Ordinal)
                     && !permission.Permission.StartsWith("wms.", StringComparison.Ordinal))
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
         // Los únicos permisos de venta son los del punto de venta (spec 2026-10-07): la regla
@@ -88,7 +112,9 @@ public sealed class AuthorizationCatalogApiTests
         Assert.DoesNotContain(
             catalog.Permissions,
             permission => permission.Permission.Contains("sale", StringComparison.Ordinal)
-                && !permission.Permission.StartsWith("pos.", StringComparison.Ordinal));
+                && !permission.Permission.StartsWith("pos.", StringComparison.Ordinal)
+                // «wholesale» contiene «sale» y es el módulo Mayorista, no un permiso de pedidos.
+                && !permission.Permission.StartsWith("wholesale.", StringComparison.Ordinal));
         // Spec 2026-09-16, decisión 5: anular es sólo de admin. Aprobar es de admin y facturación,
         // nunca del asesor: quien registra el pedido no es quien lo revisa. Facturar (spec
         // 2026-10-05, decisión 5) es de admin y facturación, y cubre también revertir.
@@ -114,15 +140,15 @@ public sealed class AuthorizationCatalogApiTests
     }
 
     /// <summary>
-    /// Spec 2026-10-07 (módulo POS): siete permisos propios, todos de admin; el rol de sistema
+    /// Spec 2026-10-07 (módulo POS): siete permisos propios, todos de admin; el rol sembrado
     /// `cashier` vende, abre y cierra su caja y lee sus ventas, sin descontar ni anular
     /// (decisión 4). Asesor y facturación no ven el punto de venta.
     /// </summary>
     [Fact]
     public async Task TheCatalogNamesThePosPermissionsAndTheCashierRole()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedRolesAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
 
@@ -157,16 +183,51 @@ public sealed class AuthorizationCatalogApiTests
             PermissionsOf(catalog, "admin", "pos."));
         Assert.Equal(
             ["pos.register.operate", "pos.sale.create", "pos.sale.customer", "pos.sale.read"],
-            catalog.Roles.Single(role => role.Role == "cashier").Permissions
-                .Order(StringComparer.Ordinal).ToArray());
+            PermissionsOf(catalog, "cashier", "pos."));
         Assert.Empty(PermissionsOf(catalog, "advisor", "pos."));
         Assert.Empty(PermissionsOf(catalog, "billing", "pos."));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-16: el catálogo dice en qué fila (entidad) y columna (acción) de la matriz de roles va
+    /// cada permiso, con los nombres en pantalla, para que el front no los traduzca con un diccionario
+    /// propio. Las columnas son las de <c>actions</c>; una acción fuera de ellas va a «Otros».
+    /// </summary>
+    [Fact]
+    public async Task TheCatalogDescribesEntityAndActionOfEachPermission()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
+
+        var catalog = await client.GetFromJsonAsync<CatalogMatrixPayload>(
+            $"/api/v1/tenants/{TenantId}/authorization/catalog", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(catalog);
+        Assert.Equal(["read", "manage", "delete", "import"], catalog!.Actions.Select(a => a.Key));
+        Assert.Equal(["Ver", "Gestionar", "Borrar", "Importar"], catalog.Actions.Select(a => a.Label));
+        var merge = catalog.Permissions.Single(p => p.Permission == "customers.customer.merge");
+        Assert.Equal(("customers.customer", "merge", "Fusionar", "Clientes"), (merge.Entity, merge.Action, merge.ActionLabel, merge.CategoryLabel));
+        Assert.Equal("manage", catalog.Permissions.Single(p => p.Permission == "tenancy.settings.update").Action);
+        Assert.DoesNotContain(catalog.Permissions.Single(p => p.Permission == "pos.sale.void").Action, catalog.Actions.Select(a => a.Key));
+        Assert.All(catalog.Permissions, p => Assert.False(string.IsNullOrWhiteSpace(p.EntityLabel)));
+    }
+
+    /// <summary>Siembra los roles de fábrica del tenant de la prueba, que no pasa por el alta ni tiene fila en
+    /// <c>tenancy.tenants</c>.</summary>
+    private async Task SeedRolesAsync(QepApiFactory factory)
+    {
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(Guid.Parse(TenantId), TestContext.Current.CancellationToken);
     }
 
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
     [
         .. catalog.Roles.Single(item => item.Role == role).Permissions
+            // Pedidos de venta; las órdenes de compra (`purchases.order.*` y `wms.purchase_order.*`) son de otros módulos.
             .Where(permission => permission.Contains("order", StringComparison.Ordinal)
+                && !permission.StartsWith("purchases.", StringComparison.Ordinal)
                 && !permission.StartsWith("wms.", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal),
     ];
@@ -181,8 +242,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsReturnsWhatTheCallerActuallyHas()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add(
             "X-Permissions",
@@ -210,8 +270,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsNeedsNoPermissionOfItsOwn()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "none.at.all");
 
@@ -230,8 +289,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsRejectsAnotherTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
 
         // Autenticado para OtherTenant, preguntando por el tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
@@ -246,8 +304,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsRejectsAnonymous()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync(
@@ -255,17 +312,6 @@ public sealed class AuthorizationCatalogApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(
@@ -286,6 +332,8 @@ public sealed class AuthorizationCatalogApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

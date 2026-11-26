@@ -24,6 +24,9 @@ public interface ISupplierWriteCommand
 
     string? CityName { get; }
 
+    /// <summary>La región (provincia) del domicilio; sólo para un país con catálogo distinto de Colombia.</summary>
+    Guid? RegionId { get; }
+
     string? Phone { get; }
 
     string? Email { get; }
@@ -93,6 +96,14 @@ internal sealed class SupplierWriteRules : AbstractValidator<ISupplierWriteComma
         RuleFor(command => command.CityName)
             .MaximumLength(Supplier.CityNameMaxLength)
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
+
+        // La región sólo existe fuera de Colombia, que deriva el departamento de la ciudad: con CO se rechaza por campo en
+        // vez de caer al dominio como un 422 sin el mapa errors. Que exista y sea de ese país lo resuelve el handler.
+        RuleFor(command => command.RegionId)
+            .Null()
+            .WithMessage("A Colombian supplier takes its region from the city, not from a region id.")
+            .When(IsColombian);
+        RuleFor(command => command.RegionId).NotEqual(Guid.Empty);
 
         // Teléfono, correo y dirección son opcionales (spec D-4): vacío no es error.
         RuleFor(command => command.Phone)

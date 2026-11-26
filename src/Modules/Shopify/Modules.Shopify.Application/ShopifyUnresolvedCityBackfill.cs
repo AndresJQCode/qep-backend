@@ -85,7 +85,7 @@ public sealed class ShopifyUnresolvedCityBackfill(
         if (row.QepOrderId is not { } orderId
             || await writer.ReadOrderCityStateAsync(row.TenantId, orderId, cancellationToken) is not
             {
-                Status: "Pending", IsStorePickup: false, HasShippingParty: false, NotesHaveRawAddress: true,
+                IsEditable: true, IsStorePickup: false, HasShippingParty: false, NotesHaveRawAddress: true,
             }
             || ReadSnapshot(row) is not { ShippingAddress: { } address } snapshot)
         {

@@ -17,6 +17,13 @@ services:
     volumes:
       - qep-postgres:/var/lib/postgresql
 
+  # Estado compartido entre pods (spec 2026-11-13). Sin contraseña ni volumen: en local todo lo que guarda es efímero.
+  # Si ya tienes otro Valkey en 6379, no levantes este: chocan el puerto.
+  valkey:
+    image: valkey/valkey:9.1.3-alpine
+    ports:
+      - "6379:6379"
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.155.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]

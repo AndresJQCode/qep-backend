@@ -32,71 +32,204 @@ internal static class CustomerMapping
         CustomerCityRef? city,
         ClientClassification? classification,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
-        IReadOnlyCollection<TagDto> tags) => new(
-        customer.Id.Value,
-        customer.Cuc,
-        customer.Name,
-        customer.BusinessName,
-        customer.IdentificationType?.ToWireValue(),
-        customer.IdentificationNumber,
-        customer.Phone,
-        customer.Email,
-        // `address`/`city`/`department` describen el **domicilio del cliente** (spec 2026-09-18):
-        // donde esta, lo que la ficha muestra arriba. Las direcciones de envio van en `addresses`,
-        // y marcar otra como principal no mueve estos tres campos.
-        customer.Address,
-        customer.Country,
-        // `city`/`department` viajan resueltos **solo** para un cliente colombiano. Uno de afuera
-        // no tiene fila en geography.cities: su ciudad es `cityName`, texto libre. Quien pinte la
-        // ficha usa `city?.Name ?? cityName`.
-        city is null
-            ? null
-            : new CustomerCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
-        city is null
-            ? null
-            : new CustomerDepartmentDto(
-                city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
-        customer.CityName,
-        // Spec 2026-10-10 §5.2: un incompleto no tiene clasificación y viaja en null.
-        classification?.ToDto(),
-        customer.Addresses
-            .OrderByDescending(address => address.IsPrincipal)
-            .ThenBy(address => address.Name)
-            .Select(address => ToAddressDto(address, citiesById))
-            .ToArray(),
-        customer.WithRetention,
-        customer.VatSurplus,
-        customer.IsActive,
-        customer.CreatedAt,
-        customer.UpdatedAt,
-        customer.IsComplete,
-        // Spec 2026-10-11 §4.2: la ficha y la modal se dibujan con un solo GET. El listado y el Excel no las
-        // piden y pasan una colección vacía.
-        tags,
-        customer.ToConsentDto(),
-        customer.InstagramUsername,
-        PersonType: customer.PersonType?.ToWireValue());
+        IReadOnlyCollection<TagDto> tags,
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById,
+        CustomerCompanyDto? company = null,
+        int contactCount = 0,
+        IReadOnlyList<CustomerContactDto>? contacts = null,
+        // Spec 2026-11-23: las regiones de la ficha, resueltas en lote por ToDtoAsync. El listado y el Excel no las piden y
+        // pasan null, así que su región queda en null.
+        IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById = null)
+    {
+        var withholdingTaxRates = ToWithholdingDtos(customer.WithholdingTaxRateIds, taxRatesById);
+        return new CustomerDto(
+            customer.Id.Value,
+            customer.Cuc,
+            customer.Name,
+            customer.BusinessName,
+            customer.IdentificationType?.ToWireValue(),
+            customer.IdentificationNumber,
+            customer.Phone,
+            customer.Email,
+            // `address`/`city`/`department` describen el **domicilio del cliente** (spec 2026-09-18):
+            // donde esta, lo que la ficha muestra arriba. Las direcciones de envio van en `addresses`,
+            // y marcar otra como principal no mueve estos tres campos.
+            customer.Address,
+            customer.Country,
+            // `city`/`department` viajan resueltos **solo** para un cliente colombiano. Uno de afuera
+            // no tiene fila en geography.cities: su ciudad es `cityName`, texto libre. Quien pinte la
+            // ficha usa `city?.Name ?? cityName`.
+            city is null
+                ? null
+                : new CustomerCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
+            city is null
+                ? null
+                : new CustomerDepartmentDto(
+                    city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+            customer.CityName,
+            // Spec 2026-10-10 §5.2: un incompleto no tiene clasificación y viaja en null.
+            classification?.ToDto(),
+            customer.Addresses
+                .OrderByDescending(address => address.IsPrincipal)
+                .ThenBy(address => address.Name)
+                .Select(address => ToAddressDto(address, citiesById, regionsById))
+                .ToArray(),
+            // Derivado (spec impuestos por tipo §9.2): retiene quien tiene una Retefuente asignada. Una sola ReteICA no alcanza,
+            // igual que en el cálculo de la cotización.
+            withholdingTaxRates.Any(rate => rate.Type == RetefuenteType),
+            customer.VatSurplus,
+            customer.IsActive,
+            customer.CreatedAt,
+            customer.UpdatedAt,
+            customer.IsComplete,
+            // Spec 2026-10-11 §4.2: la ficha y la modal se dibujan con un solo GET. El listado y el Excel no las
+            // piden y pasan una colección vacía.
+            tags,
+            customer.ToConsentDto(),
+            customer.InstagramUsername,
+            PersonType: customer.PersonType?.ToWireValue(),
+            Company: company,
+            ContactCount: contactCount,
+            Contacts: contacts,
+            WithholdingTaxRates: withholdingTaxRates,
+            WithholdingAgentCities: ToAgentCityDtos(customer, citiesById),
+            Region: ToRegionDto(customer.RegionId, regionsById),
+            // La principal primero y el resto por nombre, como la libreta de direcciones. El listado y el Excel no los
+            // cargan y salen vacíos.
+            BillingProfiles: customer.BillingProfiles
+                .OrderByDescending(profile => profile.IsPrincipal)
+                .ThenBy(profile => profile.Name)
+                .Select(profile => ToBillingProfileDto(profile, citiesById, taxRatesById, regionsById))
+                .ToArray());
+    }
+
+    private static CustomerBillingProfileDto ToBillingProfileDto(
+        CustomerBillingProfile profile,
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById,
+        IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById)
+    {
+        // En CO la ciudad y el departamento salen de Geography; afuera la ciudad es el texto guardado.
+        var city = profile.CityId is { } cityId ? citiesById.GetValueOrDefault(cityId) : null;
+        return new CustomerBillingProfileDto(
+            profile.Id.Value,
+            profile.Name,
+            profile.PersonType,
+            profile.IdentificationType,
+            profile.IdentificationNumber,
+            profile.Phone,
+            profile.Email,
+            profile.Address,
+            profile.Country,
+            profile.CityId,
+            city?.CityName ?? profile.CityName,
+            city?.DepartmentId,
+            city?.DepartmentName,
+            ToRegionDto(profile.RegionId, regionsById),
+            ToWithholdingDtos(profile.WithholdingTaxRateIds, taxRatesById),
+            profile.VatSurplus,
+            profile.IsPrincipal);
+    }
+
+    private const string RetefuenteType = "Retefuente";
+
+    // Spec ReteICA por empresa §9.3: los municipios salen del mismo lote de ciudades que la ficha ya resolvió
+    // (ToDtoAsync los suma). El listado no los pide: ahí citiesById no los trae y la lista queda vacía, que nadie lee. La FK
+    // a geography.cities garantiza que existan; un miss se omite en vez de tirar la ficha. Orden estable: departamento,
+    // municipio, tipo.
+    private static CustomerWithholdingAgentCityDto[] ToAgentCityDtos(
+        Customer customer, IReadOnlyDictionary<Guid, CustomerCityRef> citiesById) =>
+        [.. customer.WithholdingAgentCities
+            .Where(agent => citiesById.ContainsKey(agent.CityId))
+            .Select(agent => (Agent: agent, City: citiesById[agent.CityId]))
+            .OrderBy(pair => pair.City.DepartmentName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.City.CityName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Agent.Type, StringComparer.Ordinal)
+            .Select(pair => new CustomerWithholdingAgentCityDto(
+                pair.Agent.Type,
+                pair.Agent.Country,
+                new CustomerMunicipalityDto(
+                    pair.City.CityId, pair.City.CityName, pair.City.DepartmentId, pair.City.DepartmentName)))];
+
+    // Del id guardado a lo que la ficha pinta. Un id que el catálogo ya no devuelve no puede pasar (la tasa «en uso» no se
+    // desactiva ni se borra), pero si pasara, se prefiere omitirlo a tirar la ficha entera. Orden estable: país, tipo, nombre.
+    private static CustomerWithholdingTaxRateDto[] ToWithholdingDtos(
+        IEnumerable<Guid> taxRateIds, IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById) =>
+        [.. taxRateIds
+            .Where(taxRatesById.ContainsKey)
+            .Select(id => taxRatesById[id])
+            .OrderBy(rate => rate.Country, StringComparer.Ordinal)
+            .ThenBy(rate => rate.Type, StringComparer.Ordinal)
+            .ThenBy(rate => rate.Name, StringComparer.Ordinal)
+            .Select(rate => new CustomerWithholdingTaxRateDto(
+                rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.AppliesTo.ToString()))];
+
+    /// <summary>
+    /// Las tasas de todos los clientes dados y de sus perfiles de facturación (si vienen cargados), con una sola consulta al
+    /// catálogo (el listado y el Excel no pueden ir de a una).
+    /// </summary>
+    public static Task<IReadOnlyDictionary<Guid, CustomerTaxRateRef>> FindTaxRatesAsync(
+        ICustomerTaxRateLookup taxRateLookup,
+        Guid tenantId,
+        IEnumerable<Customer> customers,
+        CancellationToken cancellationToken) =>
+        taxRateLookup.FindManyAsync(
+            tenantId,
+            [.. customers
+                .SelectMany(customer => customer.WithholdingTaxRateIds.Concat(
+                    customer.BillingProfiles.SelectMany(profile => profile.WithholdingTaxRateIds)))
+                .Distinct()],
+            cancellationToken);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo
     // que hace ToDtoAsync con la ciudad del domicilio (esa si es estructural).
     private static CustomerAddressDto ToAddressDto(
         CustomerAddress address,
-        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById)
     {
-        citiesById.TryGetValue(address.CityId, out var city);
+        var region = ToRegionDto(address.RegionId, regionsById);
+        // Una direccion de afuera no tiene fila en geography.cities: su ciudad es el texto que
+        // escribieron y no hay departamento que resolver.
+        if (address.CityId is not { } cityId)
+        {
+            return new CustomerAddressDto(
+                address.Id.Value,
+                address.Name,
+                address.Address,
+                address.Phone,
+                null,
+                address.CityName ?? string.Empty,
+                null,
+                null,
+                address.IsPrincipal,
+                address.Country,
+                region);
+        }
+
+        citiesById.TryGetValue(cityId, out var city);
 
         return new CustomerAddressDto(
             address.Id.Value,
             address.Name,
             address.Address,
             address.Phone,
-            address.CityId,
+            cityId,
             city?.CityName ?? string.Empty,
             city?.DepartmentId ?? Guid.Empty,
             city?.DepartmentName ?? string.Empty,
-            address.IsPrincipal);
+            address.IsPrincipal,
+            address.Country,
+            region);
     }
+
+    // Una region que Geography ya no devuelve se omite en vez de tirar la ficha: es una referencia blanda, sin FK entre esquemas.
+    private static CustomerRegionDto? ToRegionDto(
+        Guid? regionId, IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById) =>
+        regionId is { } id && regionsById is not null && regionsById.TryGetValue(id, out var region)
+            ? new CustomerRegionDto(region.Id, region.Name)
+            : null;
 
     /// <summary>
     /// La version de un solo cliente: resuelve su ciudad y su clasificacion y arma el DTO. Para
@@ -113,19 +246,33 @@ internal static class CustomerMapping
         ICustomerGeographyLookup geographyLookup,
         IClientClassificationRepository classificationRepository,
         ICustomerTagRepository tagRepository,
+        ICustomerTaxRateLookup taxRateLookup,
+        ICustomerCompanyDirectory companyDirectory,
         CancellationToken cancellationToken)
     {
         // Las ciudades del domicilio y de todas las direcciones de envio de una vez: el domicilio
         // arma los campos planos del DTO y el resto acompaña a cada fila de la libreta. Un cliente
         // de afuera no aporta ciudad de domicilio: la suya es texto libre.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses
-                .Select(address => address.CityId)
+            CustomerCityIds.OfAddresses(customer)
+                .Concat(CustomerCityIds.OfBillingProfiles(customer))
                 .Concat(CustomerCityIds.OfDomicile(customer))
+                .Concat(customer.WithholdingAgentCities.Select(agent => agent.CityId))
                 .Distinct()
                 .ToArray(),
             cancellationToken);
         var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
+        // Las regiones del domicilio, de cada direccion y de cada perfil, con una sola consulta (sin ids no se toca
+        // Geography).
+        var regionsById = await geographyLookup.FindRegionsAsync(
+            customer.Addresses
+                .Select(address => address.RegionId)
+                .Concat(customer.BillingProfiles.Select(profile => profile.RegionId))
+                .Append(customer.RegionId)
+                .OfType<Guid>()
+                .Distinct()
+                .ToArray(),
+            cancellationToken);
         // Spec 2026-10-10 §6.2: un incompleto no tiene clasificación que buscar.
         var classification = customer.ClassificationId is { } classificationId
             ? await classificationRepository.FindAsync(customer.TenantId, classificationId, cancellationToken)
@@ -138,7 +285,61 @@ internal static class CustomerMapping
             .Select(item => item.ToDto())
             .ToArray();
 
-        return customer.ToDto(city, classification, citiesById, tags);
+        var taxRatesById = await FindTaxRatesAsync(taxRateLookup, customer.TenantId, [customer], cancellationToken);
+
+        // Spec 2026-11-10 (ruling P4): la empresa â€”y, en la tarea de contactos, la lista de contactos y su conteoâ€” se llena aquÃ­
+        // y no en cada handler, para que ninguna respuesta de la ficha salga sin ella. Una consulta, acotada al tenant.
+        var company = await ResolveCompanyAsync(customer, companyDirectory, cancellationToken);
+        var (contacts, contactCount) = await ResolveContactsAsync(customer, companyDirectory, cancellationToken);
+
+        return customer.ToDto(
+            city, classification, citiesById, tags, taxRatesById, company, contactCount, contacts, regionsById);
+    }
+
+    // Spec 2026-11-10 §4.2 (ruling P4): los contactos de una empresa viajan en toda respuesta de la ficha, no sólo en el GET, para
+    // que un PUT no deje a la caché del frontend sin ellos. Un contacto no tiene contactos (A2): no hay a quién preguntar. Se
+    // cuenta primero y se lista sólo si hay: la mayoría de los clientes no son empresa.
+    private static async Task<(IReadOnlyList<CustomerContactDto> Contacts, int Count)> ResolveContactsAsync(
+        Customer customer,
+        ICustomerCompanyDirectory companyDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (customer.CompanyId is not null)
+        {
+            return ([], 0);
+        }
+
+        var counts = await companyDirectory.CountContactsAsync(
+            customer.TenantId, [customer.Id.Value], cancellationToken);
+        if (!counts.TryGetValue(customer.Id.Value, out var count) || count == 0)
+        {
+            return ([], 0);
+        }
+
+        var contacts = await companyDirectory.ListContactsAsync(
+            customer.TenantId, customer.Id.Value, CustomerContactsLimits.MaxInDetail, cancellationToken);
+        return (contacts
+            .Select(contact => new CustomerContactDto(
+                contact.Id, contact.Name, contact.Phone, contact.Email, contact.IsComplete, contact.IsActive))
+            .ToArray(), count);
+    }
+
+    private static async Task<CustomerCompanyDto?> ResolveCompanyAsync(
+        Customer customer,
+        ICustomerCompanyDirectory companyDirectory,
+        CancellationToken cancellationToken)
+    {
+        // Sin vínculo no hay a quién preguntar: el directorio sólo devuelve contactos con empresa.
+        if (customer.CompanyId is null)
+        {
+            return null;
+        }
+
+        var companies = await companyDirectory.FindCompaniesAsync(
+            customer.TenantId, [customer.Id.Value], cancellationToken);
+        return companies.TryGetValue(customer.Id.Value, out var company)
+            ? new CustomerCompanyDto(company.Id, company.Name, company.IsComplete, company.IsActive)
+            : null;
     }
 
     /// <summary>
@@ -146,23 +347,23 @@ internal static class CustomerMapping
     /// tipo de documento desconocido; no se traduce a un valor por defecto, porque elegir NIT en
     /// silencio le cambia el documento al cliente sin que nadie se entere.
     /// </summary>
-    public static CustomerIdentification ToIdentification(
-        string identificationType,
-        string identificationNumber) =>
-        new()
-        {
-            Type = IdentificationTypeParser.Parse(identificationType),
-            Number = identificationNumber
-        };
+    public static CustomerIdentification? ToIdentification(
+        string? identificationType,
+        string? identificationNumber) =>
+        string.IsNullOrWhiteSpace(identificationType) && string.IsNullOrWhiteSpace(identificationNumber)
+            ? null
+            : new()
+            {
+                Type = IdentificationTypeParser.Parse(identificationType),
+                Number = identificationNumber!
+            };
 
     public static CustomerCommercialInfo ToCommercialInfo(
         Guid? classificationId,
-        bool withRetention,
         bool vatSurplus) =>
         new()
         {
             ClassificationId = classificationId is { } id ? new ClientClassificationId(id) : null,
-            WithRetention = withRetention,
             VatSurplus = vatSurplus
         };
 }

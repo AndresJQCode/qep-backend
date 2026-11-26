@@ -565,7 +565,8 @@ internal static class PasswordAuthApiHarness
 internal sealed class PasswordAuthApiFactory(
     string connectionString,
     IEmailChannel? emailChannel = null,
-    bool signupEnabled = true) : WebApplicationFactory<Program>
+    bool signupEnabled = true,
+    Action<IWebHostBuilder>? configure = null) : WebApplicationFactory<Program>
 {
     public const string Audience = "test-audience";
 
@@ -579,11 +580,17 @@ internal sealed class PasswordAuthApiFactory(
     {
         builder.UseEnvironment("IntegrationTests");
         builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+        // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+        builder.UseSetting("Seed:Enabled", "false");
         builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
         builder.UseSetting("Storage:R2:AccountId", "test-account");
         builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
         builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
         builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+        // Fuera de Development y Testing la tienda exige sus dos secretos al arrancar (StoreOptionsValidator.cs:13, regla de la
+        // tarea 7); valores de prueba, igual que los de R2.
+        builder.UseSetting("Store:Storefront:SharedSecret", "test-storefront-shared-secret-0123456789");
+        builder.UseSetting("Store:Turnstile:SecretKey", "test-turnstile-secret");
         builder.UseSetting("Notifications:EmailProvider", "log");
         builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
         builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
@@ -602,6 +609,9 @@ internal sealed class PasswordAuthApiFactory(
                 services.AddSingleton(emailChannel);
             });
         }
+
+        // Lo propio de una prueba (Valkey, un interceptor, un reloj), después de lo común para poder pisarlo.
+        configure?.Invoke(builder);
     }
 }
 

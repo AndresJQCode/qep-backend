@@ -29,6 +29,14 @@ public sealed record ProductPricing
     /// manda el formulario nunca la trae, así que ahí la restricción se sigue exigiendo.
     /// </summary>
     public bool KeepsIncompleteScales { get; init; }
+
+    /// <summary>
+    /// True sólo cuando el precio puede quedar vacío sin <c>catalog.product.price_required</c> (mayorista fase 3, D-16): el
+    /// producto que crea Compras sin precio de venta, y las copias de lo guardado de una variante que ya no lo tiene
+    /// (<see cref="PriceScaleCopy"/>, el PUT con <c>pricing: null</c>). No se persiste: se deriva del estado en cada copia,
+    /// para que ese producto siga editable por todo camino (pre-flight X3). Lo que manda el formulario nunca la trae.
+    /// </summary>
+    public bool AllowsNoPrice { get; init; }
 }
 
 /// <summary>

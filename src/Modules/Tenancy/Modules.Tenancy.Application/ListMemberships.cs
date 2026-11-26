@@ -32,14 +32,17 @@ public sealed record MembershipListItemDto(
     DateTimeOffset? AcceptedAt,
     DateTimeOffset ExpiresAt,
     long Version,
-    bool IsOwner);
+    bool IsOwner,
+    string? Phone = null,
+    string? PhoneSource = null);
 
 public static class MembershipListItemMappings
 {
     public static MembershipListItemDto ToListItemDto(
         this Membership membership,
         string? email,
-        Tenant tenant) =>
+        Tenant tenant,
+        EffectivePhone? phone = null) =>
         new(
             membership.Id,
             membership.UserId,
@@ -53,7 +56,9 @@ public static class MembershipListItemMappings
             membership.AcceptedAt,
             membership.ExpiresAt,
             membership.Version,
-            tenant.IsOwner(membership.Id));
+            tenant.IsOwner(membership.Id),
+            phone?.Phone,
+            phone?.SourceName);
 }
 
 /// <summary>Cuántas membresías caen en cada estado visible, dentro de lo buscado.</summary>
@@ -101,7 +106,8 @@ public sealed class ListMembershipsHandler(
     ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    MembershipPhoneReader phoneReader)
     : IQueryHandler<ListMembershipsQuery, MembershipListDto>
 {
     public async Task<MembershipListDto> HandleAsync(
@@ -129,9 +135,8 @@ public sealed class ListMembershipsHandler(
         // acá no hace falta reloj. El usuario detrás puede seguir existiendo o no —eso lo decide
         // Identity al consumir el evento de baja—; para este tenant es indistinto.
         //
-        // El rol se aplica antes de resolver los correos y no después: cada membresía que
-        // sobrevive cuesta una consulta a IUserDirectory, así que descartar acá es lo que
-        // evita ese trabajo.
+        // El rol se aplica antes de resolver los correos y no después: sólo las membresías que
+        // sobreviven entran en el lote de correos.
         var visible = memberships
             .Where(membership => membership.State != MembershipState.Removed)
             .ToList();
@@ -139,13 +144,24 @@ public sealed class ListMembershipsHandler(
             ? visible
             : visible.Where(membership => membership.Roles.Contains(query.Role)).ToList();
 
+        // Un solo viaje a Identity por todos los correos. Era una consulta por membresía, y en
+        // producción, con la base en otro nodo, cada una pagaba la red: doce miembros eran doce
+        // viajes en serie que costaban más que el resto del request junto.
+        var emails = await userDirectory.GetEmailsAsync(
+            scoped.Select(membership => membership.UserId).ToList(),
+            cancellationToken);
+        // The list also feeds the advisor picker, which only needs advisorship.read, so a phone number goes out
+        // only to who manages members; everybody else gets null and HR is never asked.
+        var phones = executionContext.HasPermission(TenancyPermissions.AdvisorshipManage)
+            ? await phoneReader.ForAsync(scoped, cancellationToken)
+            : null;
         var items = new List<MembershipListItemDto>(scoped.Count);
-        // Una búsqueda por membresía: IUserDirectory sólo expone resolución por id único
-        // (v1). Aceptable para la poca cantidad de miembros que tiene un tenant hoy.
         foreach (var membership in scoped)
         {
-            var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-            items.Add(membership.ToListItemDto(email, tenant));
+            items.Add(membership.ToListItemDto(
+                emails.GetValueOrDefault(membership.UserId),
+                tenant,
+                phones?[membership.Id]));
         }
 
         // Ninguno de los filtros se aplica en SQL, y cada uno por su razón.

@@ -13,7 +13,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// La entrega por envío en el pedido (spec 2026-10-17 §5.4 y §6): el pedido manual y su cálculo previo, la
 /// conversión que copia el envío de la cotización y la edición del pedido pendiente, contra Postgres real.
 /// </summary>
-public sealed class OrderShippingApiTests
+public sealed class OrderShippingApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -33,8 +33,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task TheOrderCreatedEventTotalIncludesTheChargedFreight()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -53,8 +52,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CreatesAManualOrderWithFreight()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -93,37 +91,29 @@ public sealed class OrderShippingApiTests
         }
     }
 
+    // Spec 2026-11-10 §3.2: el estado de pago ya no viaja; lo que se rechaza es el comprobante.
     [Fact]
     public async Task ManualOrderWithCashOnDeliveryMustBePending()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var request = (await ManualRequestAsync(client, tenantId, new ShippingRequest(carrierId, null, 0m, true))) with
         {
-            PaymentStatus = "FullPaymentReceived",
             PaymentProofs = [new OrderPaymentProofRequest(proofFileId, 100_000m)],
         };
 
-        using var response = await client.PostAsJsonAsync(OrdersUrl(tenantId), request, TestContext.Current.CancellationToken);
+        // R16: con un comprobante no, la misma regla que el cambio de envío (D-F14).
+        using var withProof = await client.PostAsJsonAsync(OrdersUrl(tenantId), request, TestContext.Current.CancellationToken);
 
-        await AssertCodeAsync(response, "order.order.cash_on_delivery_pending_only");
-
-        // R16: pendiente pero con un comprobante tampoco, la misma regla que el cambio de envío (D-F14).
-        using var pendingWithProof = await client.PostAsJsonAsync(
-            OrdersUrl(tenantId),
-            request with { PaymentStatus = "PaymentPending" },
-            TestContext.Current.CancellationToken);
-
-        await AssertCodeAsync(pendingWithProof, "order.order.cash_on_delivery_pending_only");
+        await AssertCodeAsync(withProof, "order.order.cash_on_delivery_pending_only");
 
         // Pendiente sí: la transportadora cobra en la puerta.
         using var pending = await client.PostAsJsonAsync(
             OrdersUrl(tenantId),
-            request with { PaymentStatus = "PaymentPending", PaymentProofs = [] },
+            request with { PaymentProofs = [] },
             TestContext.Current.CancellationToken);
         var created = await ReadDetailAsync(pending, HttpStatusCode.Created);
         Assert.True(created.Order.Shipping.CashOnDelivery);
@@ -133,8 +123,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ConvertingCopiesTheShippingAndTheTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -144,7 +133,7 @@ public sealed class OrderShippingApiTests
 
         using var response = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         var order = (await ReadDetailAsync(response, HttpStatusCode.Created)).Order;
@@ -161,11 +150,11 @@ public sealed class OrderShippingApiTests
         Assert.Equal(2394.96m, order.Shipping.FreightTaxAmount);
     }
 
+    // Spec 2026-11-10 §3.2: el estado de pago ya no viaja; lo que se rechaza es el comprobante.
     [Fact]
-    public async Task ConvertingACashOnDeliveryQuotationAsPaidIsRejected()
+    public async Task ConvertingACashOnDeliveryQuotationWithAProofIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -176,7 +165,7 @@ public sealed class OrderShippingApiTests
         using var response = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
             new ConvertQuotationToOrderRequest(
-                "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, 100_000m)]),
+                null, [new OrderPaymentProofRequest(proofFileId, 100_000m)]),
             TestContext.Current.CancellationToken);
 
         await AssertCodeAsync(response, "order.order.cash_on_delivery_pending_only");
@@ -185,13 +174,12 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task EditsTheShippingOfAPendingOrderAndRecalculatesThePayment()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
         var paid = await PaidOrderAsync(client, factory, tenantId);
-        Assert.Equal("FullPaymentReceived", paid.Order.PaymentStatus);
+        Assert.Equal("PendingVerification", paid.Order.PaymentStatus);
 
         var body = EditsFor(paid, new ShippingRequest(carrierId, "Charged", 15000m, false));
 
@@ -223,8 +211,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task EditingTheShippingWritesOrderHistory()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -254,8 +241,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ManualOrderWithoutShippingStillWorks()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var request = await ManualRequestAsync(client, tenantId, shipping: null);
@@ -276,8 +262,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task AManualOrderCannotChooseADisabledFreightChargeMode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -297,8 +282,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ConvertingAndEditingKeepADisabledFreightChargeMode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -308,7 +292,7 @@ public sealed class OrderShippingApiTests
 
         using var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         var detail = await ReadDetailAsync(converted, HttpStatusCode.Created);
@@ -331,8 +315,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CarrierRecognitionRememberNextLookupMatches()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -365,8 +348,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CarrierRecognitionNameOwnedByOtherCarrierReturns422NameTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -393,8 +375,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CarrierRecognitionOtherTenantReturns403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (_, _, ownerA) = await RegisterTenantAsync(factory, Permissions);
         using var _ = ownerA;
         var (tenantB, ownerUserB, ownerB) = await RegisterTenantAsync(factory, Permissions);
@@ -475,7 +456,7 @@ public sealed class OrderShippingApiTests
         return new CreateOrderRequest(
             clientId, "Transferencia", null, false, null, null,
             new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            [new OrderEditItemRequest(productId, 1m)], "PaymentPending", [], shipping);
+            [new OrderEditItemRequest(productId, 1m)], [], shipping);
     }
 
     /// <summary>Una cotización enviada —todavía editable— de un producto de 100.000 COP con el envío dado.</summary>
@@ -515,7 +496,7 @@ public sealed class OrderShippingApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         using var response = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         return await ReadDetailAsync(response, HttpStatusCode.Created);
     }

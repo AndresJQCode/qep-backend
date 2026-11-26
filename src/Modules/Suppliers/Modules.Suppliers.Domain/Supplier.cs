@@ -68,6 +68,13 @@ public sealed class Supplier
     /// <summary>La ciudad escrita a mano, **sólo fuera de Colombia**; nula en Colombia.</summary>
     public string? CityName { get; private set; }
 
+    /// <summary>
+    /// La región (provincia) del domicilio, referencia blanda a <c>geography.regions</c> (sin FK entre esquemas, igual que
+    /// <see cref="CityId"/>). **Sólo fuera de Colombia**, que deriva el departamento de <see cref="CityId"/>; nula en Colombia.
+    /// Que exista y sea del país lo comprueba el handler contra Geography; el dominio sólo garantiza el carril.
+    /// </summary>
+    public Guid? RegionId { get; private set; }
+
     /// <summary><see cref="Contact"/>.Phone en E.164 con «+», o null si no hay teléfono o no parsea.</summary>
     public string? PhoneE164 { get; private set; }
 
@@ -82,6 +89,14 @@ public sealed class Supplier
     public IReadOnlyList<SupplierContact> Contacts => _contacts;
 
     public bool IsActive { get; private set; }
+
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista), D-8: el tenant del mayorista que este proveedor representa en QEP, o <c>null</c> para un
+    /// proveedor externo. Lo fija sólo la aceptación de una invitación (<see cref="CreateLinked"/>, <see cref="LinkTo"/>),
+    /// nunca el formulario. Uno por mayorista dentro del tenant: lo arbitra el índice único parcial
+    /// <c>IX_suppliers_tenant_linked_tenant</c>. Mientras esté vinculado, el documento no se puede cambiar.
+    /// </summary>
+    public Guid? LinkedTenantId { get; private set; }
 
     /// <summary>Contador de concurrencia optimista; sube en cada escritura.</summary>
     public int Version { get; private set; }
@@ -109,10 +124,58 @@ public sealed class Supplier
         return supplier;
     }
 
+    /// <summary>El proveedor que representa al mayorista <paramref name="linkedTenantId"/> (D-8). Nace con los mismos
+    /// invariantes que <see cref="Create"/>.</summary>
+    public static Supplier CreateLinked(
+        Guid tenantId,
+        Guid linkedTenantId,
+        SupplierWriteData data,
+        ISupplierPhoneNormalizer phones,
+        DateTimeOffset now)
+    {
+        EnsureLinkTarget(linkedTenantId);
+        var supplier = Create(tenantId, data, phones, now);
+        supplier.LinkedTenantId = linkedTenantId;
+        return supplier;
+    }
+
     public void Update(SupplierWriteData data, ISupplierPhoneNormalizer phones, DateTimeOffset now)
     {
         Apply(data, phones, now);
         Version++;
+    }
+
+    /// <summary>
+    /// Vincula un proveedor que ya existía con el documento del mayorista (D-8): así no se crea un duplicado que choque con
+    /// <c>IX_suppliers_tenant_identification</c>. Ya vinculado a ese mismo tenant no cambia nada; a otro,
+    /// <c>suppliers.supplier.linked_elsewhere</c>.
+    /// </summary>
+    public void LinkTo(Guid linkedTenantId, DateTimeOffset now)
+    {
+        EnsureLinkTarget(linkedTenantId);
+        if (LinkedTenantId == linkedTenantId)
+        {
+            return;
+        }
+
+        if (LinkedTenantId is not null)
+        {
+            throw new SuppliersDomainException(
+                "suppliers.supplier.linked_elsewhere",
+                "The supplier is already linked to another tenant.");
+        }
+
+        LinkedTenantId = linkedTenantId;
+        Version++;
+        UpdatedAt = now;
+    }
+
+    private static void EnsureLinkTarget(Guid linkedTenantId)
+    {
+        if (linkedTenantId == Guid.Empty)
+        {
+            throw new ArgumentException("The linked tenant id cannot be empty.", nameof(linkedTenantId));
+        }
     }
 
     public void Deactivate(DateTimeOffset now)
@@ -164,6 +227,15 @@ public sealed class Supplier
         var identification = SupplierIdentification.Create(
             IdentificationTypeParser.Parse(data.IdentificationType),
             data.IdentificationNumber);
+        // D-8: el documento de un proveedor vinculado es el de la empresa facturadora del mayorista (D-2) y no se edita a
+        // mano. Se compara ya normalizado: el mismo número con espacios alrededor no es un cambio.
+        if (LinkedTenantId is not null && identification != Identification)
+        {
+            throw new SuppliersDomainException(
+                "suppliers.supplier.linked_identity_locked",
+                "The identification of a linked supplier cannot be changed.");
+        }
+
         var contact = new SupplierContactInfo
         {
             Phone = data.Phone,
@@ -171,14 +243,15 @@ public sealed class Supplier
             Address = data.Address,
             Country = data.Country!
         }.Normalized();
-        var (cityId, cityName) = EnsureValidLocation(
+        var (cityId, cityName, regionId) = EnsureValidLocation(
             contact.Country,
             data.CityId,
             NormalizeOptional(
                 data.CityName,
                 CityNameMaxLength,
                 "suppliers.supplier.city_name_too_long",
-                $"The supplier city cannot exceed {CityNameMaxLength} characters."));
+                $"The supplier city cannot exceed {CityNameMaxLength} characters."),
+            data.RegionId);
         var paymentTermDays = data.PaymentTermDays is >= 0 and <= PaymentTermMaxDays
             ? data.PaymentTermDays
             : throw new SuppliersDomainException(
@@ -203,6 +276,7 @@ public sealed class Supplier
         Contact = contact;
         CityId = cityId;
         CityName = cityName;
+        RegionId = regionId;
         // Sin teléfono no hay nada que normalizar; con él, un número que no parsea queda en null
         // sin impedir la escritura.
         PhoneE164 = contact.Phone is null ? null : phones.ToE164(contact.Phone, contact.Country);
@@ -222,15 +296,27 @@ public sealed class Supplier
     /// sobra envejece sola. Para Colombia el chequeo es mínimo (no vacía); que la ciudad exista lo
     /// resuelve el handler contra <c>ISupplierGeographyLookup</c>, que el dominio no puede llamar.
     /// </summary>
-    private static (Guid? CityId, string? CityName) EnsureValidLocation(
+    private static (Guid? CityId, string? CityName, Guid? RegionId) EnsureValidLocation(
         string country,
         Guid? cityId,
-        string? cityName)
+        string? cityName,
+        Guid? regionId)
     {
+        // Guid.Empty es un id roto del cliente HTTP, no una región: cuenta como ausente.
+        var normalizedRegion = regionId == Guid.Empty ? null : regionId;
+
         if (country == ColombiaCountryCode)
         {
+            // Red del dominio: el validador ya rechaza la región con CO con un error por campo.
+            if (normalizedRegion is not null)
+            {
+                throw new SuppliersDomainException(
+                    "suppliers.supplier.region_lane_invalid",
+                    "A Colombian supplier takes its region from the city, not from a region id.");
+            }
+
             return cityId is { } id && id != Guid.Empty
-                ? (id, null)
+                ? (id, null, null)
                 : throw new SuppliersDomainException(
                     "suppliers.supplier.city_required",
                     "The supplier city is required.");
@@ -240,7 +326,7 @@ public sealed class Supplier
             ? throw new SuppliersDomainException(
                 "suppliers.supplier.city_name_required",
                 "The supplier city is required for a supplier outside Colombia.")
-            : (null, cityName);
+            : (null, cityName, normalizedRegion);
     }
 
     // El tope se comprueba antes de normalizar una por una (rechazar en O(1) antes que recortar

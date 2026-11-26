@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -25,6 +26,16 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         Guid tenantId, Guid conversationId, Guid customerId, bool created, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // Borrar clientes (final review I-2a): esta conversación no tiene cliente, así que no está entre las que el borrado bloquea;
+        // lo único que la frena es el candado compartido del cliente, antes de tocar la fila. Si el borrado ganó, la excepción
+        // reintenta la unidad del motor y el reintento crea un cliente nuevo (D-4). Devolver null haría que el bot saliera por
+        // «No acepto» sin preguntar. Sin ciclo: el runner tiene el candado de esta conversación, que el borrado no pide.
+        if (!await MessagingCustomerReferenceLock.HoldAsync(dbContext, tenantId, customerId, cancellationToken))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", $"Customer '{customerId}' was deleted while a conversation was being linked to it.");
+        }
+
         var linked = await dbContext.Database.SqlQuery<LinkedRow>(
             $"""
             UPDATE messaging.conversations SET customer_id = {customerId}
@@ -54,6 +65,7 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
             $"""
             UPDATE messaging.conversations SET automation_chatbot_id = {chatbotId}
              WHERE id = {conversationId} AND tenant_id = {tenantId} AND automation_status = 'Active'
+               AND automation_bot_kind IS DISTINCT FROM 2
             """, cancellationToken) > 0;
 
     public async Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
@@ -164,17 +176,24 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
             // viola CK_conversations_automation_assignment. Los CASE miran el valor ANTERIOR de automation_status; RETURNING ve
             // el nuevo, y por eso PausedNow se deduce de la razón y la hora que acaba de escribir (COALESCE: sin asistente son NULL).
             // Spec 2026-10-29 (regla R9): asignarla la saca de la regla de la importación (history_managed), como tomarla a mano.
+            // Spec 2026-11-17 §5.3 y §6.4: pausar limpia la delegación (CK_conversations_delegation; sin asistente Active ya era NULL). El
+            // RETURNING ve el valor nuevo, así que la delegación de antes sale de `old`, leída con el candado de la fila.
             var taken = await dbContext.Database.SqlQuery<AutoAssignRow>(
                 $"""
-                UPDATE messaging.conversations
-                   SET assigned_member_id = {memberId}, assigned_at = {at}, version = version + 1, updated_at = {at}, history_managed = false,
-                       automation_status = CASE WHEN automation_status = 'Active' THEN 'Paused' ELSE automation_status END,
-                       automation_paused_at = CASE WHEN automation_status = 'Active' THEN {at} ELSE automation_paused_at END,
-                       automation_paused_by_member_id = CASE WHEN automation_status = 'Active' THEN {memberId} ELSE automation_paused_by_member_id END,
-                       automation_pause_reason = CASE WHEN automation_status = 'Active' THEN 'AdvisorReplied' ELSE automation_pause_reason END
-                 WHERE id = {conversationId} AND tenant_id = {tenantId} AND assigned_member_id IS NULL
-                RETURNING connection_id AS "ConnectionId",
-                          COALESCE(automation_pause_reason = 'AdvisorReplied' AND automation_paused_at = {at}, false) AS "PausedNow"
+                UPDATE messaging.conversations AS c
+                   SET assigned_member_id = {memberId}, assigned_at = {at}, version = c.version + 1, updated_at = {at}, history_managed = false,
+                       automation_status = CASE WHEN c.automation_status = 'Active' THEN 'Paused' ELSE c.automation_status END,
+                       automation_paused_at = CASE WHEN c.automation_status = 'Active' THEN {at} ELSE c.automation_paused_at END,
+                       automation_paused_by_member_id = CASE WHEN c.automation_status = 'Active' THEN {memberId} ELSE c.automation_paused_by_member_id END,
+                       automation_pause_reason = CASE WHEN c.automation_status = 'Active' THEN 'AdvisorReplied' ELSE c.automation_pause_reason END,
+                       automation_delegation_id = NULL
+                  FROM (SELECT id, automation_delegation_id AS old_delegation_id FROM messaging.conversations
+                         WHERE id = {conversationId} AND tenant_id = {tenantId} FOR UPDATE) AS old
+                 WHERE c.id = old.id AND c.assigned_member_id IS NULL
+                RETURNING c.connection_id AS "ConnectionId",
+                          COALESCE(c.automation_pause_reason = 'AdvisorReplied' AND c.automation_paused_at = {at}, false) AS "PausedNow",
+                          c.automation_status <> 'None' AS "HadAssistant", c.automation_bot_kind AS "BotKind",
+                          old.old_delegation_id AS "DelegationId"
                 """).ToListAsync(cancellationToken);
             if (taken.Count == 1)
             {
@@ -190,6 +209,27 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
                     await Webhook.ConversationEventRows.InsertAsync(dbContext, tenantId, taken[0].ConnectionId, conversationId,
                         new ConversationEvent(ConversationEventType.AutomationPaused, Actor: memberId, PauseReason: AutomationPauseReason.AdvisorReplied), at.AddTicks(10), at, cancellationToken);
                     audit.Record(tenantId, actorUserId, MessagingAuditActions.AutomationPaused, conversationId, at);
+                }
+
+                if (taken[0].DelegationId is { } delegationId)
+                {
+                    // Spec 2026-11-17 §6.4: con una delegación viva, la señal va a los dos bots (el agente cierra su sesión y el chatbot la
+                    // corrida que espera en el bloque) y la delegación se interrumpe en esta misma transacción; si ya volvió, queda igual.
+                    dbContext.AutomationInbox.Add(AutomationInbox.NewReleaseRun(tenantId, taken[0].ConnectionId, conversationId, BotKind.Agent, at));
+                    dbContext.AutomationInbox.Add(AutomationInbox.NewReleaseRun(tenantId, taken[0].ConnectionId, conversationId, BotKind.Chatbot, at));
+                    await dbContext.Database.ExecuteSqlAsync(
+                        $"""
+                        UPDATE messaging.bot_delegations SET status = 'Interrupted', ended_at = {at}
+                         WHERE id = {delegationId} AND tenant_id = {tenantId} AND status = 'Live'
+                        """, cancellationToken);
+                }
+                else if (taken[0].HadAssistant)
+                {
+                    // Spec 2026-11-03 D-6 y Review Focus 4: responder sobre un asistente, también el pausado a mano, suelta su corrida viva.
+                    // El UPDATE sólo cambia Active por Paused, así que el valor nuevo de automation_status dice lo mismo que el viejo.
+                    // Al procesador del bot que la tiene (una fila de antes de automation_bot_kind es de chatbot).
+                    dbContext.AutomationInbox.Add(AutomationInbox.NewReleaseRun(
+                        tenantId, taken[0].ConnectionId, conversationId, (BotKind?)taken[0].BotKind ?? BotKind.Chatbot, at));
                 }
 
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -216,7 +256,7 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         return AutoAssignOutcome.AssignedToOther;
     }
 
-    private sealed record AutoAssignRow(Guid ConnectionId, bool PausedNow);
+    private sealed record AutoAssignRow(Guid ConnectionId, bool PausedNow, bool HadAssistant, short? BotKind, Guid? DelegationId);
 
     private sealed record RepliedRow(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt, string Channel, string? UserId, int UnreadCount);
 

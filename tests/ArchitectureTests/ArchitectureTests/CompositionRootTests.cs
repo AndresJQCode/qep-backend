@@ -1,24 +1,37 @@
 using System.Reflection;
 using Bootstrapper;
 using BuildingBlocks.Application;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Modules.Ai.Application;
 using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
-using Modules.Loans.Application;
-using Modules.ServiceContracts.Application;
+using Modules.Catalog.Application;
+using Modules.Companies.Application;
 using Modules.Customers.Application;
 using Modules.Geography.Application;
+using Modules.Hr.Application;
 using Modules.Integrations.Application;
+using Modules.Loans.Application;
 using Modules.Messaging.Application;
+using Modules.Payroll.Application;
 using Modules.Pipeline.Application;
 using Modules.Pos.Application;
+using Modules.Purchases.Application;
+using Modules.Reporting.Application;
+using Modules.Scheduling.Application;
+using Modules.ServiceContracts.Application;
 using Modules.Shopify.Application;
+using Modules.Siigo.Application;
+using Modules.Store.Application;
 using Modules.Suppliers.Application;
+using Modules.Support.Application;
 using Modules.Tenancy.Application;
+using Modules.Wholesale.Application;
 using Modules.Wms.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
@@ -99,6 +112,22 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-22 D-14: el horario de atención es un contrato de BuildingBlocks que implementa Mensajería. Si su registro faltara o
+    /// se armara mal, el aviso de «sin asignar» de Soporte fallaría en el primer tick del worker, no al compilar.
+    /// </summary>
+    [Fact]
+    public void TheContainerResolvesTheBusinessHoursProvider()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var hours = scope.ServiceProvider.GetRequiredService<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider>();
+
+        // The class is internal to Messaging.Infrastructure: it is told by name.
+        Assert.Equal("BusinessHoursProvider", hours.GetType().Name);
+    }
+
+    /// <summary>
     /// La vista por tenant NO puede ser singleton: fusiona los roles que el tenant definio, y
     /// esos cambian con un PUT, no con un deploy. Registrada como singleton, el primer
     /// tenant en preguntar dejaria su catalogo cacheado para todo el proceso — y para todos
@@ -163,6 +192,142 @@ public sealed class CompositionRootTests
                 + string.Join(", ", duplicated));
     }
 
+    /// <summary>
+    /// Spec 2026-11-16 (catálogo con entidad y acción): la matriz de roles ubica cada permiso por su
+    /// <see cref="PermissionShape"/>. Un permiso sin forma quedaría fuera de la matriz sin que nada falle.
+    /// </summary>
+    [Fact]
+    public void EveryRegisteredPermissionDeclaresItsShape()
+    {
+        var missing = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is null
+                || string.IsNullOrWhiteSpace(definition.Shape.Entity)
+                || string.IsNullOrWhiteSpace(definition.Shape.EntityLabel)
+                || string.IsNullOrWhiteSpace(definition.Shape.Action))
+            .Select(definition => definition.Permission)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(missing.Length == 0, "Estos permisos no declaran Shape: " + string.Join(", ", missing));
+    }
+
+    /// <summary>Una celda de la matriz es (entidad, acción): dos permisos en la misma celda no se pueden pintar.</summary>
+    [Fact]
+    public void NoEntityRepeatsAnAction()
+    {
+        var repeated = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is not null)
+            .GroupBy(definition => (definition.Shape!.Entity, definition.Shape.Action))
+            .Where(group => group.Count() > 1)
+            .Select(group => $"{group.Key.Entity}/{group.Key.Action}: "
+                + string.Join(" + ", group.Select(definition => definition.Permission).Order(StringComparer.Ordinal)))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(repeated.Length == 0, "Estas entidades repiten acción: " + string.Join("; ", repeated));
+    }
+
+    /// <summary>Una fila de la matriz cuelga de un solo módulo.</summary>
+    [Fact]
+    public void EachEntityLivesInOneCategory()
+    {
+        var split = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is not null)
+            .GroupBy(definition => definition.Shape!.Entity, StringComparer.Ordinal)
+            .Where(group => group.Select(definition => definition.Category).Distinct(StringComparer.Ordinal).Count() > 1)
+            .Select(group => group.Key)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(split.Length == 0, "Estas entidades están en más de una categoría: " + string.Join(", ", split));
+    }
+
+    /// <summary>Una fila de la matriz tiene un solo nombre.</summary>
+    [Fact]
+    public void EveryEntityHasOneLabel()
+    {
+        var split = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is not null)
+            .GroupBy(definition => definition.Shape!.Entity, StringComparer.Ordinal)
+            .Where(group => group.Select(definition => definition.Shape!.EntityLabel).Distinct(StringComparer.Ordinal).Count() > 1)
+            .Select(group => group.Key)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(split.Length == 0, "Estas entidades tienen más de un nombre: " + string.Join(", ", split));
+    }
+
+    /// <summary>
+    /// Sin etiqueta, <see cref="PermissionVocabulary"/> devuelve la clave y la pantalla mostraría
+    /// <c>void</c> o <c>Pipeline</c>: toda acción y toda categoría registradas tienen nombre.
+    /// </summary>
+    [Fact]
+    public void EveryActionAndCategoryHasALabel()
+    {
+        var definitions = RegisteredPermissionDefinitions();
+        var unlabeled = definitions
+            .Where(definition => definition.Shape is not null)
+            .Select(definition => definition.Shape!.Action)
+            .Where(action => !PermissionVocabulary.ActionLabels.ContainsKey(action))
+            .Select(action => "acción " + action)
+            .Concat(definitions
+                .Select(definition => definition.Category)
+                .Where(category => !PermissionVocabulary.CategoryLabels.ContainsKey(category))
+                .Select(category => "categoría " + category))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(unlabeled.Length == 0, "Sin etiqueta: " + string.Join(", ", unlabeled));
+    }
+
+    /// <summary>
+    /// Dos entidades de una misma categoría no pueden compartir etiqueta: la matriz las pintaría como
+    /// dos filas indistinguibles.
+    /// </summary>
+    [Fact]
+    public void NoTwoEntitiesOfACategoryShareALabel()
+    {
+        var clashes = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is not null)
+            .Select(definition => (definition.Category, definition.Shape!.Entity, definition.Shape.EntityLabel))
+            .Distinct()
+            .GroupBy(row => (row.Category, row.EntityLabel))
+            .Where(group => group.Select(row => row.Entity).Distinct(StringComparer.Ordinal).Count() > 1)
+            .Select(group => $"{group.Key.Category}/{group.Key.EntityLabel}: "
+                + string.Join(", ", group.Select(row => row.Entity).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(clashes.Length == 0, "Etiqueta repetida en una categoría: " + string.Join(" | ", clashes));
+    }
+
+    /// <summary>La clave de una entidad es <c>módulo.entidad</c> y la de una acción, un verbo en snake_case.</summary>
+    [Fact]
+    public void EveryEntityKeyIsModuleDotEntity()
+    {
+        var shapes = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is not null)
+            .Select(definition => definition.Shape!)
+            .ToArray();
+
+        var badEntities = shapes
+            .Select(shape => shape.Entity)
+            .Where(entity => !System.Text.RegularExpressions.Regex.IsMatch(entity, @"^[a-z]+\.[a-z_]+$"))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var badActions = shapes
+            .Select(shape => shape.Action)
+            .Where(action => !System.Text.RegularExpressions.Regex.IsMatch(action, "^[a-z_]+$"))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(badEntities.Length == 0, "Entidades mal formadas: " + string.Join(", ", badEntities));
+        Assert.True(badActions.Length == 0, "Acciones mal formadas: " + string.Join(", ", badActions));
+    }
+
     /// <summary>Ningún permiso de un rol de sistema sale del fallback de metadata de RoleCatalog.</summary>
     [Fact]
     public void NoSystemRolePermissionComesFromTheMetadataFallback()
@@ -180,9 +345,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y las dieciséis <c>wms.*</c> del spec WMS 2026-10-31 §11.5.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21 y las cinco <c>scheduling.*</c> del spec 2026-11-21 (Agenda) y las dieciséis <c>wms.*</c> del spec WMS 2026-10-31 §11.5.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheEightyNineConstants()
+    public void PermissionDiscoveryFindsTheHundredAndThirtyConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -196,8 +361,24 @@ public sealed class CompositionRootTests
         // + el de claves de API (developer.api_key.manage, spec 2026-10-30)
         // + los dos de préstamos (loans, spec 2026-10-31)
         // + el de uso de la plataforma (operator.usage.read)
+        // + el de la tienda en línea (store.settings.manage, spec 2026-11-03; quotations.order.manage ya estaba y .Distinct no lo cuenta dos veces)
+        // + el de borrar clientes (customers.customer.delete, spec 2026-11-10 D-8)
+        // + los dos de la unidad tributaria del operador (operator.tax_units.*, spec 2026-11-10)
+        // + los tres de costo y margen (spec 2026-11-10 §5)
+        // + los dos de agentes IA (ai.agent.read|manage, spec 2026-10-29)
+        // + los tres de soporte (support.*, spec 2026-11-14)
+        // + los dos del copiloto (ai.copilot.use|manage, spec 2026-11-17)
+        // + los dos de compras (purchases.order.read|manage, spec 2026-11-17)
+        // + los tres de mayorista (spec 2026-11-17)
+        // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18)
+        // + el de las fallas de las llamadas a Siigo (siigo.calls.read, spec 2026-11-21)
+        // + the five hr.* permissions (spec 2026-11-20).
+        // + the four payroll.* permissions (spec 2026-11-21).
+        // + los cinco de la Agenda (scheduling.*, spec 2026-11-21).
+        // + los dos de parámetros legales del operador (operator.legal_parameters.read|manage, spec 2026-11-22).
+        // + the two hr.medical.* permissions (spec 2026-11-23).
         // + los dieciséis de bodegas (wms, spec WMS 2026-10-31 §11.5).
-        Assert.Equal(89, PermissionConstants().Length);
+        Assert.Equal(130, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -212,10 +393,10 @@ public sealed class CompositionRootTests
         Assert.Equal(["operator.cities.read", "operator.cities.manage"], cityPermissions);
         Assert.All(cityPermissions, permission =>
         {
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
             var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == permission);
             Assert.Equal("Operator", definition.Category);
             Assert.Empty(definition.RequiredModules!);
@@ -231,13 +412,55 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("operator.usage.read", OperatorPermissions.UsageRead);
-        Assert.Contains(OperatorPermissions.UsageRead, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(OperatorPermissions.UsageRead, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(OperatorPermissions.UsageRead, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(OperatorPermissions.UsageRead, catalog.PermissionsFor("cashier"));
+        Assert.Contains(OperatorPermissions.UsageRead, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == OperatorPermissions.UsageRead);
         Assert.Equal("Operator", definition.Category);
         Assert.Empty(definition.RequiredModules!);
+    }
+
+    /// <summary>Spec 2026-11-10 §5: el costo y el margen son dato comercial sensible, de fábrica sólo en <c>admin</c>.</summary>
+    [Fact]
+    public void OnlyTheAdminRoleCarriesTheCostAndMarginPermissions()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] permissions =
+            [CatalogPermissions.ProductCostRead, CatalogPermissions.ProductCostManage, ReportingPermissions.MarginRead];
+
+        Assert.Equal(["catalog.product_cost.read", "catalog.product_cost.manage", "reporting.margin.read"], permissions);
+        Assert.All(permissions, permission =>
+        {
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        });
+        var all = catalog.ListPermissions();
+        Assert.Equal([ModuleKeys.Catalog],
+            Assert.Single(all, d => d.Permission == CatalogPermissions.ProductCostRead).RequiredModules!);
+        Assert.Equal([ModuleKeys.Catalog],
+            Assert.Single(all, d => d.Permission == CatalogPermissions.ProductCostManage).RequiredModules!);
+        Assert.Equal([ModuleKeys.Reporting, ModuleKeys.Catalog],
+            Assert.Single(all, d => d.Permission == ReportingPermissions.MarginRead).RequiredModules!);
+    }
+
+    /// <summary>Sin la política, <c>RequireAuthorization</c> no resuelve y el síntoma es un 500, no un 403.</summary>
+    [Fact]
+    public async Task TheCostAndMarginPoliciesAreRegistered()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[]
+                 {
+                     CatalogPermissions.ProductCostRead, CatalogPermissions.ProductCostManage, ReportingPermissions.MarginRead,
+                 })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
+        }
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -248,9 +471,9 @@ public sealed class CompositionRootTests
         using var provider = BuildPlatformServices().BuildServiceProvider();
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
-        Assert.Contains(MessagingPermissions.CampaignManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.CampaignManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.CampaignManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.CampaignManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.CampaignManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.CampaignManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.CampaignManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -265,9 +488,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.quick_reply.manage", MessagingPermissions.QuickReplyManage);
-        Assert.Contains(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.QuickReplyManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.QuickReplyManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -282,9 +505,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.resolution_reason.manage", MessagingPermissions.ResolutionReasonManage);
-        Assert.Contains(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("admin"));
-        Assert.Contains(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.ResolutionReasonManage, FactoryPermissions(provider, "admin"));
+        Assert.Contains(MessagingPermissions.ResolutionReasonManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.ResolutionReasonManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.ResolutionReasonManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -299,12 +522,30 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("customers.customer.merge", CustomersPermissions.CustomerMerge);
-        Assert.Contains(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("admin"));
-        Assert.Contains(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("cashier"));
+        Assert.Contains(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "admin"));
+        Assert.Contains(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerMerge);
         Assert.Equal("Customers", definition.Category);
+        Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
+    }
+
+    /// <summary>Spec 2026-11-10 D-8: borrar clientes es definitivo, así que de fábrica sólo lo lleva <c>admin</c>.</summary>
+    [Fact]
+    public void OnlyAdminCarriesTheCustomerDeletePermission()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("customers.customer.delete", CustomersPermissions.CustomerDelete);
+        Assert.Contains(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "cashier"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerDelete);
+        Assert.Equal("Customers", definition.Category);
+        Assert.Equal("high", definition.RiskLevel);
         Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
     }
 
@@ -317,10 +558,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("customers.data_consent.revoke", CustomersPermissions.DataConsentRevoke);
-        Assert.Contains(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("admin"));
-        Assert.Contains(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("cashier"));
+        Assert.Contains(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "admin"));
+        Assert.Contains(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.DataConsentRevoke);
         Assert.Equal("Customers", definition.Category);
         Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
@@ -335,10 +576,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.business_hours.manage", MessagingPermissions.BusinessHoursManage);
-        Assert.Contains(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("cashier"));
+        Assert.Contains(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.BusinessHoursManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -353,9 +594,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.template.manage", MessagingPermissions.TemplateManage);
-        Assert.Contains(MessagingPermissions.TemplateManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.TemplateManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.TemplateManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.TemplateManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.TemplateManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.TemplateManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.TemplateManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -375,7 +616,7 @@ public sealed class CompositionRootTests
             [IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage];
 
         Assert.All(integrationsPermissions, permission =>
-            Assert.Contains(permission, catalog.PermissionsFor("admin")));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         var definitions = catalog.ListPermissions()
             .Where(definition => integrationsPermissions.Contains(definition.Permission))
             .ToArray();
@@ -399,7 +640,7 @@ public sealed class CompositionRootTests
 
         foreach (var role in new[] { "admin", "advisor" })
         {
-            Assert.All(messagingPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor(role)));
+            Assert.All(messagingPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -424,13 +665,13 @@ public sealed class CompositionRootTests
             [PipelinePermissions.DealRead, PipelinePermissions.DealManage, PipelinePermissions.SettingsManage];
 
         Assert.Equal(["pipeline.deal.read", "pipeline.deal.manage", "pipeline.settings.manage"], pipelinePermissions);
-        Assert.All(pipelinePermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
-        Assert.Contains(PipelinePermissions.DealRead, catalog.PermissionsFor("advisor"));
-        Assert.Contains(PipelinePermissions.DealManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(PipelinePermissions.SettingsManage, catalog.PermissionsFor("advisor"));
+        Assert.All(pipelinePermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
+        Assert.Contains(PipelinePermissions.DealRead, FactoryPermissions(provider, "advisor"));
+        Assert.Contains(PipelinePermissions.DealManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(PipelinePermissions.SettingsManage, FactoryPermissions(provider, "advisor"));
         foreach (var role in new[] { "billing", "cashier" })
         {
-            Assert.All(pipelinePermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+            Assert.All(pipelinePermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -454,10 +695,10 @@ public sealed class CompositionRootTests
         string[] automationsPermissions = [AutomationsPermissions.ChatbotRead, AutomationsPermissions.ChatbotManage];
 
         Assert.Equal(["automations.chatbot.read", "automations.chatbot.manage"], automationsPermissions);
-        Assert.All(automationsPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        Assert.All(automationsPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         foreach (var role in new[] { "advisor", "billing", "cashier" })
         {
-            Assert.All(automationsPermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+            Assert.All(automationsPermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -471,6 +712,90 @@ public sealed class CompositionRootTests
         });
     }
 
+    /// <summary>Spec 2026-10-29 §1: de núcleo (con <c>[ai]</c> el 403 saldría <c>authorization.denied</c> y no
+    /// <c>tenancy.module_not_enabled</c>; cada handler revisa la capacidad) y de fábrica sólo en <c>admin</c>: un agente habla con los
+    /// clientes en nombre de la empresa.</summary>
+    [Fact]
+    public void TheAiPermissionsAreCoreAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] aiPermissions = [AiPermissions.AgentRead, AiPermissions.AgentManage];
+
+        Assert.Equal(["ai.agent.read", "ai.agent.manage"], aiPermissions);
+        Assert.All(aiPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.All(aiPermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
+        }
+
+        var definitions = catalog.ListPermissions()
+            .Where(definition => aiPermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(2, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Ai", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
+    }
+
+    /// <summary>La otra mitad de un permiso nuevo: sin su política, <c>RequireAuthorization</c> no resuelve y la ruta responde 500, no 403
+    /// (CLAUDE.md, «Un permiso nuevo necesita dos mitades»).</summary>
+    [Fact]
+    public async Task TheAiPermissionsHaveTheirPolicies()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[] { AiPermissions.AgentRead, AiPermissions.AgentManage })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
+        }
+    }
+
+    /// <summary>Spec 2026-11-17 (copiloto), D-C14 y OC-1: de núcleo como los de agentes (cada handler revisa la capacidad
+    /// <c>copilot</c>), de fábrica sólo en <c>admin</c> (cada pregunta gasta saldo de la cuenta del tenant) y con su forma en la matriz
+    /// de <c>/roles</c>.</summary>
+    [Fact]
+    public void TheCopilotPermissionsAreCoreAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] copilotPermissions = [AiPermissions.CopilotUse, AiPermissions.CopilotManage];
+
+        Assert.Equal(["ai.copilot.use", "ai.copilot.manage"], copilotPermissions);
+        Assert.All(copilotPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.All(copilotPermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
+        }
+
+        var definitions = catalog.ListPermissions()
+            .Where(definition => copilotPermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(2, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Ai", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+            Assert.Equal("ai.copilot", definition.Shape!.Entity);
+        });
+    }
+
+    /// <summary>La otra mitad de los permisos del copiloto: sin su política la ruta responde 500, no 403.</summary>
+    [Fact]
+    public async Task TheCopilotPermissionsHaveTheirPolicies()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[] { AiPermissions.CopilotUse, AiPermissions.CopilotManage })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
+        }
+    }
+
     /// <summary>Spec 2026-10-08 §2: el admin de fábrica los lleva; el filtro decide dónde valen.</summary>
     [Fact]
     public void TheAdminRoleCarriesTheOperatorPermissionsAsCoreOperatorCategory()
@@ -481,7 +806,7 @@ public sealed class CompositionRootTests
             [OperatorPermissions.TenantsRead, OperatorPermissions.ModulesManage, OperatorPermissions.TenantsManage];
 
         Assert.All(operatorPermissions, permission =>
-            Assert.Contains(permission, catalog.PermissionsFor("admin")));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         Assert.All(
             catalog.ListPermissions().Where(definition => operatorPermissions.Contains(definition.Permission)),
             definition =>
@@ -528,15 +853,14 @@ public sealed class CompositionRootTests
     public void ThePosCustomerPermissionRequiresPosAndCustomersAndGoesToAdminAndCashier()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definition = RegisteredPermissionDefinitions()
             .Single(item => item.Permission == PosPermissions.SaleCustomer);
 
         Assert.Equal([ModuleKeys.Pos, ModuleKeys.Customers], definition.RequiredModules!.ToArray());
-        Assert.Contains(PosPermissions.SaleCustomer, catalog.PermissionsFor("admin"));
-        Assert.Contains(PosPermissions.SaleCustomer, catalog.PermissionsFor("cashier"));
-        Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("billing"));
+        Assert.Contains(PosPermissions.SaleCustomer, FactoryPermissions(provider, "admin"));
+        Assert.Contains(PosPermissions.SaleCustomer, FactoryPermissions(provider, "cashier"));
+        Assert.DoesNotContain(PosPermissions.SaleCustomer, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(PosPermissions.SaleCustomer, FactoryPermissions(provider, "billing"));
     }
 
     /// <summary>
@@ -547,7 +871,6 @@ public sealed class CompositionRootTests
     public void TheSuppliersPermissionsRequireTheSuppliersModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -555,10 +878,10 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Suppliers", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Suppliers], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.Contains(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.Contains(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
@@ -571,7 +894,6 @@ public sealed class CompositionRootTests
     public void TheServiceContractsPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -579,10 +901,10 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Contratos de servicio", definitions[permission].Category);
             Assert.Equal([ModuleKeys.ServiceContracts], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.Contains(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.Contains(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
@@ -594,7 +916,6 @@ public sealed class CompositionRootTests
     public void TheLoansPermissionsRequireTheLoansModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -602,34 +923,475 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Préstamos", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Loans], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.Contains(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.Contains(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
     /// <summary>Spec WMS 2026-10-31 §11.5: dieciséis permisos con [wms] (la máscara los quita con el módulo apagado), categoría
-    /// Bodegas, todos en admin y en ningún otro rol de sistema: el resto es rol custom del tenant.</summary>
+    /// Bodegas, todos en admin y en ninguna plantilla de rol: el resto es rol custom del tenant.</summary>
     [Fact]
     public void TheWmsPermissionsRequireTheWmsModuleAndGoOnlyToAdmin()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions().ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
-        var permissions = typeof(WmsPermissions).GetFields().Select(field => (string)field.GetRawConstantValue()!).ToArray();
 
-        Assert.Equal(16, permissions.Length);
-        foreach (var permission in permissions)
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (WmsPermissions.WarehouseManage, "wms.warehouse", "Bodegas y ubicaciones", "manage"),
+            (WmsPermissions.OwnerManage, "wms.owner", "Dueños del inventario", "manage"),
+            (WmsPermissions.ProfileManage, "wms.profile", "Perfiles de variante", "manage"),
+            (WmsPermissions.DocumentRead, "wms.document", "Documentos de inventario", "read"),
+            (WmsPermissions.StockRead, "wms.stock", "Existencias", "read"),
+            (WmsPermissions.StockExport, "wms.stock", "Existencias", "export"),
+            (WmsPermissions.AdjustmentPropose, "wms.adjustment", "Ajustes de inventario", "propose"),
+            (WmsPermissions.AdjustmentApprove, "wms.adjustment", "Ajustes de inventario", "approve"),
+            (WmsPermissions.PurchaseOrderManage, "wms.purchase_order", "Órdenes de compra", "manage"),
+            (WmsPermissions.TransferManage, "wms.transfer", "Traslados", "manage"),
+            (WmsPermissions.TransferDispatch, "wms.transfer", "Traslados", "dispatch"),
+            (WmsPermissions.ReceiptPerform, "wms.receipt", "Recepción de mercancía", "perform"),
+            (WmsPermissions.PutawayPerform, "wms.putaway", "Ubicación de mercancía", "perform"),
+            (WmsPermissions.DiscrepancyResolve, "wms.discrepancy", "Discrepancias de recepción", "resolve"),
+            (WmsPermissions.CountPerform, "wms.count", "Conteos", "perform"),
+            (WmsPermissions.CountApprove, "wms.count", "Conteos", "approve"),
+        ];
+        Assert.Equal(
+            typeof(WmsPermissions).GetFields().Select(field => (string)field.GetRawConstantValue()!).Order(StringComparer.Ordinal),
+            expected.Select(row => row.Permission).Order(StringComparer.Ordinal));
+        var templates = provider.GetServices<RoleTemplate>().ToArray();
+        Assert.NotEmpty(templates);
+        foreach (var (permission, entity, entityLabel, action) in expected)
         {
-            Assert.Equal("Bodegas", definitions[permission].Category);
-            Assert.Equal([ModuleKeys.Wms], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            foreach (var role in new[] { "advisor", "cashier", "billing" })
-            {
-                Assert.DoesNotContain(permission, catalog.PermissionsFor(role));
-            }
+            var definition = definitions[permission];
+            Assert.Equal("Bodegas", definition.Category);
+            Assert.Equal([ModuleKeys.Wms], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.All(templates, template => Assert.DoesNotContain(permission, template.Permissions));
         }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-20 (RRHH fase 1): los cinco permisos exigen el módulo <c>hr</c> (apagado, el editor de roles los oculta y la
+    /// API responde un 403 pelado) y van sólo a admin; ni asesor, ni facturación, ni cajero.
+    /// </summary>
+    [Fact]
+    public void TheHrPermissionsRequireTheHrModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (HrPermissions.EmployeeRead, "hr.employee", "Empleados", "read"),
+            (HrPermissions.EmployeeManage, "hr.employee", "Empleados", "manage"),
+            (HrPermissions.ContractRead, "hr.contract", "Contratos laborales", "read"),
+            (HrPermissions.ContractManage, "hr.contract", "Contratos laborales", "manage"),
+            (HrPermissions.SettingsManage, "hr.settings", "Configuración de RRHH", "manage"),
+            (HrPermissions.MedicalRead, "hr.medical", "Exámenes médicos", "read"),
+            (HrPermissions.MedicalManage, "hr.medical", "Exámenes médicos", "manage"),
+        ];
+        Assert.Equal(
+            [
+                "hr.employee.read", "hr.employee.manage", "hr.contract.read", "hr.contract.manage", "hr.settings.manage",
+                "hr.medical.read", "hr.medical.manage",
+            ],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Recursos humanos", definition.Category);
+            Assert.Equal([ModuleKeys.Hr], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-21 (nómina): los cuatro permisos exigen el módulo <c>payroll</c> y van sólo a admin; ni asesor, ni facturación,
+    /// ni cajero. Todos ven plata.
+    /// </summary>
+    [Fact]
+    public void ThePayrollPermissionsRequireThePayrollModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (PayrollPermissions.PeriodRead, "payroll.period", "Períodos de nómina", "read"),
+            (PayrollPermissions.PeriodManage, "payroll.period", "Períodos de nómina", "manage"),
+            (PayrollPermissions.PeriodApprove, "payroll.period", "Períodos de nómina", "approve"),
+            (PayrollPermissions.SettingsManage, "payroll.settings", "Configuración de nómina", "manage"),
+        ];
+        Assert.Equal(
+            ["payroll.period.read", "payroll.period.manage", "payroll.period.approve", "payroll.settings.manage"],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Nómina", definition.Category);
+            Assert.Equal([ModuleKeys.Payroll], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-21 (Agenda): los cinco permisos exigen el módulo <c>scheduling</c> (apagado, el editor de roles los oculta y la API
+    /// responde un 403 pelado) y de fábrica van a <c>admin</c> y a las dos plantillas de la Agenda; ni asesor, ni facturación, ni
+    /// cajero. Configurar servicios, reglas y estructura (<c>settings.manage</c>) es sólo de admin.
+    /// </summary>
+    [Fact]
+    public void TheSchedulingPermissionsRequireTheModuleAndGoToAdminAndTheSchedulingRoles()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (SchedulingPermissions.AppointmentRead, "scheduling.appointment", "Citas", "read"),
+            (SchedulingPermissions.AppointmentManage, "scheduling.appointment", "Citas", "manage"),
+            (SchedulingPermissions.AvailabilityManage, "scheduling.availability", "Franjas y bloqueos", "manage"),
+            (SchedulingPermissions.AgendaReadAll, "scheduling.agenda", "Todas las agendas", "read"),
+            (SchedulingPermissions.SettingsManage, "scheduling.settings", "Configuración de la agenda", "manage"),
+        ];
+        Assert.Equal(
+            [
+                "scheduling.appointment.read", "scheduling.appointment.manage", "scheduling.availability.manage",
+                "scheduling.agenda.read_all", "scheduling.settings.manage",
+            ],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Agenda", definition.Category);
+            Assert.Equal([ModuleKeys.Scheduling], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        }
+
+        string[] manager = [.. FactoryPermissions(provider, "scheduling_manager")];
+        string[] schedulingProvider = [.. FactoryPermissions(provider, "scheduling_provider")];
+        Assert.Equal(
+            new[]
+            {
+                SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage, SchedulingPermissions.AgendaReadAll,
+            }.Order(StringComparer.Ordinal),
+            manager.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            new[]
+            {
+                SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage, SchedulingPermissions.AvailabilityManage,
+            }.Order(StringComparer.Ordinal),
+            schedulingProvider.Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(SchedulingPermissions.SettingsManage, manager);
+        Assert.DoesNotContain(SchedulingPermissions.SettingsManage, schedulingProvider);
+        Assert.DoesNotContain(SchedulingPermissions.AgendaReadAll, schedulingProvider);
+    }
+
+    /// <summary>
+    /// Las plantillas de la Agenda conceden sólo permisos de la Agenda: con el módulo apagado sus roles no son asignables, y con él
+    /// prendido sí. Si llevaran un permiso de núcleo (por ejemplo el de Clientes), un tenant sin Agenda vería «Gestor de agenda» en su
+    /// lista (<c>RoleAssignability</c>, spec 2026-11-15). Por eso la búsqueda y el alta de clientes de la cita irán por la propia
+    /// Agenda, como en el POS (spec 2026-10-14, decisión 4).
+    /// </summary>
+    [Fact]
+    public void TheSchedulingRolesAreAssignableOnlyWithTheSchedulingModule()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var mask = provider.GetRequiredService<ModuleEntitlementMask>();
+        var withScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All);
+        var withoutScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All.Where(key => key != ModuleKeys.Scheduling));
+
+        foreach (var role in new[] { "scheduling_manager", "scheduling_provider" })
+        {
+            var permissions = FactoryPermissions(provider, role);
+            Assert.All(permissions, permission => Assert.StartsWith("scheduling.", permission));
+            Assert.True(RoleAssignability.IsAssignable(permissions, withScheduling, isOperatorTenant: false, mask));
+            Assert.False(RoleAssignability.IsAssignable(permissions, withoutScheduling, isOperatorTenant: false, mask));
+        }
+    }
+
+    /// <summary>La otra mitad de un permiso nuevo: sin su política, <c>RequireAuthorization</c> no resuelve y la ruta responde 500, no 403.</summary>
+    [Fact]
+    public async Task TheSchedulingPermissionsHaveTheirPolicies()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[]
+        {
+            SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage, SchedulingPermissions.AvailabilityManage,
+            SchedulingPermissions.AgendaReadAll, SchedulingPermissions.SettingsManage,
+        })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 (compras, P-3 propuesta): los dos permisos exigen el módulo <c>purchases</c> (apagado, el editor de roles
+    /// los oculta y la API responde un 403 pelado) y van sólo a admin; ni asesor, ni facturación, ni cajero.
+    /// </summary>
+    [Fact]
+    public void ThePurchasesPermissionsRequireThePurchasesModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        Assert.Equal("purchases.order.read", PurchasesPermissions.OrderRead);
+        Assert.Equal("purchases.order.manage", PurchasesPermissions.OrderManage);
+        foreach (var permission in new[] { PurchasesPermissions.OrderRead, PurchasesPermissions.OrderManage })
+        {
+            Assert.Equal("Compras", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Purchases], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        }
+    }
+
+    /// <summary>
+    /// Decisión del owner (2026-11-24): facturación ve las empresas y configura Siigo. De Integraciones sólo lee: crear, editar y
+    /// desconectar una conexión daría también WhatsApp, Instagram y Shopify, así que sigue siendo de admin.
+    /// </summary>
+    [Fact]
+    public void TheBillingRoleReadsCompaniesAndConnectionsWithoutManagingThem()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var billing = FactoryPermissions(provider, "billing");
+
+        Assert.Contains(CompaniesPermissions.CompanyRead, billing);
+        Assert.DoesNotContain(CompaniesPermissions.CompanyManage, billing);
+        Assert.Contains(IntegrationsPermissions.ConnectionRead, billing);
+        Assert.DoesNotContain(IntegrationsPermissions.ConnectionManage, billing);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-18 (integración Siigo): los permisos exigen el módulo <c>siigo</c>; admin y facturación llevan todos
+    /// (decisiones del owner, 2026-11-24 y 2026-11-25). Asesor y cajero, ninguno.
+    /// </summary>
+    [Fact]
+    public void TheSiigoPermissionsRequireTheSiigoModuleAndGoToAdminAndBilling()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        var all = new[] { SiigoPermissions.SettingsManage, SiigoPermissions.InvoiceIssue, SiigoPermissions.CallsRead };
+
+        Assert.Equal(["siigo.settings.manage", "siigo.invoice.issue", "siigo.calls.read"], all);
+        foreach (var permission in all)
+        {
+            Assert.Equal([ModuleKeys.Siigo], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        }
+
+        Assert.Contains(SiigoPermissions.InvoiceIssue, FactoryPermissions(provider, "billing"));
+        Assert.Contains(SiigoPermissions.SettingsManage, FactoryPermissions(provider, "billing"));
+        // Decisión del owner (2026-11-25): quien factura ve las fallas de sus llamadas, aunque lleven datos del cliente.
+        Assert.Contains(SiigoPermissions.CallsRead, FactoryPermissions(provider, "billing"));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista, P-3 aprobada): los tres permisos exigen el módulo <c>wholesale</c> y van a admin; el asesor
+    /// sólo ve los distribuidores. Facturación y cajero, ninguno.
+    /// </summary>
+    [Fact]
+    public void TheWholesalePermissionsRequireTheWholesaleModuleAndGoToAdminAndReadToAdvisor()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        var all = new[] { WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage };
+
+        Assert.Equal(["wholesale.distributor.read", "wholesale.distributor.manage"], all);
+        foreach (var permission in all)
+        {
+            Assert.Equal("Mayorista", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Wholesale], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        }
+
+        Assert.Contains(WholesalePermissions.DistributorRead, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(WholesalePermissions.DistributorManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(WholesalePermissions.PriceListManage, FactoryPermissions(provider, "advisor"));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 (D-10): las listas de precios son de Catalog. Un solo permiso, sin el módulo mayorista (el POS, la tienda y
+    /// las cotizaciones las usan sin él), sólo en admin, y Mayorista lo nombra con el mismo literal porque no referencia Catalog.
+    /// </summary>
+    [Fact]
+    public void ThePriceListPermissionIsCatalogsAndGoesToAdminOnly()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definition = Assert.Single(
+            RegisteredPermissionDefinitions(), item => item.Permission == CatalogPermissions.PriceListManage);
+
+        Assert.Equal("catalog.price_list.manage", CatalogPermissions.PriceListManage);
+        Assert.Equal(CatalogPermissions.PriceListManage, WholesalePermissions.PriceListManage);
+        Assert.Equal("Catalog", definition.Category);
+        Assert.Equal([ModuleKeys.Catalog], definition.RequiredModules!.ToArray());
+        Assert.Contains(CatalogPermissions.PriceListManage, FactoryPermissions(provider, "admin"));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.DoesNotContain(CatalogPermissions.PriceListManage, FactoryPermissions(provider, role));
+        }
+
+        Assert.DoesNotContain(RegisteredPermissionDefinitions(), item => item.Permission == "wholesale.price_list.manage");
+    }
+
+    /// <summary>
+    /// Spec 2026-11-14 (soporte, C1): los tres permisos exigen el módulo <c>support</c>; admin los lleva todos y el asesor lee y
+    /// gestiona tickets, pero no configura. Facturación y cajero, ninguno.
+    /// </summary>
+    [Fact]
+    public void TheSupportPermissionsRequireTheSupportModuleAdminGetsAllThreeAndAdvisorReadAndManage()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        var all = new[] { SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage };
+
+        Assert.Equal(["support.ticket.read", "support.ticket.manage", "support.settings.manage"], all);
+        foreach (var permission in all)
+        {
+            Assert.Equal("Soporte", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Support], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
+        }
+
+        Assert.Equal("low", definitions[SupportPermissions.Read].RiskLevel);
+        Assert.Equal("medium", definitions[SupportPermissions.Manage].RiskLevel);
+        Assert.Equal("medium", definitions[SupportPermissions.SettingsManage].RiskLevel);
+        Assert.Contains(SupportPermissions.Read, FactoryPermissions(provider, "advisor"));
+        Assert.Contains(SupportPermissions.Manage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(SupportPermissions.SettingsManage, FactoryPermissions(provider, "advisor"));
+    }
+
+    /// <summary>Spec 2026-11-22 (tareas internas, §5.6): <c>support.task.use</c> es de riesgo bajo, exige el módulo Soporte y lo llevan
+    /// de fábrica los cuatro roles, porque la meta es que cualquier miembro cree y trabaje tareas.</summary>
+    [Fact]
+    public void TheTaskUsePermissionIsLowNeedsSupportAndEveryFactoryRoleHasIt()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definition = RegisteredPermissionDefinitions().Single(d => d.Permission == SupportPermissions.TaskUse);
+
+        Assert.Equal("support.task.use", SupportPermissions.TaskUse);
+        Assert.Equal("Usar tareas internas", definition.DisplayName);
+        Assert.Equal("Soporte", definition.Category);
+        Assert.Equal("low", definition.RiskLevel);
+        Assert.Equal([ModuleKeys.Support], definition.RequiredModules!.ToArray());
+        Assert.Equal(new PermissionShape("support.task", "Tareas internas", "use"), definition.Shape);
+        foreach (var role in new[] { "admin", "advisor", "billing", "cashier" })
+        {
+            Assert.Contains(SupportPermissions.TaskUse, FactoryPermissions(provider, role));
+        }
+    }
+
+    /// <summary>La otra mitad de los permisos de soporte, más las dos políticas de visibilidad (D5 y D15): <c>TicketView</c> acepta
+    /// leer o gestionar y <c>SettingsView</c> además configurar. Sin ellas, la ruta responde 500, no 403.</summary>
+    [Fact]
+    public async Task TheSupportPoliciesAreRegistered()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[] { SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage })
+        {
+            var policy = await policies.GetPolicyAsync(permission);
+            Assert.NotNull(policy);
+            Assert.Equal([permission], AcceptedPermissions(policy));
+        }
+
+        Assert.Equal("support.ticket.view", SupportPolicies.TicketView);
+        Assert.Equal("support.settings.view", SupportPolicies.SettingsView);
+        var ticketView = await policies.GetPolicyAsync(SupportPolicies.TicketView);
+        Assert.NotNull(ticketView);
+        Assert.Equal([SupportPermissions.Read, SupportPermissions.Manage], AcceptedPermissions(ticketView));
+        var settingsView = await policies.GetPolicyAsync(SupportPolicies.SettingsView);
+        Assert.NotNull(settingsView);
+        Assert.Equal(
+            [SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage],
+            AcceptedPermissions(settingsView));
+
+        // Spec 2026-11-22 (tareas internas) §5.6 y D10: actuar sobre un ticket lo decide la puerta; la política sólo deja pasar a
+        // quien gestiona o usa tareas. Ver acepta además leer.
+        Assert.Equal("support.ticket.act", SupportPolicies.TicketAct);
+        Assert.Equal("support.ticket.scoped_view", SupportPolicies.TicketScopedView);
+        var ticketAct = await policies.GetPolicyAsync(SupportPolicies.TicketAct);
+        Assert.NotNull(ticketAct);
+        Assert.Equal([SupportPermissions.Manage, SupportPermissions.TaskUse], AcceptedPermissions(ticketAct));
+        var scopedView = await policies.GetPolicyAsync(SupportPolicies.TicketScopedView);
+        Assert.NotNull(scopedView);
+        Assert.Equal([SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.TaskUse], AcceptedPermissions(scopedView));
+    }
+
+    private static string[] AcceptedPermissions(AuthorizationPolicy policy) =>
+        Assert.Single(policy.Requirements.OfType<Microsoft.AspNetCore.Authorization.Infrastructure.ClaimsAuthorizationRequirement>(),
+                requirement => requirement.ClaimType == Bootstrapper.Authentication.QepClaimTypes.Permission)
+            .AllowedValues!.ToArray();
+
+    /// <summary>
+    /// Spec de la tienda en línea (2026-11-03, owner): <c>store.settings.manage</c> exige el módulo <c>store</c> y va SOLO a admin. La bandeja
+    /// reusa <c>quotations.order.manage</c>, que no se redefine.
+    /// </summary>
+    [Fact]
+    public void TheStoreSettingsPermissionRequiresTheStoreModuleAndGoesOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var definition = Assert.Single(
+            RegisteredPermissionDefinitions(), candidate => candidate.Permission == StorePermissions.SettingsManage);
+
+        Assert.Equal("store.settings.manage", StorePermissions.SettingsManage);
+        Assert.Equal("Tienda", definition.Category);
+        Assert.Equal([ModuleKeys.Store], definition.RequiredModules!.ToArray());
+        Assert.Contains(StorePermissions.SettingsManage, FactoryPermissions(provider, "admin"));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.DoesNotContain(StorePermissions.SettingsManage, FactoryPermissions(provider, role));
+        }
+    }
+
+    /// <summary>Spec 2026-11-14 §3: la detección de ediciones de Shopify reemplaza la vacía. Sin ella, una edición en Shopify se
+    /// guarda en el espejo y nunca llega a la bandeja ni al pedido, sin error.</summary>
+    [Fact]
+    public void TheEditDetectorIsTheRealOne()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<ShopifyOrderEdits>(scope.ServiceProvider.GetRequiredService<IShopifyOrderEditDetector>());
     }
 
     /// <summary>
@@ -674,6 +1436,53 @@ public sealed class CompositionRootTests
             provider.GetServices<IHostedService>(),
             service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyCityCorrectionWorker");
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyCityCorrectionProcessor>());
+        // Spec 2026-11-24 §11.1.1: sin el consumidor, la dirección cambiada en «Editar pedido» se publica y nunca llega a Shopify.
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.QuotationOrderEventsWorker");
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyShippingPartyChangedApplier>());
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 §5.4: los puertos de productos de Shopify tienen adaptador en el composition root. Sin alguno, la importación
+    /// y los webhooks de productos no arrancan; con <c>ValidateOnBuild</c> el contenedor lo dice antes.
+    /// </summary>
+    [Fact]
+    public void TheProductPortsAreRegistered()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyCatalogWriter>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyProductImageStore>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyImageFetcher>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyReauthorization>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyProductsSource>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyProductPayloadParser>());
+        Assert.NotNull(provider.GetRequiredService<IShopifyProductSyncMetrics>());
+    }
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4: el asistente de la tienda crea la empresa por Companies desde el composition
+    /// root. Sin el adaptador, el <c>POST …/setup/company</c> no arranca.</summary>
+    [Fact]
+    public void TheSetupPortsAreRegistered()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifySetupCompanies>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyMemberDirectory>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyStoreReferences>());
     }
 
     /// <summary>
@@ -698,6 +1507,29 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Plan 2026-11-21, Tarea 12: sin el worker registrado, o con un puerto sin adaptador de Bootstrapper (el envío por Mensajería y el
+    /// cliente con su consentimiento), ningún recordatorio de cita sale, sin error en ningún lado. Mismo armado que el de Contratos de servicio.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheSchedulingReminderWorker()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Scheduling.Infrastructure.Reminders.AppointmentReminderWorker");
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.IAppointmentReminderSender>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.ISchedulingReminderRecipients>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.ISchedulingReminderTemplateStatus>());
+    }
+
+    /// <summary>
     /// Sin el worker registrado, o con un puerto del procesador sin adaptador, ninguna cuota de préstamo se genera al cerrar su
     /// período, sin error en ningún lado. Mismo armado que el de Contratos de servicio.
     /// </summary>
@@ -719,9 +1551,10 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// WMS-D: los cinco workers del ledger (publicador de saldos, reconciliación, particiones, limpieza y entrega del export) se
+    /// WMS-D: los cuatro workers del ledger (publicador de saldos, reconciliación, particiones y limpieza) y la entrega del export se
     /// construyen desde el contenedor con validación de ámbitos. Son singleton y usan scopes propios: uno que pidiera un servicio
-    /// scoped directo se cae acá y no al arrancar en producción. Mismo armado que el de Contratos de servicio.
+    /// scoped directo se cae acá y no al arrancar en producción. La entrega no es un hosted service: es una definición que drena
+    /// <c>NotificationsDeliveryWorker</c> (spec 2026-11-13, D-7). Mismo armado que el de Contratos de servicio.
     /// </summary>
     [Fact]
     public void TheContainerValidatesAndBuildsTheWmsWorkers()
@@ -740,11 +1573,77 @@ public sealed class CompositionRootTests
             "Modules.Wms.Infrastructure.Workers.BalanceReconciliationWorker",
             "Modules.Wms.Infrastructure.Workers.PartitionMaintenanceWorker",
             "Modules.Wms.Infrastructure.Workers.WmsHousekeepingWorker",
-            "Modules.Notifications.Infrastructure.Messaging.WmsExportDeliveryWorker",
+            "Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker",
         })
         {
             Assert.Contains(worker, hosted);
         }
+
+        var definitionType = services
+            .Select(descriptor => descriptor.ServiceType)
+            .First(type => type.FullName == "Modules.Notifications.Infrastructure.Messaging.OutboxDeliveryWorker");
+        Assert.Contains(
+            provider.GetServices(definitionType),
+            definition => definition!.GetType().FullName == "Modules.Notifications.Infrastructure.Messaging.WmsExportDeliveryWorker");
+    }
+
+    /// <summary>
+    /// Spec 2026-11-13 (Valkey), D-7; plan P10: los timbres los toca el interceptor de EF al confirmar un <c>INSERT</c> en una tabla de
+    /// cola. Un <c>DbContext</c> sin el interceptor escribiría en su cola sin despertar a nadie hasta la red de seguridad, sin error. Se
+    /// exige en todos los nuestros, no sólo en los que mapean una tabla de cola: el SQL crudo (<c>ExecuteSql</c>) inserta en tablas que el
+    /// modelo no mapea.
+    /// </summary>
+    [Fact]
+    public void EveryDbContextThatMapsADoorbellTableHasTheInterceptor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        var contextTypes = services
+            .Select(descriptor => descriptor.ServiceType)
+            .Where(type => typeof(Microsoft.EntityFrameworkCore.DbContext).IsAssignableFrom(type)
+                && type.Namespace?.StartsWith("Modules.", StringComparison.Ordinal) == true)
+            .Distinct()
+            .ToList();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotEmpty(contextTypes);
+        var mapsOutbox = false;
+        foreach (var type in contextTypes)
+        {
+            var context = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(type);
+            var options = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+                .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(context);
+            var interceptors = options
+                .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()?.Interceptors ?? [];
+            Assert.True(
+                interceptors.OfType<BuildingBlocks.Infrastructure.QueueDoorbellInterceptor>().Any(),
+                $"{type.FullName} no tiene QueueDoorbellInterceptor: sus inserciones en una cola no timbran.");
+            mapsOutbox |= context.Model.GetEntityTypes().Any(entity =>
+                Microsoft.EntityFrameworkCore.RelationalEntityTypeExtensions.GetTableName(entity) == "outbox_messages");
+        }
+
+        Assert.True(mapsOutbox, "Ningún DbContext mapea platform.outbox_messages: la prueba no estaría mirando los productores.");
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 §9.1: el grupo personal de un miembro se llama <c>{tenant}:@member:{id}</c> y el hub lo une desde las claims. Si algún
+    /// autorizador declarara un prefijo que empieza por <c>@</c>, un cliente podría suscribirse a ese grupo y leer avisos ajenos.
+    /// </summary>
+    [Fact]
+    public void NoAuthorizerPrefixStartsWithAt()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var authorizers = scope.ServiceProvider.GetServices<BuildingBlocks.Application.Realtime.IRealtimeTopicAuthorizer>().ToList();
+
+        Assert.NotEmpty(authorizers);
+        Assert.All(authorizers, authorizer => Assert.False(
+            authorizer.Prefix.StartsWith('@'),
+            $"{authorizer.GetType().Name} declara el prefijo '{authorizer.Prefix}': los tópicos '@…' son grupos personales."));
     }
 
     /// <summary>
@@ -792,9 +1691,201 @@ public sealed class CompositionRootTests
         Assert.NotNull(primary.ConnectCallback);
         Assert.False(primary.AllowAutoRedirect);
         Assert.False(primary.UseProxy);
+        // Spec 2026-11-03 D-8: el pool suelta una conexión ociosa a los 4 s, antes que el keep-alive de cualquier salto (Cloudflare, ingress,
+        // NAT del hairpin), y la recicla a los 5 min aunque no esté ociosa. Con el default de .NET (1 min, vida sin límite) el bloque
+        // reutilizaba un socket que alguien ya había cerrado y recibía connection_reset (producción, 2026-11-06).
+        Assert.Equal(TimeSpan.FromSeconds(4), primary.PooledConnectionIdleTimeout);
+        Assert.Equal(TimeSpan.FromMinutes(5), primary.PooledConnectionLifetime);
         using var scope = provider.CreateScope();
         Assert.IsType<Modules.Automations.Infrastructure.Http.HttpBlockExecutor>(
             scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Http.IHttpBlockExecutor>());
+    }
+
+    /// <summary>
+    /// Plan 2026-11-12, 5.2 y C-14: el contenedor arma un adaptador del modelo para cada proveedor, y el cliente HTTP de Claude no tiene
+    /// los loggers de <see cref="HttpClient"/> (escribirían el header con la clave del tenant) ni sigue redirecciones.
+    /// </summary>
+    [Fact]
+    public void EveryAiProviderHasAModelClientAndTheClaudeHttpClientHasNoLoggers()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolver = scope.ServiceProvider.GetRequiredService<IAiModelClientResolver>();
+        foreach (var aiProvider in Modules.Ai.Domain.AiProviders.All)
+        {
+            Assert.NotNull(resolver.For(aiProvider));
+        }
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(Modules.Ai.Infrastructure.Model.Anthropic.ClaudeModelClient.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>Spec 2026-10-29 §9.1, O-2: el cliente HTTP de OpenAI tampoco tiene loggers (la clave va en <c>Authorization</c>) ni sigue
+    /// redirecciones.</summary>
+    [Fact]
+    public void TheOpenAiHttpClientHasNoLoggersAndNoRedirects()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(Modules.Ai.Infrastructure.Model.OpenAi.OpenAiModelClient.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>Spec 2026-11-18 (integración Siigo): el cliente HTTP del probador de Siigo tampoco tiene loggers (la clave de
+    /// acceso va en el cuerpo de <c>/auth</c> y el token en <c>Authorization</c>) ni sigue redirecciones. El nombre va literal porque
+    /// <c>SiigoConnectionTester</c> es interno de Integrations.Infrastructure.</summary>
+    [Fact]
+    public void TheSiigoTesterHttpClientHasNoLoggersAndNoRedirects()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler("integrations.siigo");
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>Spec 2026-11-18 §7: el cliente de la API de Siigo (<c>siigo</c>) no tiene loggers —el log de <c>HttpClient</c> escribiría
+    /// el <c>Authorization</c> y la URL con la identificación del cliente— ni sigue redirecciones: la clave de acceso viaja en el cuerpo de
+    /// <c>/auth</c>. El nombre va literal porque <c>SiigoApiClient</c> es interno de Siigo.Infrastructure.</summary>
+    [Fact]
+    public void TheSiigoHttpClientHasNoLoggersAndNoRedirects()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler("siigo");
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>
+    /// Plan fase 2, C2.4 (spec 2026-11-17 copiloto §6): un contexto de ejecución que no sale de los claims de un request sólo lo crea el
+    /// ejecutor de herramientas del copiloto, y sólo él lo instala en un scope. Cualquier otro lugar que lo hiciera podría correr consultas
+    /// con los permisos de alguien que no las pidió. Se lee del IL: un <c>new</c> o un <c>Enter</c> en otro tipo pone esto en rojo.
+    /// </summary>
+    [Fact]
+    public void OnlyTheCopilotExecutorAndTheSiigoBatchInvokerCreateADelegatedContext()
+    {
+        var bootstrapper = typeof(QepServiceCollectionExtensions).Assembly;
+        var delegated = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionContext", throwOnError: true)!;
+        var scope = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionScope", throwOnError: true)!;
+        var executor = bootstrapper.GetType("Bootstrapper.Copilot.CopilotToolExecutor", throwOnError: true)!;
+        // Spec 2026-11-21: el único otro que corre un handler como un miembro fuera de un request. Factura cada pedido de una tanda con
+        // los permisos que quien la pidió tiene al procesarlo.
+        var siigoBatchInvoker = bootstrapper.GetType("Bootstrapper.SiigoBatchItemInvoker", throwOnError: true)!;
+
+        var creators = IlScanner.CallersOf(bootstrapper, method => method is ConstructorInfo && method.DeclaringType == delegated);
+        var enterers = IlScanner.CallersOf(bootstrapper, method => method.DeclaringType == scope && method.Name == "Enter");
+
+        Assert.NotEmpty(creators);
+        Assert.NotEmpty(enterers);
+        Assert.All(creators.Concat(enterers), caller => Assert.True(
+            IlScanner.IsWithin(caller, executor) || IlScanner.IsWithin(caller, siigoBatchInvoker),
+            $"{caller.DeclaringType?.FullName}.{caller.Name} creates or installs a delegated context."));
+    }
+
+    /// <summary>Plan fase 2, C2.4: fuera de un scope del ejecutor del copiloto, <c>IExecutionContext</c> sigue siendo el de los claims del
+    /// request, y por scope (un singleton serviría el contexto de otro).</summary>
+    [Fact]
+    public void OutsideADelegatedScopeTheExecutionContextIsTheHttpOne()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.Equal(ServiceLifetime.Scoped, services.Single(descriptor => descriptor.ServiceType == typeof(IExecutionContext)).Lifetime);
+        Assert.Equal("HttpExecutionContext", scope.ServiceProvider.GetRequiredService<IExecutionContext>().GetType().Name);
+    }
+
+    /// <summary>Plan fase 2, C2.3: el trabajo del copiloto se arma con su ejecutor de herramientas, que vive en Bootstrapper.</summary>
+    [Fact]
+    public void TheContainerBuildsTheCopilotJobProcessor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<CopilotJobProcessor>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICopilotToolExecutor>());
+    }
+
+    /// <summary>Plan fase 2, C2.5: cada adaptador del copiloto registrado una vez, con nombre único (el ejecutor los indexa por nombre). Los
+    /// de reportes, siete.</summary>
+    [Fact]
+    public void EveryCopilotToolIsRegisteredOnceWithAUniqueName()
+    {
+        var services = BuildPlatformServices();
+        using var provider = services.BuildServiceProvider();
+        var contract = typeof(QepServiceCollectionExtensions).Assembly.GetType("Bootstrapper.Copilot.ICopilotTool", throwOnError: true)!;
+
+        var names = provider.GetServices(contract)
+            .Select(tool => ((CopilotToolContract)contract.GetProperty("Contract")!.GetValue(tool)!).Name)
+            .ToList();
+
+        Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
+        Assert.Superset(
+            new HashSet<string>(
+                ["get_orders_summary", "list_orders_report", "get_quotations_summary", "list_quotations_report", "get_customers_summary",
+                 "get_margin_summary", "get_price_changes_summary"],
+                StringComparer.Ordinal),
+            names.ToHashSet(StringComparer.Ordinal));
+    }
+
+    /// <summary>Spec 2026-10-29 §12: el worker de modelo y el procesador de las pruebas se arman con todos sus puertos (las fuentes de las
+    /// herramientas son adaptadores de Bootstrapper: sin su registro, el primer trabajo daría 500 en vez de una respuesta).</summary>
+    [Fact]
+    public void TheContainerBuildsTheAiModelWorkerAndTheTestJobProcessor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<AgentTestJobProcessor>());
+        var worker = typeof(Modules.Ai.Infrastructure.AiInfrastructureExtensions).Assembly.GetType("Modules.Ai.Infrastructure.AiModelWorker", throwOnError: true)!;
+        Assert.IsAssignableFrom<IHostedService>(provider.GetRequiredService(worker));
     }
 
     /// <summary>
@@ -831,6 +1922,77 @@ public sealed class CompositionRootTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Engine.ManualRunStarter>());
     }
 
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the CRM port and catalog of Automations resolve to their Bootstrapper adapters, over
+    /// the system entry points of Customers and Pipeline; the engine and the editor builder resolve with them.</summary>
+    [Fact]
+    public void TheContainerBuildsTheChatbotCrmAction()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.Equal("AutomationCrm", scope.ServiceProvider.GetRequiredService<IAutomationCrm>().GetType().Name);
+        Assert.Equal("AutomationsCrmDirectory", scope.ServiceProvider.GetRequiredService<IAutomationsCrmDirectory>().GetType().Name);
+        Assert.IsType<Modules.Customers.Application.ChatbotCustomerTags>(
+            scope.ServiceProvider.GetRequiredService<Modules.Customers.Application.IChatbotCustomerTags>());
+        Assert.IsType<Modules.Pipeline.Application.ChatbotDealMover>(
+            scope.ServiceProvider.GetRequiredService<Modules.Pipeline.Application.IChatbotDealMover>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Engine.RunEffects>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ChatbotEditorBuilder>());
+    }
+
+    /// <summary>Spec 2026-11-25 (roles por tenant): sólo <c>admin</c> se define en código. Una definición más volvería a reservar
+    /// permisos por clave, y un rol del tenant con esa clave la pisaría.</summary>
+    [Fact]
+    public void OnlyAdminIsASystemRole()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("admin", Assert.Single(catalog.ListRoles()).Role);
+    }
+
+    /// <summary>Las cinco plantillas con las que se siembra cada tenant, con los mismos nombres de siempre.</summary>
+    [Fact]
+    public void TheFiveTemplatesAreRegisteredWithTodaysNames()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+
+        var templates = provider.GetServices<RoleTemplate>().ToArray();
+
+        Assert.Equal(
+            new (string, string)[]
+            {
+                (RoleTemplateKeys.Advisor, "Asesor"),
+                (RoleTemplateKeys.Billing, "Facturación"),
+                (RoleTemplateKeys.Cashier, "Cajero"),
+                (RoleTemplateKeys.SchedulingManager, "Gestor de agenda"),
+                (RoleTemplateKeys.SchedulingProvider, "Profesional de agenda"),
+            },
+            templates
+                .Select(template => (template.Key, template.DisplayName))
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal));
+    }
+
+    /// <summary>El catálogo de permisos sólo ofrece lo que concede algún rol de sistema: un permiso de una plantilla que
+    /// <c>admin</c> no llevara no se podría marcar ni guardar (<c>authorization.role.permission_unknown</c>).</summary>
+    [Fact]
+    public void EveryRoleTemplateIsASubsetOfAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var offered = provider.GetRequiredService<IRoleCatalog>().ListPermissions()
+            .Select(permission => permission.Permission)
+            .ToHashSet(StringComparer.Ordinal);
+        var templates = provider.GetServices<RoleTemplate>().ToArray();
+
+        Assert.NotEmpty(templates);
+        Assert.All(templates, template => Assert.Empty(
+            template.Permissions.Where(permission => !offered.Contains(permission))
+                .Select(permission => $"{template.Key}: {permission}")));
+    }
+
     [Fact]
     public void TheContainerCanBuildTheEntitlementMask()
     {
@@ -848,10 +2010,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("developer.api_key.manage", ApiAccessPermissions.ApiKeyManage);
-        Assert.Contains(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("cashier"));
+        Assert.Contains(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == ApiAccessPermissions.ApiKeyManage);
         Assert.Equal("Developer", definition.Category);
         Assert.Equal([ModuleKeys.Developer], definition.RequiredModules);
@@ -878,6 +2040,13 @@ public sealed class CompositionRootTests
         Assert.Equal(ModuleKeys.Messaging.Value, scope.RequiredModule);
         Assert.True(scope.RestrictableByConnection);
     }
+
+    /// <summary>Lo que concede un rol de fábrica: <c>admin</c> sale del catálogo de sistema y los demás de la plantilla con la que se
+    /// siembra cada tenant.</summary>
+    private static IReadOnlyCollection<string> FactoryPermissions(IServiceProvider provider, string role) =>
+        role == "admin"
+            ? provider.GetRequiredService<IRoleCatalog>().PermissionsFor(role)
+            : provider.GetServices<RoleTemplate>().Single(template => template.Key == role).Permissions;
 
     private static ApiScopeDefinition[] RegisteredApiScopes() =>
         BuildPlatformServices()
@@ -924,6 +2093,16 @@ public sealed class CompositionRootTests
                 ["Storage:R2:SecretAccessKey"] = "secret",
                 ["Storage:R2:Bucket"] = "bucket",
                 ["Notifications:EmailProvider"] = "log",
+                // La lista curada de Ai (C-3): sin ella, armar algo que lea el catálogo de modelos lanza al validar las opciones.
+                ["Ai:DefaultProvider"] = "anthropic",
+                ["Ai:Providers:anthropic:Models:0:Id"] = "claude-opus-5-5",
+                ["Ai:Providers:anthropic:Models:0:Label"] = "Claude Opus 5.5",
+                ["Ai:Providers:anthropic:Models:0:IsDefault"] = "true",
+                ["Ai:Providers:anthropic:Models:0:Effort"] = "medium",
+                ["Ai:Providers:openai:Models:0:Id"] = "gpt-6-luna",
+                ["Ai:Providers:openai:Models:0:Label"] = "GPT-6 Luna",
+                ["Ai:Providers:openai:Models:0:IsDefault"] = "true",
+                ["Ai:Providers:openai:Models:0:Available"] = "false",
             })
             .Build();
 

@@ -29,8 +29,47 @@ public sealed class ShopifyConnectionTesterTests
 
     private static Dictionary<string, string> Secrets() => new(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = Token };
 
+    private static readonly DateTimeOffset Now = new(2026, 11, 12, 15, 0, 0, TimeSpan.Zero);
+
     private static ShopifyConnectionTester Tester(FakeShopifyAdminGateway gateway, FakeShopifyAppSettings? app = null) =>
-        new(gateway, app ?? new FakeShopifyAppSettings());
+        new(gateway, app ?? new FakeShopifyAppSettings(), new FixedTime(Now));
+
+    // Review Focus 4 (D11): con el worker atrasado, el token guardado ya venció. Llamar a Shopify daría 401 y marcaría
+    // credentials_rejected una tienda sana; se responde «no pude verificar» sin llamar.
+    [Fact]
+    public async Task AnExpiredTokenIsUnreachableWithoutCallingShopify()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(Now.AddSeconds(-1));
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Unreachable, result.Outcome);
+        Assert.Equal("token_refresh_pending", result.Reason);
+        Assert.Empty(gateway.Calls);
+    }
+
+    // D14: una conexión anterior a los tokens que expiran no trae la fecha; se prueba como siempre.
+    [Fact]
+    public async Task ATokenWithoutExpiryIsStillTested()
+    {
+        var gateway = new FakeShopifyAdminGateway { ShopName = "Mi Tienda" };
+        var fields = Fields();
+        fields[ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(Now.AddMinutes(10));
+
+        var withoutExpiry = await Tester(gateway).TestAsync(Fields(), Secrets(), Ct);
+        var notYetExpired = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, withoutExpiry.Outcome);
+        Assert.Equal(ConnectionTestOutcome.Ok, notYetExpired.Outcome);
+        Assert.Equal("shop", gateway.Calls[0]);
+    }
+
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 
     [Fact]
     public async Task Test200RefreshesShopNameAndRecreatesMissingTopics()
@@ -55,6 +94,78 @@ public sealed class ShopifyConnectionTesterTests
             ["gid://shopify/WebhookSubscription/1", "gid://shopify/WebhookSubscription/2", "gid://shopify/WebhookSubscription/3"],
             ids[..3]);
         Assert.Equal(IntegrationProviders.Shopify.Key, Tester(gateway).ProviderKey);
+    }
+
+    // Spec 2026-11-17 §2 (onboarding): un 200 también refresca el perfil de la tienda, como el nombre.
+    [Fact]
+    public async Task TheTesterRefreshesTheShopProfile()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+
+        var result = await Tester(gateway, new FakeShopifyAppSettings { WebhookCallbackUrl = null }).TestAsync(Fields(), Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.NotNull(result.RefreshedFields);
+        var profile = ShopifyShopProfile.TryParse(result.RefreshedFields[ShopifyFieldKeys.ShopProfile]);
+        Assert.NotNull(profile);
+        Assert.Equal("COP", profile.CurrencyCode);
+        Assert.Equal("Medellín", profile.BillingAddress?.City);
+    }
+
+    // Sin perfil (Shopify no devolvió ninguno de sus campos) no se pisa el guardado.
+    [Fact]
+    public async Task AShopWithoutProfileDoesNotRefreshIt()
+    {
+        var gateway = new FakeShopifyAdminGateway { Profile = null };
+
+        var result = await Tester(gateway, new FakeShopifyAppSettings { WebhookCallbackUrl = null }).TestAsync(Fields(), Secrets(), Ct);
+
+        Assert.NotNull(result.RefreshedFields);
+        Assert.False(result.RefreshedFields.ContainsKey(ShopifyFieldKeys.ShopProfile));
+    }
+
+    // Spec 2026-11-17 P10: sin read_products no se intentan los products/*, y la tienda no pasa a NeedsAttention por ellos.
+    [Fact]
+    public void ProductTopicsAreSkippedWithoutReadProducts()
+    {
+        var topics = ShopifyWebhookTopics.ForScopes(["read_orders", "read_customers"]);
+
+        Assert.Equal(["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "app/uninstalled"], topics);
+    }
+
+    [Fact]
+    public void WriteProductsRegistersProductTopics()
+    {
+        Assert.Equal(ShopifyWebhookTopics.Registered, ShopifyWebhookTopics.ForScopes(["read_orders", "write_products"]));
+        Assert.Equal(ShopifyWebhookTopics.Registered, ShopifyWebhookTopics.ForScopes(["read_products"]));
+    }
+
+    [Fact]
+    public async Task TheTesterDoesNotMarkNeedsAttentionWithoutReadProducts()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.Scopes] = "read_orders,read_customers";
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.DoesNotContain(gateway.Calls, call => call.StartsWith("create-webhook:products/", StringComparison.Ordinal));
+        Assert.Equal(5, result.RefreshedFields![ShopifyFieldKeys.WebhookSubscriptionIds].Split(',').Length);
+    }
+
+    [Fact]
+    public async Task TheTesterRegistersProductTopicsWithReadProducts()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.Scopes] = "read_orders,read_customers,read_products";
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.Contains("create-webhook:products/update", gateway.Calls);
+        Assert.Equal(8, result.RefreshedFields![ShopifyFieldKeys.WebhookSubscriptionIds].Split(',').Length);
     }
 
     [Fact]

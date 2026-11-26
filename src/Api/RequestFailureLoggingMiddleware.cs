@@ -1,3 +1,4 @@
+using Bootstrapper;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Platform.Application;
@@ -68,7 +69,7 @@ internal sealed class RequestFailureLoggingMiddleware(
                 logger,
                 httpContext.Response.StatusCode,
                 httpContext.Request.Method,
-                httpContext.Request.Path.Value,
+                SensitivePaths.Mask(httpContext.Request.Path),
                 exception);
         }
     }

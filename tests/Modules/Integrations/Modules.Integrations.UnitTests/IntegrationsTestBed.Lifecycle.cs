@@ -17,17 +17,20 @@ internal sealed partial class IntegrationsTestBed
     public ResumeConnectionHandler ResumeHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Tester, Modules, Providers, AuthorNames, context ?? Context(), Clock);
 
+    public FakeConnectionBotOccupancy BotOccupancy { get; } = new();
+
     public DeleteConnectionHandler DeleteHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Events, Modules, context ?? Context(), Clock);
+        new(Catalog, Repository, UnitOfWork, Audit, Events, BotOccupancy, Modules, context ?? Context(), Clock);
 }
 
 internal sealed record PublishedEvent(
-    string EventName, Guid TenantId, Guid ConnectionId, string ProviderKey, DateTimeOffset OccurredAt);
+    string EventName, Guid TenantId, Guid ConnectionId, string ProviderKey, DateTimeOffset OccurredAt, string? FailureCode);
 
 internal sealed class RecordingEventPublisher : IConnectionEventPublisher
 {
     public List<PublishedEvent> Published { get; } = [];
 
     public void Publish(string eventName, IntegrationConnection connection, DateTimeOffset occurredAt) =>
-        Published.Add(new PublishedEvent(eventName, connection.TenantId, connection.Id, connection.ProviderKey, occurredAt));
+        Published.Add(new PublishedEvent(
+            eventName, connection.TenantId, connection.Id, connection.ProviderKey, occurredAt, connection.LastFailureCode));
 }

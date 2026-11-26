@@ -10,7 +10,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// La entrega por envío en la cotización (spec 2026-10-17 §5.2, §5.4 y §7): crear, guardar y previsualizar con
 /// <c>shipping</c>, y la respuesta con el objeto <c>shipping</c> y los totales del envío, contra Postgres real.
 /// </summary>
-public sealed class QuotationShippingApiTests
+public sealed class QuotationShippingApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -23,8 +23,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task CreatesAQuotationWithChargedFreight()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -70,8 +69,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task FreeAndOnDeliveryDoNotChangeTheTotal()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -103,8 +101,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task SwitchingToPickupClearsTheShipping()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -136,8 +133,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task SendsAndConvertsWithoutAnyShipping()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var (quotation, _) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -146,7 +142,7 @@ public sealed class QuotationShippingApiTests
 
         using var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         Assert.True(converted.IsSuccessStatusCode, await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
@@ -157,8 +153,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task OldClientsWithoutShippingKeepIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -191,8 +186,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task ChangingCurrencyClearsTheFreightEvenIfTheBodyResendsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -228,8 +222,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task PreviewComputesTheFreight()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -254,11 +247,12 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task ChargedWithoutAFreightTaxRateIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
+        // La empresa de la cotización enviada siembra la tasa del envío (spec 2026-11-17 §5.3): se quita para probar sin ella.
+        await ClearFreightTaxRateAsync(factory, tenantId);
 
         using var response = await PutAsync(
             client, tenantId, quotation, RequestFor(quotation, productId, new ShippingRequest(null, "Charged", 15000m, false)));
@@ -271,8 +265,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task AnAmountWithMoreThanTwoDecimalsOrAnUnknownModeIsAFieldError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -292,8 +285,7 @@ public sealed class QuotationShippingApiTests
     [Fact]
     public async Task ADisabledFreightChargeModeIsRejectedWhenChosenAndKeptWhenUnchanged()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);

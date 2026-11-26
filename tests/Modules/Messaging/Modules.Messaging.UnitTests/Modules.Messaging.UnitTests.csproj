@@ -10,6 +10,8 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- MessagingRealtimeAuthorizerTests. -->
+    <ProjectReference Include="..\..\..\..\src\Modules\Messaging\Modules.Messaging.Api\Modules.Messaging.Api.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Messaging\Modules.Messaging.Application\Modules.Messaging.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Messaging\Modules.Messaging.Domain\Modules.Messaging.Domain.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Messaging\Modules.Messaging.Infrastructure\Modules.Messaging.Infrastructure.csproj" />

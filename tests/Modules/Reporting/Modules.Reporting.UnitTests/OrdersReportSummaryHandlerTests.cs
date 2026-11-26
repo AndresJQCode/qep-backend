@@ -222,7 +222,7 @@ public sealed class OrdersReportSummaryHandlerTests
 
         var error = await Assert.ThrowsAsync<ValidationException>(() =>
             handler.HandleAsync(
-                new GetOrdersReportSummaryQuery(Filter(source: "Store")),
+                new GetOrdersReportSummaryQuery(Filter(source: "Telegram")),
                 TestContext.Current.CancellationToken));
 
         Assert.Contains(error.Errors, failure => failure.PropertyName == "Source");

@@ -28,7 +28,7 @@ internal sealed class ClaimedOutboxConsumer(
 
     public IReadOnlyList<TimeSpan> Leases => leases;
 
-    public async Task ProcessBatchAsync(
+    public async Task<bool> ProcessBatchAsync(
         Func<ClaimedMessage, CancellationToken, Task> process,
         Action<Exception, PipelineOutboxRecord, int?> onFailure,
         CancellationToken cancellationToken)
@@ -80,6 +80,8 @@ internal sealed class ClaimedOutboxConsumer(
                 onFailure(exception, record, attempts);
             }
         }
+
+        return pending.Count == BatchSize;
     }
 
     /// <summary>Marca como terminada la fila que dejó el reclamo, sin guardar: quien llama la guarda en el mismo SaveChanges que su

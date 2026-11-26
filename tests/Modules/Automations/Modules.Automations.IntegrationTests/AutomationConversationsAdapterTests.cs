@@ -354,7 +354,7 @@ public sealed class AutomationConversationsAdapterTests
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_paused_at = now(), automation_pause_reason = 'Manual'",
+            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, automation_paused_at = now(), automation_pause_reason = 'Manual'",
             ("c", Guid.CreateVersion7()));
 
         await WithAdapterAsync(f, adapter => adapter.EndAsync(f.TenantId, f.ConversationId, Ct));
@@ -404,9 +404,17 @@ public sealed class AutomationConversationsAdapterTests
         });
 
         Assert.NotNull(state);
+        // El cliente escribió, así que la ventana de 24 h cierra 24 h después de su último entrante (spec 2026-10-31).
+        var lastInbound = new DateTimeOffset(lastInboundAt, TimeSpan.Zero);
         Assert.Equal(
-            new AutomationConversationState("Open", null, "Active", chatbotId, connectionId, new DateTimeOffset(lastInboundAt, TimeSpan.Zero), "Laura Gómez", WaId),
-            state with { LastInboundAt = state.LastInboundAt?.ToUniversalTime() });
+            new AutomationConversationState(
+                "Open", null, "Active", chatbotId, connectionId, lastInbound, "Laura Gómez", WaId,
+                WindowExpiresAt: lastInbound.AddHours(24)),
+            state with
+            {
+                LastInboundAt = state.LastInboundAt?.ToUniversalTime(),
+                WindowExpiresAt = state.WindowExpiresAt?.ToUniversalTime(),
+            });
         Assert.Null(foreign);
     }
 

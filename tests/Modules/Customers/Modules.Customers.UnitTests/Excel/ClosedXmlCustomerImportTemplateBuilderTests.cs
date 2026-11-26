@@ -89,6 +89,18 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
                 (range.RangeAddress.ToString() ?? string.Empty).StartsWith("A2:", StringComparison.Ordinal)));
     }
 
+    // Spec ReteICA por empresa §7.4 (A3): la ReteICA ya no es del cliente, así que su columna sale de la plantilla.
+    [Fact]
+    public void TemplateHasNoReteIcaColumn()
+    {
+        using var workbook = BuildWorkbook();
+        var headers = workbook.Worksheet("Clientes").Row(1).CellsUsed().Select(cell => cell.GetString()).ToArray();
+
+        Assert.Contains("Retefuente", headers);
+        Assert.DoesNotContain("ReteICA", headers);
+        Assert.DoesNotContain("Con Retencion", headers);
+    }
+
     [Fact]
     public void ClassificationColumnHeaderIsTamano()
     {
@@ -151,5 +163,56 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
             .SelectMany(range => range.Cells())
             .Select(cell => cell.GetString())
             .ToArray();
+    }
+
+    [Fact]
+    public void TheTemplateEndsWithTheOptionalColumns()
+    {
+        using var workbook = BuildWorkbook();
+
+        var headers = workbook.Worksheet("Clientes").Row(1).CellsUsed().Select(cell => cell.GetString()).ToArray();
+
+        // Las trece de siempre, en su orden, y las opcionales después («Empresa», «Etiquetas»): un archivo viejo sigue siendo
+        // válido porque las últimas son opcionales.
+        Assert.Equal(CustomerImportColumns.Ordered.Count + 2, headers.Length);
+        Assert.Equal(CustomerImportColumns.Ordered, headers.Take(CustomerImportColumns.Ordered.Count));
+        Assert.Equal(["Empresa", "Etiquetas"], headers.Skip(CustomerImportColumns.Ordered.Count));
+        Assert.DoesNotContain(CustomerImportColumns.Company, CustomerImportColumns.Ordered);
+        Assert.DoesNotContain(CustomerImportColumns.Tags, CustomerImportColumns.Ordered);
+    }
+
+    [Fact]
+    public void TheFailedRowsFileCarriesTheTagsCell()
+    {
+        var failed = new CustomerImportRowData(
+            null, "Ana", null, "CC", "1010", "3001112233", null, "Calle 2", "Antioquia", "Medellin", "", Retefuente: null, ReteIca: null,
+            VatSurplus: "No", null, Tags: "Evento macel; VIP");
+        using var workbook = new XLWorkbook(new MemoryStream(
+            builder.BuildWithRows(Departments, Classifications, IdentificationTypes, [failed], CancellationToken.None)));
+
+        var sheet = workbook.Worksheet("Clientes");
+        var column = CustomerImportColumns.Ordered.Count + 2;
+
+        Assert.Equal("Etiquetas", sheet.Cell(1, column).GetString());
+        Assert.Equal("Evento macel; VIP", sheet.Cell(2, column).GetString());
+    }
+
+    [Fact]
+    public void TheFailedRowsFileCarriesTheCompanyColumn()
+    {
+        var failed = new CustomerImportRowData(
+            null, "Ana", null, "CC", "1010", "3001112233", null, "Calle 2", "Antioquia", "Medellin", "", Retefuente: null, ReteIca: null, VatSurplus: "No", "900111222");
+        var withoutCompany = failed with { Name = "Beto", CompanyIdentificationNumber = null };
+        using var workbook = new XLWorkbook(new MemoryStream(
+            builder.BuildWithRows(Departments, Classifications, IdentificationTypes, [failed, withoutCompany], CancellationToken.None)));
+
+        var sheet = workbook.Worksheet("Clientes");
+        var column = CustomerImportColumns.Ordered.Count + 1;
+
+        // La celda que la persona corrige vuelve tal como vino; si no traía empresa, queda vacía.
+        Assert.Equal("Empresa", sheet.Cell(1, column).GetString());
+        Assert.Equal("900111222", sheet.Cell(2, column).GetString());
+        Assert.Equal(string.Empty, sheet.Cell(3, column).GetString());
+        Assert.Equal("Ana", sheet.Cell(2, 2).GetString());
     }
 }

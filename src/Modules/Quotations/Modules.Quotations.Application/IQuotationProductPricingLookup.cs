@@ -1,3 +1,6 @@
+using BuildingBlocks.Domain.Catalog;
+using Modules.Quotations.Domain;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -30,6 +33,35 @@ public interface IQuotationProductPricingLookup
         Guid tenantId,
         IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-22 (listas de precios por canal, D-5): lo mismo con los precios de la lista del canal. Los dos métodos de
+    /// arriba son el canal <see cref="QuotationPriceChannel.Quotations"/>. La implementación por defecto devuelve el precio base,
+    /// para que los dobles de prueba que ya existen sigan compilando; el adaptador real la sobrescribe.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> variantIds,
+        QuotationPriceChannel channel,
+        CancellationToken cancellationToken) =>
+        FindManyAsync(tenantId, variantIds, cancellationToken);
+}
+
+/// <summary>
+/// Spec 2026-11-22 (D-5): con qué lista se precia una línea. La tienda pública y la edición de un pedido que nació en ella usan la
+/// de <c>Store</c>; todo lo demás (cotizaciones, pedidos manuales y convertidos, regalos) la de <c>Quotations</c>. El canal se
+/// deriva del origen del pedido y no se guarda: la línea guarda su precio.
+/// </summary>
+public enum QuotationPriceChannel
+{
+    Quotations,
+    Store,
+}
+
+public static class QuotationPriceChannels
+{
+    public static QuotationPriceChannel For(OrderSource source) =>
+        source == OrderSource.Store ? QuotationPriceChannel.Store : QuotationPriceChannel.Quotations;
 }
 
 /// <param name="ProductId">El producto dueño: la línea lo guarda junto a la variante (spec §4) y
@@ -43,6 +75,9 @@ public interface IQuotationProductPricingLookup
 /// <param name="TaxPercentage">La tasa de impuesto del producto
 /// (<c>Catalog.TaxRate.Percentage</c>). Null si el producto no tiene tasa asignada — se resuelve
 /// a 0% (RN-013, el gap que <c>Catalog.TaxRate</c> dejaba abierto a propósito).</param>
+/// <param name="Kind">Producto o servicio, del producto dueño (spec 2026-11-18 §3.4). La línea lo fija al nacer y no lo
+/// vuelve a leer. Último y con default para no tocar las construcciones que ya existen.</param>
+/// <param name="SalesUnit">La unidad de venta del producto, con la misma regla que <paramref name="Kind"/>.</param>
 public sealed record QuotationVariantPricingRef(
     Guid VariantId,
     Guid ProductId,
@@ -52,7 +87,9 @@ public sealed record QuotationVariantPricingRef(
     bool IsActive,
     IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyCollection<QuotationPriceScaleRef> Scales,
-    int? TaxPercentage);
+    int? TaxPercentage,
+    ProductKind Kind = ProductKind.Physical,
+    SalesUnit SalesUnit = SalesUnit.Unit);
 
 /// <summary>
 /// Espeja a <c>Catalog.Domain.PriceScaleRestriction</c> sin referenciarlo: este assembly no

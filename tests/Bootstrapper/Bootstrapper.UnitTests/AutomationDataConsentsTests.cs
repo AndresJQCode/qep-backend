@@ -46,15 +46,16 @@ public sealed class AutomationDataConsentsTests
             Stub<IConversationQueries>((method, _) => method.Name == nameof(IConversationQueries.FindAsync)
                 ? Task.FromResult<ConversationRow?>(row)
                 : throw new NotSupportedException(method.Name)),
-            Unused<IConversationRepository>(),
-            Unused<IMessagingCustomerDirectory>(),
+            new ConversationCustomerResolver(
+                Unused<IConversationRepository>(),
+                Unused<IMessagingCustomerDirectory>(),
+                Unused<IMessagingNotifier>(),
+                Unused<IClock>(),
+                NullLogger<ConversationCustomerResolver>.Instance),
             Stub<IAutomationInbox>((method, _) => method.Name == nameof(IAutomationInbox.ReadInboundAsync)
                 ? Task.FromResult(inbound)
                 : throw new NotSupportedException(method.Name)),
-            consents,
-            Unused<IMessagingNotifier>(),
-            Unused<IClock>(),
-            NullLogger<AutomationDataConsents>.Instance);
+            consents);
         return (adapter, calls);
     }
 

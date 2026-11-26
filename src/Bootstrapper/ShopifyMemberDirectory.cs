@@ -27,6 +27,37 @@ internal sealed class ShopifyMemberDirectory(IMembershipRepository memberships, 
         return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
+    // Spec 2026-11-17 (onboarding) §4.1: las opciones del paso «Asesor». Una membresía sin nombre ni correo no se ofrece: la
+    // pantalla no tendría qué mostrar.
+    public async Task<IReadOnlyList<ShopifyMemberOption>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var active = (await memberships.ListByTenantAsync(new TenantId(tenantId), cancellationToken))
+            .Where(membership => membership.State == MembershipState.Active)
+            .ToList();
+        // Un solo viaje a Identity por los correos de quienes no tienen nombre, como MessagingMemberNames.
+        var emails = await users.GetEmailsAsync(
+            active.Where(membership => string.IsNullOrWhiteSpace(membership.DisplayName))
+                .Select(membership => membership.UserId)
+                .ToList(),
+            cancellationToken);
+        var options = new List<ShopifyMemberOption>();
+        foreach (var membership in active)
+        {
+            var name = !string.IsNullOrWhiteSpace(membership.DisplayName)
+                ? membership.DisplayName
+                : emails.GetValueOrDefault(membership.UserId);
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                options.Add(new ShopifyMemberOption(membership.Id.Value, name));
+            }
+        }
+
+        return options
+            .OrderBy(option => option.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(option => option.MembershipId)
+            .ToArray();
+    }
+
     // ListByIdsAsync ya filtra por tenant: una membresía de otro tenant no aparece.
     private async Task<Membership?> FindAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken)
     {

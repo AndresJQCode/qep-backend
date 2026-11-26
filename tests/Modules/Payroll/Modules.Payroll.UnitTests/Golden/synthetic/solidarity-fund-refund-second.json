@@ -1,0 +1,98 @@
+{
+  "name": "solidarity-fund-refund-second",
+  "source": "synthetic",
+  "description": "Termina el 2026-11-20: el IBC del mes baja de 4 SMMLV y se devuelve lo retenido.",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "SolidarityFundRule"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-16",
+      "end": "2026-11-30",
+      "half": "Second"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "contractEndedOn": "2026-11-20",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 7500000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "prior": {
+      "workedDays": 15,
+      "salaryRaw": 3750000,
+      "salary": 3750000,
+      "transportRaw": 0,
+      "transport": 0,
+      "overtime": 0,
+      "salaryIncome": 0,
+      "nonSalaryIncome": 0,
+      "healthEmployee": 150000,
+      "pensionEmployee": 150000,
+      "solidarityFund": 37500,
+      "healthEmployer": 0,
+      "pensionEmployer": 450000,
+      "arl": 19600,
+      "compensationFund": 150000,
+      "icbf": 0,
+      "sena": 0
+    }
+  },
+  "expected": {
+    "workedDays": 5,
+    "finalSettlementPending": true,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 1250000 },
+      { "code": "transport_allowance", "amount": 0 },
+      { "code": "ibc", "amount": 5000000 },
+      { "code": "health_employee", "amount": 50000 },
+      { "code": "pension_employee", "amount": 50000 },
+      { "code": "solidarity_fund", "amount": -37500 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 150000 },
+      { "code": "arl", "amount": 6500 },
+      { "code": "compensation_fund", "amount": 50000 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 104125 },
+      { "code": "severance_interest", "amount": 12500 },
+      { "code": "premium", "amount": 104125 },
+      { "code": "vacation", "amount": 52125 }
+    ],
+    "net": 1187500,
+    "employerCost": 1729375
+  },
+  "notes": [
+    "prior = acumulados de la primera quincena (solidarity-fund-refund-first) escritos a mano en `input.prior`",
+    "días = 5 días reales entre 2026-11-16 y 2026-11-20; finalSettlementPending = true",
+    "salary: SalaryRaw = 7 500 000 ÷ 30 × 5 = 1250000; salary = round(3750000 + 1250000) − 3750000 = 1 250 000",
+    "transport_allowance = 0: ingreso para el tope 7 500 000 > 3 501 810 (2 × SMMLV)",
+    "SalDev_m = 3750000 + 1250000 + 0 + 0 = 5000000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 1167270; tope 43772625; ibc = techo(5000000) = 5 000 000",
+    "health_employee = al peso(5 000 000 × 0,04 = 200000) − 150000 = 50 000",
+    "pension_employee = al peso(5 000 000 × 0,04) − 150000 = 50 000",
+    "solidarity_fund: tramo por ≈2.855666 SMMLV = ninguno; techo100(5 000 000 × 0) − 37500 = -37 500",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 7 500 000 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(5 000 000 × 0.12) − 450000 = 150 000",
+    "arl = techo100(5000000 × 0.00522 = 26100) − 19600 = 6 500",
+    "compensation_fund = techo100(5000000 × 0,04) − 150000 = 50 000",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 1250000 + 0 + 0 + 0 = 1250000; severance = round(104125) = 104 125; severance_interest = round(12500) = 12 500; premium = 104 125; vacation = round((1250000 + 0) × 0,0417 = 52125) = 52 125",
+    "totalEarned = 1250000 + 0 + 0 + 0 + 0 = 1250000; totalDeductions = 62500; net = 1187500; employerCost = 1250000 + aportes 206500 + provisiones 272875 = 1729375"
+  ]
+}

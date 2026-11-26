@@ -12,6 +12,15 @@ internal enum CoexistenceSource
     Echo,
 }
 
+/// <summary>La clave de un hilo de coexistencia: el teléfono (dígitos) o, para un contacto que sólo usa username, su BSUID. Nunca los dos.
+/// Un <c>string</c> se lee como teléfono, que es lo que mandan todos los llamadores anteriores.</summary>
+internal readonly record struct ThreadKey(string? WaId, string? UserId)
+{
+    public static implicit operator ThreadKey(string waId) => new(waId, null);
+
+    public static ThreadKey ForUser(string userId) => new(null, userId);
+}
+
 /// <summary>
 /// Spec 2026-10-29 §4.1: el historial de la app WhatsApp Business entra sin generar trabajo. No pasa por <c>IngestOnceAsync</c>:
 /// no suma no leídos, no reabre, no mueve <c>last_inbound_at</c>, no emite eventos en el hilo, no avisa en tiempo real, no encola al
@@ -21,13 +30,15 @@ internal enum CoexistenceSource
 /// </summary>
 internal static class CoexistenceIngestion
 {
-    /// <summary>Un hilo (un teléfono) en una transacción: la conversación, sus mensajes, la foto y la regla.</summary>
-    /// <param name="waId">Los dígitos del teléfono, ya normalizados por el parser.</param>
+    /// <summary>Un hilo (un teléfono, o un BSUID si el contacto no tiene número) en una transacción: la conversación, sus mensajes, la
+    /// foto y la regla.</summary>
+    /// <param name="thread">Los dígitos del teléfono, ya normalizados por el parser, o el BSUID de un contacto que sólo usa username
+    /// (un eco trae <c>to_user_id</c> y no <c>to</c>; producción 2026-11-18).</param>
     /// <param name="connectedAt">La hora de la conexión (<c>history_syncs.connected_at</c>); <c>null</c> si no hay fila, y entonces la
     /// conversación importada queda cerrada.</param>
     /// <returns>La conversación, o <c>null</c> si todos los mensajes ya estaban y nada cambió.</returns>
     public static async Task<Guid?> IngestThreadAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, string waId, IReadOnlyList<CoexistenceMessage> messages,
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, ThreadKey thread, IReadOnlyList<CoexistenceMessage> messages,
         Guid? customerId, CoexistenceSource source, DateTimeOffset? connectedAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(messages);
@@ -39,8 +50,23 @@ internal static class CoexistenceIngestion
         // OrderBy es estable: dos mensajes del mismo segundo conservan el orden en que Meta los mandó.
         var ordered = messages.OrderBy(message => message.OccurredAt).ToList();
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // Borrar clientes (A-12 y P4): un solo candado de cliente, antes de cualquier fila (EnsureAttachedIsHeld explica el orden): el
+        // del cliente que la conversación ya tiene, que es el que conserva el COALESCE de UpdateSummaryAsync, o, si no hay conversación o
+        // no tiene cliente, el resuelto afuera. Si el borrado ganó, CustomerVanishedException deshace el hilo entero y la entrega se
+        // reintenta: el reintento ya no encuentra ni la conversación ni el cliente, y crea los nuevos (D-4).
+        var existing = await FindExistingAsync(dbContext, tenantId, connectionId, thread, cancellationToken);
+        var held = (existing is { } existingId ? await MessagingCustomerReferenceLock.OwnerOfAsync(dbContext, existingId, cancellationToken) : null)
+            ?? customerId;
+        if (held is { } heldId)
+        {
+            await MessagingCustomerReferenceLock.HoldOrVanishAsync(dbContext, tenantId, heldId, cancellationToken);
+        }
+
         var (conversationId, created) = await FindOrCreateAsync(
-            dbContext, tenantId, connectionId, waId, customerId, source, ordered[0].OccurredAt, now, cancellationToken);
+            dbContext, tenantId, connectionId, thread, customerId, source, ordered[0].OccurredAt, now, cancellationToken);
+        MessagingCustomerReferenceLock.EnsureAttachedIsHeld(
+            created ? customerId : await MessagingCustomerReferenceLock.OwnerOfAsync(dbContext, conversationId, cancellationToken) ?? customerId,
+            held);
 
         var changed = created;
         // La marca durable de lo importado (decisión del owner del 2026-10-30): un eco es tráfico en vivo y no la lleva.
@@ -139,10 +165,10 @@ internal static class CoexistenceIngestion
     /// caería en la bandeja y en el triage del embudo. La reabre el contacto cuando escribe en vivo, por el camino de siempre.
     /// <c>Created</c> sólo si esta llamada la insertó.</summary>
     private static async Task<(Guid Id, bool Created)> FindOrCreateAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, string waId, Guid? customerId, CoexistenceSource source,
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, ThreadKey thread, Guid? customerId, CoexistenceSource source,
         DateTimeOffset earliest, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (await ConversationOpener.FindByPhoneAsync(dbContext, tenantId, connectionId, waId, cancellationToken) is { } existing)
+        if (await FindExistingAsync(dbContext, tenantId, connectionId, thread, cancellationToken) is { } existing)
         {
             return (existing, false);
         }
@@ -152,24 +178,57 @@ internal static class CoexistenceIngestion
         var status = nameof(ConversationStatus.Resolved);
         var fromEcho = source == CoexistenceSource.Echo;
         var channel = nameof(ConversationChannel.WhatsApp);
-        // Sin BSUID, el blanco del ON CONFLICT es el índice del teléfono de una fila vieja (IX_conversations_connection_wa_legacy).
-        var inserted = await dbContext.Database.SqlQuery<Guid>(
-            $"""
-            INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, user_id, wa_id, profile_name, customer_id, status, unread_count,
-                                                 last_activity_at, history_managed, imported, started_by_echo, created_at, updated_at, version)
-            VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {waId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {fromHistory}, {fromEcho}, {now}, {now}, 1)
-            ON CONFLICT (connection_id, wa_id) WHERE user_id IS NULL DO NOTHING
-            RETURNING id AS "Value"
-            """).ToListAsync(cancellationToken);
+        List<Guid> inserted;
+        if (thread.UserId is { } userId)
+        {
+            // Un contacto sin teléfono: la clave es el BSUID, sin wa_id (CK_conversations_identity pide uno de los dos), y el blanco del
+            // ON CONFLICT es el índice del BSUID, el mismo de la ingesta en vivo.
+            inserted = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, user_id, wa_id, profile_name, customer_id, status, unread_count,
+                                                     last_activity_at, history_managed, imported, started_by_echo, created_at, updated_at, version)
+                VALUES ({id}, {tenantId}, {connectionId}, {channel}, {userId}, NULL, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {fromHistory}, {fromEcho}, {now}, {now}, 1)
+                ON CONFLICT (connection_id, user_id) WHERE user_id IS NOT NULL DO NOTHING
+                RETURNING id AS "Value"
+                """).ToListAsync(cancellationToken);
+        }
+        else
+        {
+            // Sin BSUID, el blanco del ON CONFLICT es el índice del teléfono de una fila vieja (IX_conversations_connection_wa_legacy).
+            inserted = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, user_id, wa_id, profile_name, customer_id, status, unread_count,
+                                                     last_activity_at, history_managed, imported, started_by_echo, created_at, updated_at, version)
+                VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {thread.WaId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {fromHistory}, {fromEcho}, {now}, {now}, 1)
+                ON CONFLICT (connection_id, wa_id) WHERE user_id IS NULL DO NOTHING
+                RETURNING id AS "Value"
+                """).ToListAsync(cancellationToken);
+        }
+
         if (inserted.Count == 1)
         {
             return (id, true);
         }
 
         // Otra entrega la creó entre el SELECT y el INSERT; el SELECT va en una sentencia aparte, así ve lo commiteado.
-        var raced = await ConversationOpener.FindByPhoneAsync(dbContext, tenantId, connectionId, waId, cancellationToken)
+        var raced = await FindExistingAsync(dbContext, tenantId, connectionId, thread, cancellationToken)
             ?? throw new InvalidOperationException("The conversation that blocked the insert could not be found.");
         return (raced, false);
+    }
+
+    /// <summary>La conversación del hilo: por BSUID si el contacto no tiene teléfono; si no, como siempre, por teléfono.</summary>
+    private static async Task<Guid?> FindExistingAsync(
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, ThreadKey thread, CancellationToken cancellationToken)
+    {
+        if (thread.UserId is not { } userId)
+        {
+            return await ConversationOpener.FindByPhoneAsync(dbContext, tenantId, connectionId, thread.WaId!, cancellationToken);
+        }
+
+        var found = await dbContext.Database.SqlQuery<Guid>(
+            $"""SELECT id AS "Value" FROM messaging.conversations WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND user_id = {userId}""")
+            .ToListAsync(cancellationToken);
+        return found.Count == 1 ? found[0] : null;
     }
 
     private static Task<int> ClearHistoryManagedAsync(

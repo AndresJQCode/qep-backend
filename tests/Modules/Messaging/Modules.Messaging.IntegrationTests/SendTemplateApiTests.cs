@@ -227,4 +227,39 @@ public sealed class SendTemplateApiTests
         Assert.Equal("4|131050", await ScalarAsync<string>(connectionString, "SELECT status || '|' || failure_code FROM messaging.messages WHERE direction = 2"));
         Assert.True(await ScalarAsync<bool>(connectionString, "SELECT marketing_opt_out AND marketing_opt_out_source = 'meta' FROM customers.customers WHERE id = @id", ("id", customerId)));
     }
+    // Spec 2026-11-17: «promo» tiene encabezado IMAGE. Sin imagen guardada no se puede enviar; con ella el chat manda su enlace solo.
+    [Fact]
+    public async Task SendingAnImageTemplateFromTheChatSendsTheStoredLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptSendOk(f.Factory.MetaHandler);
+        const string url = "https://public.test/promo.png";
+        var connectionId = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT connection_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId));
+        var catalogUrl = $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/connections/{connectionId}/templates";
+
+        // La primera lectura llena el espejo desde Meta.
+        var before = (await f.Client.GetFromJsonAsync<JsonElement>(catalogUrl, Ct)).EnumerateArray().Single(item => item.GetProperty("name").GetString() == "promo");
+        Assert.Equal((false, "media_header", JsonValueKind.Null), (
+            before.GetProperty("sendable").GetBoolean(), before.GetProperty("unsupportedReason").GetString(), before.GetProperty("headerImageUrl").ValueKind));
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.message_templates SET header_image_file_id = @file, header_image_url = @url WHERE name = 'promo'",
+            ("file", Guid.CreateVersion7()), ("url", url));
+        var after = (await f.Client.GetFromJsonAsync<JsonElement>(catalogUrl, Ct)).EnumerateArray().Single(item => item.GetProperty("name").GetString() == "promo");
+        Assert.Equal((true, url), (after.GetProperty("sendable").GetBoolean(), after.GetProperty("headerImageUrl").GetString()));
+
+        var response = await SendAsync(f.Client, HttpMethod.Post, TemplateUrl(f),
+            new { clientId = Guid.CreateVersion7(), name = "promo", language = "es", parameters = new Dictionary<string, string>() });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        using var payload = JsonDocument.Parse(send.Body!);
+        var header = payload.RootElement.GetProperty("template").GetProperty("components")[0];
+        var expected = System.Text.Json.Nodes.JsonNode.Parse($$$"""{"type":"header","parameters":[{"type":"image","image":{"link":"{{{url}}}"}}]}""");
+        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(expected, System.Text.Json.Nodes.JsonNode.Parse(header.GetRawText())), header.GetRawText());
+        Assert.Equal($"image|{url}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT details->'template'->'header'->>'type' || '|' || (details->'template'->'header'->>'link') FROM messaging.messages WHERE direction = 2"));
+    }
 }

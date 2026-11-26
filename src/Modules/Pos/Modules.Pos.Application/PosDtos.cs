@@ -7,9 +7,9 @@ namespace Modules.Pos.Application;
 
 public sealed record PosCashierResponse(Guid MemberId, string Name);
 
-public sealed record PosCompanyOption(Guid Id, string Name, string TaxId);
+public sealed record PosCompanyOption(Guid Id, string Name, string TaxId, string DocumentType);
 
-public sealed record PosCompanyHeader(string Name, string TaxId);
+public sealed record PosCompanyHeader(string Name, string TaxId, string DocumentType);
 
 /// <summary>Los tres medios siempre, en cero si no hubo: la pantalla no conoce el enum.</summary>
 public sealed record PosPaymentTotalResponse(string Method, decimal Amount);
@@ -77,7 +77,7 @@ public sealed record PosPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, 
 /// <param name="Code">El <c>Code</c> de la variante.</param>
 /// <param name="Barcode">El código de barras de la variante, si tiene.</param>
 /// <param name="Name">El nombre visible ya armado («Camiseta – M / Azul»; el del producto si no tiene opciones). El carrito y el ticket lo pintan tal cual: el frontend no concatena.</param>
-/// <param name="TaxPercentage">Siempre presente: 0 sin tasa o con tasa inexistente (PosProductRef.TaxPercentage es int), igual que el tipo del frontend. Sólo la línea NotFound del preview lo lleva en null.</param>
+/// <param name="TaxPercentage">Siempre presente: 0 sin tasa o con tasa inexistente (PosProductRef.TaxPercentage es int), igual que el tipo del frontend. Sólo la línea NotFound del preview lo lleva en null. Es la tasa con que cobra la caja abierta: 0 en una caja de empresa sin IVA (spec 2026-11-17 R4).</param>
 /// <param name="UnsellableReason">Inactive, PriceMissing o NotFound (este último sólo en el preview). Un producto no vendible se muestra marcado en vez de esconderse: el cajero escanearía un código existente y vería "no existe".</param>
 public sealed record PosProductResponse(
     Guid VariantId,
@@ -174,9 +174,9 @@ public sealed record PosSaleLineRequest(
 /// <param name="Tendered">Sólo Cash: el billete del cliente.</param>
 public sealed record PosPaymentRequest(string Method, decimal? Amount, decimal? Tendered, string? Reference);
 
-public sealed record PosIssuerResponse(string Name, string TaxId, string? Address, string? Phone);
+public sealed record PosIssuerResponse(string Name, string TaxId, string DocumentType, string? Address, string? Phone);
 
-public sealed record PosCustomerResponse(string Name, string? IdentificationType, string IdentificationNumber);
+public sealed record PosCustomerResponse(string Name, string? IdentificationType, string? IdentificationNumber);
 
 /// <summary>
 /// El selector de la caja (spec «Endpoints nuevos»): sin teléfono, correo, dirección ni clasificación, porque el
@@ -184,7 +184,7 @@ public sealed record PosCustomerResponse(string Name, string? IdentificationType
 /// no puede elegir a un inactivo; en la búsqueda siempre es true.
 /// </summary>
 public sealed record PosCustomerOptionResponse(
-    Guid Id, string Name, string IdentificationType, string IdentificationNumber, bool IsComplete, bool IsActive);
+    Guid Id, string Name, string? IdentificationType, string? IdentificationNumber, bool IsComplete, bool IsActive);
 
 /// <summary>Un selector, no una lista paginada: siempre hasta 20, sin total.</summary>
 public sealed record PosCustomerOptionsResponse(IReadOnlyList<PosCustomerOptionResponse> Items);

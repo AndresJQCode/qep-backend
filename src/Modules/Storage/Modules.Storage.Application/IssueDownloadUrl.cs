@@ -38,6 +38,9 @@ public sealed class IssueDownloadUrlHandler(
                 "storage.file.not_found", "The file resource was not found.");
         }
 
+        // Un adjunto de Soporte se baja sólo por Soporte (support.ticket.view), no con storage.file.read.
+        SystemOwnedFileGuard.EnsureVisibleToMembers(resource);
+
         // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);

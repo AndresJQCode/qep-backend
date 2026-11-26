@@ -53,7 +53,10 @@ public sealed class ListTenantHistoryHandlerTests
             (page.Items[1].Kind, Assert.Single(page.Items[1].Changes)));
         Assert.Null(page.Items[2].ActorEmail);                     // usuario que ya no existe
         Assert.Null(Assert.Single(page.Items[2].Changes).FromStatus);
-        Assert.Equal(2, users.Calls);                              // deduplicado por página
+        // Un solo viaje a Identity por página, con los actores sin repetir.
+        Assert.Equal((1, 0), (users.BatchCalls, users.Calls));
+        Assert.Equal(2, users.Batched.Count);
+        Assert.True(users.Batched.ToHashSet().SetEquals([Andres, Gone]));
     }
 
     // Plan 2026-10-21, Task 3: un lote de proveedor lleva su clave y ModuleKey en null.
@@ -129,6 +132,26 @@ public sealed class ListTenantHistoryHandlerTests
         {
             Calls++;
             return Task.FromResult(emails.GetValueOrDefault(userId));
+        }
+
+        public Task<Guid?> FindUserIdByEmailAsync(string email, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public int BatchCalls { get; private set; }
+
+        public IReadOnlyList<Guid> Batched { get; private set; } = [];
+
+        // Propio y no el de la interfaz, que itera llamando GetEmailAsync: así Calls no cuenta las del lote.
+        public Task<IReadOnlyDictionary<Guid, string>> GetEmailsAsync(
+            IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken)
+        {
+            BatchCalls++;
+            Batched = [.. userIds];
+            IReadOnlyDictionary<Guid, string> found = userIds
+                .Distinct()
+                .Where(emails.ContainsKey)
+                .ToDictionary(userId => userId, userId => emails[userId]);
+            return Task.FromResult(found);
         }
     }
 }

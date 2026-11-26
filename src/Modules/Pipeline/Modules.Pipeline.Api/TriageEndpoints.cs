@@ -28,8 +28,11 @@ internal static class TriageEndpoints
     private static async Task<IResult> DecideAsync(
         Guid tenantId, Guid conversationId, DecideTriageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
-            new DecideTriageCommand(tenantId, conversationId, request.Action, request.Title, request.DismissReasonId), cancellationToken));
+            new DecideTriageCommand(tenantId, conversationId, request.Action, request.Title, request.DismissReasonId, request.CustomerId),
+            cancellationToken));
 }
 
-/// <summary>D29: <c>action</c> es <c>create</c> o <c>dismiss</c>. <c>title</c> opcional (sin él, el nombre del cliente).</summary>
-public sealed record DecideTriageRequest(string? Action, string? Title, Guid? DismissReasonId);
+/// <summary>D29: <c>action</c> es <c>create</c> o <c>dismiss</c>. <c>title</c> opcional (sin él, el nombre de quien recibe el
+/// negocio). <c>customerId</c> opcional (decisión del owner 2026-11-16): el contacto de la conversación o su empresa; sin él, la
+/// empresa si la hay.</summary>
+public sealed record DecideTriageRequest(string? Action, string? Title, Guid? DismissReasonId, Guid? CustomerId = null);

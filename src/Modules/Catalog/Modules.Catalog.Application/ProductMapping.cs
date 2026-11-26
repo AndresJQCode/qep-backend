@@ -14,11 +14,14 @@ namespace Modules.Catalog.Application;
 /// de acá sale <c>CanDelete</c>. Null es «no se consultó» y deja <c>CanDelete</c> en false: ofrecer
 /// «Eliminar» sin saberlo sería prometer un borrado que el PUT puede convertir en
 /// desactivación.</param>
+/// <param name="IncludeCosts">Si el llamador puede leer costos (<see cref="CatalogCostAccess.CanRead"/>). Falso deja
+/// <c>Costs</c> en null, en el detalle y en las variantes del listado con <c>includeVariants</c> (spec 2026-11-19).</param>
 internal sealed record ProductReadLookups(
     Guid TenantId,
     IReadOnlyDictionary<Guid, OptionDefinition> Options,
     IReadOnlyDictionary<Guid, ProductImageRef> Images,
-    IReadOnlySet<Guid>? UsedVariantIds = null)
+    IReadOnlySet<Guid>? UsedVariantIds = null,
+    bool IncludeCosts = false)
 {
     /// <summary>Sin nombres de opción ni URLs: para quien mapea en memoria (pruebas).</summary>
     public static ProductReadLookups Empty(Guid tenantId) =>
@@ -53,11 +56,15 @@ internal static class ProductMapping
             product.Id.Value,
             product.Name,
             product.IsActive,
+            product.VisibleInStore,
+            product.ExternalSource,
             product.Description,
             product.ImageFileId,
             mainImageUrl,
             product.TaxRateId?.Value,
             product.CategoryId?.Value,
+            product.Kind.ToString(),
+            product.SalesUnit.ToString(),
             OptionsOf(product, lookups),
             product.Variants
                 .Select(variant => ToResponse(product, variant, galleryById, valueNames, mainImageUrl, lookups))
@@ -95,6 +102,7 @@ internal static class ProductMapping
         IOptionDefinitionRepository optionRepository,
         IVariantUsageChecker? usageChecker,
         Guid tenantId,
+        bool includeCosts,
         CancellationToken cancellationToken)
     {
         var materialized = products as IReadOnlyList<Product> ?? products.ToArray();
@@ -109,6 +117,7 @@ internal static class ProductMapping
             UsedVariantIds = usageChecker is null
                 ? new HashSet<Guid>()
                 : await usageChecker.FindUsedAsync(tenantId, variantIds, cancellationToken),
+            IncludeCosts = includeCosts,
         };
 
         return materialized.Select(product => product.ToDto(lookups)).ToArray();
@@ -214,8 +223,13 @@ internal static class ProductMapping
             variant.IsActive,
             // Spec §3.3: sin líneas que la vendan se puede borrar (omitiéndola del PUT); con
             // líneas, el PUT la desactiva. Ver ProductVariantResponse.
-            CanDelete: lookups.CanDelete(variant.Id.Value));
+            CanDelete: lookups.CanDelete(variant.Id.Value),
+            Costs: lookups.IncludeCosts ? CostsOf(variant) : null);
     }
+
+    // Same catalogue order as the prices; empty (not null) when the variant has no cost.
+    private static Dictionary<string, decimal> CostsOf(ProductVariant variant) =>
+        InCatalogueOrder(variant.Costs.Select(cost => KeyValuePair.Create(cost.Currency, cost.Amount)));
 
     // Catalogue order (spec D10), not insertion order: the form and the product table paint one
     // column per currency in that order.
@@ -306,6 +320,11 @@ internal static class ProductMapping
                     scale.Restriction, scale.Multiple, scale.AllowGrouping, prices))
                 .ToArray(),
             variant.PackagingUnits.ToArray(),
-            variant.GalleryFileId is { } fileId ? lookups.UrlOf(fileId) : mainImageUrl);
+            variant.GalleryFileId is { } fileId ? lookups.UrlOf(fileId) : mainImageUrl,
+            // Same rule and order as the detail (ToResponse/CostsOf): the permission decides, not whether the reading
+            // happened to load them; a reader with a variant without costs gets {}.
+            Costs: lookups.IncludeCosts
+                ? InCatalogueOrder(variant.Costs ?? new Dictionary<string, decimal>())
+                : null);
     }
 }

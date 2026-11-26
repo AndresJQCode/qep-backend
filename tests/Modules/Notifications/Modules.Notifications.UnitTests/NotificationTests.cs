@@ -46,6 +46,36 @@ public sealed class NotificationTests
     }
 
     [Fact]
+    public void AnonymizeRecipientClearsTheAddressAndTheRecipientButKeepsTheStatus()
+    {
+        var notification = Notification.CreateEmail(
+            null, Guid.CreateVersion7(), "person@example.com", "buyers.verification.v1", Now);
+        notification.MarkSent(Now);
+
+        notification.AnonymizeRecipient();
+
+        Assert.Equal(Guid.Empty, notification.RecipientId);
+        Assert.Equal(string.Empty, notification.RecipientAddress);
+        Assert.Equal(NotificationStatus.Sent, notification.Status);
+        Assert.Equal("buyers.verification.v1", notification.TemplateRef);
+    }
+
+    [Fact]
+    public void EveryBuyerTemplateSharesThePrefixTheDeletionAnonymizes()
+    {
+        string[] refs =
+        [
+            BuyerVerificationEmailTemplate.TemplateRef,
+            BuyerExistingAccountEmailTemplate.TemplateRef,
+            BuyerPasswordResetEmailTemplate.TemplateRef,
+            BuyerAccountDeletedEmailTemplate.TemplateRef,
+        ];
+
+        Assert.All(refs, value => Assert.StartsWith(
+            BuyerAccountDeletedEmailTemplate.BuyerTemplateRefPrefix, value, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void InvitationTemplateRendersRecipientAndInvitationLink()
     {
         var message = InvitationEmailTemplate.Render(

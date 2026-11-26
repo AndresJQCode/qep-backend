@@ -25,12 +25,16 @@ internal sealed class QuotationCompanyLookup(ICompanyRepository repository)
                 company.Id.Value,
                 company.Name,
                 company.TaxId,
+                company.DocumentType.ToWire(),
+                company.Country,
                 company.IsActive,
                 company.Address,
                 company.Phone,
                 company.BankAccounts
                     .Select(account => new QuotationCompanyAccountRef(
                         account.BankName, account.AccountNumber, account.Currency))
-                    .ToArray());
+                    .ToArray(),
+                company.CityId,
+                company.ChargesVat);
     }
 }

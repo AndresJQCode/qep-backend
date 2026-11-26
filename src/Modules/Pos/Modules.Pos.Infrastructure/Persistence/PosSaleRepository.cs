@@ -62,7 +62,8 @@ internal sealed class PosSaleRepository(PosDbContext dbContext) : IPosSaleReposi
         if (!string.IsNullOrWhiteSpace(filter.CustomerDocument))
         {
             var document = ContainsPattern(filter.CustomerDocument.Trim());
-            query = query.Where(sale => EF.Functions.ILike(sale.CustomerIdentificationNumber, document, LikeEscapeCharacter));
+            // Una venta sin número (cliente sin documento, spec 2026-11-09) da NULL en ILIKE y queda fuera del filtro.
+            query = query.Where(sale => EF.Functions.ILike(sale.CustomerIdentificationNumber!, document, LikeEscapeCharacter));
         }
 
         var total = await query.CountAsync(cancellationToken);

@@ -47,7 +47,8 @@ public static class SupplierPaging
 public sealed class ListSuppliersHandler(
     ISupplierRepository repository,
     ISupplierGeographyLookup geographyLookup,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ISupplierRelationshipLookup relationships)
     : IQueryHandler<ListSuppliersQuery, SupplierPage>
 {
     public async Task<SupplierPage> HandleAsync(
@@ -75,8 +76,20 @@ public sealed class ListSuppliersHandler(
             ? new Dictionary<Guid, SupplierCityRef>()
             : await geographyLookup.FindCitiesAsync(cityIds, cancellationToken);
 
+        // Mayorista fase 3 (adenda): el estado de la relación con cada mayorista de la página, en una consulta.
+        var wholesalerIds = suppliers
+            .Where(supplier => supplier.LinkedTenantId is not null)
+            .Select(supplier => supplier.LinkedTenantId!.Value)
+            .Distinct()
+            .ToArray();
+        IReadOnlyDictionary<Guid, string> statuses = wholesalerIds.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await relationships.FindStatusesAsync(query.TenantId, wholesalerIds, cancellationToken);
+
         var items = suppliers
-            .Select(supplier => supplier.ToListItem(ResolveCity(citiesById, supplier)))
+            .Select(supplier => supplier.ToListItem(
+                ResolveCity(citiesById, supplier),
+                supplier.LinkedTenantId is { } linked ? statuses.GetValueOrDefault(linked) : null))
             .ToArray();
 
         return new SupplierPage(items, total, page, pageSize);

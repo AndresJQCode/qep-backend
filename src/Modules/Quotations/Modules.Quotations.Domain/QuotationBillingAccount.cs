@@ -14,19 +14,62 @@ namespace Modules.Quotations.Domain;
 /// referencia entre módulos.
 ///
 /// Nulo es válido y es el estado inicial: una cotización en borrador todavía no eligió con qué
-/// cuenta se cobra, y <c>EnsureSendable</c> no lo exige a propósito. Quien sí lo exige es
-/// <c>EnsureConvertibleToOrder</c>: un pedido tiene que decir a dónde se paga.
+/// empresa se emite, y se puede guardar así. Lo exigen <c>EnsureSendable</c> (spec impuestos por tipo
+/// §7.7: sin empresa no hay país, y sin país no se sabe qué retenciones aplican) y
+/// <c>EnsureConvertibleToOrder</c> (un pedido tiene que decir quién lo emite).
+///
+/// <b>Empresa sin cuenta</b> (spec 2026-11-17 §4.2, R3): <see cref="BankName"/> y <see cref="AccountNumber"/>
+/// nulos los dos. Es un estado guardable —la empresa emite, la cuenta todavía no se definió—, y la moneda
+/// (<see cref="Currency"/>) la decide quien arma la cuenta, porque ya no sale de una cuenta.
 /// </summary>
 public sealed record QuotationBillingAccount
 {
     public required Guid CompanyId { get; init; }
 
-    public required string BankName { get; init; }
+    /// <summary>Null, junto con <see cref="AccountNumber"/>, en una empresa sin cuenta.</summary>
+    public required string? BankName { get; init; }
 
-    public required string AccountNumber { get; init; }
+    /// <summary>Null, junto con <see cref="BankName"/>, en una empresa sin cuenta.</summary>
+    public required string? AccountNumber { get; init; }
 
     /// <summary>Código ISO 4217 de tres letras, en mayúsculas.</summary>
     public required string Currency { get; init; }
+
+    /// <summary>
+    /// El país de la empresa (ISO 3166-1 alfa-2, en mayúsculas), congelado con la cuenta (plan P1): decide qué
+    /// retenciones aplican (spec §7.5) y los montos se recalculan en cada edición, sin poder ir a Companies.
+    /// Null en una cuenta armada sin él; ahí no aplica ninguna retención.
+    /// </summary>
+    public string? Country { get; init; }
+
+    /// <summary>
+    /// El municipio de la empresa (spec ReteICA por empresa §7.5), congelado con la cuenta: es el municipio de la
+    /// operación por defecto (A6). Null en un documento anterior a este trabajo, hasta que el cuerpo vuelva a traer la
+    /// cuenta, y en una empresa sin municipio.
+    /// </summary>
+    public Guid? CityId { get; init; }
+
+    /// <summary>
+    /// Si la empresa emisora cobra IVA (spec 2026-11-17 §5.2), congelado con la cuenta como el país y el municipio:
+    /// cambiar después la empresa no cambia un documento ya emitido. Lo efectivo de cada línea es
+    /// <c>ChargesVat ? tasa del producto : 0</c>.
+    /// </summary>
+    public bool ChargesVat { get; init; } = true;
+
+    /// <summary>
+    /// La columna de <see cref="ChargesVat"/>, sólo para la persistencia. En <c>quotations.quotations</c> es nullable (el owned
+    /// es opcional) y un pod sin esta columna —el anterior durante un rollout, o un rollback— escribe una cotización con empresa
+    /// y la deja en <c>NULL</c>. Un <c>NULL</c> se lee como <c>true</c>: hasta el spec 2026-11-17 toda empresa cobraba IVA.
+    /// Sin esto, materializar el <c>bool</c> desde el <c>NULL</c> lanzaba y la cotización no se podía abrir.
+    /// </summary>
+    private bool? StoredChargesVat
+    {
+        get => ChargesVat;
+        init => ChargesVat = value ?? true;
+    }
+
+    /// <summary>Si hay cuenta bancaria, o sólo empresa (R3). No tiene columna.</summary>
+    public bool HasBankAccount => BankName is not null;
 
     // Espejan los anchos de companies.company_bank_accounts: esto es una copia de esa fila y no
     // puede aceptar más de lo que el original acepta.
@@ -36,32 +79,46 @@ public sealed record QuotationBillingAccount
 
     public const int CurrencyLength = 3;
 
-    internal QuotationBillingAccount Normalized() => new()
+    public const int CountryLength = 2;
+
+    internal QuotationBillingAccount Normalized()
     {
-        CompanyId = CompanyId == Guid.Empty
+        var companyId = CompanyId == Guid.Empty
             ? throw new QuotationsDomainException(
                 "quotation.billing.company_required",
                 "The billing company is required.")
-            : CompanyId,
-        BankName = NormalizeRequired(
-            BankName,
-            BankNameMaxLength,
-            "quotation.billing.bank_name_required",
-            "The billing bank name is required.",
-            "quotation.billing.bank_name_too_long",
-            $"The billing bank name cannot exceed {BankNameMaxLength} characters."),
-        AccountNumber = NormalizeRequired(
-            AccountNumber,
-            AccountNumberMaxLength,
-            "quotation.billing.account_number_required",
-            "The billing account number is required.",
-            "quotation.billing.account_number_too_long",
-            $"The billing account number cannot exceed {AccountNumberMaxLength} characters."),
-        Currency = NormalizeCurrency(Currency)
-    };
+            : CompanyId;
+
+        // Banco y número en blanco los dos es «empresa sin cuenta» (R3); sólo uno de los dos sigue siendo el error de hoy
+        // del que falta, porque una cuenta a medias no dice a dónde se paga.
+        var withoutAccount = string.IsNullOrWhiteSpace(BankName) && string.IsNullOrWhiteSpace(AccountNumber);
+
+        return new QuotationBillingAccount
+        {
+            CompanyId = companyId,
+            BankName = withoutAccount ? null : NormalizeRequired(
+                BankName,
+                BankNameMaxLength,
+                "quotation.billing.bank_name_required",
+                "The billing bank name is required.",
+                "quotation.billing.bank_name_too_long",
+                $"The billing bank name cannot exceed {BankNameMaxLength} characters."),
+            AccountNumber = withoutAccount ? null : NormalizeRequired(
+                AccountNumber,
+                AccountNumberMaxLength,
+                "quotation.billing.account_number_required",
+                "The billing account number is required.",
+                "quotation.billing.account_number_too_long",
+                $"The billing account number cannot exceed {AccountNumberMaxLength} characters."),
+            Currency = NormalizeCurrency(Currency),
+            Country = string.IsNullOrWhiteSpace(Country) ? null : Country.Trim().ToUpperInvariant(),
+            CityId = CityId,
+            ChargesVat = ChargesVat,
+        };
+    }
 
     private static string NormalizeRequired(
-        string value,
+        string? value,
         int maxLength,
         string requiredCode,
         string requiredMessage,

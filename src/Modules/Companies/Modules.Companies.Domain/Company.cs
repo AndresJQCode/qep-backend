@@ -20,7 +20,14 @@ public sealed class Company
 
     public const int TaxIdMaxLength = 32;
 
+    public const int CountryLength = 2;
+
+    public const int CityNameMaxLength = 120;
+
+    public const string ColombiaCountryCode = "CO";
+
     private readonly List<CompanyBankAccount> _bankAccounts = [];
+    private readonly List<CompanyTaxRate> _withholdingTaxRates = [];
 
     // EF Core materializa por aca. El codigo nunca construye el agregado asi: Create es el unico
     // punto de entrada, y es el que hace cumplir los invariantes.
@@ -28,6 +35,7 @@ public sealed class Company
     {
         Name = string.Empty;
         TaxId = string.Empty;
+        Country = string.Empty;
     }
 
     private Company(
@@ -36,17 +44,27 @@ public sealed class Company
         string name,
         IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
-        Guid cityId,
+        string country,
+        CompanyDocumentType documentType,
+        Guid? cityId,
+        string? cityName,
         CompanyContactInfo contact,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool chargesVat,
+        Guid? regionId)
     {
         Id = id;
         TenantId = tenantId;
         Name = name;
         TaxId = taxId;
+        Country = country;
+        DocumentType = documentType;
         CityId = cityId;
+        CityName = cityName;
+        RegionId = regionId;
         _bankAccounts.AddRange(bankAccounts);
         Apply(contact);
+        ChargesVat = chargesVat;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -60,7 +78,9 @@ public sealed class Company
     public string Name { get; private set; }
 
     /// <summary>
-    /// Las cuentas bancarias de la empresa, en el orden en que se cargaron. **Al menos una.**
+    /// Las cuentas bancarias de la empresa, en el orden en que se cargaron. **Pueden ser cero**
+    /// (spec 2026-11-17 §4.1): una empresa nueva todavía no tiene cuenta, y un cobro por tarjeta o
+    /// pasarela no la necesita. El tope es <see cref="CompanyBankAccount.MaxPerCompany"/>.
     ///
     /// La unicidad vive dentro de la empresa —la misma terna banco/numero/moneda no se carga dos
     /// veces— y no en un indice de base. Es invariante del agregado: la coleccion entera se
@@ -72,11 +92,26 @@ public sealed class Company
     public IReadOnlyList<CompanyBankAccount> BankAccounts => _bankAccounts;
 
     /// <summary>
-    /// NIT. **No es unico todavia.** Un NIT repetido en dos empresas del mismo tenant puede ser un
-    /// error de datos o una sucursal — nadie lo decidio. Si el gate del modulo lo cierra en
-    /// "unico", es un indice unico **con su propio codigo de dominio**.
+    /// Las tasas municipales (ReteICA) que la empresa aplica, una por municipio y tipo (spec ReteICA por empresa §7.3). Que
+    /// cada id sea una tasa municipal activa del país de la empresa lo valida Application contra Catalog; el agregado sólo
+    /// guarda el conjunto.
+    /// </summary>
+    public IReadOnlyCollection<Guid> WithholdingTaxRateIds =>
+        _withholdingTaxRates.Select(rate => rate.TaxRateId).ToArray();
+
+    /// <summary>
+    /// Número del documento, cuyo tipo es <see cref="DocumentType"/>. **No es unico todavia.** Un
+    /// número repetido en dos empresas del mismo tenant puede ser un error de datos o una
+    /// sucursal — nadie lo decidio. Si el gate del modulo lo cierra en "unico", es un indice
+    /// unico **con su propio codigo de dominio**.
     /// </summary>
     public string TaxId { get; private set; }
+
+    /// <summary>País de la empresa: código ISO 3166-1 alfa-2 en mayúsculas.</summary>
+    public string Country { get; private set; }
+
+    /// <summary>Tipo del documento de <see cref="TaxId"/>; depende del país.</summary>
+    public CompanyDocumentType DocumentType { get; private set; }
 
     /// <summary>
     /// FK a <c>geography.cities(id)</c>, tipada como <see cref="Guid"/> plano y no como el
@@ -86,10 +121,29 @@ public sealed class Company
     /// garantiza la FK de base (agregada a mano en la migración, ver
     /// <c>CompaniesDbContext.ConfigureCompany</c>) más la resolución previa contra
     /// <c>ICompanyGeographyLookup</c> en el handler — acá sólo se comprueba que no venga vacía.
+    /// Sólo para Colombia; nula en el extranjero.
     /// </summary>
-    public Guid CityId { get; private set; }
+    public Guid? CityId { get; private set; }
+
+    /// <summary>Ciudad escrita a mano, sólo para empresas fuera de Colombia; nula en Colombia.</summary>
+    public string? CityName { get; private set; }
+
+    /// <summary>
+    /// La región (provincia) del domicilio, referencia blanda a <c>geography.regions</c> (sin FK entre esquemas, igual que
+    /// <see cref="CityId"/>). Sólo para una empresa de un país con catálogo de regiones distinto de Colombia; nula en
+    /// Colombia, que deriva el departamento de <see cref="CityId"/>. Que la región exista y sea del país lo comprueba el
+    /// handler contra Geography; el dominio sólo garantiza el carril.
+    /// </summary>
+    public Guid? RegionId { get; private set; }
 
     public bool IsActive { get; private set; }
+
+    /// <summary>
+    /// Si la empresa cobra IVA (spec 2026-11-17 §5.1). Lo que emite una empresa que no lo cobra va
+    /// al 0 % en líneas y envío, y el cliente paga el precio de lista. Cada documento congela su
+    /// propia copia al elegir la empresa: cambiarlo acá no toca lo ya emitido.
+    /// </summary>
+    public bool ChargesVat { get; private set; } = true;
 
     public string? Phone { get; private set; }
 
@@ -120,30 +174,52 @@ public sealed class Company
         string name,
         IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
-        Guid cityId,
+        string country,
+        CompanyDocumentType documentType,
+        Guid? cityId,
+        string? cityName,
         CompanyContactInfo contact,
-        DateTimeOffset occurredAt) =>
-        new(
+        DateTimeOffset occurredAt,
+        bool chargesVat = true,
+        Guid? regionId = null)
+    {
+        var normalizedCountry = NormalizeCountry(country);
+        EnsureDocumentTypeAllowed(normalizedCountry, documentType);
+        var location = EnsureValidLocation(normalizedCountry, cityId, cityName, regionId);
+
+        return new Company(
             id,
             tenantId,
             NormalizeName(name),
             NormalizeBankAccounts(bankAccounts),
             NormalizeTaxId(taxId),
-            EnsureValidCityId(cityId),
+            normalizedCountry,
+            documentType,
+            location.CityId,
+            location.CityName,
             contact,
-            occurredAt);
+            occurredAt,
+            chargesVat,
+            location.RegionId);
+    }
 
     /// <summary>
     /// Reemplaza el recurso entero, coleccion de cuentas incluida: lo que no viene en el cuerpo se
-    /// **quita**.
+    /// **quita**. <paramref name="chargesVat"/> es obligatorio acá: decidir qué hace un cuerpo sin
+    /// el campo (conservar) es del handler, no del agregado.
     /// </summary>
     public void Update(
         string name,
         IReadOnlyCollection<CompanyBankAccount> bankAccounts,
         string taxId,
-        Guid cityId,
+        string country,
+        CompanyDocumentType documentType,
+        Guid? cityId,
+        string? cityName,
         CompanyContactInfo contact,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool chargesVat,
+        Guid? regionId = null)
     {
         EnsureActive();
 
@@ -156,15 +232,22 @@ public sealed class Company
         var normalizedName = NormalizeName(name);
         var normalizedAccounts = NormalizeBankAccounts(bankAccounts);
         var normalizedTaxId = NormalizeTaxId(taxId);
-        var normalizedCityId = EnsureValidCityId(cityId);
+        var normalizedCountry = NormalizeCountry(country);
+        EnsureDocumentTypeAllowed(normalizedCountry, documentType);
+        var location = EnsureValidLocation(normalizedCountry, cityId, cityName, regionId);
         var normalizedContact = contact.Normalized();
 
         Name = normalizedName;
         TaxId = normalizedTaxId;
-        CityId = normalizedCityId;
+        Country = normalizedCountry;
+        DocumentType = documentType;
+        CityId = location.CityId;
+        CityName = location.CityName;
+        RegionId = location.RegionId;
         _bankAccounts.Clear();
         _bankAccounts.AddRange(normalizedAccounts);
         Assign(normalizedContact);
+        ChargesVat = chargesVat;
         Version++;
         UpdatedAt = occurredAt;
     }
@@ -216,6 +299,39 @@ public sealed class Company
         UpdatedAt = occurredAt;
     }
 
+    /// <summary>
+    /// Reemplaza las tasas municipales de la empresa. Deduplica; <see cref="Guid.Empty"/> se rechaza. Sube la versión y
+    /// devuelve <c>true</c> sólo si el conjunto cambió: guardar lo mismo no es un cambio (mismo criterio que
+    /// <c>Customer.SetWithholdingTaxRates</c>).
+    /// </summary>
+    public bool SetWithholdingTaxRates(IReadOnlyCollection<Guid> taxRateIds, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(taxRateIds);
+        if (taxRateIds.Any(id => id == Guid.Empty))
+        {
+            throw new CompaniesDomainException(
+                "companies.company.withholding_tax_rate_invalid",
+                "A withholding tax rate id cannot be empty.");
+        }
+
+        var wanted = taxRateIds.ToHashSet();
+        if (wanted.SetEquals(_withholdingTaxRates.Select(rate => rate.TaxRateId)))
+        {
+            return false;
+        }
+
+        _withholdingTaxRates.RemoveAll(rate => !wanted.Contains(rate.TaxRateId));
+        var kept = _withholdingTaxRates.Select(rate => rate.TaxRateId).ToHashSet();
+        foreach (var id in wanted.Where(id => !kept.Contains(id)))
+        {
+            _withholdingTaxRates.Add(new CompanyTaxRate(TenantId, id));
+        }
+
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
     private void EnsureActive()
     {
         if (!IsActive)
@@ -227,8 +343,8 @@ public sealed class Company
     }
 
     /// <summary>
-    /// Normaliza cada cuenta y hace cumplir los invariantes de la coleccion: cuantas hay y que no
-    /// se repitan.
+    /// Normaliza cada cuenta y hace cumplir los invariantes de la coleccion: el tope y que no se
+    /// repitan. Cero cuentas es válido (spec 2026-11-17 §4.1).
     ///
     /// El orden importa. Los duplicados se buscan sobre las cuentas **ya normalizadas**, porque
     /// sobre las crudas " CTA-1" y "CTA-1" pasan como dos. Y el tope se comprueba antes de
@@ -238,13 +354,6 @@ public sealed class Company
     private static List<CompanyBankAccount> NormalizeBankAccounts(
         IReadOnlyCollection<CompanyBankAccount> bankAccounts)
     {
-        if (bankAccounts.Count == 0)
-        {
-            throw new CompaniesDomainException(
-                "companies.company.bank_accounts_required",
-                "The company needs at least one bank account.");
-        }
-
         if (bankAccounts.Count > CompanyBankAccount.MaxPerCompany)
         {
             throw new CompaniesDomainException(
@@ -291,16 +400,74 @@ public sealed class Company
             "companies.company.tax_id_too_long",
             $"The company tax id cannot exceed {TaxIdMaxLength} characters.");
 
-    // Mismo criterio que Customer.EnsureValidCityId: acá sólo se comprueba que no venga vacía.
-    // Que la fila exista es responsabilidad del handler, que resuelve contra
-    // ICompanyGeographyLookup *antes* de llegar hasta acá — el dominio no puede llamar a
-    // Geography para confirmarlo él mismo.
-    private static Guid EnsureValidCityId(Guid cityId) =>
-        cityId == Guid.Empty
+    // Dos letras ASCII, en mayúsculas. No se valida contra la lista ISO: el catálogo de países es
+    // del frontend y el backend solo necesita que el código tenga la forma de uno.
+    private static string NormalizeCountry(string country)
+    {
+        var trimmed = country?.Trim().ToUpperInvariant() ?? string.Empty;
+
+        return trimmed.Length == CountryLength && trimmed.All(c => c is >= 'A' and <= 'Z')
+            ? trimmed
+            : throw new CompaniesDomainException(
+                "companies.company.country_invalid",
+                "The country must be a two-letter ISO code.");
+    }
+
+    private static void EnsureDocumentTypeAllowed(string country, CompanyDocumentType documentType)
+    {
+        if (!CompanyDocumentTypes.AllowedFor(country).Contains(documentType))
+        {
+            throw new CompaniesDomainException(
+                "companies.company.document_type_not_allowed",
+                $"The document type {documentType.ToWire()} is not allowed for country {country}.");
+        }
+    }
+
+    // Una empresa colombiana se queda sin CityName y una de afuera sin CityId: guardar los dos
+    // dejaría dos respuestas a «dónde está» sin nada que diga cuál gana. Para Colombia el chequeo
+    // es mínimo (no vacía): que la fila exista es del handler, que resuelve contra
+    // ICompanyGeographyLookup antes de llegar acá — el dominio no puede llamar a Geography.
+    // Mismo criterio que Supplier.EnsureValidLocation.
+    private static (Guid? CityId, string? CityName, Guid? RegionId) EnsureValidLocation(
+        string country,
+        Guid? cityId,
+        string? cityName,
+        Guid? regionId)
+    {
+        // Guid.Empty es un id roto del cliente HTTP, no una región: cuenta como ausente.
+        var normalizedRegion = regionId == Guid.Empty ? null : regionId;
+
+        if (country == ColombiaCountryCode)
+        {
+            // Red del dominio: el validador ya rechaza la región con CO con un error por campo.
+            if (normalizedRegion is not null)
+            {
+                throw new CompaniesDomainException(
+                    "companies.company.region_lane_invalid",
+                    "A Colombian company takes its region from the city, not from a region id.");
+            }
+
+            return cityId is { } id && id != Guid.Empty
+                ? (id, null, null)
+                : throw new CompaniesDomainException(
+                    "companies.company.city_required",
+                    "The city is required.");
+        }
+
+        var trimmed = cityName?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            throw new CompaniesDomainException(
+                "companies.company.city_name_required",
+                "The city name is required for a company outside Colombia.");
+        }
+
+        return trimmed.Length > CityNameMaxLength
             ? throw new CompaniesDomainException(
-                "companies.company.city_required",
-                "The city is required.")
-            : cityId;
+                "companies.company.city_name_too_long",
+                $"The city name cannot exceed {CityNameMaxLength} characters.")
+            : (null, trimmed, normalizedRegion);
+    }
 
     private static string Normalize(
         string value,

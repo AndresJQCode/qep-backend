@@ -41,7 +41,7 @@ public sealed class PosCustomerApiTests
     private static string CustomersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/customers";
 
     private static async Task<Guid> CreateCompleteCustomerAsync(
-        HttpClient customers, Guid tenantId, string name, string number, Guid? classificationId = null)
+        HttpClient customers, Guid tenantId, string name, string? number, Guid? classificationId = null)
     {
         var cityId = await EnsureCityIdAsync(customers);
         classificationId ??= await CreateClassificationAsync(customers, tenantId);
@@ -50,7 +50,7 @@ public sealed class PosCustomerApiTests
             new
             {
                 name,
-                identificationType = "CC",
+                identificationType = number is null ? null : "CC",
                 identificationNumber = number,
                 phone = "310 935 2187",
                 email = "compras@verde.co",
@@ -91,7 +91,7 @@ public sealed class PosCustomerApiTests
         new { name, identificationType = "CC", identificationNumber = number, phone = (string?)null };
 
     [Fact]
-    public async Task TheCashierSearchesOnlyActiveCustomersWithDocument()
+    public async Task TheCashierSearchesActiveCustomersWithDocumentOrComplete()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -103,20 +103,112 @@ public sealed class PosCustomerApiTests
         var inactive = await CreateCompleteCustomerAsync(arranged.Customers, tenantId, "Pedro Inactivo", "5566778899", classification);
         (await arranged.Customers.PostAsync($"{CustomersUrl(tenantId)}/{inactive}/deactivate", null, TestContext.Current.CancellationToken))
             .EnsureSuccessStatusCode();
+        // Spec 2026-11-09: con el documento opcional al guardar, el padrón tiene clientes completos sin él.
+        await SetTenantCustomerFieldPolicyAsync(database, tenantId, false, false, false, false);
+        var withoutDocument = await CreateCompleteCustomerAsync(arranged.Customers, tenantId, "Sin Documento SA", null, classification);
+        // De vuelta a la política por defecto: con el documento no exigido al facturar la caja también lista a los
+        // incompletos sin documento (incluido el de WhatsApp); un completo sin documento se lista con cualquier política.
+        await SetTenantCustomerFieldPolicyAsync(database, tenantId, true, true, true, true);
 
         var response = await arranged.Cashier.GetAsync($"{arranged.World.Url}/customers?search=", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
-        var item = Assert.Single(body.GetProperty("items").EnumerateArray());
-        Assert.Equal(complete, item.GetProperty("id").GetGuid());
+        var items = body.GetProperty("items").EnumerateArray().ToList();
+        // Ni el de WhatsApp (incompleto, sin documento) ni el inactivo.
+        Assert.Equal(
+            new[] { complete, withoutDocument }.Order(),
+            items.Select(item => item.GetProperty("id").GetGuid()).Order());
+        var item = items.Single(candidate => candidate.GetProperty("id").GetGuid() == complete);
         Assert.Equal("Verde Esencial", item.GetProperty("name").GetString());
+        Assert.Equal("1020304050", item.GetProperty("identificationNumber").GetString());
         Assert.True(item.GetProperty("isComplete").GetBoolean());
         Assert.True(item.GetProperty("isActive").GetBoolean());
         // El cajero no tiene el padrón: ni teléfono, ni correo, ni dirección.
         Assert.Equal(
             ["id", "identificationNumber", "identificationType", "isActive", "isComplete", "name"],
             item.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        var bare = items.Single(candidate => candidate.GetProperty("id").GetGuid() == withoutDocument);
+        Assert.Equal(JsonValueKind.Null, bare.GetProperty("identificationType").ValueKind);
+        Assert.Equal(JsonValueKind.Null, bare.GetProperty("identificationNumber").ValueKind);
+        Assert.True(bare.GetProperty("isComplete").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TheCashierQuickCreatesACustomerWithoutDocumentWhenAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database);
+        var tenantId = arranged.World.Tenant.TenantId;
+        await SetTenantCustomerFieldPolicyAsync(database, tenantId, false, false, false, false);
+
+        var response = await arranged.Cashier.PostAsJsonAsync(
+            $"{arranged.World.Url}/customers",
+            new { name = "Laura Gómez", identificationType = (string?)null, identificationNumber = (string?)null, phone = "3001234567" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("Laura Gómez", body.GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("identificationType").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("identificationNumber").ValueKind);
+        Assert.False(body.GetProperty("isComplete").GetBoolean());
+    }
+
+    // Spec 2026-11-09 (final review): un tenant que no exige el documento al facturar le vende a un cliente incompleto sin
+    // documento, así que la caja tiene que poder volver a encontrarlo; si no, cada visita es otra alta rápida. Con la
+    // política por defecto la caja no le puede vender, y el selector sigue sin listarlo.
+    [Fact]
+    public async Task TheCashierFindsAQuickCreatedCustomerWithoutDocumentOnlyWhenTheTenantDoesNotBillTheDocument()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database);
+        var tenantId = arranged.World.Tenant.TenantId;
+        await SetTenantCustomerFieldPolicyAsync(database, tenantId, false, false, false, false);
+        var created = await arranged.Cashier.PostAsJsonAsync(
+            $"{arranged.World.Url}/customers",
+            new { name = "Laura Gómez", identificationType = (string?)null, identificationNumber = (string?)null, phone = "3001234567" },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
+
+        var relaxed = await SearchIdsAsync(arranged.Cashier, $"{arranged.World.Url}/customers?search=Laura");
+        await SetTenantCustomerFieldPolicyAsync(database, tenantId, true, true, true, true);
+        var byDefault = await SearchIdsAsync(arranged.Cashier, $"{arranged.World.Url}/customers?search=Laura");
+
+        Assert.Equal([id], relaxed);
+        Assert.Empty(byDefault);
+    }
+
+    private static async Task<List<Guid>> SearchIdsAsync(HttpClient cashier, string url)
+    {
+        var response = await cashier.GetAsync(url, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        return [.. body.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetGuid())];
+    }
+
+    [Fact]
+    public async Task TheCashierQuickCreateWithoutDocumentIsRejectedByDefault()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database);
+
+        var response = await arranged.Cashier.PostAsJsonAsync(
+            $"{arranged.World.Url}/customers",
+            new { name = "Laura Gómez", identificationType = (string?)null, identificationNumber = (string?)null, phone = (string?)null },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("customers.customer.identification_required", problem.GetProperty("code").GetString());
+        var errors = problem.GetProperty("errors");
+        Assert.Equal(
+            ["IdentificationNumber", "IdentificationType"],
+            errors.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
     }
 
     [Fact]

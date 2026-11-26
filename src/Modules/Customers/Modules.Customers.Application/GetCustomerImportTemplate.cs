@@ -46,7 +46,7 @@ public sealed class GetCustomerImportTemplateHandler(
         var content = templateBuilder.Build(
             departmentOptions,
             activeClassificationNames,
-            IdentificationTypeParser.SupportedWireValues,
+            ExcelCustomerRowRules.IdentificationTypes,
             cancellationToken);
         return new CustomerImportTemplateFile(content, FileName);
     }

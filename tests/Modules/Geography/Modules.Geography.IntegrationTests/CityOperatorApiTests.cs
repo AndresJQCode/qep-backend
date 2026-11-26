@@ -628,8 +628,11 @@ public sealed class CityOperatorApiTests
         Assert.Empty(await OutboxAsync(factory));
     }
 
+    private static readonly string[] CorrectedEventFields =
+        ["synonymId", "departmentId", "previousCityId", "cityId", "operatorSubjectId", "operatorTenantId", "occurredAt"];
+
     // El literal de «Contrato de eventos» del plan: lo que Geography escribe aquí es lo que Shopify lee por nombre
-    // (CitySynonymEventPayloads). Los nombres, su orden y los valores, con la ciudad anterior.
+    // (CitySynonymEventPayloads). Los nombres y los valores, con la ciudad anterior.
     [Fact]
     public async Task CorrectingPublishesTheCorrectedEventWithThePreviousCity()
     {
@@ -655,9 +658,11 @@ public sealed class CityOperatorApiTests
         Assert.Equal((CitySynonymEventNames.Corrected, synonym.Value.ToString()), (outbox.EventName, outbox.CorrelationId));
         using var payload = JsonDocument.Parse(outbox.Payload);
         var root = payload.RootElement;
+        // Todos los nombres y ninguno más, sin orden: platform.outbox_messages.payload es jsonb, que guarda las claves
+        // ordenadas por largo y no por inserción, y Shopify las lee por nombre (CitySynonymEventPayloads).
         Assert.Equal(
-            ["synonymId", "departmentId", "previousCityId", "cityId", "operatorSubjectId", "operatorTenantId", "occurredAt"],
-            root.EnumerateObject().Select(property => property.Name));
+            CorrectedEventFields.Order(StringComparer.Ordinal),
+            root.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
         Assert.Equal(
             (synonym.Value, valle.Value, cali.Id.Value, palmira.Id.Value, OperatorSubjectId, OperatorTenantId),
             (root.GetProperty("synonymId").GetGuid(), root.GetProperty("departmentId").GetGuid(),

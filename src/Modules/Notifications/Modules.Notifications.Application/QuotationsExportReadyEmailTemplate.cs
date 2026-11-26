@@ -1,4 +1,5 @@
 using System.Net;
+using BuildingBlocks.Domain.Localization;
 
 namespace Modules.Notifications.Application;
 
@@ -18,9 +19,10 @@ public static class QuotationsExportReadyEmailTemplate
         string fileName,
         int rowCount,
         DateTimeOffset expiresAt,
-        EmailRegionalFormat format)
+        EmailRegionalFormat format,
+        string language = SupportedLanguages.Default)
     {
-        var names = QuotationsExportKindText.Of(kind);
+        var names = QuotationsExportKindText.Of(kind, language);
         var subject = $"Tu exportación de {names.Plural} está lista";
         // En la hora del tenant del export y sin etiqueta de huso (spec 2026-09-17, punto 8b): es la
         // hora que la persona ve en su reloj. El patrón de la fecha es el del tenant (spec 2026-10-23,

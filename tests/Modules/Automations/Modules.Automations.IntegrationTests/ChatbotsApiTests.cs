@@ -11,7 +11,7 @@ namespace Modules.Automations.IntegrationTests;
 
 /// <summary>Spec 2026-10-21 §4.4, D-C2, D-C3 y D-M6: lista, creación en blanco, edición y borrador del chatbot por la API, con las
 /// fronteras de tenant, permiso, capacidad y versión.</summary>
-public sealed class ChatbotsApiTests
+public sealed partial class ChatbotsApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -564,6 +564,50 @@ public sealed class ChatbotsApiTests
         Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_versions"));
     }
 
+    // Spec 2026-11-18 «Editor response» (BFF): el editor trae los archivos del borrador con su URL pública; un id que no resuelve no viaja
+    // y bloquea publicar.
+    [Fact]
+    public async Task TheEditorListsTheDraftsMediaFiles()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var session = await factory.Media.OpenUploadAsync(setup.Tenant.TenantId, "catalogo.jpg", "image/jpeg", 2048, 25_000_000, Ct);
+        await factory.Media.CompleteAsync(setup.Tenant.TenantId, session.FileId, Ct);
+        var missing = Guid.CreateVersion7();
+        var editor = await CreateAsync(setup);
+
+        var saved = await SaveDraftAsync(setup, editor, MediaFlow(session.FileId, missing));
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+
+        var file = Assert.Single(reloaded.MediaFiles);
+        Assert.Equal(
+            (session.FileId, "image", "catalogo.jpg", "image/jpeg", 2048L, $"https://public.test/{session.FileId}/catalogo.jpg"),
+            (file.FileId, file.Kind, file.FileName, file.ContentType, file.SizeBytes, file.Url));
+        Assert.Equal(["m2"], reloaded.Issues.Where(issue => issue.Code == FlowIssueCodes.MessageMediaMissing).Select(issue => issue.NodeId));
+
+        var response = await ActAsync(setup.Client, setup, editor.Chatbot.Id, "publish", reloaded.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("automations.chatbot.invalid", problem.RootElement.GetProperty("code").GetString());
+        var flow = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.Contains(flow, item => item.StartsWith($"{FlowIssueCodes.MessageMediaMissing}: ", StringComparison.Ordinal));
+    }
+
+    private static string MediaFlow(Guid stored, Guid missing) =>
+        $$"""
+        { "schema": 1, "start": { "firstNodeId": "m1" }, "variables": [], "nodes": [
+          { "id": "m1", "kind": "message", "title": "Catálogo", "text": "", "urlButton": null,
+            "media": { "kind": "image", "fileId": "{{stored}}" }, "outputs": { "next": "m2" } },
+          { "id": "m2", "kind": "message", "title": "Folleto", "text": "", "urlButton": null,
+            "media": { "kind": "document", "fileId": "{{missing}}" }, "outputs": { "next": "h1" } },
+          { "id": "h1", "kind": "handoff", "title": "Asesor", "text": null, "outputs": {} } ] }
+        """;
+
     // Spec 2026-10-25 D-5: el editor trae la regla y los miembros que pueden responder (los de «Transferir»), no los que no.
     [Fact]
     public async Task TheEditorBringsTheRuleAndTheMembersWhoCanReply()
@@ -692,8 +736,13 @@ public sealed class ChatbotsApiTests
             setup, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}",
             new
             {
-                name = "Servicio técnico", description = "", trigger = "NewConversation", keywords = Array.Empty<string>(),
-                restartKeyword = "reiniciar", maxAttempts = 3, connectionIds = new[] { setup.WhatsAppId },
+                name = "Servicio técnico",
+                description = "",
+                trigger = "NewConversation",
+                keywords = Array.Empty<string>(),
+                restartKeyword = "reiniciar",
+                maxAttempts = 3,
+                connectionIds = new[] { setup.WhatsAppId },
             },
             handoff.Chatbot.Version);
 
@@ -829,7 +878,9 @@ public sealed class ChatbotsApiTests
             """;
         var file = export with
         {
-            Flow = JsonDocument.Parse(flow).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = stranger,
+            Flow = JsonDocument.Parse(flow).RootElement,
+            ExhaustedAction = "Handoff",
+            ExhaustedMemberId = stranger,
         };
 
         var response = await setup.Client.PostAsJsonAsync(
@@ -892,7 +943,9 @@ public sealed class ChatbotsApiTests
         var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
         var file = export with
         {
-            Flow = JsonDocument.Parse(HandoffFlow(advisor.MembershipId)).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = advisor.MembershipId,
+            Flow = JsonDocument.Parse(HandoffFlow(advisor.MembershipId)).RootElement,
+            ExhaustedAction = "Handoff",
+            ExhaustedMemberId = advisor.MembershipId,
         };
 
         var response = await setup.Client.PostAsJsonAsync(
@@ -969,7 +1022,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(1, published.Published!.Number);
         Assert.Equal((int?)1, published.Chatbot.PublishedVersion);
         Assert.True(published.Chatbot.Version > version);
-        Assert.Equal(new ServedByDto(id, "Servicio técnico"), Assert.Single(published.Connections).ServedBy);
+        Assert.Equal(new ServedByDto(id, "Servicio técnico", "chatbot", id), Assert.Single(published.Connections).ServedBy);
         Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.published'", ("id", id.ToString())));
@@ -1104,7 +1157,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
         var taker = await GetAsync(setup, second);
         Assert.Equal([setup.WhatsAppId], taker.Chatbot.Connections.Select(connection => connection.Id));
-        Assert.Equal(new ServedByDto(second, "Ventas"), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
+        Assert.Equal(new ServedByDto(second, "Ventas", "chatbot", second), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
         var former = await GetAsync(setup, first);
         Assert.Empty(former.Chatbot.Connections);
         Assert.Equal("Active", former.Chatbot.Status);
@@ -1307,7 +1360,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var taker = await GetAsync(setup, second);
         Assert.Equal("Paused", taker.Chatbot.Status);
-        Assert.Equal(new ServedByDto(second, "Ventas"), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
+        Assert.Equal(new ServedByDto(second, "Ventas", "chatbot", second), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
         Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
         Assert.Empty((await GetAsync(setup, first)).Chatbot.Connections);
     }
@@ -1403,7 +1456,7 @@ public sealed class ChatbotsApiTests
     }
 
     [Fact]
-    public async Task DeleteWithLiveRunsIs409()
+    public async Task DeleteWithALiveRunOfAMissingConversationIs204()
     {
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
@@ -1423,10 +1476,9 @@ public sealed class ChatbotsApiTests
 
         var response = await DeleteAsync(setup, id, published.Chatbot.Version);
 
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal("automations.chatbot.has_live_runs", (await ProblemAsync(response)).Code);
-        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", id)));
-        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        // D-7: la conversación de la corrida no existe, así que no hay a quién dejar hablando solo y el borrado sigue.
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", id)));
     }
 
     // D-C13: borrar sí libera la conexión; versiones y conexiones se van en cascada.

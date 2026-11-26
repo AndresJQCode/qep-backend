@@ -154,7 +154,8 @@ internal sealed partial class ConnectionSecretRekeyWorker(
     /// Spec 2026-10-15 §9: una instalación de Shopify canjeada guarda el token cifrado hasta 7 días, con AAD
     /// <c>installId</c> + <c>accessToken</c>. Sin esto, rotar la llave dejaría esas instalaciones sin poder enlazarse. Mismo
     /// criterio que las conexiones: lo de una llave retirada o que no descifra se salta y se cuenta; una fila que el enlace o
-    /// el barrido borró en el medio devuelve el lote a la próxima corrida.
+    /// el barrido borró en el medio vuelve a la próxima corrida. A diferencia de las conexiones, va de a una: cada una toma
+    /// el candado del token (ver <see cref="RekeyShopifyInstallAsync"/>), y las instalaciones en vuelo son pocas.
     /// </summary>
     private async Task<(int Reencrypted, int Skipped)> RekeyShopifyInstallsAsync(string active, CancellationToken cancellationToken)
     {
@@ -173,52 +174,83 @@ internal sealed partial class ConnectionSecretRekeyWorker(
         }
 
         var reencrypted = 0;
-        foreach (var batch in installIds.Chunk(BatchSize))
+        foreach (var installId in installIds)
         {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>();
-            var installs = await dbContext.ShopifyInstalls
-                .Where(install => batch.Contains(install.Id) && install.ProtectedToken != null)
-                .ToListAsync(cancellationToken);
-
-            var done = 0;
-            foreach (var install in installs)
+            switch (await RekeyShopifyInstallAsync(installId, active, cancellationToken))
             {
-                if (string.Equals(install.KeyId, active, StringComparison.Ordinal) || !protector.HasKey(install.KeyId!))
-                {
-                    continue;
-                }
-
-                var stored = new ProtectedSecret(install.KeyId!, install.ProtectedToken!);
-                if (protector.TryUnprotect(install.Id, ShopifyFieldKeys.AccessToken, stored, out var plaintext))
-                {
-                    install.Reprotect(protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, plaintext));
-                    done++;
-                }
-                else
-                {
+                case true:
+                    reencrypted++;
+                    break;
+                case false:
                     skipped++;
-                }
-            }
-
-            if (done == 0)
-            {
-                continue;
-            }
-
-            try
-            {
-                await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(cancellationToken);
-                reencrypted += done;
-            }
-            catch (RequestConcurrencyException)
-            {
-                // El enlace o el barrido borró una fila del lote: se reintenta en la próxima corrida.
-                skipped += done;
+                    break;
+                default:
+                    break;
             }
         }
 
         return (reencrypted, skipped);
+    }
+
+    /// <summary>
+    /// Una instalación, en su transacción y bajo el candado del token (spec 2026-11-12 D1). El enlace refresca el par de
+    /// la instalación con ese candado tomado, y Shopify retira el par viejo: si el re-cifrado leyera antes y guardara
+    /// después, dejaría guardado un par muerto. Por eso toma el candado sin esperar (ocupado, la fila vuelve en la próxima
+    /// corrida) y relee la fila ya con él.
+    /// </summary>
+    /// <returns><c>true</c> re-cifrada; <c>false</c> saltada (ocupada, no descifra o cambió en el medio); <c>null</c> ya no
+    /// hay nada que hacer (la borraron o ya está en la llave activa).</returns>
+    private async Task<bool?> RekeyShopifyInstallAsync(Guid installId, string active, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await unitOfWork.TryLockShopifyTokenAsync(installId, cancellationToken))
+        {
+            return false;
+        }
+
+        var install = await scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>().ShopifyInstalls
+            .SingleOrDefaultAsync(stored => stored.Id == installId && stored.ProtectedToken != null, cancellationToken);
+        if (install is null || string.Equals(install.KeyId, active, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (!protector.HasKey(install.KeyId!))
+        {
+            return false;
+        }
+
+        // Spec 2026-11-12 D5: los dos tokens comparten key_id, así que se re-cifran juntos; si alguno no descifra, la fila se
+        // salta entera y queda como estaba.
+        var stored = new ProtectedSecret(install.KeyId!, install.ProtectedToken!);
+        string? refreshPlaintext = null;
+        if (!protector.TryUnprotect(install.Id, ShopifyFieldKeys.AccessToken, stored, out var plaintext)
+            || (install.ProtectedRefreshToken is not null
+                && !protector.TryUnprotect(
+                    install.Id,
+                    ShopifyFieldKeys.RefreshToken,
+                    new ProtectedSecret(install.KeyId!, install.ProtectedRefreshToken),
+                    out refreshPlaintext)))
+        {
+            return false;
+        }
+
+        install.Reprotect(
+            protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, plaintext),
+            refreshPlaintext is null ? null : protector.Protect(install.Id, ShopifyFieldKeys.RefreshToken, refreshPlaintext));
+        try
+        {
+            // Con la transacción abierta, guardar confirma y suelta el candado.
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (RequestConcurrencyException)
+        {
+            // El enlace o el barrido borró la fila en el medio: vuelve en la próxima corrida, si sigue existiendo.
+            return false;
+        }
     }
 
     private async Task<(int Reencrypted, int Skipped)> RekeyBatchAsync(

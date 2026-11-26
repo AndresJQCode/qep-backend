@@ -46,4 +46,17 @@ public static class ShopifyIgnoredReasons
 {
     public const string UnknownShop = "unknown_shop";
     public const string UnsupportedTopic = "unsupported_topic";
+
+    // Spec 2026-11-17 §6 y plan D9: los products/* sin efecto.
+
+    /// <summary>La tienda todavía no terminó una importación de productos: el comercio no eligió traerlos.</summary>
+    public const string ProductsNotSynced = "products_not_synced";
+
+    public const string ConnectionNotOperational = "connection_not_operational";
+
+    /// <summary>Shopify rechazó la credencial al releer el producto (401/402).</summary>
+    public const string TokenExpired = "token_expired";
+
+    /// <summary>Shopify negó leer productos (403/<c>ACCESS_DENIED</c>): falta <c>read_products</c>.</summary>
+    public const string ScopeMissing = "scope_missing";
 }

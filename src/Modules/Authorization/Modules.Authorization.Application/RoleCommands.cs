@@ -95,6 +95,21 @@ internal static class RoleWriteRules
         }
     }
 
+    /// <summary>
+    /// Guarda y sube la versión de acceso del tenant antes y después (spec 2026-11-13, D-5): la caché de permisos no puede
+    /// servir los permisos de antes del cambio ni los que un request en carrera armó en el medio.
+    /// </summary>
+    public static async Task SaveAndBumpAsync(
+        IAuthorizationUnitOfWork unitOfWork,
+        ITenantAccessVersion tenantAccessVersion,
+        TenantId tenantId,
+        CancellationToken cancellationToken)
+    {
+        await tenantAccessVersion.BumpAsync(tenantId.Value, cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await tenantAccessVersion.BumpAsync(tenantId.Value, cancellationToken);
+    }
+
     public static async Task<Role> LoadAsync(
         IRoleRepository repository,
         RoleId id,
@@ -113,7 +128,8 @@ public sealed class CreateRoleHandler(
     IAuthorizationUnitOfWork unitOfWork,
     IRoleCatalog systemCatalog,
     IExecutionContext executionContext,
-    IClock clock) : ICommandHandler<CreateRoleCommand, Role>
+    IClock clock,
+    ITenantAccessVersion tenantAccessVersion) : ICommandHandler<CreateRoleCommand, Role>
 {
     public async Task<Role> HandleAsync(
         CreateRoleCommand command,
@@ -147,7 +163,8 @@ public sealed class CreateRoleHandler(
         }
 
         repository.Add(role);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        // Spec 2026-11-13, D-5: un rol nuevo no lo tiene nadie todavía, pero subir no estorba y deja la regla sin excepciones.
+        await RoleWriteRules.SaveAndBumpAsync(unitOfWork, tenantAccessVersion, command.TenantId, cancellationToken);
         return role;
     }
 }
@@ -158,7 +175,8 @@ public sealed class UpdateRoleHandler(
     IRoleCatalog systemCatalog,
     IMembershipRoleUsage roleUsage,
     IExecutionContext executionContext,
-    IClock clock) : ICommandHandler<UpdateRoleCommand, Role>
+    IClock clock,
+    ITenantAccessVersion tenantAccessVersion) : ICommandHandler<UpdateRoleCommand, Role>
 {
     public async Task<Role> HandleAsync(
         UpdateRoleCommand command,
@@ -183,7 +201,7 @@ public sealed class UpdateRoleHandler(
         role.Rename(command.DisplayName, command.Description, clock.UtcNow);
         role.ChangePermissions(command.Permissions, clock.UtcNow);
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await RoleWriteRules.SaveAndBumpAsync(unitOfWork, tenantAccessVersion, command.TenantId, cancellationToken);
         return role;
     }
 
@@ -266,7 +284,8 @@ public sealed class DeleteRoleHandler(
     IRoleRepository repository,
     IAuthorizationUnitOfWork unitOfWork,
     IMembershipRoleUsage roleUsage,
-    IExecutionContext executionContext) : ICommandHandler<DeleteRoleCommand, bool>
+    IExecutionContext executionContext,
+    ITenantAccessVersion tenantAccessVersion) : ICommandHandler<DeleteRoleCommand, bool>
 {
     public async Task<bool> HandleAsync(
         DeleteRoleCommand command,
@@ -279,11 +298,10 @@ public sealed class DeleteRoleHandler(
 
         // Borrar un rol que alguien tiene puesto no explota en ningún lado: `PermissionsForAsync`
         // ignora lo que no conoce, así que esa gente pierde permisos en silencio y nadie
-        // relaciona una cosa con la otra. Se rechaza y se pide reasignar primero.
-        var roleSets = await roleUsage.ActiveRoleSetsAsync(command.TenantId, cancellationToken);
-        var inUse = roleSets.Any(
-            roles => roles.Contains(role.Key, StringComparer.Ordinal));
-        if (inUse)
+        // relaciona una cosa con la otra. Se rechaza y se pide reasignar primero. Cuentan
+        // también las invitadas y las suspendidas (spec 2026-11-25): su rol quedaría sin existir
+        // y guardar sus roles respondería `tenancy.membership.role_unknown`.
+        if (await roleUsage.AnyHoldsRoleAsync(command.TenantId, role.Key, cancellationToken))
         {
             throw new AuthorizationDomainException(
                 "authorization.role.in_use",
@@ -291,7 +309,7 @@ public sealed class DeleteRoleHandler(
         }
 
         repository.Remove(role);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await RoleWriteRules.SaveAndBumpAsync(unitOfWork, tenantAccessVersion, command.TenantId, cancellationToken);
         return true;
     }
 }

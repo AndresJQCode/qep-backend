@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Catalog.Domain;
 
 namespace Modules.Catalog.UnitTests;
@@ -795,5 +796,184 @@ public sealed class ProductTests
             Now.AddMinutes(5));
 
         Assert.Equal([100, 150], product.Variants.Single().PackagingUnits);
+    }
+
+    // Productos desde Shopify (spec 2026-11-17 §5.4): el origen es lo que hace que el PUT proteja
+    // los campos que administra la tienda.
+    private static Product NewExternalProduct(string? externalSource, IReadOnlyList<Guid>? gallery = null) =>
+        Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Camiseta",
+            ProductDetails.Empty,
+            [],
+            [new ProductVariantInput { Code = "CAM-001", Pricing = ValidPricing }],
+            gallery ?? [],
+            Now,
+            externalSource: externalSource);
+
+    [Fact]
+    public void AProductCreatedFromShopifyKeepsItsSource()
+    {
+        var product = NewExternalProduct(Product.ShopifySource);
+
+        Assert.Equal("shopify", product.ExternalSource);
+        Assert.Equal(1, product.Version);
+    }
+
+    [Fact]
+    public void ReleasingClearsTheSourceAndBumpsTheVersion()
+    {
+        var product = NewExternalProduct(Product.ShopifySource);
+
+        product.ReleaseExternal(Now.AddMinutes(5));
+
+        Assert.Null(product.ExternalSource);
+        Assert.Equal(2, product.Version);
+        Assert.Equal(Now.AddMinutes(5), product.UpdatedAt);
+    }
+
+    // Desvincular dos veces no le da un 412 a quien tiene el formulario abierto.
+    [Fact]
+    public void ReleasingAnOwnProductChangesNothing()
+    {
+        var product = NewExternalProduct(externalSource: null);
+
+        product.ReleaseExternal(Now.AddMinutes(5));
+
+        Assert.Null(product.ExternalSource);
+        Assert.Equal(1, product.Version);
+        Assert.Equal(Now, product.UpdatedAt);
+    }
+
+    [Fact]
+    public void ASourceLongerThan20IsRejected()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() => NewExternalProduct(new string('s', 21)));
+
+        Assert.Equal("catalog.product.external_source_too_long", error.Code);
+    }
+
+    // La imagen de Shopify reemplaza sólo la foto que puso la importación, en su lugar (spec
+    // 2026-11-17 §6 «imagen»): el orden que eligió el asesor no se toca.
+    [Fact]
+    public void ReplacingTheImportedImageKeepsItsPosition()
+    {
+        var imported = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        var replacement = Guid.CreateVersion7();
+        var product = NewExternalProduct(Product.ShopifySource, [imported, other]);
+
+        var replaced = product.ReplaceGalleryImage(imported, replacement, Now.AddMinutes(5));
+
+        Assert.True(replaced);
+        Assert.Equal([replacement, other], product.Gallery.Select(image => image.FileId));
+        Assert.Equal(2, product.Version);
+    }
+
+    // Una variante que apuntaba a la foto importada sigue apuntando a la misma fila de galería.
+    [Fact]
+    public void ReplacingTheImportedImageKeepsTheVariantPointingAtIt()
+    {
+        var imported = Guid.CreateVersion7();
+        var product = Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Camiseta",
+            ProductDetails.Empty,
+            [],
+            [new ProductVariantInput { Code = "CAM-001", Pricing = ValidPricing, GalleryFileId = imported }],
+            [imported],
+            Now,
+            externalSource: Product.ShopifySource);
+        var imageRow = product.Gallery.Single().Id;
+
+        product.ReplaceGalleryImage(imported, Guid.CreateVersion7(), Now.AddMinutes(5));
+
+        Assert.Equal(imageRow, product.Variants.Single().GalleryImageId);
+    }
+
+    [Fact]
+    public void TheImportedImageRemovedByTheAdvisorIsNotReplaced()
+    {
+        var imported = Guid.CreateVersion7();
+        var advisorPhoto = Guid.CreateVersion7();
+        var product = NewExternalProduct(Product.ShopifySource, [advisorPhoto]);
+
+        var replaced = product.ReplaceGalleryImage(imported, Guid.CreateVersion7(), Now.AddMinutes(5));
+
+        Assert.False(replaced);
+        Assert.Equal([advisorPhoto], product.Gallery.Select(image => image.FileId));
+        Assert.Equal(1, product.Version);
+    }
+
+    [Fact]
+    public void TheFirstImportedImageEntersAnEmptyGallery()
+    {
+        var product = NewExternalProduct(Product.ShopifySource);
+        var image = Guid.CreateVersion7();
+
+        Assert.True(product.ReplaceGalleryImage(previousFileId: null, image, Now.AddMinutes(5)));
+
+        Assert.Equal(image, product.ImageFileId);
+    }
+
+    // Sin foto previa importada pero con fotos del asesor: la tienda no le gana el primer lugar.
+    [Fact]
+    public void TheFirstImportedImageDoesNotEnterAGalleryWithPhotos()
+    {
+        var advisorPhoto = Guid.CreateVersion7();
+        var product = NewExternalProduct(Product.ShopifySource, [advisorPhoto]);
+
+        Assert.False(product.ReplaceGalleryImage(previousFileId: null, Guid.CreateVersion7(), Now.AddMinutes(5)));
+
+        Assert.Equal([advisorPhoto], product.Gallery.Select(image => image.FileId));
+    }
+
+    // Spec 2026-11-18 §3.1-§3.2: todo producto nace con el valor de hoy.
+    [Fact]
+    public void ANewProductIsPhysicalByUnit()
+    {
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+
+        Assert.Equal(ProductKind.Physical, product.Kind);
+        Assert.Equal(SalesUnit.Unit, product.SalesUnit);
+    }
+
+    // El empaque es de mercancía: un servicio no lo lleva (spec §3.1), y el 422 marca el campo.
+    [Fact]
+    public void AServiceWithPackagingUnitsIsRejected()
+    {
+        var pricing = ValidPricing with { PackagingUnits = [12] };
+
+        var error = Assert.Throws<CatalogDomainException>(() => NewProduct(
+            "Instalación",
+            "SRV-001",
+            new ProductDetails { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour },
+            pricing,
+            Now));
+
+        Assert.Equal("catalog.product.packaging_not_allowed_for_service", error.Code);
+        Assert.Equal(["PackagingUnits"], error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void TurningAProductIntoAServiceRequiresEmptyPackaging()
+    {
+        var product = NewProduct(
+            "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing with { PackagingUnits = [12] }, Now);
+        var service = new ProductDetails { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour };
+
+        var error = Assert.Throws<CatalogDomainException>(() => UpdateDefault(
+            product, "Vela de soja", "VS-001", service, ValidPricing with { PackagingUnits = [12] }, Now.AddMinutes(1)));
+        Assert.Equal("catalog.product.packaging_not_allowed_for_service", error.Code);
+
+        var fresh = NewProduct(
+            "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing with { PackagingUnits = [12] }, Now);
+        UpdateDefault(fresh, "Vela de soja", "VS-001", service, ValidPricing, Now.AddMinutes(1));
+
+        Assert.Equal(ProductKind.Service, fresh.Kind);
+        Assert.Equal(SalesUnit.Hour, fresh.SalesUnit);
+        Assert.Empty(fresh.Variants.Single().PackagingUnits);
     }
 }

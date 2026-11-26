@@ -26,7 +26,7 @@ public interface IServiceContractsCustomerProvisioning
 }
 
 /// <summary>
-/// Los tipos de documento que acepta Customers (<c>IdentificationTypeParser.SupportedWireValues</c>), para la regla
+/// Los tipos de documento de la importación (los de <c>CO</c> en <c>DocumentTypesByCountry</c>), para la regla
 /// <c>identification_type_invalid</c> y el desplegable de la plantilla sin que Application referencie Customers.
 /// </summary>
 public interface IServiceContractsIdentificationTypes

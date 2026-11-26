@@ -19,9 +19,15 @@ internal sealed class ShopifyCustomerDirectory(
 
     private const string DefaultCountry = "CO";
 
-    // Los dos códigos de ICustomerProvisioning.CreateCompleteAsync que dicen «no alcanza para completo».
+    // Los tres códigos de ICustomerProvisioning.CreateCompleteAsync que dicen «no alcanza para completo»; el tercero es un
+    // documento colombiano con una dirección de envío en otro país.
     private static readonly HashSet<string> NotCompletableCodes =
-        new(StringComparer.Ordinal) { "customers.customer.classification_not_found", "customers.customer.city_not_found" };
+        new(StringComparer.Ordinal)
+        {
+            "customers.customer.classification_not_found",
+            "customers.customer.city_not_found",
+            "customers.customer.document_type_not_allowed"
+        };
 
     public async Task<ShopifyCustomerRef?> FindByDocumentAsync(
         Guid tenantId, string type, string number, CancellationToken cancellationToken)

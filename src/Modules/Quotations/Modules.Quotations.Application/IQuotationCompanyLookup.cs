@@ -21,13 +21,24 @@ public sealed record QuotationCompanyRef(
     Guid Id,
     string Name,
     string TaxId,
+    /// <summary>Código de wire del tipo de documento (NIT, CC, NIF…): Quotations no referencia
+    /// Companies, así que el tipo cruza sólo como texto.</summary>
+    string DocumentType,
+    /// <summary>País de la empresa (ISO 3166-1 alfa-2). La cotización y el pedido lo congelan con la cuenta
+    /// (plan impuestos por tipo P1): decide qué retenciones aplican.</summary>
+    string Country,
     bool IsActive,
     /// <summary>Membrete del PDF: dirección y teléfono tal como están hoy en la empresa, no
     /// congelados como la cuenta bancaria — son datos de contacto, no un compromiso financiero
     /// que el documento tenga que preservar si la empresa los corrige después.</summary>
     string? Address,
     string? Phone,
-    IReadOnlyCollection<QuotationCompanyAccountRef> BankAccounts);
+    IReadOnlyCollection<QuotationCompanyAccountRef> BankAccounts,
+    /// <summary>Municipio de la empresa (Geography). La cotización y el pedido lo congelan con la cuenta: es el
+    /// municipio de la operación por defecto (spec ReteICA por empresa §7.5, A6).</summary>
+    Guid? CityId = null,
+    /// <summary>Si la empresa cobra IVA (spec 2026-11-17 §5.1). La cotización y el pedido lo congelan con la cuenta.</summary>
+    bool ChargesVat = true);
 
 public sealed record QuotationCompanyAccountRef(
     string BankName,

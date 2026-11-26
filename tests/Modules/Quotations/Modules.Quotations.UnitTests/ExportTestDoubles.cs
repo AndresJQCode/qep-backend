@@ -93,6 +93,11 @@ internal sealed class RecordingExportAuditPublisher : IQuotationAuditPublisher
         string outcome, DateTimeOffset occurredAt) =>
         Entries.Add(new RecordedAuditEntry(tenantId, actorId, action, resourceId, outcome));
 
+    public void PublishWithDetails(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) =>
+        Entries.Add(new RecordedAuditEntry(tenantId, actorId, action, resourceId, outcome));
+
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
         Entries.Add(new RecordedAuditEntry(tenantId, Guid.Empty, action, resourceId, outcome));
@@ -179,6 +184,20 @@ internal sealed class RecordingExportFileStorage : IExportFileStorage
         return Task.FromResult(new ExportFileUpload(
             $"https://r2.test/exports/tenants/{tenantId:N}/jobs/{jobId:N}.xlsx",
             StubExportJobProcessor.LinkExpiresAt));
+    }
+}
+
+/// <summary>El partidor de teléfonos del Excel de pedidos (spec 2026-11-25): sólo parte lo que la prueba le
+/// enseña, y anota qué se le preguntó.</summary>
+internal sealed class StubQuotationPhoneNumbers(IReadOnlyDictionary<string, string>? nationalNumbers = null)
+    : IQuotationPhoneNumbers
+{
+    public List<string> Calls { get; } = [];
+
+    public string? NationalNumberOf(string phone)
+    {
+        Calls.Add(phone);
+        return nationalNumbers is not null && nationalNumbers.TryGetValue(phone, out var national) ? national : null;
     }
 }
 

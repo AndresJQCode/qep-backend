@@ -13,7 +13,13 @@ public sealed class ShopifyAppOptions
     /// <summary>D-S29: la estable del trimestre en que se implementó (2026-10-18).</summary>
     public const string DefaultApiVersion = "2026-10";
 
-    public const string DefaultScopes = "read_orders,read_customers";
+    /// <summary><c>write_orders</c> desde el spec 2026-11-14: la corrección del asesor viaja a Shopify con <c>orderUpdate</c>. Según
+    /// el owner, las tiendas ya enlazadas lo tienen concedido (V-13, por verificar con <c>currentAppInstallation.accessScopes</c>);
+    /// sumarlo acá es para que una instalación nueva lo pida. Un canje nuevo sin él falla con <c>scopes_missing</c>.
+    /// <para><c>read_products</c> desde el spec 2026-11-17 §5.1: la importación de productos y los <c>products/*</c>. Una tienda
+    /// instalada antes no lo tiene: importar le responde 422 <c>shopify.products.scope_missing</c> con la URL para reautorizar, y el
+    /// registro de webhooks no le pide los <c>products/*</c> hasta que el canje guarde el scope (P10).</para></summary>
+    public const string DefaultScopes = "read_orders,write_orders,read_customers,read_products";
 
     public string? ClientId { get; set; }
 

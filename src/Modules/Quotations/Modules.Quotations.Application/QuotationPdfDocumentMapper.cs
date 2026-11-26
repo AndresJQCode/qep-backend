@@ -1,3 +1,6 @@
+using System.Globalization;
+using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Localization;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -25,7 +28,11 @@ public static class QuotationPdfDocumentMapper
     /// se imprime en su día, no en el de UTC (spec 2026-09-17, punto 7). El <paramref name="numberFormat"/>
     /// es el del tenant y sólo decide los separadores (spec 2026-10-23, D-R1).</summary>
     public static QuotationPdfDocument From(
-        QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
+        QuotationResponse quotation,
+        TenantCalendar calendar,
+        QuotationPdfLogo? logo,
+        string? numberFormat = null,
+        string? language = null)
     {
         var currency = Currencies.Get(quotation.Currency);
         var (thousands, decimals) = RegionalNumberFormat.Separators(numberFormat);
@@ -46,13 +53,14 @@ public static class QuotationPdfDocumentMapper
             currency.Decimals,
             BillingAccountFor(quotation.BillingAccount),
             quotation.PaymentMethod,
-            [.. quotation.Items.Select(LineFor)],
+            LinesFor(quotation.Items),
             quotation.Subtotal,
             quotation.DiscountAmount,
             quotation.TaxPercentage,
             quotation.TaxAmount,
             quotation.Total,
             quotation.RetentionAmount,
+            WithholdingsFor(quotation.Withholdings, decimals),
             quotation.NetTotal,
             quotation.CustomerVatSurplus,
             logo,
@@ -64,7 +72,8 @@ public static class QuotationPdfDocumentMapper
             quotation.FreightTaxAmount,
             quotation.Shipping.CashOnDelivery,
             ThousandsSeparator: thousands,
-            DecimalSeparator: decimals);
+            DecimalSeparator: decimals,
+            Language: SupportedLanguages.OrDefault(language));
     }
 
     /// <summary>
@@ -73,11 +82,15 @@ public static class QuotationPdfDocumentMapper
     /// motivos que <see cref="From"/>. Todo sale del pedido —partes, cuenta de cobro, líneas, totales,
     /// envío—, nunca de la cotización de origen, que puede no existir (pedido manual o de Shopify).
     ///
-    /// La emisión es el día en que se creó el pedido, en el día del tenant. No hay vigencia: un pedido
+    /// La emisión es la fecha del pedido (<see cref="OrderResponse.OrderDate"/>, spec 2026-11-16). No hay vigencia: un pedido
     /// no vence, y la plantilla omite el renglón con <see cref="QuotationPdfKind.Order"/>.
     /// </summary>
     public static QuotationPdfDocument FromOrder(
-        OrderDetailResponse order, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
+        OrderDetailResponse order,
+        TenantCalendar calendar,
+        QuotationPdfLogo? logo,
+        string? numberFormat = null,
+        string? language = null)
     {
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(calendar);
@@ -86,7 +99,8 @@ public static class QuotationPdfDocumentMapper
         var (thousands, decimals) = RegionalNumberFormat.Separators(numberFormat);
         return new(
             header.OrderNumber,
-            DateOnly.FromDateTime(calendar.ToLocal(header.CreatedAt).DateTime),
+            // Spec 2026-11-16 §5: la fecha del pedido, que el asesor puede corregir; ya es un día del tenant.
+            header.OrderDate,
             ValidUntil: null,
             order.Client?.Name ?? string.Empty,
             order.Client?.Cuc ?? string.Empty,
@@ -101,13 +115,14 @@ public static class QuotationPdfDocumentMapper
             currency.Decimals,
             BillingAccountFor(order.BillingAccount),
             header.PaymentMethod,
-            [.. order.Items.Select(LineFor)],
+            LinesFor(order.Items),
             header.Subtotal,
             header.DiscountAmount,
             header.TaxPercentage,
             header.TaxAmount,
             header.Total,
             header.RetentionAmount,
+            WithholdingsFor(order.Order.Withholdings, decimals),
             header.NetTotal,
             header.CustomerVatSurplus,
             logo,
@@ -122,8 +137,33 @@ public static class QuotationPdfDocumentMapper
             header.Shipping.CashOnDelivery,
             QuotationPdfKind.Order,
             thousands,
-            decimals);
+            decimals,
+            Language: SupportedLanguages.OrDefault(language));
     }
+
+    /// <summary>Las respuestas ya traen sólo las que aplicaron (<c>AppliedWithholdings</c>), en su orden: una fila
+    /// del documento por cada una, rotulada con el nombre de la tasa y su porcentaje efectivo (spec ReteICA por empresa
+    /// §7.9). Sin ninguna, sin filas.</summary>
+    private static QuotationPdfWithholding[] WithholdingsFor(
+        IReadOnlyList<WithholdingResponse> withholdings, string decimalSeparator) =>
+        [
+            .. withholdings.Select(withholding => new QuotationPdfWithholding(
+                ScopedName(withholding), withholding.Amount, PercentageLabel(withholding.Percentage, decimalSeparator))),
+        ];
+
+    // Spec 2026-11-18 §4.4: dos tasas pueden compartir nombre y porcentaje si son de distinto alcance; el rótulo dice a qué
+    // líneas aplica. Una sin alcance (All) sale con su nombre, como antes.
+    private static string ScopedName(WithholdingResponse withholding) => withholding.AppliesTo switch
+    {
+        "Goods" => $"{withholding.Name} (bienes)",
+        "Services" => $"{withholding.Name} (servicios)",
+        _ => withholding.Name,
+    };
+
+    // Plan P10: el mismo patrón que HistoryFormat.Percentage, con el separador decimal del tenant. Un porcentaje no lleva
+    // miles, así que basta el decimal.
+    private static string PercentageLabel(decimal percentage, string decimalSeparator) =>
+        percentage.ToString("0.###", new NumberFormatInfo { NumberDecimalSeparator = decimalSeparator }) + " %";
 
     /// <summary>
     /// Los importes que el cliente comprueba con la calculadora.
@@ -131,23 +171,34 @@ public static class QuotationPdfDocumentMapper
     /// <c>QuotationItemResponse.Subtotal</c> es la base <b>sin</b> IVA de la línea, mientras que
     /// <c>UnitPrice</c> viene <b>con</b> el impuesto adentro (<c>QuotationItem.Apply</c>).
     /// Imprimir esos dos juntos daba una fila que no multiplica: 12 × 35.900 no da 307.714. Acá
-    /// se rearma el total bruto con la misma fórmula y los mismos redondeos que el dominio.
+    /// el total de línea es <c>Subtotal + TaxAmount</c>, igual que <c>LineTotal</c> en el dominio: desde el
+    /// 2026-11-23 el descuento de línea es sin IVA y ya no se puede restar del bruto con IVA.
     ///
     /// El unitario con descuento ya no se deriva acá: lo calcula la línea y viaja en el DTO
     /// (<c>QuotationItem.DiscountedUnitPriceUnder</c>, con la regla de redondeo del documento), desde que la pantalla lo muestra en una
     /// columna propia. Tenerlo en un solo lado es lo que evita que el PDF y la pantalla impriman
     /// números distintos.
     /// </summary>
-    private static QuotationPdfLine LineFor(QuotationItemResponse item) =>
+    private static QuotationPdfLine LineFor(QuotationItemResponse item, bool withUnit) =>
         new(item.ProductName,
             item.Quantity,
             item.UnitPrice,
             item.DiscountPercentage,
             item.DiscountedUnitPrice,
-            Round(item.Quantity * item.UnitPrice) - item.DiscountAmount);
+            item.Subtotal + item.TaxAmount,
+            withUnit ? SalesUnitLabels.Spanish(Enum.Parse<SalesUnit>(item.SalesUnit), item.Quantity) : null,
+            item.ProductCode);
 
-    private static decimal Round(decimal value) =>
-        Math.Round(value, 2, MidpointRounding.AwayFromZero);
+    /// <summary>
+    /// Spec 2026-11-18 §6: con todas las líneas en <c>Unit</c> ninguna lleva unidad, para que el PDF de un tenant que no
+    /// usa unidades salga idéntico al de antes. Con una sola distinta, todas la llevan, también las de «unidad»: una
+    /// columna con la unidad en unas filas y en otras no se lee como un olvido.
+    /// </summary>
+    private static QuotationPdfLine[] LinesFor(IReadOnlyCollection<QuotationItemResponse> items)
+    {
+        var withUnit = items.Any(item => item.SalesUnit != nameof(SalesUnit.Unit));
+        return [.. items.Select(item => LineFor(item, withUnit))];
+    }
 
     /// <summary>Sin datos propios la parte se imprime como "los del cliente", en vez de repetir
     /// por tercera vez lo que el bloque Cliente ya muestra.</summary>
@@ -163,11 +214,19 @@ public static class QuotationPdfDocumentMapper
                 false,
                 party.Name ?? string.Empty,
                 Join(ContactSeparator, party.Phone, party.Email),
-                party.Address ?? string.Empty,
+                // El código postal va tras la dirección (spec 2026-11-24; sólo la entrega lo trae). Fuera de Colombia la
+                // parte guarda la ciudad como texto: se imprime después, con el país.
+                IsForeign(party)
+                    ? Join(LocationSeparator, party.Address, party.PostalCode, Join(LocationSeparator, party.CityName, party.Country))
+                    : Join(LocationSeparator, party.Address, party.PostalCode),
                 // Sólo la facturación guarda documento (la entrega lo descarta en el dominio); una
                 // fila anterior a la columna no tiene y queda vacío, que la plantilla no imprime.
                 role == QuotationPartyRole.Billing ? party.IdentificationNumber ?? string.Empty : string.Empty);
     }
+
+    private static bool IsForeign(QuotationPartyResponse party) =>
+        !string.IsNullOrWhiteSpace(party.Country)
+        && !string.Equals(party.Country, QuotationPartyDetails.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Consumidor final no tiene fila de facturación —el dominio la prohíbe— pero
     /// tampoco es "los del cliente": la factura sale a otro nombre, con el NIT genérico. Sin
@@ -207,8 +266,10 @@ public static class QuotationPdfDocumentMapper
                 // y la cotización tiene que poder exportarse igual.
                 account.CompanyName ?? string.Empty,
                 account.CompanyTaxId,
+                CompanyDocumentLabels.For(account.CompanyDocumentType),
                 account.CompanyAddress ?? string.Empty,
                 account.CompanyPhone ?? string.Empty,
+                // Null en una empresa sin cuenta (spec 2026-11-17 §4.2): la plantilla no pinta el bloque de pago.
                 account.BankName,
                 account.AccountNumber,
                 account.Currency)

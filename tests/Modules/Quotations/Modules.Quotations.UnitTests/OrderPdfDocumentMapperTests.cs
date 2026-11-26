@@ -31,6 +31,44 @@ public sealed class OrderPdfDocumentMapperTests
         Assert.Equal((thousands, decimals), (document.ThousandsSeparator, document.DecimalSeparator));
     }
 
+    // Spec ReteICA por empresa §7.9 (R13): el PDF del pedido imprime el porcentaje efectivo igual que el de la cotización.
+    [Theory]
+    [InlineData(null, "0,966 %")]
+    [InlineData(Modules.Tenancy.Domain.TenantNumberFormats.DotDecimal, "0.966 %")]
+    public void PercentageLabelUsesTheTenantSeparator(string? numberFormat, string expected)
+    {
+        var document = QuotationPdfDocumentMapper.FromOrder(
+            WithRows(QuotationPdfDocumentMapperTests.WithholdingRow("ReteICA Bogotá", "ReteICA", 966m, 0.966m)),
+            Calendar, logo: null, numberFormat);
+
+        Assert.Equal(expected, Assert.Single(document.Withholdings).PercentageLabel);
+    }
+
+    [Fact]
+    public void PercentageLabelHasNoTrailingZeros()
+    {
+        var document = Map(WithRows(
+            QuotationPdfDocumentMapperTests.WithholdingRow("Retefuente 2,5 %", "Retefuente", 2_500m, 2.5m),
+            QuotationPdfDocumentMapperTests.WithholdingRow("Retefuente 4 %", "Retefuente", 4_000m, 4m)));
+
+        Assert.Equal<string>(["2,5 %", "4 %"], document.Withholdings.Select(row => row.PercentageLabel).ToArray());
+    }
+
+    [Fact]
+    public void EditedPercentageWinsOverCatalog()
+    {
+        var document = Map(WithRows(
+            QuotationPdfDocumentMapperTests.WithholdingRow("ReteICA Bogotá", "ReteICA", 800m, 0.8m, catalog: 0.966m)));
+
+        Assert.Equal("0,8 %", Assert.Single(document.Withholdings).PercentageLabel);
+    }
+
+    private static OrderDetailResponse WithRows(params WithholdingResponse[] rows)
+    {
+        var detail = Detail();
+        return detail with { Order = detail.Order with { Withholdings = rows } };
+    }
+
     [Fact]
     public void AnOrderIsPrintedAsAnOrderWithoutValidity()
     {
@@ -41,18 +79,22 @@ public sealed class OrderPdfDocumentMapperTests
         Assert.Null(document.ValidUntil);
     }
 
-    // Spec 2026-09-17, punto 7, igual que la cotización: creado el 31 de diciembre a las 23:00 en
-    // Bogotá —1 de enero en UTC— el documento dice 31 de diciembre.
+    // Spec 2026-11-16 §5: el documento imprime la fecha del pedido, que el asesor puede corregir, y no el día en que se
+    // creó. Ya es un día del tenant: no pasa por el calendario.
     [Fact]
-    public void TheIssueDateIsTheDayTheOrderWasCreatedInTheTenantsZone()
+    public void TheOrderPdfPrintsTheOrderDate()
     {
         var detail = Detail();
         var document = Map(detail with
         {
-            Order = detail.Order with { CreatedAt = new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero) },
+            Order = detail.Order with
+            {
+                CreatedAt = new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
+                OrderDate = new DateOnly(2026, 12, 28),
+            },
         });
 
-        Assert.Equal(new DateOnly(2026, 12, 31), document.IssuedOn);
+        Assert.Equal(new DateOnly(2026, 12, 28), document.IssuedOn);
     }
 
     [Fact]
@@ -180,6 +222,21 @@ public sealed class OrderPdfDocumentMapperTests
         Assert.Equal((string.Empty, string.Empty), (document.CustomerName, document.CustomerContact));
     }
 
+    // Spec 2026-11-18 §6: el pedido imprime la unidad con la misma regla que la cotización.
+    [Fact]
+    public void AnOrderWithAServiceLabelsItsLine()
+    {
+        var detail = Detail();
+        var line = detail.Items.Single() with { Quantity = 1m, Kind = "Service", SalesUnit = "Month" };
+
+        var document = Map(detail with { Items = [line] });
+
+        Assert.Equal("mes", Assert.Single(document.Items).Unit);
+    }
+
+    [Fact]
+    public void AnOrderOfUnitsOmitsTheUnit() => Assert.Null(Assert.Single(Map(Detail()).Items).Unit);
+
     [Fact]
     public void MapsTheLogo()
     {
@@ -195,25 +252,27 @@ public sealed class OrderPdfDocumentMapperTests
             15000m, 19, 12605.04m, 2394.96m, true, null);
         var order = new OrderResponse(
             Guid.CreateVersion7(), "PED-2026-0042", "Manual", null, null, Guid.CreateVersion7(), Guid.CreateVersion7(),
-            "Approved", "PaymentPending", "Transferencia", "COP", false, null, false, false, false, null, null, false,
+            "Open", "PaymentPending", "NotPrepared", false, "Transferencia", "COP", false, null, false, false, false, null, null, false,
             307714.29m, 19m, 58465.71m, 64620m, 381180m, 0m, 381180m, "Notas internas",
             new QuotationBillingAccountDto(Guid.CreateVersion7(), "Bancolombia", "123-456789-01", "COP"),
             [], new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), Guid.CreateVersion7(), null, null, null,
             null, null, null, null, null,
             new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero),
-            1, [], shipping, 12605.04m, 2394.96m);
+            1, [], shipping, 12605.04m, 2394.96m, [], [], [], null, null, null, null, 381180m, null, [],
+            new DateOnly(2026, 10, 20));
         var client = new QuotationClientResponse(
             order.ClientId, "CUC-0042", "Comercializadora del Norte S.A.S.", "3001234567", "compras@ejemplo.co",
             "Calle 100 #15-20", Guid.CreateVersion7(), "Bogotá", Guid.CreateVersion7(), "Cundinamarca", null, false, false,
             true, DateTimeOffset.UtcNow, []);
         var billing = new QuotationBillingResponse(
-            Guid.CreateVersion7(), "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
+            Guid.CreateVersion7(), "Ferretería Andina S.A.S.", "900.123.456-7", "NIT", "Carrera 7 #71-52, Bogotá", "6015550100",
             "Bancolombia", "123-456789-01", "COP");
         // 12 x 35.900 = 430.800; 15% = 64.620; línea = 366.180 con IVA adentro.
         var item = new QuotationItemResponse(
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "BRONCEADOR RITUAL DEL SOL", "BRO-01", null, [], 12m, 35900m,
             15m, 64620m, 30515m, 307714.29m, 19, 58465.71m, 1, nameof(QuotationDiscountOrigin.Own));
 
-        return new OrderDetailResponse(order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], []);
+        return new OrderDetailResponse(
+            order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], [], null, null, [], null);
     }
 }

@@ -44,9 +44,10 @@ public sealed class OrdersReportApiTests
         Assert.Equal(order.OrderNumber, item.OrderNumber);
         Assert.Equal(quotation.Id, item.QuotationId);
         Assert.Equal(quotation.QuotationNumber, item.QuotationNumber);
-        // Todo pedido nace Pending y otro rol lo aprueba (aa020a8): recién convertido, así sale.
-        Assert.Equal("Pending", item.Status);
-        Assert.Equal("FullPaymentReceived", item.PaymentStatus);
+        // Todo pedido nace Open y el pago lo calcula el sistema (spec 2026-11-10): con un comprobante
+        // por el total queda «Por verificar» hasta que otro rol lo marque pagado.
+        Assert.Equal("Open", item.Status);
+        Assert.Equal("PendingVerification", item.PaymentStatus);
         Assert.Equal(customer.Id, item.ClientId);
         Assert.Equal(customer.Cuc, item.ClientCuc);
         Assert.Equal("Verde Esencial S.A.S.", item.ClientName);
@@ -179,7 +180,7 @@ public sealed class OrdersReportApiTests
         await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
 
         var matching = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
-            $"{ReportsUrl(tenant.TenantId)}/orders?paymentStatus=FullPaymentReceived",
+            $"{ReportsUrl(tenant.TenantId)}/orders?paymentStatus=PendingVerification",
             TestContext.Current.CancellationToken);
         var other = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
             $"{ReportsUrl(tenant.TenantId)}/orders?paymentStatus=PaymentPending",

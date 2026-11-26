@@ -1,0 +1,11 @@
+// USD per million tokens, by "provider:model". QEP keeps no price table (owner, P-15): copy the values from each provider's pricing
+// page on the day of the run into a copy of this file and pass it with --prices. A component left null with tokens in the run makes
+// the cost "unknown" instead of guessing it. OpenAI does not report cache writes: its cacheWriteUsdPerMillion is never used.
+{
+  "anthropic:claude-opus-5-5": { "inputUsdPerMillion": null, "outputUsdPerMillion": null, "cacheWriteUsdPerMillion": null, "cacheReadUsdPerMillion": null },
+  "anthropic:claude-sonnet-5-5": { "inputUsdPerMillion": null, "outputUsdPerMillion": null, "cacheWriteUsdPerMillion": null, "cacheReadUsdPerMillion": null },
+  "anthropic:claude-haiku-5-5": { "inputUsdPerMillion": null, "outputUsdPerMillion": null, "cacheWriteUsdPerMillion": null, "cacheReadUsdPerMillion": null },
+  "openai:gpt-6-luna": { "inputUsdPerMillion": null, "outputUsdPerMillion": null, "cacheWriteUsdPerMillion": null, "cacheReadUsdPerMillion": null },
+  "openai:gpt-6.1-terra": { "inputUsdPerMillion": null, "outputUsdPerMillion": null, "cacheWriteUsdPerMillion": null, "cacheReadUsdPerMillion": null },
+  "openai:gpt-6.1-sol": { "inputUsdPerMillion": null, "outputUsdPerMillion": null, "cacheWriteUsdPerMillion": null, "cacheReadUsdPerMillion": null }
+}

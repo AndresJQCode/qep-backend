@@ -18,11 +18,12 @@ internal sealed record PosWorld(
 {
     public string Url => PosUrl(Tenant.TenantId);
 
-    public static async Task<PosWorld> ArrangeAsync(QepApiFactory factory, PostgreSqlContainer database)
+    /// <param name="chargesVat">Spec 2026-11-17: la única empresa del tenant cobra IVA, o no.</param>
+    public static async Task<PosWorld> ArrangeAsync(QepApiFactory factory, PostgreSqlContainer database, bool chargesVat = true)
     {
         var tenant = await RegisterTenantAsync(factory);
         await EnablePosAsync(database, tenant.TenantId);
-        var company = await CreateCompanyAsync(tenant.Seeder, tenant.TenantId);
+        var company = await CreateCompanyAsync(tenant.Seeder, tenant.TenantId, chargesVat);
         var tax19 = await CreateTaxRateAsync(tenant.Seeder, tenant.TenantId, "IVA 19", 19);
         var tax5 = await CreateTaxRateAsync(tenant.Seeder, tenant.TenantId, "IVA 5", 5);
         var shampoo = await CreateProductAsync(tenant.Seeder, tenant.TenantId, "SH-400", "Shampoo 400 ml", 11_900m, tax19);

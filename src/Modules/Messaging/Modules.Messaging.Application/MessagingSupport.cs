@@ -112,8 +112,11 @@ public sealed class ConversationSummaryBuilder(
             .Select(row => row.ResolutionReasonId!.Value).Distinct().ToArray();
         var reasons = reasonIds.Length == 0 ? null : await reasonNames.FindAsync(tenantId, reasonIds, cancellationToken);
         // Spec 2026-10-21 D-M14: los nombres de los chatbots, una consulta por respuesta para todas las conversaciones con asistente.
-        var chatbotIds = rows.Where(row => row.AutomationStatus != ConversationAutomationStatus.None && row.AutomationChatbotId is not null)
-            .Select(row => row.AutomationChatbotId!.Value).Distinct().ToArray();
+        // Spec 2026-10-29 §4.4: el mismo diccionario trae el nombre del agente de IA que atiende.
+        // Spec 2026-11-17 §7: y el del chatbot que delegó en ese agente.
+        var chatbotIds = rows.Where(row => row.AutomationStatus != ConversationAutomationStatus.None)
+            .SelectMany(row => new[] { row.AutomationChatbotId ?? row.AutomationAgentId, row.DelegatedByChatbotId })
+            .OfType<Guid>().Distinct().ToArray();
         var chatbots = chatbotIds.Length == 0 ? null : await chatbotNames.ResolveAsync(tenantId, chatbotIds, cancellationToken);
         return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, resolvedNames, me, reasons, chatbots)).ToArray();
     }
@@ -163,7 +166,31 @@ public sealed class ConversationSummaryBuilder(
             row.BlockedAt is { } blockedAt
                 ? new ConversationBlockDto(blockedAt, row.BlockedByMemberId is { } blocker ? memberNames.GetValueOrDefault(blocker) ?? MessageMapping.DeletedMemberName : null)
                 : null,
-            row.Imported && row.LastInboundAt is null);
+            row.Imported && row.LastInboundAt is null,
+            AutomationBotFrom(row, chatbotNames));
+    }
+
+    /// <summary>Spec 2026-10-29 §4.4: el bot de una conversación con asistente (activo o en pausa); <c>null</c> en <c>None</c>. Una fila de
+    /// antes de <c>automation_bot_kind</c> con chatbot sale como chatbot.</summary>
+    private static AutomationBotDto? AutomationBotFrom(ConversationRow row, IReadOnlyDictionary<Guid, string>? botNames)
+    {
+        if (row.AutomationStatus == ConversationAutomationStatus.None)
+        {
+            return null;
+        }
+
+        if (row.AutomationBotKind == BotKind.Agent && row.AutomationAgentId is { } agentId)
+        {
+            return new AutomationBotDto(
+                "agent", agentId, botNames?.GetValueOrDefault(agentId) ?? MessageMapping.DeletedAgentName,
+                row.DelegatedByChatbotId is { } chatbot
+                    ? new AutomationDelegatedByDto(chatbot, botNames?.GetValueOrDefault(chatbot) ?? MessageMapping.DeletedChatbotName)
+                    : null);
+        }
+
+        return row.AutomationChatbotId is { } chatbotId
+            ? new AutomationBotDto("chatbot", chatbotId, botNames?.GetValueOrDefault(chatbotId) ?? MessageMapping.DeletedChatbotName)
+            : null;
     }
 
     /// <summary><c>null</c> en <c>None</c> (D-A10). La guarda de <c>StartedAt</c> es inalcanzable por <c>CK_conversations_automation_started</c>;
@@ -207,7 +234,8 @@ internal static class MessageMapping
     public static MessageDto ToDto(
         MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets,
         IReadOnlyDictionary<Guid, string>? reasonNames = null, IReadOnlyDictionary<Guid, string>? chatbotNames = null,
-        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null)
+        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones = null,
+        IReadOnlyDictionary<Guid, string>? ticketNumbers = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(memberNames);
@@ -221,7 +249,8 @@ internal static class MessageMapping
             row.Direction.ToString(),
             row.Kind.ToString(),
             row.Text,
-            row.Media is null ? null : new MediaDto(MediaUrl(tenantId, row.Id), row.Media.MimeType, row.Media.FileName, row.Caption),
+            // Spec 2026-11-18 (BFF): el archivo de un chatbot se dibuja desde su URL pública; no se copian bytes por envío.
+            row.Media is null ? null : new MediaDto(row.Media.PublicUrl ?? MediaUrl(tenantId, row.Id), row.Media.MimeType, row.Media.FileName, row.Caption),
             row.Kind == MessageKind.Location ? LocationFrom(row.DetailsJson) : null,
             row.Status.ToString(),
             MessageFailureReasons.For(row.FailureCode),
@@ -243,7 +272,16 @@ internal static class MessageMapping
                     EventCustomer(conversationEvent.CustomerId, customerRefs),
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
                     ToDto(conversationEvent.Handoff, memberNames),
-                    Chatbot(conversationEvent.ChatbotId, chatbotNames)),
+                    conversationEvent.ChatbotId is { } eventChatbot && conversationEvent.ChatbotName is { } chatbotSnapshot
+                        ? new ChatbotRefDto(eventChatbot, chatbotSnapshot)
+                        : Chatbot(conversationEvent.ChatbotId, chatbotNames),
+                    conversationEvent.TicketId,
+                    conversationEvent.TicketId is { } ticketId ? ticketNumbers?.GetValueOrDefault(ticketId) : null,
+                    // Spec 2026-11-17 adenda D-5: la foto del nombre gana; sin ella, el de hoy.
+                    conversationEvent.AgentId is { } eventAgent && conversationEvent.AgentName is { } agentSnapshot
+                        ? new AgentRefDto(eventAgent, agentSnapshot)
+                        : Agent(conversationEvent.AgentId, chatbotNames),
+                    conversationEvent.Output),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
@@ -251,22 +289,33 @@ internal static class MessageMapping
             // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
             row is { Direction: MessageDirection.Outbound, Kind: MessageKind.Interactive } ? InteractiveDetailsJson.Parse(row.DetailsJson) : null,
             mediaState,
-            row.SentByApiKeyId is { } apiKeyId ? new ApiKeyRefDto(apiKeyId, row.SentByApiKeyName ?? string.Empty) : null);
+            row.SentByApiKeyId is { } apiKeyId ? new ApiKeyRefDto(apiKeyId, row.SentByApiKeyName ?? string.Empty) : null,
+            row.RetryDisabled,
+            row.Kind == MessageKind.Contacts ? ContactsFrom(row.DetailsJson, sharedPhones) : null,
+            Agent(row.SentByAgentId, chatbotNames));
     }
 
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>
     public const string DeletedChatbotName = "Chatbot";
 
+    /// <summary>Spec 2026-10-29 §4.4: lo mismo para un agente de IA borrado.</summary>
+    public const string DeletedAgentName = "Agente IA";
+
     private static ChatbotRefDto? Chatbot(Guid? chatbotId, IReadOnlyDictionary<Guid, string>? chatbotNames) =>
         chatbotId is { } id ? new ChatbotRefDto(id, chatbotNames?.GetValueOrDefault(id) ?? DeletedChatbotName) : null;
 
-    /// <summary>Los chatbots que una página necesita con nombre, sin repetir: los autores de mensajes y el que firma un
-    /// <c>Resolved</c> del bot (sin esto el evento saldría siempre como «Chatbot»).</summary>
+    private static AgentRefDto? Agent(Guid? agentId, IReadOnlyDictionary<Guid, string>? botNames) =>
+        agentId is { } id ? new AgentRefDto(id, botNames?.GetValueOrDefault(id) ?? DeletedAgentName) : null;
+
+    /// <summary>Los bots que una página necesita con nombre, sin repetir: los autores de mensajes (chatbots y agentes de IA, spec
+    /// 2026-10-29 §4.4) y el que firma un <c>Resolved</c> del bot (sin esto el evento saldría siempre como «Chatbot»).</summary>
     public static IReadOnlyCollection<Guid> ChatbotIdsOf(IEnumerable<MessageRow> rows)
     {
         ArgumentNullException.ThrowIfNull(rows);
         return rows
-            .Select(row => row.Kind == MessageKind.Event ? ConversationEventJson.Parse(row.DetailsJson)?.ChatbotId : row.SentByChatbotId)
+            .Select(row => row.Kind == MessageKind.Event
+                ? ConversationEventJson.Parse(row.DetailsJson)?.ChatbotId
+                : row.SentByChatbotId ?? row.SentByAgentId)
             .OfType<Guid>().Distinct().ToArray();
     }
 
@@ -327,6 +376,17 @@ internal static class MessageMapping
             .ToArray();
     }
 
+    /// <summary>Soporte fase 2: los tickets que nombran los eventos de la página, para una sola consulta de números.</summary>
+    public static IReadOnlyCollection<Guid> TicketIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Where(row => row.Kind == MessageKind.Event)
+            .Select(row => ConversationEventJson.Parse(row.DetailsJson)?.TicketId)
+            .OfType<Guid>()
+            .Distinct()
+            .ToArray();
+    }
+
     private static EventCustomerRefDto? EventCustomer(Guid? customerId, IReadOnlyDictionary<Guid, CustomerRefDto>? refs) =>
         customerId is { } id && refs?.GetValueOrDefault(id) is { } customer ? new EventCustomerRefDto(customer.Id, customer.Name) : null;
 
@@ -337,8 +397,8 @@ internal static class MessageMapping
         var ids = new HashSet<Guid>();
         foreach (var row in rows)
         {
-            // Una fila de chatbot no tiene miembro; el CHECK de la tabla lo garantiza, esto lo hace explícito.
-            if (row.SentByChatbotId is null && row.SentByMemberId is { } sender)
+            // Una fila de chatbot o de agente no tiene miembro; el CHECK de la tabla lo garantiza, esto lo hace explícito.
+            if (row.SentByChatbotId is null && row.SentByAgentId is null && row.SentByMemberId is { } sender)
             {
                 ids.Add(sender);
             }
@@ -377,7 +437,10 @@ internal static class MessageMapping
                 handoff.Http is { } http
                     ? new AutomationHandoffHttpDto(http.NodeId, http.NodeTitle, http.Outcome, http.ErrorCode, http.Status, http.ConnectionName)
                     : null,
-                Member(handoff.AssignedMemberId, memberNames));
+                Member(handoff.AssignedMemberId, memberNames),
+                handoff.Provider,
+                handoff.ChatbotName,
+                handoff.AgentName);
 
     /// <summary><c>details</c> de un <c>Unsupported</c> es <c>{ type, errors }</c> con los <c>errors</c> de Meta tal cual
     /// (<c>WebhookPayloadParser</c>). El primer <c>code</c> numérico, o <c>null</c> si no hay o el JSON no tiene esa forma.</summary>
@@ -446,4 +509,97 @@ internal static class MessageMapping
             return null;
         }
     }
+
+    /// <summary><c>details</c> de un <c>contacts</c> es el arreglo <c>contacts</c> de Meta tal cual (<c>WebhookPayloadParser</c>).
+    /// Si no es un arreglo, el mensaje sale sin <c>contacts</c> en vez de romper la página; el nombre sigue en <c>text</c>.</summary>
+    private static List<SharedContactDto>? ContactsFrom(string? detailsJson, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones)
+    {
+        if (string.IsNullOrEmpty(detailsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(detailsJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            return root.EnumerateArray()
+                .Where(contact => contact.ValueKind == JsonValueKind.Object)
+                .Select(contact => new SharedContactDto(
+                    contact.TryGetProperty("name", out var name) ? JsonString(name, "formatted_name") : null,
+                    contact.TryGetProperty("org", out var org) ? JsonString(org, "company") : null,
+                    ObjectsOf(contact, "phones")
+                        .Select(phone => SharedPhoneFrom(phone, sharedPhones))
+                        .Where(phone => phone.Phone is not null || phone.WaId is not null)
+                        .ToList(),
+                    ObjectsOf(contact, "emails")
+                        .Select(email => (Address: JsonString(email, "email"), Type: JsonString(email, "type")))
+                        .Where(email => email.Address is not null)
+                        .Select(email => new SharedContactEmailDto(email.Address!, email.Type))
+                        .ToList()))
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static SharedContactPhoneDto SharedPhoneFrom(JsonElement phone, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones)
+    {
+        var waId = JsonString(phone, "wa_id");
+        var resolved = waId is null ? null : sharedPhones?.GetValueOrDefault(waId);
+        return new SharedContactPhoneDto(
+            JsonString(phone, "phone"), waId, JsonString(phone, "type"), resolved?.Customer, resolved?.Country, resolved?.NationalNumber);
+    }
+
+    /// <summary>Spec 2026-11-10: los <c>wa_id</c> de los teléfonos de toda tarjeta de contactos de la página, sin repetir, para
+    /// resolverlos en una sola consulta. Un <c>details</c> ilegible no aporta nada y no lanza.</summary>
+    public static IReadOnlyCollection<string> SharedContactWaIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var waIds = new List<string>();
+        foreach (var row in rows.Where(row => row.Kind == MessageKind.Contacts && !string.IsNullOrEmpty(row.DetailsJson)))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(row.DetailsJson!);
+                if (document.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                waIds.AddRange(document.RootElement.EnumerateArray()
+                    .Where(contact => contact.ValueKind == JsonValueKind.Object)
+                    .SelectMany(contact => ObjectsOf(contact, "phones"))
+                    .Select(phone => JsonString(phone, "wa_id"))
+                    .OfType<string>());
+            }
+            catch (JsonException)
+            {
+                // Un details roto no aporta nada: ContactsFrom ya deja el mensaje sin tarjeta.
+            }
+        }
+
+        return [.. waIds.Distinct(StringComparer.Ordinal)];
+    }
+
+    private static IEnumerable<JsonElement> ObjectsOf(JsonElement parent, string property) =>
+        parent.TryGetProperty(property, out var list) && list.ValueKind == JsonValueKind.Array
+            ? list.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.Object)
+            : [];
+
+    /// <summary>El texto de <paramref name="property"/> si <paramref name="element"/> es un objeto y el valor es un string no vacío.</summary>
+    private static string? JsonString(JsonElement element, string property) =>
+        element.ValueKind == JsonValueKind.Object
+        && element.TryGetProperty(property, out var value)
+        && value.ValueKind == JsonValueKind.String
+        && value.GetString() is { Length: > 0 } text
+            ? text
+            : null;
 }

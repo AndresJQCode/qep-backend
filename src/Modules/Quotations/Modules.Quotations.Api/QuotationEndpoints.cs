@@ -58,7 +58,7 @@ public static class QuotationEndpoints
         // `/preview` no choca con `/{quotationId:guid}`: la restricción de guid no lo acepta.
         group.MapPost("/preview", PreviewNewQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
-            .Accepts<CreateQuotationRequest>("application/json")
+            .Accepts<PreviewNewQuotationRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -81,7 +81,7 @@ public static class QuotationEndpoints
         // no es un guid.
         group.MapPost("/{quotationId:guid}/preview", PreviewQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
-            .Accepts<SaveQuotationRequest>("application/json")
+            .Accepts<PreviewQuotationRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -146,6 +146,18 @@ public static class QuotationEndpoints
             // Opcional de verdad: el cuerpo puede no venir. Dejar que se infiera requerido es lo
             // que rompio el envio con 500 en su momento.
             .Accepts<SendQuotationRequest>(isOptional: true, "application/json")
+            .Produces<QuotationResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Marcar como enviada sin que QEP la entregue: el asesor ya se la hizo llegar al cliente
+        // por fuera (su propio WhatsApp, un correo) y sólo quiere que el estado lo refleje. No es
+        // `/send`: genera y guarda el PDF —el documento que el asesor descarga y el que queda como
+        // «lo que se le envió»—, pero no lo publica ni manda nada, y el historial lo deja como
+        // `MarkedSent` para que nadie lo confunda con un envío de QEP. Sin cuerpo.
+        group.MapPost("/{quotationId:guid}/mark-sent", MarkQuotationSentAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -269,7 +281,10 @@ public static class QuotationEndpoints
                 request.Shipping,
                 ToItems(request),
                 request.GlobalScaleFloor,
-                request.IsRetail),
+                request.IsRetail,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
 
         return Results.Created(
@@ -279,7 +294,7 @@ public static class QuotationEndpoints
 
     private static async Task<IResult> PreviewNewQuotationAsync(
         Guid tenantId,
-        CreateQuotationRequest request,
+        PreviewNewQuotationRequest request,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
@@ -293,7 +308,11 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes,
+                request.BillingCompanyId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -325,7 +344,10 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
@@ -335,7 +357,7 @@ public static class QuotationEndpoints
     private static async Task<IResult> PreviewQuotationAsync(
         Guid tenantId,
         Guid quotationId,
-        SaveQuotationRequest request,
+        PreviewQuotationRequest request,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
@@ -349,7 +371,11 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes,
+                request.BillingCompanyId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -486,7 +512,22 @@ public static class QuotationEndpoints
         SendQuotationRequest? request = null)
     {
         var quotation = await dispatcher.SendAsync(
-            new SendQuotationCommand(tenantId, quotationId, request?.Recipient, request?.ConnectionId),
+            new SendQuotationCommand(
+                tenantId, quotationId, request?.Recipient, request?.ConnectionId, request?.ContactId, request?.ThreadConnectionId),
+            cancellationToken);
+
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    private static async Task<IResult> MarkQuotationSentAsync(
+        Guid tenantId,
+        Guid quotationId,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var quotation = await dispatcher.SendAsync(
+            new MarkQuotationSentCommand(tenantId, quotationId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -529,6 +570,7 @@ public static class QuotationEndpoints
         quotation.IsComplete,
         quotation.OrderId,
         quotation.OrderStatus,
-        ShippingResponse.From(quotation.Shipping));
+        ShippingResponse.From(quotation.Shipping),
+        quotation.RequiresShipping);
 
 }

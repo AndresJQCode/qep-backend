@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -75,6 +76,45 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .ToDictionaryAsync(order => order.Id, order => order.OrderNumber, cancellationToken);
     }
 
+    public async Task<IReadOnlyDictionary<OrderId, OrderNumberAndClient>> FindNumbersAndClientsAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return new Dictionary<OrderId, OrderNumberAndClient>();
+        }
+
+        var ids = orderIds.ToArray();
+        return await dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId && ids.Contains(order.Id))
+            .Select(order => new { order.Id, order.OrderNumber, order.ClientId })
+            .ToDictionaryAsync(
+                order => order.Id, order => new OrderNumberAndClient(order.OrderNumber, order.ClientId), cancellationToken);
+    }
+
+    // La regla de Order.RequiresShipping en SQL (spec 2026-11-18 §5), como la de cotizaciones: la búsqueda del listado no
+    // trae las líneas, y cargarlas para esto sería toda la página de líneas para un booleano.
+    public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var ids = orderIds.ToArray();
+        var found = await dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId
+                && ids.Contains(order.Id)
+                && (!order.Items.Any() || order.Items.Any(item => item.Kind == ProductKind.Physical)))
+            .Select(order => order.Id)
+            .ToListAsync(cancellationToken);
+
+        return found.Select(id => id.Value).ToHashSet();
+    }
+
     public Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
         WithAggregate(dbContext.Orders)
@@ -89,6 +129,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 order => order.TenantId == tenantId && order.Source == source && order.ExternalKey == externalKey,
                 cancellationToken);
 
+    // Sin filtro de estado a propósito: anular un pedido no devuelve cupo del tope diario.
+    public Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken) =>
+        dbContext.Orders
+            .AsNoTracking()
+            .CountAsync(
+                order => order.TenantId == tenantId && order.Source == source && order.ConvertedAt >= since,
+                cancellationToken);
+
     public async Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -96,25 +145,112 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        bool? wholesaleApproved,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
+        // D-1: «Por aprobar» es la marca, no un estado; el filtro deja sólo pedidos mayoristas.
+        if (wholesaleApproved is { } approved)
+        {
+            orders = approved
+                ? orders.Where(order => order.Source == OrderSource.Wholesale && order.WholesaleApprovedAt != null)
+                : orders.Where(order => order.Source == OrderSource.Wholesale && order.WholesaleApprovedAt == null);
+        }
+
         var total = await orders.CountAsync(cancellationToken);
+        // Spec 2026-11-16 §5: primero la fecha del pedido; dentro del mismo día, el instante en que se creó.
         var items = await orders
-            .OrderByDescending(order => order.ConvertedAt)
+            .OrderByDescending(order => order.OrderDate)
+            .ThenByDescending(order => order.ConvertedAt)
             .ThenByDescending(order => order.OrderNumber)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
         return (items, total);
     }
+
+    public Task<int> CountAwaitingWholesaleApprovalAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
+        string? orderNumber,
+        OrderSource? source,
+        CancellationToken cancellationToken) =>
+        Filtered(
+                tenantId, clientId, clientIds, advisorId, OrderStatus.Open, paymentStatus, fulfillmentStatus, invoiced,
+                orderDateFrom, orderDateTo, orderNumber, source)
+            .Where(order => order.Source == OrderSource.Wholesale && order.WholesaleApprovedAt == null)
+            .CountAsync(cancellationToken);
+
+    public async Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        var orders = dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId && order.BuyerAccountId == buyerAccountId);
+        var total = await orders.CountAsync(cancellationToken);
+        var items = await orders
+            .Include(order => order.Items)
+            .Include(order => order.PaymentProofs)
+            .OrderByDescending(order => order.CreatedAt)
+            .ThenByDescending(order => order.OrderNumber)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return (items, total);
+    }
+
+    // El origen y el rol se guardan como texto (HasConversion<string>), y un correo NULL nunca coincide.
+    // lower(trim(...)) replica BuyerEmail.TryNormalize (Trim + ToLowerInvariant), que es como llega normalizedEmail. El trim
+    // de SQL sólo quita espacios: un correo guardado con tabulador o salto de línea no coincide, que es el lado seguro (no
+    // enlaza de más).
+    public Task<int> LinkStoreOrdersByBillingEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken)
+    {
+        var source = nameof(OrderSource.Store);
+        var billingRole = nameof(QuotationPartyRole.Billing);
+        return dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE quotations.orders o
+            SET buyer_account_id = {buyerAccountId}
+            FROM quotations.order_parties p
+            WHERE o.tenant_id = {tenantId}
+              AND o.source = {source}
+              AND o.buyer_account_id IS NULL
+              AND NOT o.buyer_account_set_by_member
+              AND p.order_id = o.id
+              AND p.role = {billingRole}
+              AND lower(trim(p.email)) = {normalizedEmail};
+            """,
+            cancellationToken);
+    }
+
+    public void ForceBuyerAccountWrite(Order order) =>
+        dbContext.Entry(order).Property(value => value.BuyerAccountId).IsModified = true;
+
+    public Task<Order?> FindByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken) =>
+        WithAggregate(dbContext.Orders)
+            .SingleOrDefaultAsync(
+                order => order.TenantId == tenantId
+                    && order.BuyerAccountId == buyerAccountId
+                    && order.Id == orderId,
+                cancellationToken);
 
     public Task<bool> AnyForExportAsync(
         Guid tenantId,
@@ -123,12 +259,14 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         CancellationToken cancellationToken) =>
-        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source)
+        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source)
             .AnyAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Order>> ListForExportAsync(
@@ -138,8 +276,10 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         OrderExportCursor? after,
@@ -147,18 +287,21 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
         if (after is not null)
         {
+            // El cursor es el orden del listado entero (spec 2026-11-16 §5): fecha del pedido, instante y número.
+            var orderDate = after.OrderDate;
             var convertedAt = after.ConvertedAt;
             var number = after.OrderNumber;
             orders = orders.Where(order => EF.Functions.LessThan(
-                ValueTuple.Create(order.ConvertedAt, order.OrderNumber),
-                ValueTuple.Create(convertedAt, number)));
+                ValueTuple.Create(order.OrderDate, order.ConvertedAt, order.OrderNumber),
+                ValueTuple.Create(orderDate, convertedAt, number)));
         }
 
         return await orders
-            .OrderByDescending(order => order.ConvertedAt)
+            .OrderByDescending(order => order.OrderDate)
+            .ThenByDescending(order => order.ConvertedAt)
             .ThenByDescending(order => order.OrderNumber)
             .Take(limit)
             .ToListAsync(cancellationToken);
@@ -173,17 +316,31 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source)
     {
         var orders = dbContext.Orders
             .AsNoTracking()
             .Where(order => order.TenantId == tenantId);
-        if (status is { } orderStatus)
+        // Sin filtro de estado, los archivados no salen (spec 2026-11-10 §5): el listado es lo pendiente de trabajar.
+        orders = status is { } orderStatus
+            ? orders.Where(order => order.Status == orderStatus)
+            : orders.Where(order => order.Status != OrderStatus.Archived);
+
+        if (fulfillmentStatus is { } orderFulfillmentStatus)
         {
-            orders = orders.Where(order => order.Status == orderStatus);
+            orders = orders.Where(order => order.FulfillmentStatus == orderFulfillmentStatus);
+        }
+
+        if (invoiced is { } isInvoiced)
+        {
+            orders = isInvoiced
+                ? orders.Where(order => order.InvoicedAt != null)
+                : orders.Where(order => order.InvoicedAt == null);
         }
 
         if (paymentStatus is { } orderPaymentStatus)
@@ -203,14 +360,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 EF.Functions.ILike(order.OrderNumber, orderNumberPattern, LikeEscapeCharacter));
         }
 
-        if (convertedFrom is { } from)
+        // Spec 2026-11-16 §4: el filtro de fechas corta por la fecha del pedido, inclusive en las dos puntas y sin huso.
+        if (orderDateFrom is { } from)
         {
-            orders = orders.Where(order => order.ConvertedAt >= from);
+            orders = orders.Where(order => order.OrderDate >= from);
         }
 
-        if (convertedBefore is { } before)
+        if (orderDateTo is { } to)
         {
-            orders = orders.Where(order => order.ConvertedAt < before);
+            orders = orders.Where(order => order.OrderDate <= to);
         }
 
         if (clientId is { } client)
@@ -314,16 +472,24 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 select entry)
             .ToListAsync(cancellationToken);
 
-    public Task<bool> IsPaymentProofFileInUseAsync(
-        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
+    public async Task<IReadOnlySet<Guid>> ListPaymentProofFilesInUseAsync(
+        IReadOnlyCollection<Guid> fileIds, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
     {
-        var proofs = dbContext.OrderPaymentProofs.AsNoTracking().Where(proof => proof.FileId == fileId);
+        if (fileIds.Count == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        // Un arreglo, no la colección: Npgsql lo manda como un solo parámetro (file_id = ANY (@ids)).
+        var ids = fileIds.Distinct().ToArray();
+        var proofs = dbContext.OrderPaymentProofs.AsNoTracking().Where(proof => ids.Contains(proof.FileId));
         if (exceptProofId is { } except)
         {
             proofs = proofs.Where(proof => proof.Id != except);
         }
 
-        return proofs.AnyAsync(cancellationToken);
+        var inUse = await proofs.Select(proof => proof.FileId).Distinct().ToListAsync(cancellationToken);
+        return inUse.ToHashSet();
     }
 
     public void Add(Order order) => dbContext.Orders.Add(order);

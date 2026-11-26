@@ -18,18 +18,28 @@ internal sealed class MessagingAssignees(IMembershipRepository memberships, IUse
 
     public async Task<IReadOnlyList<AssigneeDto>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        var result = new List<AssigneeDto>();
+        var eligible = new List<Membership>();
         foreach (var membership in await memberships.ListByTenantAsync(new TenantId(tenantId), cancellationToken))
         {
-            if (membership.State != MembershipState.Active || !await GrantsManageAsync(tenantId, membership, cancellationToken))
+            if (membership.State == MembershipState.Active && await GrantsManageAsync(tenantId, membership, cancellationToken))
             {
-                continue;
+                eligible.Add(membership);
             }
+        }
 
+        // Un solo viaje a Identity por los correos de quienes no tienen nombre, como MessagingMemberNames.
+        var emails = await users.GetEmailsAsync(
+            eligible.Where(membership => string.IsNullOrWhiteSpace(membership.DisplayName))
+                .Select(membership => membership.UserId)
+                .ToList(),
+            cancellationToken);
+        var result = new List<AssigneeDto>();
+        foreach (var membership in eligible)
+        {
             // P17: como MessagingMemberNames, el nombre o el correo.
             var name = !string.IsNullOrWhiteSpace(membership.DisplayName)
                 ? membership.DisplayName
-                : await users.GetEmailAsync(membership.UserId, cancellationToken);
+                : emails.GetValueOrDefault(membership.UserId);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 result.Add(new AssigneeDto(membership.Id.Value, name));

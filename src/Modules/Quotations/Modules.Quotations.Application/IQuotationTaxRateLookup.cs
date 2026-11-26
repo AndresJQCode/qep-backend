@@ -8,4 +8,6 @@ public interface IQuotationTaxRateLookup
     Task<QuotationTaxRateRef?> FindAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken);
 }
 
-public sealed record QuotationTaxRateRef(Guid Id, string Name, int Percentage, bool IsActive);
+/// <param name="AddsTax"><c>false</c> si la tasa retiene: entonces <c>Percentage</c> es 0, porque un
+/// porcentaje de retención no se lee como IVA.</param>
+public sealed record QuotationTaxRateRef(Guid Id, string Name, int Percentage, bool IsActive, bool AddsTax = true);

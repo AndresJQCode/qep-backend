@@ -41,6 +41,13 @@ public interface IMessagingAuditRecorder
     /// <c>changed_fields</c>. Siempre una persona.</summary>
     void RecordHistorySync(
         Guid tenantId, Guid actorId, string action, Guid connectionId, DateTimeOffset occurredAt, IReadOnlyCollection<string> retriedTypes);
+
+    /// <summary>Spec 2026-11-09 «Auditoría»: un mensaje programado, en la misma transacción que el cambio. Lo que cierra el worker
+    /// (enviado, fallido) no tiene una persona detrás: <paramref name="bySystem"/> y actor vacío. <paramref name="changedFields"/>
+    /// (<c>null</c> es <c>[]</c>) va a <c>changed_fields</c>.</summary>
+    void RecordScheduledMessage(
+        Guid tenantId, Guid actorId, bool bySystem, string action, Guid scheduledMessageId, DateTimeOffset occurredAt,
+        IReadOnlyCollection<string>? changedFields = null);
 }
 
 public static class MessagingAuditActions
@@ -59,6 +66,11 @@ public static class MessagingAuditActions
 
     /// <summary>Spec 2026-11-01 D-13: distinta de <see cref="AutomationResumed"/>, que reinicia el flujo.</summary>
     public const string AutomationContinued = "messaging.conversation.automation_continued";
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: el chatbot delegó la conversación en un agente y el agente la devolvió.
+    /// Siempre de sistema.</summary>
+    public const string AutomationDelegated = "messaging.conversation.automation_delegated";
+    public const string AutomationReturned = "messaging.conversation.automation_returned";
 
     /// <summary>Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto, sólo cuando Meta lo aceptó y el estado cambió.</summary>
     public const string ContactBlocked = "messaging.conversation.contact_blocked";
@@ -80,8 +92,12 @@ public static class MessagingAuditActions
         ConversationEventType.CustomerChanged => CustomerChanged,
         ConversationEventType.AutomationStarted => AutomationStarted,
         ConversationEventType.AutomationContinued => AutomationContinued,
+        ConversationEventType.AutomationDelegated => AutomationDelegated,
+        ConversationEventType.AutomationReturned => AutomationReturned,
         ConversationEventType.ContactBlocked => ContactBlocked,
         ConversationEventType.ContactUnblocked => ContactUnblocked,
+        // Spec 2026-11-17: abrir la conversación del cliente reabre una resuelta en el mismo cambio que la toma.
+        ConversationEventType.Reopened => Reopened,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "That event type has no assignment audit action."),
     };
 
@@ -116,8 +132,28 @@ public static class MessagingAuditActions
     public const string TemplateCreated = "messaging.template.created";
     public const string TemplateQuotationProvisioned = "messaging.template.quotation_provisioned";
     public const string TemplateBillingProvisioned = "messaging.template.billing_provisioned";
+    public const string TemplateOrderProvisioned = "messaging.template.order_provisioned";
+    public const string TemplateInvoiceProvisioned = "messaging.template.invoice_provisioned";
+    public const string TemplateSupportReplyProvisioned = "messaging.template.support_reply_provisioned";
+    public const string TemplateSupportFormalReplyProvisioned = "messaging.template.support_formal_reply_provisioned";
+    public const string TemplateSupportSurveyProvisioned = "messaging.template.support_survey_provisioned";
+    public const string TemplateWholesaleInvitationNoticeProvisioned = "messaging.template.wholesale_invitation_notice_provisioned";
+    public const string TemplateTaskNoticeProvisioned = "messaging.template.task_notice_provisioned";
+    public const string TemplateAppointmentReminderProvisioned = "messaging.template.appointment_reminder_provisioned";
     public const string TemplateDeleted = "messaging.template.deleted";
+    // Spec 2026-11-20: cambiar la imagen fija del encabezado sin pasar por Meta.
+    public const string TemplateHeaderImageReplaced = "messaging.template.header_image_replaced";
 
     public const string HistorySyncResourceType = "history_sync";
     public const string HistorySyncRetried = "messaging.history_sync.retried";
+
+    public const string ScheduledMessageResourceType = "scheduled_message";
+    public const string ScheduledMessageCreated = "messaging.scheduled_message.created";
+    public const string ScheduledMessageUpdated = "messaging.scheduled_message.updated";
+    public const string ScheduledMessageCancelled = "messaging.scheduled_message.cancelled";
+    public const string ScheduledMessageSendNow = "messaging.scheduled_message.send_now";
+    public const string ScheduledMessageRetried = "messaging.scheduled_message.retried";
+    public const string ScheduledMessageDiscarded = "messaging.scheduled_message.discarded";
+    public const string ScheduledMessageSent = "messaging.scheduled_message.sent";
+    public const string ScheduledMessageFailed = "messaging.scheduled_message.failed";
 }

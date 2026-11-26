@@ -61,7 +61,18 @@ public static partial class FlowValidator
         [FlowOutputs.Error] = "error",
         [FlowOutputs.Accepted] = DataConsentButtons.AcceptLabel,
         [FlowOutputs.Rejected] = DataConsentButtons.RejectLabel,
+        [FlowOutputs.Done] = "terminó",
+        [FlowOutputs.Human] = "pidió un asesor",
+        [FlowOutputs.NoAnswer] = "no supo responder",
+        [FlowOutputs.Idle] = "inactivo",
+        [FlowOutputs.Skipped] = "Sin nada que hacer",
     }.ToFrozenDictionary(StringComparer.Ordinal);
+
+    /// <summary>Spec 2026-11-19: the field of <c>{saveTo}</c> that the «Acción de CRM» block writes.</summary>
+    private const string CrmResultField = "result";
+
+    /// <summary>Spec 2026-11-17 §5.1: los campos de <c>{saveTo}</c> que escribe el bloque «Agente IA», en el orden en que el editor los lista.</summary>
+    private static readonly string[] AiAgentFields = ["summary", "reason", "quotationNumber"];
 
     public static IReadOnlyList<FlowIssue> Validate(FlowDefinition flow, FlowValidationContext context)
     {
@@ -102,7 +113,7 @@ public static partial class FlowValidator
         ArgumentNullException.ThrowIfNull(flow);
         var known = new List<string>(FixedVariables.Count + flow.Variables.Count);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in FlowFixedVariables.Names.Concat(flow.Variables.Select(variable => variable.Name)).Concat(WrittenInOrder(flow)))
+        foreach (var name in FlowFixedVariables.Names.Concat(flow.Variables.Select(variable => variable.Name)).Concat(KnownWrittenInOrder(flow)))
         {
             if (!string.IsNullOrWhiteSpace(name) && seen.Add(name))
             {
@@ -143,8 +154,11 @@ public static partial class FlowValidator
                     continue;
                 }
 
+                // Spec 2026-11-17 D-B12: en «Agente IA» las cinco son aviso; sin conectar, las de problema traspasan y las otras terminan.
                 var message = $"La salida «{OutputLabel(node, output)}» de «{node.Title}» no está conectada.";
-                issues.Add(OptionalOutputs.Contains(output)
+                // Spec 2026-11-19: in «Acción de CRM» skipped and error are secondary exits; unconnected, the run ends there.
+                issues.Add(OptionalOutputs.Contains(output) || node is AiAgentNode
+                           || node is CrmActionNode && output is FlowOutputs.Skipped or FlowOutputs.Error
                     ? Warning(FlowIssueCodes.NodeOutputUnconnectedOptional, node.Id, message)
                     : Error(FlowIssueCodes.NodeOutputUnconnected, node.Id, message));
             }
@@ -168,6 +182,9 @@ public static partial class FlowValidator
     {
         switch (node)
         {
+            case MessageNode { Media: { } media } message:
+                CheckMediaMessage(message, media, context, issues);
+                break;
             case MessageNode message:
                 CheckText(node, message.Text, message.UrlButton is null ? TextMaxLength : InteractiveBodyMaxLength, issues);
                 if (message.UrlButton is { } urlButton)
@@ -283,6 +300,106 @@ public static partial class FlowValidator
             case ResolveNode { Text: { } text }:
                 CheckOptionalText(node, text, issues);
                 break;
+            case AiAgentNode agent:
+                CheckAiAgent(agent, context, issues);
+                break;
+            case CrmActionNode crm:
+                CheckCrmAction(crm, context, issues);
+                break;
+        }
+    }
+
+    /// <summary>Spec 2026-11-19 «Validation»: the module first (without it the catalog is empty and would only add noise), then the tag or
+    /// stage against the tenant's catalog, then <c>saveTo</c>.</summary>
+    private static void CheckCrmAction(CrmActionNode crm, FlowValidationContext context, List<FlowIssue> issues)
+    {
+        var isTagOperation = CrmOperations.IsTagOperation(crm.Operation);
+        if (isTagOperation ? !context.CustomersEnabled : !context.PipelineEnabled)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.CrmModuleOff, crm.Id,
+                isTagOperation
+                    ? $"«{crm.Title}» usa las etiquetas de clientes, y tu empresa no tiene activo el módulo de clientes."
+                    : $"«{crm.Title}» mueve un negocio, y tu empresa no tiene activo el módulo de embudo de ventas."));
+        }
+        else if (isTagOperation && (crm.TagId is not { } tagId || context.CrmTagIds?.Contains(tagId) != true))
+        {
+            issues.Add(Error(FlowIssueCodes.CrmTagMissing, crm.Id, $"Elige la etiqueta de «{crm.Title}»: la que tenía ya no existe o no la has elegido."));
+        }
+        else if (!isTagOperation && (crm.StageId is not { } stageId || context.CrmOpenStageIds?.Contains(stageId) != true))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.CrmStageMissing, crm.Id,
+                $"Elige la etapa de «{crm.Title}»: la que tenía ya no existe, está cerrada o no la has elegido."));
+        }
+
+        CheckName(crm, crm.SaveTo, issues);
+    }
+
+    /// <summary>Spec 2026-11-17 §5.2: el agente, el objetivo, la inactividad, el módulo y el canal. El objetivo y el contexto miden
+    /// <see cref="AiAgentLimits.TextMaxLength"/> (el contexto, además, se corta al interpolar).</summary>
+    private static void CheckAiAgent(AiAgentNode agent, FlowValidationContext context, List<FlowIssue> issues)
+    {
+        if (!context.AiEnabled)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.AiAgentModuleDisabled, agent.Id,
+                $"«{agent.Title}» usa un agente de IA, y tu empresa no tiene activo el módulo de agentes IA."));
+        }
+
+        if (context.Channels.Contains(Instagram))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.AiAgentChannelNotSupported, agent.Id,
+                $"«{agent.Title}» usa un agente de IA, y los chatbots todavía no lo pueden usar en Instagram."));
+        }
+
+        var known = agent.AgentId is { } agentId ? context.Agents?.FirstOrDefault(candidate => candidate.Id == agentId) : null;
+        if (known is null)
+        {
+            issues.Add(Error(FlowIssueCodes.AiAgentMissing, agent.Id, $"Elige el agente que atiende «{agent.Title}»."));
+        }
+        else if (known.Status == FlowAgentRef.Draft)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.AiAgentNotPublished, agent.Id,
+                $"El agente «{known.Name}» de «{agent.Title}» todavía no está publicado: publícalo o elige otro."));
+        }
+        else if (known.Status == FlowAgentRef.Paused)
+        {
+            issues.Add(Warning(
+                FlowIssueCodes.AiAgentPaused, agent.Id,
+                $"El agente «{known.Name}» de «{agent.Title}» está pausado: mientras siga así, el bloque saldrá por «error»."));
+        }
+
+        if (string.IsNullOrWhiteSpace(agent.Objective))
+        {
+            issues.Add(Error(FlowIssueCodes.AiAgentObjectiveMissing, agent.Id, $"Escribe el objetivo del agente en «{agent.Title}»."));
+        }
+        else
+        {
+            CheckAiAgentText(agent, "El objetivo", agent.Objective, issues);
+        }
+
+        CheckAiAgentText(agent, "El contexto", agent.Context, issues);
+
+        if (agent.IdleMinutes is < AiAgentLimits.MinIdleMinutes or > AiAgentLimits.MaxIdleMinutes)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.AiAgentIdleOutOfRange, agent.Id,
+                $"La inactividad de «{agent.Title}» es {agent.IdleMinutes} minutos; tiene que estar entre {AiAgentLimits.MinIdleMinutes} y {AiAgentLimits.MaxIdleMinutes}."));
+        }
+
+        CheckName(agent, agent.SaveTo, issues);
+    }
+
+    private static void CheckAiAgentText(AiAgentNode agent, string what, string text, List<FlowIssue> issues)
+    {
+        if (text.Length > AiAgentLimits.TextMaxLength)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.TextTooLong, agent.Id,
+                $"{what} de «{agent.Title}» tiene {text.Length} caracteres; el máximo es {AiAgentLimits.TextMaxLength}."));
         }
     }
 
@@ -533,14 +650,55 @@ public static partial class FlowValidator
         }
     }
 
-    // Pasar a un asesor y Resolver pueden no decir nada; si dicen algo, es texto libre.
-    private static void CheckOptionalText(FlowNode node, string text, List<FlowIssue> issues)
+    /// <summary>
+    /// Spec 2026-11-18 «Validation». El texto es el pie y puede ir vacío, salvo con botón: el <c>cta_url</c> de WhatsApp exige cuerpo
+    /// (Review Focus 3). Tope: 1024 (pie de WhatsApp y cuerpo del interactivo), salvo el audio sin botón, cuyo texto sale solo, como texto libre.
+    /// </summary>
+    private static void CheckMediaMessage(MessageNode message, MessageMedia media, FlowValidationContext context, List<FlowIssue> issues)
     {
-        if (text.Length > TextMaxLength)
+        var isAudio = media.Kind == ChatbotMediaKinds.Audio;
+        if (message.UrlButton is { } urlButton)
+        {
+            CheckText(message, message.Text, InteractiveBodyMaxLength, issues);
+            CheckLabel(message, urlButton.Label, issues);
+            CheckUrlButton(message, urlButton, issues);
+        }
+        else
+        {
+            CheckOptionalText(message, message.Text, isAudio ? TextMaxLength : InteractiveBodyMaxLength, issues);
+        }
+
+        if (context.MediaFiles?.GetValueOrDefault(media.FileId) != media.Kind)
+        {
+            issues.Add(Error(FlowIssueCodes.MessageMediaMissing, message.Id, "Falta el archivo de este mensaje. Vuelve a subirlo."));
+        }
+
+        if (isAudio && !string.IsNullOrWhiteSpace(message.Text))
+        {
+            issues.Add(Warning(
+                FlowIssueCodes.MessageAudioCaptionSeparate, message.Id,
+                "El audio no lleva texto: se envía como un mensaje aparte, después del audio."));
+        }
+
+        if (isAudio && message.UrlButton is not null)
+        {
+            issues.Add(Warning(
+                FlowIssueCodes.MessageAudioButtonSeparate, message.Id,
+                "El audio no lleva botón: el botón se envía en un mensaje aparte, después del audio."));
+        }
+    }
+
+    // Pasar a un asesor y Resolver pueden no decir nada; si dicen algo, es texto libre.
+    private static void CheckOptionalText(FlowNode node, string text, List<FlowIssue> issues) =>
+        CheckOptionalText(node, text, TextMaxLength, issues);
+
+    private static void CheckOptionalText(FlowNode node, string text, int maxLength, List<FlowIssue> issues)
+    {
+        if (text.Length > maxLength)
         {
             issues.Add(Error(
                 FlowIssueCodes.TextTooLong, node.Id,
-                $"El texto de «{node.Title}» tiene {text.Length} caracteres; el máximo es {TextMaxLength}."));
+                $"El texto de «{node.Title}» tiene {text.Length} caracteres; el máximo es {maxLength}."));
         }
     }
 
@@ -635,6 +793,50 @@ public static partial class FlowValidator
                     }
 
                     break;
+                case AiAgentNode agent:
+                    // §5.1: la raíz; las referencias se revisan por su raíz ({asesorIa.summary} → asesorIa).
+                    yield return agent.SaveTo;
+                    break;
+                case CrmActionNode crm:
+                    // Spec 2026-11-19: {saveTo}.result; references are checked by their root.
+                    yield return crm.SaveTo;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Lo que el editor ofrece de lo escrito por los bloques: igual que <see cref="WrittenInOrder"/>, salvo «Agente IA», que se ofrece
+    /// campo por campo (<c>{saveTo}.summary</c>, <c>.reason</c>, <c>.quotationNumber</c>): el selector del frontend no los calcula.</summary>
+    private static IEnumerable<string> KnownWrittenInOrder(FlowDefinition flow)
+    {
+        foreach (var node in flow.Nodes)
+        {
+            if (node is AiAgentNode agent)
+            {
+                if (!string.IsNullOrWhiteSpace(agent.SaveTo))
+                {
+                    foreach (var field in AiAgentFields)
+                    {
+                        yield return $"{agent.SaveTo}.{field}";
+                    }
+                }
+
+                continue;
+            }
+
+            if (node is CrmActionNode crm)
+            {
+                if (!string.IsNullOrWhiteSpace(crm.SaveTo))
+                {
+                    yield return $"{crm.SaveTo}.{CrmResultField}";
+                }
+
+                continue;
+            }
+
+            foreach (var name in WrittenInOrder(new FlowDefinition(flow.Schema, flow.Start, [], [node])))
+            {
+                yield return name;
             }
         }
     }
@@ -683,6 +885,8 @@ public static partial class FlowValidator
         ],
         HandoffNode handoff => [handoff.Text],
         ResolveNode resolve => [resolve.Text],
+        // Spec 2026-11-17 §5.1: el contexto se interpola al entrar; el objetivo no.
+        AiAgentNode agent => [agent.Context],
         _ => [],
     };
 

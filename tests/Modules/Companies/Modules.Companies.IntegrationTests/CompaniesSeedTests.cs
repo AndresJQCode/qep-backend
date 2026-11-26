@@ -33,7 +33,10 @@ public sealed class CompaniesSeedTests
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CompaniesDbContext>();
 
+        // Con dos colecciones owned (cuentas y tasas municipales) EF no ordena las cuentas por su ordinal: se piden en el
+        // orden guardado, igual que CompanyRepository.
         var companies = await dbContext.Companies
+            .Include(company => company.BankAccounts.OrderBy(account => EF.Property<int>(account, "Id")))
             .OrderBy(company => company.CreatedAt)
             .ToListAsync(TestContext.Current.CancellationToken);
 
@@ -47,7 +50,7 @@ public sealed class CompaniesSeedTests
         // afirma contra el DIVIPOLA: 05615 es Rionegro, Antioquia.
         var cityId = Assert.Single(companies.Select(company => company.CityId).Distinct());
         var city = await scope.ServiceProvider.GetRequiredService<ICityRepository>()
-            .FindAsync(new CityId(cityId), TestContext.Current.CancellationToken);
+            .FindAsync(new CityId(cityId!.Value), TestContext.Current.CancellationToken);
         Assert.NotNull(city);
         Assert.Equal("05615", city.DivipolaCode);
 

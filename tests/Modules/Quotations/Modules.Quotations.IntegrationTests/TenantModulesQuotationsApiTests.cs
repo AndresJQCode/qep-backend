@@ -12,13 +12,12 @@ namespace Modules.Quotations.IntegrationTests;
 /// Módulos por tenant sobre cotizaciones y pedidos (spec 2026-10-07): un tenant registrado nace con
 /// los seis, y apagar uno corta el acceso en el request siguiente.
 /// </summary>
-public sealed class TenantModulesQuotationsApiTests
+public sealed class TenantModulesQuotationsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task QuotationsAreForbiddenOnceTheModuleIsTurnedOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         Assert.Equal(
@@ -35,8 +34,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task EffectivePermissionsDropQuotationsOnceTurnedOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -51,8 +49,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TurningCustomersBackOnRestoresQuotations()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -73,8 +70,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TheListHidesTheOrderOnceOrdersIsTurnedOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -82,7 +78,7 @@ public sealed class TenantModulesQuotationsApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, customerId, productId);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         Assert.NotNull(Assert.Single((await ListAsync(client, tenantId)).Items).OrderId);
@@ -99,8 +95,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TheRoleCatalogHidesThePermissionsOfAModuleThatIsOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.AdvisorshipRead]);
         using var _ = client;
@@ -111,12 +106,16 @@ public sealed class TenantModulesQuotationsApiTests
         await DisableModuleAsync(factory, tenantId, ModuleKeys.Quotations);
 
         var catalog = await CatalogAsync(client, tenantId);
+        // Los permisos de pedidos (quotations.order.*) son del módulo orders, que ya no depende de quotations: sólo
+        // desaparecen los de cotizaciones.
         Assert.DoesNotContain(
             catalog.Permissions,
-            permission => permission.Permission.StartsWith("quotations.", StringComparison.Ordinal));
+            permission => permission.Permission.StartsWith("quotations.quotation.", StringComparison.Ordinal));
+        Assert.Contains(
+            catalog.Permissions, permission => permission.Permission == OrdersPermissions.OrderRead);
         Assert.NotEmpty(catalog.Roles);
         Assert.All(catalog.Roles, role => Assert.DoesNotContain(
-            role.Permissions, permission => permission.StartsWith("quotations.", StringComparison.Ordinal)));
+            role.Permissions, permission => permission.StartsWith("quotations.quotation.", StringComparison.Ordinal)));
         Assert.Contains(
             catalog.Permissions, permission => permission.Permission == CustomersPermissions.CustomerRead);
     }
@@ -124,8 +123,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TheOrdersExportLayoutNeedsOrders()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.SettingsRead]);
         using var _ = client;
@@ -141,6 +139,77 @@ public sealed class TenantModulesQuotationsApiTests
         using var problem = JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Equal("tenancy.module_not_enabled", problem.RootElement.GetProperty("code").GetString());
+    }
+
+    // Un pedido nace sin cotización (spec 2026-10-15): el dueño de la plataforma oculta cotizaciones y los pedidos,
+    // sus permisos y las opciones de envío del formulario de pedido siguen funcionando.
+    [Fact]
+    public async Task OrdersAndShippingOptionsSurviveHidingQuotations()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.SettingsRead]);
+        using var _ = client;
+        var ordersUrl = $"/api/v1/tenants/{tenantId}/orders";
+        var shippingUrl = $"/api/v1/tenants/{tenantId}/shipping-options";
+        var carriersUrl = $"/api/v1/tenants/{tenantId}/carriers";
+
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Quotations);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.GetAsync(QuotationsUrl(tenantId), TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync(ordersUrl, TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync(shippingUrl, TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync(carriersUrl, TestContext.Current.CancellationToken)).StatusCode);
+        var permissions = await EffectivePermissionsAsync(client, tenantId);
+        Assert.Contains(OrdersPermissions.OrderRead, permissions);
+        Assert.DoesNotContain(QuotationsPermissions.QuotationRead, permissions);
+    }
+
+    // La otra cara: quien sólo cotiza (sin pedidos) conserva transportadoras y opciones de envío.
+    [Fact]
+    public async Task ShippingOptionsSurviveHidingOrders()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.SettingsRead]);
+        using var _ = client;
+
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Orders);
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync($"/api/v1/tenants/{tenantId}/shipping-options", TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync($"/api/v1/tenants/{tenantId}/carriers", TestContext.Current.CancellationToken)).StatusCode);
+    }
+
+    // Sin ninguno de los dos módulos no hay nada que enviar: la configuración compartida se cierra.
+    [Fact]
+    public async Task ShippingOptionsAreForbiddenWithoutQuotationsNorOrders()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.SettingsRead]);
+        using var _ = client;
+
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Quotations);
+        await DisableModuleAsync(factory, tenantId, ModuleKeys.Orders);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.GetAsync($"/api/v1/tenants/{tenantId}/shipping-options", TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.GetAsync($"/api/v1/tenants/{tenantId}/carriers", TestContext.Current.CancellationToken)).StatusCode);
     }
 
     private static async Task<CatalogDto> CatalogAsync(HttpClient client, Guid tenantId)

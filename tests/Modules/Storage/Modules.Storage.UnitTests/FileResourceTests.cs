@@ -170,6 +170,53 @@ public sealed class FileResourceTests
             resource.Publish("public/document.pdf", DateTimeOffset.UtcNow));
     }
 
+    // Spec 2026-11-18: el multimedia de un chatbot se manda por link, así que un PDF también se publica.
+    [Fact]
+    public void AChatbotMediaPdfCanBePublished()
+    {
+        var resource = NewChatbotMedia("catalogo.pdf", "application/pdf");
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        resource.Promote("files/catalogo", DateTimeOffset.UtcNow);
+
+        resource.Publish("public/catalogo.pdf", DateTimeOffset.UtcNow);
+
+        Assert.Equal("public/catalogo.pdf", resource.PublicStorageKey);
+    }
+
+    [Fact]
+    public void AProductPdfStillCannotBePublished()
+    {
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.Product,
+            "ficha.pdf", "application/pdf", 1024, "staging/ficha", DateTimeOffset.UtcNow);
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        resource.Promote("files/ficha", DateTimeOffset.UtcNow);
+
+        var error = Assert.Throws<StorageDomainException>(() =>
+            resource.Publish("public/ficha.pdf", DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.public_image_required", error.Code);
+    }
+
+    // Una imagen grande de un chatbot se reemplaza por su versión comprimida antes de quedar Available.
+    [Fact]
+    public void AChatbotMediaImageCanBeReplacedByItsProcessedVersion()
+    {
+        var resource = NewChatbotMedia("catalogo.png", "image/png");
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+
+        resource.ReplaceContentWithProcessedImage("image/jpeg", ".jpg", "shrunk", 512, DateTimeOffset.UtcNow);
+
+        Assert.Equal("catalogo.jpg", resource.Name);
+        Assert.Equal("image/jpeg", resource.MimeType);
+        Assert.Equal(512, resource.SizeBytes);
+    }
+
+    private static FileResource NewChatbotMedia(string name, string mimeType) =>
+        FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.ChatbotMedia,
+            name, mimeType, 1024, "staging/chatbot-media", DateTimeOffset.UtcNow);
+
     [Fact]
     public void OnlyAvailableIsDownloadable()
     {
@@ -183,5 +230,60 @@ public sealed class FileResourceTests
         resource.SoftDelete(DateTimeOffset.UtcNow);
         Assert.Equal(FileResourceStatus.Deleted, resource.Status);
         Assert.Throws<StorageDomainException>(() => resource.EnsureDownloadable());
+    }
+
+    private static FileResource NewProductImage(bool available = true)
+    {
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.Product,
+            "product.jpg", "image/jpeg", 1024, "staging/product", DateTimeOffset.UtcNow);
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        if (available)
+        {
+            resource.MarkClean(DateTimeOffset.UtcNow);
+        }
+
+        return resource;
+    }
+
+    [Fact]
+    public void PurgeReleasedProductImageMarksAnAvailableProductImagePurged()
+    {
+        var resource = NewProductImage();
+        resource.Publish("public/product.jpg", DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        resource.PurgeReleasedProductImage(now);
+
+        Assert.Equal(FileResourceStatus.Purged, resource.Status);
+        Assert.Equal(now, resource.DeletedAt);
+        Assert.Equal(now, resource.UpdatedAt);
+        Assert.Equal("public/product.jpg", resource.PublicStorageKey);
+    }
+
+    [Fact]
+    public void PurgeReleasedProductImageRequiresAvailable()
+    {
+        var resource = NewProductImage(available: false);
+        Assert.Equal(FileResourceStatus.PendingScan, resource.Status);
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedProductImage(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+    }
+
+    [Fact]
+    public void PurgeReleasedProductImageRequiresAProductImage()
+    {
+        var resource = NewPending();
+        resource.CompleteUpload("abc", 10, DateTimeOffset.UtcNow);
+        resource.MarkClean(DateTimeOffset.UtcNow);
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedProductImage(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+        Assert.Equal(FileResourceStatus.Available, resource.Status);
     }
 }

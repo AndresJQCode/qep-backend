@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Localization;
+
 namespace Modules.Notifications.Application;
 
 public sealed record QuotationsExportKindNames(string Singular, string Plural);
@@ -7,11 +9,16 @@ public sealed record QuotationsExportKindNames(string Singular, string Plural);
 /// nombre del enum de Quotations; Notifications no referencia ese módulo, así que la traducción
 /// vive acá. Un kind desconocido cae a "registros": que el texto llegue después que el evento no
 /// puede dejar sin correo a quien pidió la exportación.
+///
+/// <para>En España la cotización es «presupuesto» (owner, 2026-11-22, spec i18n). Tiene que coincidir con
+/// el diccionario <c>es-ES</c> del frontend: si uno de los dos cambia, cambian juntos.</para>
 /// </summary>
 public static class QuotationsExportKindText
 {
-    public static QuotationsExportKindNames Of(string kind) => kind switch
+    public static QuotationsExportKindNames Of(string kind, string language = SupportedLanguages.Default) => kind switch
     {
+        "Quotations" when SupportedLanguages.OrDefault(language) == SupportedLanguages.SpainSpanish =>
+            new("presupuesto", "presupuestos"),
         "Quotations" => new("cotización", "cotizaciones"),
         "Orders" => new("pedido", "pedidos"),
         _ => new("registro", "registros"),

@@ -31,6 +31,8 @@ public static class PriceScaleCopy
         {
             // The target's own prices: this operation copies tiers, never prices.
             Prices = target.Prices.ToDictionary(price => price.Currency, price => price.Amount),
+            // A target created without a sale price (wholesale phase 3, D-16) keeps having none.
+            AllowsNoPrice = target.Prices.Count == 0,
             // The target's own as well: packaging is about how each variant is sold.
             PackagingUnits = target.PackagingUnits,
             // Ordered by range, like the history: otherwise the order of the new rows depends on

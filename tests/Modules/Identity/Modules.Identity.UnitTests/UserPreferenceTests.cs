@@ -90,7 +90,7 @@ public sealed class UserPreferenceTests
     {
         var preference = UserPreference.CreateDefault(UserId.New(), Guid.NewGuid(), UpdatedAt);
 
-        preference.Change("ocean", "dark", messageSound: true, UpdatedAt.AddHours(1));
+        preference.Change("ocean", "dark", messageSound: true, UpdatedAt.AddHours(1), language: null);
 
         Assert.Equal("ocean", preference.ColorScheme);
         Assert.Equal(ThemeMode.Dark, preference.Mode);
@@ -103,7 +103,7 @@ public sealed class UserPreferenceTests
         var preference = UserPreference.CreateDefault(UserId.New(), Guid.NewGuid(), UpdatedAt);
 
         Assert.Throws<IdentityDomainException>(() =>
-            preference.Change("ocean", "system", messageSound: true, UpdatedAt.AddHours(1)));
+            preference.Change("ocean", "system", messageSound: true, UpdatedAt.AddHours(1), language: null));
 
         // Una preferencia rechazada no puede quedar a medias: ni el esquema ni la marca de
         // tiempo se mueven si el modo no valida.
@@ -128,7 +128,7 @@ public sealed class UserPreferenceTests
         var preference = UserPreference.Create(UserId.New(), Guid.NewGuid(), "botanical", "light", messageSound: false, UpdatedAt);
         Assert.False(preference.MessageSound);
 
-        preference.Change("botanical", "light", messageSound: true, UpdatedAt.AddHours(1));
+        preference.Change("botanical", "light", messageSound: true, UpdatedAt.AddHours(1), language: null);
 
         Assert.True(preference.MessageSound);
         Assert.Equal(UpdatedAt.AddHours(1), preference.UpdatedAt);
@@ -139,7 +139,7 @@ public sealed class UserPreferenceTests
     {
         var preference = UserPreference.CreateDefault(UserId.New(), Guid.NewGuid(), UpdatedAt);
 
-        Assert.Throws<IdentityDomainException>(() => preference.Change("ocean", "system", messageSound: false, UpdatedAt.AddHours(1)));
+        Assert.Throws<IdentityDomainException>(() => preference.Change("ocean", "system", messageSound: false, UpdatedAt.AddHours(1), language: null));
 
         Assert.True(preference.MessageSound);
     }

@@ -20,8 +20,18 @@ public sealed record ListSection(string? Title, IReadOnlyList<ListRow> Rows);
 public sealed record ListSend(string Body, string ButtonLabel, IReadOnlyList<ListSection> Sections, string? Header = null, string? Footer = null)
     : InteractiveSend(Body, Header, Footer);
 
-public sealed record CtaUrlSend(string Body, string DisplayText, Uri Url, string? Header = null, string? Footer = null)
+/// <summary>Spec 2026-11-18: con <see cref="MediaHeader"/> el encabezado es un archivo por link (el del bloque «Mensaje» de un chatbot) en vez de
+/// texto; los dos juntos no existen en Meta (<c>interactive.header.conflict</c>).</summary>
+public sealed record CtaUrlSend(
+    string Body, string DisplayText, Uri Url, string? Header = null, string? Footer = null, InteractiveMediaHeader? MediaHeader = null)
     : InteractiveSend(Body, Header, Footer);
+
+/// <summary>Spec 2026-11-18: el encabezado de archivo de un <c>cta_url</c>. <see cref="Type"/> es <c>image</c>, <c>video</c> o <c>document</c> (Meta no
+/// admite audio de encabezado); <see cref="FileName"/> sólo viaja con <c>document</c>.</summary>
+public sealed record InteractiveMediaHeader(string Type, Uri Link, string? FileName)
+{
+    public static readonly IReadOnlySet<string> Types = new HashSet<string>(StringComparer.Ordinal) { "image", "video", "document" };
+}
 
 /// <summary>Los topes que Meta aplica a cada pieza: pasarse devuelve un 400 de Graph recién al enviar, así que se valida antes.</summary>
 public static class InteractiveLimits
@@ -80,10 +90,34 @@ public static class InteractiveSendValidation
                     errors.Add("interactive.cta.url_not_https");
                 }
 
+                if (cta.MediaHeader is { } media)
+                {
+                    ValidateMediaHeader(cta, media, errors);
+                }
+
                 break;
         }
 
         return errors;
+    }
+
+    private static void ValidateMediaHeader(CtaUrlSend cta, InteractiveMediaHeader media, List<string> errors)
+    {
+        if (cta.Header is not null)
+        {
+            errors.Add("interactive.header.conflict");
+        }
+
+        if (!InteractiveMediaHeader.Types.Contains(media.Type))
+        {
+            errors.Add("interactive.header.media_type_invalid");
+        }
+
+        // Meta descarga el archivo del link: como el botón, sólo https.
+        if (!media.Link.IsAbsoluteUri || media.Link.Scheme != Uri.UriSchemeHttps)
+        {
+            errors.Add("interactive.header.link_not_https");
+        }
     }
 
     private static void ValidateButtons(ButtonsSend send, List<string> errors)
@@ -195,7 +229,17 @@ public static class InteractiveSendJson
             _ => throw new ArgumentOutOfRangeException(nameof(send), send.GetType().Name, "Tipo interactivo desconocido."),
         };
         var result = new JsonObject { ["type"] = type };
-        if (send.Header is not null)
+        if (send is CtaUrlSend { MediaHeader: { } media })
+        {
+            var file = new JsonObject { ["link"] = media.Link.AbsoluteUri };
+            if (media.Type == "document" && media.FileName is not null)
+            {
+                file["filename"] = media.FileName;
+            }
+
+            result["header"] = new JsonObject { ["type"] = media.Type, [media.Type] = file };
+        }
+        else if (send.Header is not null)
         {
             result["header"] = new JsonObject { ["type"] = "text", ["text"] = send.Header };
         }

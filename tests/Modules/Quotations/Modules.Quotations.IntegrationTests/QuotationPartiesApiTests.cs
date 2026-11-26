@@ -1,0 +1,329 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Modules.Quotations.Application;
+using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
+
+namespace Modules.Quotations.IntegrationTests;
+
+/// <summary>
+/// Task 1B de la tienda pública: una parte de facturación o de entrega puede estar fuera de Colombia. Allá la ciudad
+/// es un texto; en Colombia sigue siendo un par de ids de DIVIPOLA y nada del contrato anterior cambia.
+/// </summary>
+public sealed class QuotationPartiesApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
+{
+    private static string QuotationUrl(Guid tenantId, Guid quotationId) =>
+        $"{QuotationsUrl(tenantId)}/{quotationId}";
+
+    private static string ConvertUrl(Guid tenantId, Guid quotationId) =>
+        $"{QuotationUrl(tenantId, quotationId)}/order";
+
+    // Natural: en un tenant colombiano una jurídica exige NIT aunque la parte sea de afuera (BillingPartyFiscalRules.cs:18-35, regla
+    // por el país del tenant), y estas pruebas son del carril de ciudad, no de esa regla.
+    private static QuotationPartyRequest ForeignBilling() => new(
+        "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
+        PersonType: "Natural", IdentificationType: "NIE", Country: "ES", CityName: "Madrid");
+
+    private static QuotationPartyRequest ForeignShipping() => new(
+        "Bodega Madrid", null, "+34600111333", "bodega@madrid.es", "Calle Alcalá 20", null, null,
+        Country: "ES", CityName: "Madrid");
+
+    private static async Task<HttpResponseMessage> PutAsync(
+        HttpClient client, Guid tenantId, QuotationResponse quotation, QuotationPartiesRequest parties)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, QuotationUrl(tenantId, quotation.Id))
+        {
+            Content = JsonContent.Create(new SaveQuotationRequest(
+                quotation.ValidUntil,
+                quotation.PaymentMethod,
+                null,
+                parties,
+                quotation.BillingAccount is { } billing
+                    ? new QuotationBillingAccountRequest(
+                        billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency)
+                    : null,
+                null)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{quotation.Version}\"");
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<QuotationResponse> ReadQuotationAsync(HttpResponseMessage response)
+    {
+        var quotation = await response.Content.ReadFromJsonAsync<QuotationResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(quotation);
+        return quotation;
+    }
+
+    private sealed record Problem(string Code, Dictionary<string, string[]>? Errors);
+
+    [Fact]
+    public async Task AQuotationSavedWithoutCountryIsColombian()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+        var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
+        var shipping = new QuotationPartyRequest(
+            "Bodega Fontibón", null, "3001234567", "bodega@x.co", "Zona Franca", home.DepartmentId, home.CityId);
+
+        var response = await PutAsync(client, tenantId, created, new QuotationPartiesRequest(null, shipping));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var party = Assert.Single((await ReadQuotationAsync(response)).Parties);
+        Assert.Equal(("CO", null), (party.Country, party.CityName));
+        Assert.Equal(home.CityId, party.CityId);
+    }
+
+    [Fact]
+    public async Task AForeignBillingPartyRoundTrips()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var response = await PutAsync(
+            client, tenantId, created, new QuotationPartiesRequest(ForeignBilling(), ForeignShipping()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadQuotationAsync(response);
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            QuotationUrl(tenantId, created.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        foreach (var quotation in new[] { saved, fetched })
+        {
+            var billing = Assert.Single(quotation.Parties, party => party.Role == "Billing");
+            Assert.Equal(("ES", "Madrid", null, null), (billing.Country, billing.CityName, billing.DepartmentId, billing.CityId));
+            var shipping = Assert.Single(quotation.Parties, party => party.Role == "Shipping");
+            Assert.Equal(("ES", "Madrid"), (shipping.Country, shipping.CityName));
+        }
+    }
+
+    [Fact]
+    public async Task ASpanishBillingPartyWithACcIsA422OnItsType()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(ForeignBilling() with { IdentificationType = "CC" }, null));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<Problem>(TestContext.Current.CancellationToken);
+        Assert.Contains("Parties.Billing.IdentificationType", problem!.Errors!.Keys);
+    }
+
+    [Fact]
+    public async Task ASpanishBillingPartyWithANifRoundTrips()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(ForeignBilling() with { IdentificationType = "NIF" }, null));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            QuotationUrl(tenantId, created.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        foreach (var quotation in new[] { await ReadQuotationAsync(response), fetched })
+        {
+            Assert.Equal("NIF", Assert.Single(quotation.Parties, party => party.Role == "Billing").IdentificationType);
+        }
+    }
+
+    [Fact]
+    public async Task AForeignPartyWithDivipolaIdsIsRejectedWithItsField()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+        var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(null, ForeignShipping() with { DepartmentId = home.DepartmentId, CityId = home.CityId }));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<Problem>(TestContext.Current.CancellationToken);
+        Assert.Equal("quotations.party.city_lane_invalid", problem!.Code);
+        Assert.Contains("Parties.Shipping.CityId", problem.Errors!.Keys);
+    }
+
+    [Fact]
+    public async Task ConvertingAForeignQuotationCopiesItsCityText()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, customerId, productId,
+            parties: new QuotationPartiesRequest(
+                ForeignBilling(), ForeignShipping(), BillingWithRetention: false, BillingVatSurplus: false));
+
+        var response = await client.PostAsJsonAsync(
+            ConvertUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(null, []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.All(order.Parties, party => Assert.Equal(("ES", "Madrid"), (party.Country, party.CityName)));
+        Assert.Equal(2, order.Parties.Count);
+    }
+
+    // ---- Region (provincia guardada, spec 2026-11-23) -----------------------------------------
+    //
+    // Toda lectura de `region` sale del JSON de la respuesta HTTP, no del DTO: la respuesta se arma a mano y se come
+    // en silencio un campo nuevo.
+
+    private static JsonElement PartyJson(JsonElement quotation, string role) =>
+        quotation.GetProperty("parties").EnumerateArray().Single(party => party.GetProperty("role").GetString() == role);
+
+    [Fact]
+    public async Task ForeignBillingPartyRoundTripsRegion()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(
+                ForeignBilling() with { RegionId = madrid }, ForeignShipping() with { RegionId = madrid }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var fetched = await client.GetFromJsonAsync<JsonElement>(
+            QuotationUrl(tenantId, created.Id), TestContext.Current.CancellationToken);
+        foreach (var quotation in new[] { saved, fetched })
+        {
+            foreach (var role in new[] { "Billing", "Shipping" })
+            {
+                var region = PartyJson(quotation, role).GetProperty("region");
+                Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+                Assert.Equal("Madrid", region.GetProperty("name").GetString());
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SavingAPartyWithoutRegionClearsIt()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+        var madrid = await MadridRegionIdAsync(client);
+        var withRegion = await PutAsync(
+            client, tenantId, created, new QuotationPartiesRequest(null, ForeignShipping() with { RegionId = madrid }));
+        var saved = await ReadQuotationAsync(withRegion);
+
+        var response = await PutAsync(client, tenantId, saved, new QuotationPartiesRequest(null, ForeignShipping()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal(JsonValueKind.Null, PartyJson(json, "Shipping").GetProperty("region").ValueKind);
+    }
+
+    [Fact]
+    public async Task ColombianPartyWithRegionIs422()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+        var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
+        var madrid = await MadridRegionIdAsync(client);
+        var shipping = new QuotationPartyRequest(
+            "Bodega Fontibón", null, "3001234567", "bodega@x.co", "Zona Franca", home.DepartmentId, home.CityId,
+            RegionId: madrid);
+
+        var response = await PutAsync(client, tenantId, created, new QuotationPartiesRequest(null, shipping));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<Problem>(TestContext.Current.CancellationToken);
+        Assert.Equal("quotations.party.city_lane_invalid", problem!.Code);
+        Assert.Contains("Parties.Shipping.RegionId", problem.Errors!.Keys);
+    }
+
+    [Fact]
+    public async Task RegionOfAnotherCountryIs422()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(null, ForeignShipping() with { Country = "FR", RegionId = madrid }));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<Problem>(TestContext.Current.CancellationToken);
+        Assert.Equal("quotations.party.region_invalid", problem!.Code);
+        Assert.Contains("Parties.Shipping.RegionId", problem.Errors!.Keys);
+    }
+
+    [Fact]
+    public async Task DepartmentIdAsRegionIsRejected()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+        var department = await ColombianDepartmentRegionIdAsync(client);
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(null, ForeignShipping() with { RegionId = department }));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<Problem>(TestContext.Current.CancellationToken);
+        Assert.Equal("quotations.party.region_invalid", problem!.Code);
+    }
+
+    [Fact]
+    public async Task QuoteClientCarriesCustomerRegion()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var madrid = await MadridRegionIdAsync(client);
+        var customerId = await CreateForeignCustomerWithRegionAsync(client, tenantId, madrid);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var fetched = await client.GetFromJsonAsync<JsonElement>(
+            QuotationUrl(tenantId, created.Id), TestContext.Current.CancellationToken);
+
+        var region = fetched.GetProperty("client").GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
+}

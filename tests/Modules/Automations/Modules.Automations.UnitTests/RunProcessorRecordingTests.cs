@@ -52,6 +52,24 @@ public sealed class RunProcessorRecordingTests
             RunState.Initial(RunVariables.Empty()) with { Status = status, CurrentNodeId = nodeId, StepNumber = stepNumber }, updatedAt);
 
     [Fact]
+    public async Task AReleaseRowWritesTheClosedRowWithHumanTookOver()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(new AutomationConversationState("Open", MemberId, "Paused", ChatbotId, ConnectionId, now, "Laura", "573001234567"));
+        var run = LiveRun(RunStatus.Waiting, "q", stepNumber: 2, now.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+        var item = new InboundQueueItem(Guid.CreateVersion7(), TenantId, ConnectionId, ConversationId, Opened: false, now, Attempts: 1, ReleaseRun: true);
+
+        await bed.Processor().ProcessAsync(item, TestContext.Current.CancellationToken);
+
+        var closed = Assert.Single(bed.Units.Saved, row => row.RunId == run.Id);
+        Assert.Equal(
+            (TenantId, 2, RunUnitTriggers.Closed, (Guid?)item.MessageId, RunOutcomes.Interrupted, "[]", (string?)"Interrupted", (string?)RunCloseReasons.HumanTookOver),
+            (closed.TenantId, closed.BaseStep, closed.Trigger, closed.InboundMessageId, closed.Outcome, closed.StepsJson, closed.ClosedStatus, closed.ClosedReason));
+        Assert.Single(bed.Units.Saved);
+    }
+
+    [Fact]
     public async Task AUnitLeavesOneRowWithTheRealClientIds()
     {
         var bed = new Bed();
@@ -227,7 +245,8 @@ public sealed class RunProcessorRecordingTests
             var chatbots = new ServingChatbots();
             var clock = new FixedClock();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new OkHttp(), media, audit, new NoDataConsents(), chatbots, NullLogger<RunEffects>.Instance);
+                Messenger, conversations, hours, http ?? new OkHttp(), media, new MemoryChatbotMedia(), audit, new NoDataConsents(), new NoCrm(), chatbots, new ModuleStatus(moduleEnabled),
+                NullLogger<RunEffects>.Instance);
             var recorder = new RunUnitWriter(Units, clock, Logs.CreateLogger<RunUnitWriter>());
             return new RunProcessor(
                 UnitOfWork, Runs, chatbots, Inbox, conversations, new TenantNames(), new Connections(), hours, media, new ModuleStatus(moduleEnabled),
@@ -388,6 +407,12 @@ public sealed class RunProcessorRecordingTests
 
     private sealed class Conversations(AutomationConversationState? state) : IAutomationConversations
     {
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
@@ -428,6 +453,13 @@ public sealed class RunProcessorRecordingTests
             Sent.Add(clientId);
             return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
         }
+
+        public Task<BotSendOutcome> SendMediaAsync(
+            Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, BotMediaMessage message, CancellationToken cancellationToken)
+        {
+            Sent.Add(clientId);
+            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
+        }
     }
 
     private sealed class OpenHours : IAutomationBusinessHours
@@ -461,6 +493,8 @@ public sealed class RunProcessorRecordingTests
     private sealed class ModuleStatus(bool enabled) : IAutomationsModuleStatus
     {
         public Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(enabled);
+
+        public Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     private sealed class NoAudit : IAutomationsAuditRecorder
@@ -475,6 +509,15 @@ public sealed class RunProcessorRecordingTests
         public Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class NoCrm : IAutomationCrm
+    {
+        public Task<string> AddTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string> RemoveTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string> MoveDealAsync(CrmActionContext context, Guid stageId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FixedClock : IClock

@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using Modules.Catalog.Domain;
 
 namespace Modules.Catalog.Application;
@@ -37,10 +38,22 @@ internal static class ProductTaxRateResolver
         // usaban, ni impedir corregir uno mientras se decide su reemplazo. Lo que se rechaza es
         // que no exista o que sea de otro tenant — y las dos dan el mismo código a propósito,
         // porque distinguirlas le confirmaría al llamador que el id existe en otro tenant.
-        return taxRate is null
-            ? throw new CatalogDomainException(
+        if (taxRate is null)
+        {
+            throw new CatalogDomainException(
                 "catalog.product.tax_rate_not_found",
-                "The tax rate was not found in this tenant.")
-            : candidate;
+                "The tax rate was not found in this tenant.");
+        }
+
+        // Un producto lleva el IVA que se le suma al precio: una tasa que retiene (Retefuente,
+        // ReteICA) se descuenta del total del documento y no tiene sentido en la línea.
+        if (taxRate.Behavior != TaxBehavior.Adds)
+        {
+            throw new CatalogDomainException(
+                "catalog.product.tax_rate_not_vat",
+                "Only a tax rate that adds (VAT) can be set on a product.");
+        }
+
+        return candidate;
     }
 }

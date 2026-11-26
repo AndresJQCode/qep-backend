@@ -9,6 +9,7 @@ internal sealed class MessagingMetrics
     public const string MeterName = "Qep.Messaging";
 
     private readonly Histogram<double> _inboundLag;
+    private readonly Counter<long> _discarded;
 
     public MessagingMetrics(IMeterFactory meterFactory)
     {
@@ -18,6 +19,20 @@ internal sealed class MessagingMetrics
             unit: "s",
             description: "Seconds between Meta's timestamp for an inbound message and the moment it was stored.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [1, 2, 5, 10, 30, 60, 300, 3600] });
+        _discarded = Meter.CreateCounter<long>(
+            "qep.webhook.discarded",
+            unit: "{event}",
+            description: "Webhook events from Meta that were received and deliberately not ingested.");
+
+        // Las series que lee QepWebhookDiscarding nacen en cero: increase() toma la primera muestra como base, y sin esto el primer
+        // lote de descartes después de cada reinicio —la ventana de un despliegue— no contaría para la alerta.
+        foreach (var provider in (string[])[WebhookDiscardProviders.WhatsApp, WebhookDiscardProviders.Instagram])
+        {
+            foreach (var reason in WebhookDiscardReasons.Alerting)
+            {
+                _discarded.Add(0, new KeyValuePair<string, object?>("provider", provider), new KeyValuePair<string, object?>("reason", reason));
+            }
+        }
     }
 
     public Meter Meter { get; }
@@ -25,4 +40,16 @@ internal sealed class MessagingMetrics
     /// <summary>Un timestamp a futuro (reloj desfasado de Meta o del pod) cuenta cero: un rezago negativo no existe.</summary>
     public void RecordInboundLag(string channel, DateTimeOffset occurredAt, DateTimeOffset storedAt) =>
         _inboundLag.Record(Math.Max(0, (storedAt - occurredAt).TotalSeconds), new KeyValuePair<string, object?>("channel", channel));
+
+    /// <summary><paramref name="provider"/> y <paramref name="reason"/> salen de <see cref="WebhookDiscardProviders"/> y
+    /// <see cref="WebhookDiscardReasons"/>. Un descarte de cero eventos (un change de sólo estados) no suma.</summary>
+    public void RecordDiscarded(string provider, string reason, int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        _discarded.Add(count, new KeyValuePair<string, object?>("provider", provider), new KeyValuePair<string, object?>("reason", reason));
+    }
 }
