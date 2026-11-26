@@ -78,14 +78,27 @@ cambió y no deja aprobarlo sin reliquidar. `Reopened` y `Draft` no bloquean.
 `Assignment`), con etiqueta, cambios antes y después, y auditoría `hr.contract.assignment_rewritten` y
 `hr.contract.assignment_deleted`. La restricción `CK_employee_activity_action` se amplía con una migración.
 
-**PDF.** Al eliminar un registro con PDF, el archivo se borra de R2 después de confirmar la transacción, si ningún otro
-registro de Hr lo referencia. `IHrDocumentStore` suma el borrado y Storage lo expone para archivos de sistema. Si el
-borrado en R2 falla, la eliminación del registro queda hecha y se escribe un log: no se reintenta.
+**PDF (decisión del owner, 2026-11-26: aviso por outbox con reintento).** Al eliminar un registro con PDF, Hr escribe en
+`platform.outbox_messages`, en la misma transacción, el evento `hr.documents.released.v1` (`{ tenantId, fileIds }`).
+Storage lo consume con su inbox (`storage.hr-document-release`), como la liberación de imágenes de producto: pregunta a
+las sondas si algún registro de Hr todavía usa el archivo; si ninguno, borra el objeto de R2, marca el recurso `Purged`
+y audita `storage.file.purged`. Si algo falla, no marca el inbox y reintenta en el tick siguiente. Sin sondas no borra
+nada. El consumidor sólo purga archivos `HrDocument`.
+
+El fallo queda en el log (`Error`, con el id del mensaje). El tablero de colas no lo muestra: la cola `outbox` cuenta
+filas sin `processed_at`, que marca el despachador de plataforma, no este consumidor.
 
 ## Enfoques considerados (nómina)
 
 - **A. Bloquear (elegido).** El historial siempre cuadra con lo pagado. Cuesta un puerto de lectura nuevo.
 - **B. Permitir.** Más simple, pero el historial puede contradecir la nómina cerrada y reabrirla cambia el cálculo.
+
+## Enfoques considerados (borrado del PDF)
+
+- **A. Aviso por outbox con reintento (elegido).** El borrado no se pierde. Cuesta un consumidor y un worker nuevos.
+- **B. Barrido diario de PDF sin referencia.** Cubre además los reemplazados, pero una referencia omitida borra un
+  documento laboral válido.
+- **C. Borrar tras la transacción y sólo registrar el fallo.** Deja huérfanos.
 
 ## Arquitectura (requiere tu autorización)
 
@@ -93,6 +106,9 @@ Hr no referencia a Payroll. Se agrega un puerto en `Modules.Hr.Application` (per
 empresa, inicio y fin), otro de lectura en `Modules.Payroll.Application` (EF sobre `periods` y `employee_results`) y el
 adaptador en Bootstrapper, como `LegalParameterUsage`. No agrega referencias entre módulos. La ficha del empleado hace
 una consulta más.
+
+Para el PDF: Hr publica en el outbox de plataforma, Storage suma el consumidor y su worker, y Hr suma su sonda
+(`IFileReferenceProbe`) en Infrastructure, como las de Catalog, Quotations y Support.
 
 ## Fuera de alcance
 
@@ -103,8 +119,8 @@ una consulta más.
 ## Pruebas
 
 Unitarias de dominio (vecinos, primer registro, contrato terminado, `canDelete`) y de aplicación (bloqueo por nómina,
-borrado del PDF, actividad). Integración: las dos rutas, los códigos, el puerto de Payroll contra el esquema migrado y
-la migración.
+aviso del PDF, actividad). Integración: las dos rutas, los códigos, el puerto de Payroll contra el esquema migrado, la
+migración y el consumidor de Storage (borra, conserva si hay referencia y reintenta si R2 falla).
 
 ## Documentos a actualizar
 
