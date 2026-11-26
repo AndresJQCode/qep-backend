@@ -55,6 +55,26 @@ public sealed class LedgerEntryRulesTests
     }
 
     [Fact]
+    public void AReversalSwapsTheHandlingUnitOfEachSide()
+    {
+        // La unidad puede cambiar entre extremos, como el estado: recibir suelto y almacenar dentro de un palet.
+        var unit = Guid.CreateVersion7();
+        var original = new LedgerEntry(
+            new StockKey(Owner, FromLocation.Id, Variant, null, StockStatus.Received),
+            new StockKey(Owner, ToLocation.Id, Variant, null, StockStatus.Available, unit),
+            5m,
+            null,
+            MovementReason.Putaway,
+            null,
+            Now);
+
+        var reversal = LedgerEntry.Reverse(original, Guid.CreateVersion7(), Now.AddDays(-1), Now, null);
+
+        Assert.Equal(new StockKey(Owner, ToLocation.Id, Variant, null, StockStatus.Available, unit), reversal.From);
+        Assert.Equal(new StockKey(Owner, FromLocation.Id, Variant, null, StockStatus.Received), reversal.To);
+    }
+
+    [Fact]
     public void ANewMovementWithAnUnknownCaptureIsStillRejected() =>
         Assert.Equal(
             "wms.uom.factor_mismatch",

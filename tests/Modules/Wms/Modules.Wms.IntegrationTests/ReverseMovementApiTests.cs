@@ -74,6 +74,35 @@ public sealed class ReverseMovementApiTests
         Assert.Equal("Error de digitación", note);
     }
 
+    // D-12: el reverso rearma las dos claves desde el movimiento guardado, unidad incluida. Sin ella compensaría el saldo suelto.
+    [Fact]
+    public async Task TheReversalRestoresTheHandlingUnitOfEachSide()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var unit = Guid.CreateVersion7();
+        await PostAsync(factory, Batch(s, Entry(s, s.Supplier, StockStatus.Available, s.Receiving, StockStatus.Received, 5, MovementReason.Receipt)));
+        await StockAsync(factory, s, s.BinA, 7);
+        var received = new StockKey(s.OwnerId, s.Receiving, s.VariantId, null, StockStatus.Received);
+        var inUnit = new StockKey(s.OwnerId, s.BinA, s.VariantId, null, StockStatus.Available, unit);
+        var loose = inUnit with { HandlingUnitId = null };
+        var movementId = await SeedUnitMovementAsync(database, s, received, inUnit, 5);
+
+        var response = await ReverseRawAsync(s.Manager, movementId, Guid.NewGuid().ToString());
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
+        var reversal = (await response.Content.ReadFromJsonAsync<MovementDto>(Ct))!;
+        Assert.Equal(0m, await OnHandAsync(database, inUnit));
+        Assert.Equal(7m, await OnHandAsync(database, loose));
+        Assert.Equal(5m, await OnHandAsync(database, received));
+        Assert.Equal(
+            unit,
+            await ScalarAsync<Guid>(database, "SELECT from_handling_unit_id FROM wms.stock_movements WHERE id = @id", ("id", reversal.Id)));
+        Assert.Null(await ScalarAsync<Guid?>(database, "SELECT to_handling_unit_id FROM wms.stock_movements WHERE id = @id", ("id", reversal.Id)));
+    }
+
     [Fact]
     public async Task ReversingTwiceIs422AlreadyReversed()
     {

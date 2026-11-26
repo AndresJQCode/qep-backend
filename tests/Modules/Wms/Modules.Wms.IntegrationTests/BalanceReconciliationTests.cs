@@ -105,6 +105,34 @@ public sealed class BalanceReconciliationTests
         }
     }
 
+    // D-12: el ledger agrupa por la unidad de cada extremo y el JOIN la compara con IS NOT DISTINCT FROM; si no, el saldo suelto y el de
+    // la unidad se sumarían en una sola clave del ledger y aparecerían dos diferencias que no existen.
+    [Fact]
+    public async Task TwoBalancesThatDifferOnlyInHandlingUnitDoNotDrift()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var unit = Guid.CreateVersion7();
+        await StockAsync(factory, s, s.BinA, 10);
+        var supplier = new StockKey(s.OwnerId, s.Supplier, s.VariantId, null, StockStatus.Available);
+        var inUnit = new StockKey(s.OwnerId, s.BinA, s.VariantId, null, StockStatus.Available, unit);
+        await SeedUnitMovementAsync(database, s, supplier, inUnit, 4, MovementReason.Adjustment);
+        var worker = factory.Services.GetRequiredService<BalanceReconciliationWorker>();
+
+        Assert.Equal(0L, await worker.RunOnceAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.balance_checks"));
+
+        await ExecuteAsync(
+            database, "UPDATE wms.stock_balances SET on_hand = 3 WHERE handling_unit_id = @unit", ("unit", unit));
+
+        Assert.Equal(1L, await worker.RunOnceAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(unit, await ScalarAsync<Guid>(database, "SELECT handling_unit_id FROM wms.balance_checks"));
+        Assert.Equal(4m, await ScalarAsync<decimal>(database, "SELECT ledger_on_hand FROM wms.balance_checks"));
+        Assert.Equal(3m, await ScalarAsync<decimal>(database, "SELECT balance_on_hand FROM wms.balance_checks"));
+    }
+
     [Fact]
     public async Task AConsistentWarehouseWritesNothing()
     {

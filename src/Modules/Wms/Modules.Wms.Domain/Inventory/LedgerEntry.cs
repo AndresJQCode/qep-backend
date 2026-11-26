@@ -10,7 +10,8 @@ public sealed record LedgerDocument(string Type, Guid Id, Guid? LineId);
 /// <summary>
 /// Un movimiento pedido al ledger: de <see cref="From"/> a <see cref="To"/>, en unidad base. La estructura se valida al
 /// construirlo (cantidad positiva, claves distintas, misma variante, dueño y lote); las reglas con perfil y ubicaciones van en
-/// <see cref="LedgerEntryRules"/>.
+/// <see cref="LedgerEntryRules"/>. La unidad logística no tiene que coincidir entre extremos, como el estado (spec §6.1): recibir
+/// dentro de un palet, almacenarlo entero o sacar sueltas cambian la unidad.
 /// </summary>
 public sealed record LedgerEntry
 {

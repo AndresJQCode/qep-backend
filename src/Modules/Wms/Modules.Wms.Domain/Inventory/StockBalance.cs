@@ -25,6 +25,9 @@ public sealed class StockBalance
 
     public Guid? LotId { get; private set; }
 
+    /// <summary>D-12: la caja o el palet que contiene el saldo; <c>null</c> es suelto. Parte de la clave única.</summary>
+    public Guid? HandlingUnitId { get; private set; }
+
     public StockStatus Status { get; private set; }
 
     public decimal OnHand { get; private set; }

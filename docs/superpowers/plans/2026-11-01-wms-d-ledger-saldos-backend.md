@@ -1129,7 +1129,7 @@ clave. Ningún código de error nuevo nace en esta tarea.
 - `LedgerEntry` **no** exige la misma unidad en los dos extremos (spec §6.1: recibir dentro de un palet, almacenarlo entero o sacar sueltas cambian la unidad); sigue exigiendo misma variante, dueño y lote.
 - Guard interno mientras no exista el agregado: `InventoryLedger.PostAsync` lanza `InvalidOperationException("Handling units are not supported until the HandlingUnit aggregate exists.")` si alguna clave de una entrada **sin** `ReversesMovementId` trae `HandlingUnitId`. No es un código de negocio (ningún endpoint de WMS-D puede producirla) y lo retira el corte que crea las unidades.
 
-- [ ] **Step 1: RED — orden y clave en unitarias**
+- [x] **Step 1: RED — orden y clave en unitarias**
   - `StockKeyComparerTests.NullHandlingUnitSortsBeforeAnyUnitAndTheOrderIsTotal`: cuatro claves que sólo difieren en la unidad (`null`, `U1`, `U2`) y en el estado; el orden directo y el inverso coinciden y la de `null` va primero dentro de la misma `(ubicación, variante, lote)`.
   - `StockKeyComparerTests.KeysThatDifferOnlyInHandlingUnitAreDifferent`: `Compare ≠ 0` y `!=` entre la clave suelta y la misma con `U1`.
   - Reverso: `LedgerEntry.Reverse` de una entrada `(A, Received, null) → (B, Available, U1)` devuelve `(B, Available, U1) → (A, Received, null)`.
@@ -1139,9 +1139,9 @@ dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName
 ```
 Expected: error de compilación (`StockKey` no tiene `HandlingUnitId`).
 
-- [ ] **Step 2: GREEN — dominio.** `StockKey` con el parámetro final, comparador, `StockMovement`/`StockBalance`/`BalanceCheck` con sus propiedades. Mismo comando: PASS, y `dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~WmsLayerTests"` sigue verde (`Inventory` sigue con `Guid` blandos: la unidad tampoco es un tipo fuerte).
+- [x] **Step 2: GREEN — dominio.** `StockKey` con el parámetro final, comparador, `StockMovement`/`StockBalance`/`BalanceCheck` con sus propiedades. Mismo comando: PASS, y `dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~WmsLayerTests"` sigue verde (`Inventory` sigue con `Guid` blandos: la unidad tampoco es un tipo fuerte).
 
-- [ ] **Step 3: RED — esquema e integración**
+- [x] **Step 3: RED — esquema e integración**
   - `InventoryLedgerMigrationTests.TheBalanceKeyIncludesTheHandlingUnitWithNullsNotDistinct`: lee `indexdef` de `pg_indexes` para `UQ_stock_balances_key` y exige `handling_unit_id` entre las columnas y `NULLS NOT DISTINCT`.
   - `InventoryLedgerMigrationTests.MovementsCarryFromAndToHandlingUnit`: `information_schema.columns` de `wms.stock_movements` (y de una partición mensual, que hereda) tiene `from_handling_unit_id` y `to_handling_unit_id` nullable; `wms.v_stock_rows` expone `handling_unit_id`.
   - `InventoryLedgerPostingTests.TheSameKeyLooseAndInsideAUnitAreTwoBalances`: siembra a mano (SQL, como `WmsLedgerSeeding`) un saldo suelto y otro de la misma `(dueño, ubicación, variante, lote, estado)` con `handling_unit_id = U1`; no chocan, y un ajuste posteado por la API (suelto) suma sólo al suelto.
@@ -1156,7 +1156,7 @@ dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualif
 ```
 Expected: FAIL (la columna no existe; `42703` en los sembrados).
 
-- [ ] **Step 4: GREEN — migración `AddHandlingUnitDimension`**
+- [x] **Step 4: GREEN — migración `AddHandlingUnitDimension`**
 
 ```powershell
 dotnet ef migrations add AddHandlingUnitDimension --project src/Modules/Wms/Modules.Wms.Infrastructure --context WmsDbContext -o Persistence/Migrations
@@ -1179,7 +1179,7 @@ dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --filter "FullyQualifiedNa
 ```
 Expected: PASS.
 
-- [ ] **Step 5: Docs.** `CLAUDE.md`, en la entrada de la clave de `stock_balances`: la clave incluye `handling_unit_id` (`NULL` = suelta, también `NULLS NOT DISTINCT`) y un `INSERT` a mano lo lleva en `NULL`; `CatalogVariantUsageChecker` no cambia. README: una línea en la sección del ledger.
+- [x] **Step 5: Docs.** `CLAUDE.md`, en la entrada de la clave de `stock_balances`: la clave incluye `handling_unit_id` (`NULL` = suelta, también `NULLS NOT DISTINCT`) y un `INSERT` a mano lo lleva en `NULL`; `CatalogVariantUsageChecker` no cambia. README: una línea en la sección del ledger.
 
 - [ ] **Step 6: Commit** — `git commit -m "feat(wms): add the handling unit dimension to the balance key and the movement"`.
 

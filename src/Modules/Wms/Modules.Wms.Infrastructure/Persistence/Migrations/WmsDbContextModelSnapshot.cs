@@ -266,6 +266,10 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("checked_at");
 
+                    b.Property<Guid?>("HandlingUnitId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("handling_unit_id");
+
                     b.Property<Guid?>("LastMovementId")
                         .HasColumnType("uuid")
                         .HasColumnName("last_movement_id");
@@ -575,6 +579,10 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("allows_negative");
 
+                    b.Property<Guid?>("HandlingUnitId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("handling_unit_id");
+
                     b.Property<Guid>("LocationId")
                         .HasColumnType("uuid")
                         .HasColumnName("location_id");
@@ -625,11 +633,11 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "OwnerId", "LocationId", "VariantId", "LotId", "Status")
+                    b.HasIndex("TenantId", "OwnerId", "LocationId", "VariantId", "LotId", "HandlingUnitId", "Status")
                         .IsUnique()
                         .HasDatabaseName("UQ_stock_balances_key");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "OwnerId", "LocationId", "VariantId", "LotId", "Status"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "OwnerId", "LocationId", "VariantId", "LotId", "HandlingUnitId", "Status"), false);
 
                     b.HasIndex(new[] { "LocationId" }, "IX_stock_balances_location");
 
@@ -698,6 +706,10 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("document_type");
 
+                    b.Property<Guid?>("FromHandlingUnitId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("from_handling_unit_id");
+
                     b.Property<Guid>("FromLocationId")
                         .HasColumnType("uuid")
                         .HasColumnName("from_location_id");
@@ -753,6 +765,10 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<Guid?>("ToHandlingUnitId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("to_handling_unit_id");
 
                     b.Property<Guid>("ToLocationId")
                         .HasColumnType("uuid")

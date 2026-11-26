@@ -32,6 +32,38 @@ public sealed class StockKeyComparerTests
     }
 
     [Fact]
+    public void NullHandlingUnitSortsBeforeAnyUnitAndTheOrderIsTotal()
+    {
+        var unit1 = Guid.Parse("00000000-0000-0000-0000-000000000100");
+        var unit2 = Guid.Parse("00000000-0000-0000-0000-000000000200");
+        StockKey[] keys =
+        [
+            new(Owner, LocationA, Variant, LotX, StockStatus.Available, unit2),
+            new(Owner, LocationA, Variant, LotX, StockStatus.Received, unit1),
+            new(Owner, LocationA, Variant, LotX, StockStatus.Received),
+            new(Owner, LocationA, Variant, LotX, StockStatus.Available, unit1),
+        ];
+        var forward = keys.Order(StockKeyComparer.Instance).ToArray();
+        var backward = keys.Reverse().Order(StockKeyComparer.Instance).ToArray();
+
+        // La unidad va después del lote y antes del estado: la suelta (null) primero dentro de la misma (ubicación, variante, lote).
+        Assert.Equal(forward, backward);
+        Assert.Equal(
+            [((Guid?)null, StockStatus.Received), (unit1, StockStatus.Available), (unit1, StockStatus.Received), (unit2, StockStatus.Available)],
+            forward.Select(key => (key.HandlingUnitId, key.Status)).ToArray());
+    }
+
+    [Fact]
+    public void KeysThatDifferOnlyInHandlingUnitAreDifferent()
+    {
+        var loose = new StockKey(Owner, LocationA, Variant, LotX, StockStatus.Available);
+        var inUnit = loose with { HandlingUnitId = Guid.Parse("00000000-0000-0000-0000-000000000100") };
+
+        Assert.NotEqual(0, StockKeyComparer.Instance.Compare(loose, inUnit));
+        Assert.True(loose != inUnit);
+    }
+
+    [Fact]
     public void EqualKeysCompareAsZero() =>
         Assert.Equal(0, StockKeyComparer.Instance.Compare(
             new(Owner, LocationA, Variant, LotX, StockStatus.Blocked), new(Owner, LocationA, Variant, LotX, StockStatus.Blocked)));

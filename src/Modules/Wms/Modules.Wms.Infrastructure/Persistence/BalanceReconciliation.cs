@@ -73,40 +73,47 @@ internal sealed class BalanceReconciliation(WmsDbContext dbContext) : IBalanceRe
             WITH drift AS (
                 SELECT coalesce(ledger.tenant_id, bal.tenant_id) AS tenant_id, coalesce(ledger.owner_id, bal.owner_id) AS owner_id,
                        coalesce(ledger.location_id, bal.location_id) AS location_id, coalesce(ledger.variant_id, bal.variant_id) AS variant_id,
-                       coalesce(ledger.lot_id, bal.lot_id) AS lot_id, coalesce(ledger.status, bal.status) AS status,
+                       coalesce(ledger.lot_id, bal.lot_id) AS lot_id, coalesce(ledger.handling_unit_id, bal.handling_unit_id) AS handling_unit_id,
+                       coalesce(ledger.status, bal.status) AS status,
                        coalesce(ledger.on_hand, 0) AS ledger_on_hand, coalesce(bal.on_hand, 0) AS balance_on_hand,
                        ledger.last_movement_id
                 FROM (
-                    SELECT movement.tenant_id, movement.owner_id, movement.location_id, movement.variant_id, movement.lot_id, movement.status,
-                           sum(movement.delta) AS on_hand,
+                    SELECT movement.tenant_id, movement.owner_id, movement.location_id, movement.variant_id, movement.lot_id,
+                           movement.handling_unit_id, movement.status, sum(movement.delta) AS on_hand,
                            (array_agg(movement.id ORDER BY movement.occurred_at DESC, movement.id DESC))[1] AS last_movement_id
                     FROM (
                         SELECT m.id, m.occurred_at, m.tenant_id, m.owner_id, m.to_location_id AS location_id, m.variant_id, m.lot_id,
-                               m.to_status AS status, m.quantity AS delta
+                               m.to_handling_unit_id AS handling_unit_id, m.to_status AS status, m.quantity AS delta
                         FROM wms.stock_movements m JOIN wms.locations l ON l.id = m.to_location_id
                         WHERE m.tenant_id = {tenantId} AND l.warehouse_id = {warehouseId} AND m.variant_id > {after} AND m.variant_id <= {upper}
                         UNION ALL
-                        SELECT m.id, m.occurred_at, m.tenant_id, m.owner_id, m.from_location_id, m.variant_id, m.lot_id, m.from_status, -m.quantity
+                        SELECT m.id, m.occurred_at, m.tenant_id, m.owner_id, m.from_location_id, m.variant_id, m.lot_id,
+                               m.from_handling_unit_id, m.from_status, -m.quantity
                         FROM wms.stock_movements m JOIN wms.locations l ON l.id = m.from_location_id
                         WHERE m.tenant_id = {tenantId} AND l.warehouse_id = {warehouseId} AND m.variant_id > {after} AND m.variant_id <= {upper}) movement
-                    GROUP BY movement.tenant_id, movement.owner_id, movement.location_id, movement.variant_id, movement.lot_id, movement.status) ledger
+                    GROUP BY movement.tenant_id, movement.owner_id, movement.location_id, movement.variant_id, movement.lot_id,
+                             movement.handling_unit_id, movement.status) ledger
                 FULL OUTER JOIN (
-                    SELECT tenant_id, owner_id, location_id, variant_id, lot_id, status, on_hand
+                    SELECT tenant_id, owner_id, location_id, variant_id, lot_id, handling_unit_id, status, on_hand
                     FROM wms.stock_balances
                     WHERE tenant_id = {tenantId} AND warehouse_id = {warehouseId} AND variant_id > {after} AND variant_id <= {upper}) bal
                   ON bal.tenant_id = ledger.tenant_id AND bal.owner_id = ledger.owner_id AND bal.location_id = ledger.location_id
-                 AND bal.variant_id = ledger.variant_id AND bal.lot_id IS NOT DISTINCT FROM ledger.lot_id AND bal.status = ledger.status
+                 AND bal.variant_id = ledger.variant_id AND bal.lot_id IS NOT DISTINCT FROM ledger.lot_id
+                 AND bal.handling_unit_id IS NOT DISTINCT FROM ledger.handling_unit_id AND bal.status = ledger.status
                 WHERE coalesce(ledger.on_hand, 0) <> coalesce(bal.on_hand, 0)),
             recorded AS (
                 INSERT INTO wms.balance_checks
-                    (id, tenant_id, warehouse_id, owner_id, location_id, variant_id, lot_id, status, ledger_on_hand, balance_on_hand, last_movement_id, checked_at)
-                SELECT gen_random_uuid(), d.tenant_id, {warehouseId}, d.owner_id, d.location_id, d.variant_id, d.lot_id, d.status,
+                    (id, tenant_id, warehouse_id, owner_id, location_id, variant_id, lot_id, handling_unit_id, status, ledger_on_hand,
+                     balance_on_hand, last_movement_id, checked_at)
+                SELECT gen_random_uuid(), d.tenant_id, {warehouseId}, d.owner_id, d.location_id, d.variant_id, d.lot_id, d.handling_unit_id,
+                       d.status,
                        d.ledger_on_hand, d.balance_on_hand, d.last_movement_id, now()
                 FROM drift d
                 WHERE NOT EXISTS (
                     SELECT 1 FROM wms.balance_checks c
                     WHERE c.tenant_id = d.tenant_id AND c.warehouse_id = {warehouseId} AND c.owner_id = d.owner_id
                       AND c.location_id = d.location_id AND c.variant_id = d.variant_id AND c.lot_id IS NOT DISTINCT FROM d.lot_id
+                      AND c.handling_unit_id IS NOT DISTINCT FROM d.handling_unit_id
                       AND c.status = d.status AND c.checked_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))
                 RETURNING 1)
             SELECT count(*)::int AS "Value" FROM drift

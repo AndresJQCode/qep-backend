@@ -4270,6 +4270,10 @@ bloqueado. Las sondas de «con existencias» (`hasStock` del perfil, borrar una 
 ubicación no virtual con `on_hand` o `reserved` distinto de cero. Una variante con movimientos o saldos en el ledger tampoco se borra
 de Catalog (`CatalogVariantUsageChecker`): se desactiva.
 
+La clave del saldo incluye además la **unidad logística** (`handling_unit_id`, caja o palet; D-12): `NULL` es stock suelto, y el
+movimiento guarda la de cada extremo (`from_handling_unit_id`, `to_handling_unit_id`). En WMS-D va siempre en `NULL`, salvo lo que copie
+un reverso: el agregado `HandlingUnit`, su tabla y sus rutas llegan con el corte que confirme recepciones.
+
 **Rutas** (bajo `/api/v1/tenants/{tenantId}/wms`). **IK** exige el header `Idempotency-Key`; **SK** deriva la clave en el servidor.
 
 | Ruta | Permiso | Idempotencia |

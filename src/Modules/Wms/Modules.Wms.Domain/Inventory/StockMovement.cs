@@ -26,9 +26,14 @@ public sealed class StockMovement
 
     public StockStatus FromStatus { get; private set; }
 
+    /// <summary>D-12: la unidad logística de origen; <c>null</c> es stock suelto. Puede ser distinta de la de destino.</summary>
+    public Guid? FromHandlingUnitId { get; private set; }
+
     public Guid ToLocationId { get; private set; }
 
     public StockStatus ToStatus { get; private set; }
+
+    public Guid? ToHandlingUnitId { get; private set; }
 
     public decimal Quantity { get; private set; }
 
@@ -119,8 +124,10 @@ public sealed class StockMovement
             SerialUnitId = serialUnitId,
             FromLocationId = from.LocationId,
             FromStatus = from.Status,
+            FromHandlingUnitId = from.HandlingUnitId,
             ToLocationId = to.LocationId,
             ToStatus = to.Status,
+            ToHandlingUnitId = to.HandlingUnitId,
             Quantity = quantity,
             CapturedUom = capturedUom,
             CapturedQty = capturedQty,

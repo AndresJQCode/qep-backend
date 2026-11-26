@@ -24,6 +24,8 @@ public sealed class BalanceCheck
 
     public Guid? LotId { get; private set; }
 
+    public Guid? HandlingUnitId { get; private set; }
+
     public StockStatus Status { get; private set; }
 
     public decimal LedgerOnHand { get; private set; }

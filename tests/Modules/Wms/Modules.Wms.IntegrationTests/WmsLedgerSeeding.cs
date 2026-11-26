@@ -118,6 +118,91 @@ internal static class WmsLedgerSeeding
             ("status", status.ToString()),
             ("lot", lotId));
 
+    /// <summary>El saldo de una clave exacta, unidad logística incluida (<c>null</c> es suelto, y no suma lo que está en unidades).</summary>
+    public static async Task<decimal> OnHandAsync(PostgreSqlContainer database, StockKey key) =>
+        await ScalarAsync<decimal>(
+            database,
+            """
+            SELECT coalesce(sum(on_hand), 0)
+            FROM wms.stock_balances
+            WHERE owner_id = @owner AND location_id = @location AND variant_id = @variant AND status = @status
+              AND lot_id IS NOT DISTINCT FROM @lot::uuid AND handling_unit_id IS NOT DISTINCT FROM @unit::uuid
+            """,
+            ("owner", key.OwnerId),
+            ("location", key.LocationId),
+            ("variant", key.VariantId),
+            ("status", key.Status.ToString()),
+            ("lot", key.LotId),
+            ("unit", key.HandlingUnitId));
+
+    /// <summary>Suma <paramref name="delta"/> al saldo de la clave por SQL, como lo haría el upsert del ledger. Sirve para sembrar saldos
+    /// dentro de una unidad logística, que el ledger de WMS-D todavía no escribe (D-12). Primero el UPDATE y sólo si no hay fila el
+    /// INSERT, como el débito del ledger: un <c>ON CONFLICT</c> con delta negativo chocaría con el CHECK antes de ver el conflicto.</summary>
+    public static Task SeedBalanceAsync(PostgreSqlContainer database, LedgerSetup s, StockKey key, decimal delta) =>
+        ExecuteAsync(
+            database,
+            """
+            WITH updated AS (
+                UPDATE wms.stock_balances
+                SET on_hand = on_hand + @delta, version = version + 1
+                WHERE tenant_id = @tenant AND owner_id = @owner AND location_id = @location AND variant_id = @variant
+                  AND lot_id IS NOT DISTINCT FROM @lot::uuid AND handling_unit_id IS NOT DISTINCT FROM @unit::uuid AND status = @status
+                RETURNING 1)
+            INSERT INTO wms.stock_balances
+                (tenant_id, owner_id, warehouse_id, location_id, variant_id, lot_id, handling_unit_id, status, on_hand, reserved,
+                 allows_negative, version, updated_at)
+            SELECT @tenant, @owner, l.warehouse_id, l.id, @variant, @lot::uuid, @unit::uuid, @status, @delta, 0,
+                   l.role IN ('Supplier', 'Customer', 'Adjustment'), 1, now()
+            FROM wms.locations l
+            WHERE l.id = @location AND NOT EXISTS (SELECT 1 FROM updated)
+            """,
+            ("tenant", s.TenantId),
+            ("owner", key.OwnerId),
+            ("variant", key.VariantId),
+            ("lot", key.LotId),
+            ("unit", key.HandlingUnitId),
+            ("status", key.Status.ToString()),
+            ("delta", delta),
+            ("location", key.LocationId));
+
+    /// <summary>Un movimiento con unidad logística sembrado por SQL, con sus dos saldos. Mientras no exista el agregado
+    /// <c>HandlingUnit</c> el ledger rechaza unidades fuera de un reverso, así que es la única forma de tener uno.</summary>
+    public static async Task<Guid> SeedUnitMovementAsync(
+        PostgreSqlContainer database, LedgerSetup s, StockKey from, StockKey to, decimal qty, MovementReason reason = MovementReason.Putaway)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(
+            database,
+            """
+            INSERT INTO wms.stock_movements
+                (id, tenant_id, owner_id, variant_id, lot_id, from_location_id, from_status, from_handling_unit_id,
+                 to_location_id, to_status, to_handling_unit_id, quantity, reason, batch_id, idempotency_key, actor_id, actor_type,
+                 occurred_at, recorded_at)
+            VALUES
+                (@id, @tenant, @owner, @variant, @lot::uuid, @fromLocation, @fromStatus, @fromUnit::uuid,
+                 @toLocation, @toStatus, @toUnit::uuid, @qty, @reason, @batch, @key, @actor, 'Human', now(), now())
+            """,
+            ("id", id),
+            ("tenant", s.TenantId),
+            ("owner", from.OwnerId),
+            ("variant", from.VariantId),
+            ("lot", from.LotId),
+            ("fromLocation", from.LocationId),
+            ("fromStatus", from.Status.ToString()),
+            ("fromUnit", from.HandlingUnitId),
+            ("toLocation", to.LocationId),
+            ("toStatus", to.Status.ToString()),
+            ("toUnit", to.HandlingUnitId),
+            ("qty", qty),
+            ("reason", reason.ToString()),
+            ("batch", Guid.CreateVersion7()),
+            ("key", Guid.NewGuid().ToString()),
+            ("actor", Guid.Parse(SubjectId)));
+        await SeedBalanceAsync(database, s, from, -qty);
+        await SeedBalanceAsync(database, s, to, qty);
+        return id;
+    }
+
     /// <summary>Por el <c>PUT</c> de WMS-B, con la versión 0 de un perfil todavía sin guardar.</summary>
     public static async Task SetTrackingAsync(HttpClient manager, Guid variantId, string tracking, bool tracksExpiry = false)
     {

@@ -634,4 +634,50 @@ public sealed class InventoryLedgerPostingTests
 
         Assert.Equal(2, Interlocked.Read(ref total));
     }
+
+    // D-12: la misma (dueño, ubicación, variante, lote, estado) suelta y dentro de una unidad son dos saldos, y lo que entra suelto no
+    // toca el de la unidad.
+    [Fact]
+    public async Task TheSameKeyLooseAndInsideAUnitAreTwoBalances()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var loose = new StockKey(s.OwnerId, s.BinA, s.VariantId, null, Available);
+        var inUnit = loose with { HandlingUnitId = Guid.CreateVersion7() };
+        await SeedBalanceAsync(database, s, loose, 5);
+        await SeedBalanceAsync(database, s, inUnit, 4);
+
+        await AdjustmentTestSupport.PostedAsync(s.Manager, s, s.BinA, 3);
+
+        Assert.Equal(2L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_balances WHERE location_id = @a", ("a", s.BinA)));
+        Assert.Equal(8m, await OnHandAsync(database, loose));
+        Assert.Equal(4m, await OnHandAsync(database, inUnit));
+    }
+
+    // Guard interno mientras no exista el agregado HandlingUnit: ningún endpoint de WMS-D puede producirlo, así que no es un código
+    // de negocio sino un error de programación.
+    [Fact]
+    public async Task APostedBatchWithAHandlingUnitIsRejectedUntilTheAggregateExists()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var entry = new LedgerEntry(
+            new StockKey(s.OwnerId, s.Supplier, s.VariantId, null, Available),
+            new StockKey(s.OwnerId, s.BinA, s.VariantId, null, Available, Guid.CreateVersion7()),
+            5,
+            null,
+            MovementReason.Adjustment,
+            null,
+            DateTimeOffset.UtcNow);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => PostAsync(factory, Batch(s, entry)));
+
+        Assert.Equal("Handling units are not supported until the HandlingUnit aggregate exists.", exception.Message);
+        Assert.Equal(0, await MovementCountAsync(database));
+        Assert.Equal(0, await BalanceCountAsync(database));
+    }
 }

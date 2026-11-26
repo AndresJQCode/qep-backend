@@ -110,11 +110,14 @@ public sealed class ReverseMovementHandler(
         return dto;
     }
 
-    /// <summary>La entrada original a partir de su fila: lo que el ledger escribió es lo que el compensatorio invierte.</summary>
+    /// <summary>La entrada original a partir de su fila: lo que el ledger escribió es lo que el compensatorio invierte. La unidad
+    /// logística de cada extremo también (D-12): sin ella el reverso compensaría el saldo suelto y no el de la unidad.</summary>
     private static LedgerEntry ToEntry(StockMovement movement) =>
         new(
-            new StockKey(movement.OwnerId, movement.FromLocationId, movement.VariantId, movement.LotId, movement.FromStatus),
-            new StockKey(movement.OwnerId, movement.ToLocationId, movement.VariantId, movement.LotId, movement.ToStatus),
+            new StockKey(
+                movement.OwnerId, movement.FromLocationId, movement.VariantId, movement.LotId, movement.FromStatus, movement.FromHandlingUnitId),
+            new StockKey(
+                movement.OwnerId, movement.ToLocationId, movement.VariantId, movement.LotId, movement.ToStatus, movement.ToHandlingUnitId),
             movement.Quantity,
             movement.CapturedUom is not null && movement.CapturedQty is { } capturedQty && movement.ConversionFactor is { } factor
                 ? new LedgerCapture(movement.CapturedUom, capturedQty, factor)

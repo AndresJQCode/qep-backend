@@ -37,6 +37,8 @@ internal sealed class InventoryLedger(
             throw new InvalidOperationException("InventoryLedger.PostAsync requires the transaction from BeginTransactionAsync.");
         }
 
+        EnsureNoHandlingUnits(batch);
+
         var tenantId = batch.TenantId;
         var locations = await LoadLocationsAsync(batch, cancellationToken);
         var variants = await LoadVariantRulesAsync(batch, cancellationToken);
@@ -81,6 +83,19 @@ internal sealed class InventoryLedger(
         }
 
         return new LedgerPosting(batch.BatchId, movements.Select(movement => movement.Id).ToArray());
+    }
+
+    // D-12, temporal: la unidad logística ya es dimensión de la clave, pero sin el agregado HandlingUnit nadie verifica «una unidad, una
+    // ubicación» ni bloquea la fila de la unidad (spec §6.3). Ningún endpoint de WMS-D puede mandar una, así que no es un código de
+    // negocio. Se exceptúa el reverso: copia las unidades del movimiento guardado, que ya aceptó el ledger (o sembró una prueba), y sin
+    // ellas compensaría el saldo suelto. Lo retira el corte que crea las unidades.
+    private static void EnsureNoHandlingUnits(LedgerBatch batch)
+    {
+        if (batch.Entries.Any(entry => entry.ReversesMovementId is null
+            && (entry.From.HandlingUnitId is not null || entry.To.HandlingUnitId is not null)))
+        {
+            throw new InvalidOperationException("Handling units are not supported until the HandlingUnit aggregate exists.");
+        }
     }
 
     private async Task<Dictionary<Guid, LedgerLocationInfo>> LoadLocationsAsync(LedgerBatch batch, CancellationToken ct)
@@ -229,7 +244,8 @@ internal sealed class InventoryLedger(
             UPDATE wms.stock_balances
             SET on_hand = on_hand + {delta}, version = version + 1, updated_at = now()
             WHERE tenant_id = {tenantId} AND owner_id = {key.OwnerId} AND location_id = {key.LocationId} AND variant_id = {key.VariantId}
-              AND lot_id IS NOT DISTINCT FROM {key.LotId}::uuid AND status = {status}
+              AND lot_id IS NOT DISTINCT FROM {key.LotId}::uuid AND handling_unit_id IS NOT DISTINCT FROM {key.HandlingUnitId}::uuid
+              AND status = {status}
               AND on_hand + {delta} >= reserved
             RETURNING on_hand AS "OnHand", reserved AS "Reserved"
             """)
@@ -244,7 +260,8 @@ internal sealed class InventoryLedger(
             SELECT on_hand AS "OnHand", reserved AS "Reserved"
             FROM wms.stock_balances
             WHERE tenant_id = {tenantId} AND owner_id = {key.OwnerId} AND location_id = {key.LocationId} AND variant_id = {key.VariantId}
-              AND lot_id IS NOT DISTINCT FROM {key.LotId}::uuid AND status = {status}
+              AND lot_id IS NOT DISTINCT FROM {key.LotId}::uuid AND handling_unit_id IS NOT DISTINCT FROM {key.HandlingUnitId}::uuid
+              AND status = {status}
             """)
             .ToListAsync(ct);
         var (onHand, reserved) = current.Count > 0 ? (current[0].OnHand, current[0].Reserved) : (0m, 0m);
@@ -262,11 +279,12 @@ internal sealed class InventoryLedger(
         await dbContext.Database.ExecuteSqlAsync(
             $"""
             INSERT INTO wms.stock_balances
-                (tenant_id, owner_id, warehouse_id, location_id, variant_id, lot_id, status, on_hand, reserved, allows_negative, version, updated_at)
+                (tenant_id, owner_id, warehouse_id, location_id, variant_id, lot_id, handling_unit_id, status, on_hand, reserved, allows_negative,
+                 version, updated_at)
             VALUES
-                ({tenantId}, {key.OwnerId}, {location.WarehouseId}, {key.LocationId}, {key.VariantId}, {key.LotId}::uuid, {key.Status.ToString()},
-                 {delta}, 0, {location.AllowsNegative}, 1, now())
-            ON CONFLICT (tenant_id, owner_id, location_id, variant_id, lot_id, status)
+                ({tenantId}, {key.OwnerId}, {location.WarehouseId}, {key.LocationId}, {key.VariantId}, {key.LotId}::uuid,
+                 {key.HandlingUnitId}::uuid, {key.Status.ToString()}, {delta}, 0, {location.AllowsNegative}, 1, now())
+            ON CONFLICT (tenant_id, owner_id, location_id, variant_id, lot_id, handling_unit_id, status)
             DO UPDATE SET on_hand = wms.stock_balances.on_hand + EXCLUDED.on_hand,
                           version = wms.stock_balances.version + 1,
                           updated_at = now()

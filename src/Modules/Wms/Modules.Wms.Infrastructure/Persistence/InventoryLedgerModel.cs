@@ -45,8 +45,10 @@ internal static class InventoryLedgerModel
         movement.Property(value => value.SerialUnitId).HasColumnName("serial_unit_id");
         movement.Property(value => value.FromLocationId).HasColumnName("from_location_id");
         movement.Property(value => value.FromStatus).HasColumnName("from_status").HasConversion<string>();
+        movement.Property(value => value.FromHandlingUnitId).HasColumnName("from_handling_unit_id");
         movement.Property(value => value.ToLocationId).HasColumnName("to_location_id");
         movement.Property(value => value.ToStatus).HasColumnName("to_status").HasConversion<string>();
+        movement.Property(value => value.ToHandlingUnitId).HasColumnName("to_handling_unit_id");
         movement.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(18, 6);
         movement.Property(value => value.CapturedUom).HasColumnName("captured_uom");
         movement.Property(value => value.CapturedQty).HasColumnName("captured_qty").HasPrecision(18, 6);
@@ -83,14 +85,19 @@ internal static class InventoryLedgerModel
         balance.Property(value => value.LocationId).HasColumnName("location_id");
         balance.Property(value => value.VariantId).HasColumnName("variant_id");
         balance.Property(value => value.LotId).HasColumnName("lot_id");
+        balance.Property(value => value.HandlingUnitId).HasColumnName("handling_unit_id");
         balance.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
         balance.Property(value => value.OnHand).HasColumnName("on_hand").HasPrecision(18, 6);
         balance.Property(value => value.Reserved).HasColumnName("reserved").HasPrecision(18, 6);
         balance.Property(value => value.AllowsNegative).HasColumnName("allows_negative");
         balance.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint");
         balance.Property(value => value.UpdatedAt).HasColumnName("updated_at");
-        // NULLS NOT DISTINCT: dos saldos sin lote de la misma clave son el mismo saldo.
-        balance.HasIndex(value => new { value.TenantId, value.OwnerId, value.LocationId, value.VariantId, value.LotId, value.Status })
+        // NULLS NOT DISTINCT: dos saldos sin lote, o sueltos (sin unidad, D-12), de la misma clave son el mismo saldo. La unidad va entre
+        // el lote y el estado, como en StockKeyComparer.
+        balance.HasIndex(value => new
+            {
+                value.TenantId, value.OwnerId, value.LocationId, value.VariantId, value.LotId, value.HandlingUnitId, value.Status,
+            })
             .IsUnique()
             .AreNullsDistinct(false)
             .HasDatabaseName(WmsDbContext.StockBalanceKeyIndex);
@@ -199,6 +206,7 @@ internal static class InventoryLedgerModel
         check.Property(value => value.LocationId).HasColumnName("location_id");
         check.Property(value => value.VariantId).HasColumnName("variant_id");
         check.Property(value => value.LotId).HasColumnName("lot_id");
+        check.Property(value => value.HandlingUnitId).HasColumnName("handling_unit_id");
         check.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
         check.Property(value => value.LedgerOnHand).HasColumnName("ledger_on_hand").HasPrecision(18, 6);
         check.Property(value => value.BalanceOnHand).HasColumnName("balance_on_hand").HasPrecision(18, 6);
