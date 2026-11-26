@@ -130,6 +130,8 @@ public static class MultiReplicaInventory
             "Modules/Ai/Modules.Ai.Infrastructure/Persistence/AiRunPersistence.cs:64-75 — FOR UPDATE SKIP LOCKED y lease_until (LeaseMinutes, mayor que el tope de 120 s del trabajo)"),
         new("Modules.Wms.Infrastructure.Workers.BalanceChangePublisher", WorkerClassification.Claimed,
             "Modules/Wms/Modules.Wms.Infrastructure/Persistence/BalanceChangeQueue.cs:39-56 — FOR UPDATE SKIP LOCKED y DELETE … RETURNING en la misma transacción que escribe el evento en el outbox"),
+        new("Modules.Wms.Infrastructure.Workers.TaskLeaseSweeper", WorkerClassification.Claimed,
+            "Modules/Wms/Modules.Wms.Infrastructure/Persistence/WarehouseTaskRepository.cs:162-177 (LockExpiredAsync) — toma las tareas vencidas con FOR UPDATE SKIP LOCKED en la transacción de la pasada; dos réplicas reparten filas distintas y el dominio (ExpireLease) no hace nada si el lease ya no está vencido"),
         // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
         new("Modules.Notifications.Infrastructure.TaskNotices.TaskNoticeEscalationWorker", WorkerClassification.Claimed,

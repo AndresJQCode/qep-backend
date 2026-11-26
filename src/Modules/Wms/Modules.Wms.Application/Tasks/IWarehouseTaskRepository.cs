@@ -6,9 +6,13 @@ public sealed record WarehouseTaskPage(IReadOnlyList<WarehouseTask> Items, int T
 
 public sealed record TaskStatusCount(WarehouseTaskStatus Status, int Count);
 
-/// <summary>Las tareas de bodega (spec 2026-11-26 §6). Todas las lecturas traen las líneas en orden de recorrido. Las que sólo
-/// alimentan una pantalla vienen sin rastreo: así no se cuelan en un <c>SaveChangesAsync</c> ni se quedan viejas en el contexto si
-/// después se bloquea y se recarga la misma tarea.</summary>
+/// <summary>Una tarea con el lease vencido, con su tenant para cargarla.</summary>
+public sealed record ExpiredTaskLease(Guid TenantId, Guid TaskId);
+
+/// <summary>Las tareas de bodega (spec 2026-11-26 §6). Todo se pide por tenant, salvo <see cref="LockExpiredAsync"/>, que es del
+/// barrido. Todas las lecturas traen las líneas en orden de recorrido. Las que sólo alimentan una pantalla vienen sin rastreo: así
+/// no se cuelan en un <c>SaveChangesAsync</c> ni se quedan viejas en el contexto si después se bloquea y se recarga la misma
+/// tarea.</summary>
 public interface IWarehouseTaskRepository
 {
     void Add(WarehouseTask task);
@@ -60,6 +64,11 @@ public interface IWarehouseTaskRepository
         IReadOnlyCollection<WarehouseTaskType> types,
         DateTimeOffset now,
         CancellationToken cancellationToken);
+
+    /// <summary>Hasta <paramref name="limit"/> tareas en curso, de cualquier tenant, cuyo lease venció antes de
+    /// <paramref name="now"/>, las más vencidas primero; quedan bloqueadas por esta transacción (exige la de
+    /// <see cref="IWmsUnitOfWork.BeginTransactionAsync"/>) y las que otra tiene bloqueadas se saltan.</summary>
+    Task<IReadOnlyList<ExpiredTaskLease>> LockExpiredAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
 
     /// <summary><c>TSK-{yyyyMMdd}-{NNNN}</c>, consecutivo por tenant y día. Toma un lock bloqueante de transacción antes de contar;
     /// exige la transacción de <see cref="IWmsUnitOfWork.BeginTransactionAsync"/> y el lock vive hasta que ella confirme o se

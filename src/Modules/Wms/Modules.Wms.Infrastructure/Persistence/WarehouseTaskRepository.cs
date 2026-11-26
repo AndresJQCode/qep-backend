@@ -157,6 +157,25 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return candidates.Count == 0 ? null : candidates[0];
     }
 
+    // El mismo corte que WarehouseTask.ExpireLease (vencido es estrictamente anterior). SKIP LOCKED reparte las filas entre réplicas
+    // y no espera a la confirmación que tenga una tomada: la ve en la pasada siguiente.
+    public async Task<IReadOnlyList<ExpiredTaskLease>> LockExpiredAsync(
+        DateTimeOffset now, int limit, CancellationToken cancellationToken)
+    {
+        EnsureTransaction(nameof(LockExpiredAsync));
+
+        return await dbContext.Database
+            .SqlQuery<ExpiredTaskLease>(
+                $"""
+                SELECT t.tenant_id AS "TenantId", t.id AS "TaskId" FROM wms.tasks t
+                WHERE t.status = 'InProgress' AND t.lease_expires_at < {now}
+                ORDER BY t.lease_expires_at
+                LIMIT {limit}
+                FOR UPDATE SKIP LOCKED
+                """)
+            .ToListAsync(cancellationToken);
+    }
+
     // Mismo mecanismo que la numeración de ajustes (S26): lock bloqueante antes del conteo, vivo hasta que la transacción confirme.
     public async Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken)
     {

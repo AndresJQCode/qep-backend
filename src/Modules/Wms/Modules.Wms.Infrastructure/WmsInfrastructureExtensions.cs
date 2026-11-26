@@ -66,6 +66,8 @@ public static class WmsInfrastructureExtensions
         services.AddHostedService(provider => provider.GetRequiredService<BalanceReconciliationWorker>());
         services.AddSingleton<PartitionMaintenanceWorker>();
         services.AddHostedService(provider => provider.GetRequiredService<PartitionMaintenanceWorker>());
+        services.AddSingleton<TaskLeaseSweeper>();
+        services.AddHostedService(provider => provider.GetRequiredService<TaskLeaseSweeper>());
 
         // Las sondas de «con existencias» leen el libro de saldos. Las pruebas las sustituyen con configureServices para ejercer las reglas.
         services.AddScoped<IVariantStockProbe, VariantStockProbe>();
