@@ -88,7 +88,8 @@ public sealed record ShopifyDocumentSourcesDto(IReadOnlyList<string> Sources);
 /// con <c>order_rejected</c>, <c>{"code"}</c>; con los del envío, <c>{"shippingTitle","amount"}</c>. Una fila
 /// <c>Cancelled</c> después de facturar trae <c>{"reason":"invoiced_before_cancel"}</c>.</item>
 /// <item><see cref="Warnings"/> es un arreglo <c>[{"code","detail"}]</c> o <c>null</c> sin avisos, y <c>detail</c> puede ser
-/// <c>null</c> (<c>shipping_address_unresolved</c> y <c>total_difference</c> no llevan detalle: la diferencia está en
+/// <c>null</c> (<c>shipping_address_unresolved</c>, <c>shipping_region_unresolved</c> y <c>total_difference</c> no llevan detalle: la
+/// diferencia está en
 /// <see cref="TotalDifference"/>). <see cref="WarningsReviewedAt"/> <c>null</c> es aviso pendiente (D-S31).</item>
 /// <item><see cref="LastError"/> es texto libre para soporte y logs: puede traer varios errores unidos con <c>"; "</c>, nombres
 /// de enum o un <c>invalid_payload: …</c> en inglés. La pantalla no lo muestra.</item>

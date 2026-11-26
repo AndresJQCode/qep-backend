@@ -677,7 +677,8 @@ internal sealed class ImporterWorld
 
     public ShopifyOrderImporter Importer =>
         new(
-            Members, Billing, Resolver, Products, CustomLines, ProductLinks, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
+            Members, Billing, Resolver, Products, CustomLines, ProductLinks, Shipping, Geography, Writer,
+            new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
             CityCorrections, CityCorrectionJobs, UnresolvedCities, Synonyms, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>

@@ -35,6 +35,7 @@ public sealed class ShopifyOrderImporter(
     IShopifyCustomLineMappingRepository customLines,
     IShopifyProductLinkRepository productLinks,
     IShopifyShippingLookup shipping,
+    IShopifyGeographyLookup geography,
     IShopifyOrderWriter orders,
     IShopifyOrderChangeReaction changes,
     IShopifyCityCorrectionRepository cityCorrections,
@@ -208,7 +209,11 @@ public sealed class ShopifyOrderImporter(
         var shippingCity = snapshot.ShippingAddress is not null && (!draft.IsStorePickup || creation is { CityBlocked: true })
             ? await customers.ResolveCityAsync(snapshot.ShippingAddress, cancellationToken)
             : null;
-        var party = draft.IsStorePickup ? null : ShippingParty(snapshot, shippingCity?.City);
+        var (party, regionUnresolved) = draft.IsStorePickup
+            ? ((ShopifyPartyDraft?)null, false)
+            : ShopifyForeignAddress.IsForeign(snapshot.ShippingAddress)
+                ? await ForeignShippingPartyAsync(snapshot, cancellationToken)
+                : (ShippingParty(snapshot, shippingCity?.City), false);
         var addressUnresolved = !draft.IsStorePickup && snapshot.ShippingAddress is not null && party is null;
         var result = await orders.CreateAsync(
             Draft(connection, store, advisorId, account, customer, snapshot, lines, shippingResult, party, addressUnresolved),
@@ -245,7 +250,8 @@ public sealed class ShopifyOrderImporter(
                 addressUnresolved,
                 ExceedsTolerance(totalDifference, snapshot.TotalPrice),
                 shippingResult,
-                draft.CarrierName),
+                draft.CarrierName,
+                regionUnresolved),
             now);
         if (syncError is not null)
         {
@@ -295,6 +301,24 @@ public sealed class ShopifyOrderImporter(
         }
 
         return new ShopifyPartyDraft(name, phone, fields.Email, line, city.DepartmentId, city.CityId, ShippingPostalCode(snapshot));
+    }
+
+    /// <summary>La parte de envío de una dirección de fuera de Colombia: los campos de <see cref="ShippingPartyFields"/> (con
+    /// correo) más el destino de <see cref="ShopifyForeignAddress"/>; sin alguno de los dos, no hay parte. Sin los campos no se
+    /// consulta Geography.</summary>
+    private async Task<(ShopifyPartyDraft? Party, bool RegionUnresolved)> ForeignShippingPartyAsync(
+        ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        if (ShippingPartyFields(snapshot) is not { } fields
+            || await ShopifyForeignAddress.ResolveAsync(geography, snapshot.ShippingAddress!, cancellationToken) is not { } destination)
+        {
+            return (null, false);
+        }
+
+        var party = new ShopifyPartyDraft(
+            fields.Name, fields.Phone, fields.Email, fields.Address, null, null, ShippingPostalCode(snapshot), destination.Country,
+            destination.CityName, destination.RegionId);
+        return (party, destination.RegionUnresolved);
     }
 
     /// <summary>
@@ -515,15 +539,16 @@ public sealed class ShopifyOrderImporter(
     /// <summary>§6.2.4: los avisos como arreglo de <c>{ code, detail }</c>, en el orden del spec. <c>customer_incomplete</c> lleva
     /// el documento que sí vino, para que quien complete la ficha lo tenga a la mano (§6.2.1 paso 4);
     /// <c>carrier_unrecognized</c>, el título de Shopify, y <c>cash_on_delivery_unmatched</c>, la transportadora reconocida que
-    /// no recauda (§6.2.2). <c>shipping_address_unresolved</c> y <c>total_difference</c> no llevan detalle: la dirección cruda va
-    /// en las notas del pedido y la diferencia en <c>total_difference</c> de la fila.</summary>
+    /// no recauda (§6.2.2). <c>shipping_address_unresolved</c>, <c>shipping_region_unresolved</c> y <c>total_difference</c> no llevan
+    /// detalle: la dirección cruda va en las notas del pedido y la diferencia en <c>total_difference</c> de la fila.</summary>
     internal static string? WarningsJson(
         ShopifyCustomerRef? customer,
         ShopifyBuyerDocument? document,
         bool addressUnresolved,
         bool totalDiffers,
         ShopifyShippingResult? shippingResult,
-        string? carrierName)
+        string? carrierName,
+        bool shippingRegionUnresolved = false)
     {
         var warnings = new List<ShopifyImportWarning>();
         if (customer is { IsComplete: false })
@@ -536,6 +561,11 @@ public sealed class ShopifyOrderImporter(
         if (addressUnresolved)
         {
             warnings.Add(new ShopifyImportWarning(ShopifyWarnings.ShippingAddressUnresolved, null));
+        }
+
+        if (shippingRegionUnresolved)
+        {
+            warnings.Add(new ShopifyImportWarning(ShopifyWarnings.ShippingRegionUnresolved, null));
         }
 
         if (totalDiffers)

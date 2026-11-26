@@ -6,6 +6,9 @@ public static class ShopifyWarnings
 {
     public const string CustomerIncomplete = "customer_incomplete";
     public const string ShippingAddressUnresolved = "shipping_address_unresolved";
+
+    /// <summary>La parte de envío de fuera de Colombia quedó sin región en un país que la tiene: se elige en «Editar pedido».</summary>
+    public const string ShippingRegionUnresolved = "shipping_region_unresolved";
     public const string TotalDifference = "total_difference";
     public const string CarrierUnrecognized = "carrier_unrecognized";
     public const string CashOnDeliveryUnmatched = "cash_on_delivery_unmatched";
@@ -14,6 +17,7 @@ public static class ShopifyWarnings
     [
         CustomerIncomplete,
         ShippingAddressUnresolved,
+        ShippingRegionUnresolved,
         TotalDifference,
         CarrierUnrecognized,
         CashOnDeliveryUnmatched,
