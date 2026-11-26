@@ -339,6 +339,69 @@ public sealed class SiigoBatchItemEffectiveStateTests
             state);
     }
 
+    // El que se guardó facturado también sigue a la anulación: sin número y sin nada que ofrecer.
+    [Theory]
+    [InlineData(false, "siigo.invoice.annulled_in_siigo")]
+    [InlineData(true, "siigo.invoice.deleted_in_siigo")]
+    public void AStoredInvoicedItemWhoseInvoiceWasAnnulledLooksFailedWithTheRowCode(bool deleted, string code)
+    {
+        var invoice = CreatedInSiigo();
+        var item = NewItem();
+        item.MarkInvoiced("FV-1-9", Now, invoice.Id);
+        invoice.MarkAnnulled(deleted, Now.AddMinutes(1));
+
+        var state = item.Effective(invoice, Now.AddMinutes(1));
+
+        Assert.Equal(new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Failed, code, null, false, false, null), state);
+    }
+
+    // Se leía fallido por la de flete: anulada la del pedido, no vuelve a leerse facturado, le pasen o no la de flete.
+    [Theory]
+    [InlineData("rejected")]
+    [InlineData("failed")]
+    public void AnItemThatReadFreightNotCreatedNeverLooksInvoicedAfterTheAnnulment(string freightCase)
+    {
+        var invoice = CreatedInSiigo();
+        var toConfirm = ToConfirm(invoice);
+        var invoiced = NewItem();
+        invoiced.MarkInvoiced("FV-1-9", Now, invoice.Id);
+        var freight = FreightIn(invoice, freightCase);
+        Assert.Equal("siigo.invoice.freight_not_created", invoiced.Effective(invoice, Now, freight).ErrorCode);
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+        var expected = new SiigoBatchItemState(
+            SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.annulled_in_siigo", null, false, false, null);
+
+        foreach (var item in new[] { toConfirm, invoiced })
+        {
+            Assert.Equal(expected, item.Effective(invoice, Now.AddMinutes(1), freight));
+            Assert.Equal(expected, item.Effective(invoice, Now.AddMinutes(1)));
+        }
+    }
+
+    // «No se pudo marcar el pedido» era de una factura que ya no existe: no hay número que marcar.
+    [Fact]
+    public void AnAnnulledItemNoLongerWarnsOfTheOrderMark()
+    {
+        var invoice = CreatedInSiigo();
+        var item = NewItem();
+        item.MarkInvoiced("FV-1-9", Now, invoice.Id, orderMarkFailed: true);
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        var dto = DtoOf(item, invoice, Now.AddMinutes(1));
+
+        Assert.False(dto.OrderMarkFailed);
+        Assert.Null(dto.InvoiceNumber);
+        Assert.Empty(dto.SiigoErrors);
+        Assert.Equal((false, false, false), (dto.CanResend, dto.CanResolve, dto.CanResolveMissing));
+    }
+
+    private static SiigoInvoice CreatedInSiigo()
+    {
+        var invoice = Unanswered();
+        invoice.MarkCreated("id-1", "FV-1-9", 100m, null, Now);
+        return invoice;
+    }
+
     [Fact]
     public void AnyOtherStoredStatusIsShownAsStored()
     {
@@ -441,6 +504,7 @@ public sealed class SiigoBatchItemEffectiveStateTests
     [Theory]
     [InlineData("rejected", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_not_created")]
     [InlineData("failed", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_not_created")]
+    [InlineData("annulled", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_not_created")]
     [InlineData("unknown", SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.freight_unconfirmed")]
     [InlineData("pending", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_pending")]
     public void AnOrderWhoseFreightIsNotInSiigoNeverLooksInvoiced(
@@ -542,6 +606,11 @@ public sealed class SiigoBatchItemEffectiveStateTests
             case "created":
                 freight.BeginSend(Now);
                 freight.MarkCreated("id-2", "FV-1-10", 10m, null, Now);
+                break;
+            case "annulled":
+                freight.BeginSend(Now);
+                freight.MarkCreated("id-2", "FV-1-10", 10m, null, Now);
+                freight.MarkAnnulled(false, Now);
                 break;
             case "rejected":
                 freight.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now);

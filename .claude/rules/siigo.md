@@ -137,12 +137,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   2026-11-25). Al cerrar (`SiigoBatchItemInvoker.Map` y `SiigoInvoiceBatchWorker.RecoverAsync`) sólo se mira la `Pending`: sale `Failed`
   sin `invoice_id` con `siigo.invoice.freight_pending`. **Lo demás se decide al leer** (`SiigoInvoiceBatchItem.Effective`), en ítems
   guardados `ToConfirm` e `Invoiced`: de flete `Pending` → `Sending` mientras se manda y si no `Failed` con `freight_pending`;
-  `Rejected` o `Failed` → `Failed` con `siigo.invoice.freight_not_created` (QEP no la vuelve a armar: se crea en Siigo); `Unknown` →
+  `Rejected`, `Failed` o `Annulled` → `Failed` con `siigo.invoice.freight_not_created` (QEP no la vuelve a armar: se crea en Siigo); `Unknown` →
   `ToConfirm` con `siigo.invoice.freight_unconfirmed` y sin acciones (las de la tanda actúan sobre la factura del pedido). Los códigos
   son propios para que nadie cree otra vez en Siigo la del pedido; el motivo de la de flete se ve en el pedido. La de flete de una
   factura es la más nueva del pedido creada con ella o después (`SiigoInvoiceBatchViews.FreightsAsync`). Una lectura nueva de ítems
   tiene que pasársela a `Effective`: es un parámetro opcional y sin él responde `Invoiced`. Reintentar el pedido manda sólo la de flete
   `Pending` y vuelve a marcarlo.
+- **Un ítem enlazado a una fila `Annulled` se lee `Failed` con el código de la fila, esté guardado `ToConfirm` o `Invoiced`** (spec
+  2026-11-25 §1), sin número ni acciones y con `orderMarkFailed` en `false`. Se decide antes que la de flete, así que ninguno vuelve a
+  leerse facturado, tampoco el ítem viejo de un pedido que se volvió a facturar.
 - **El `orderMarkFailed` de un ítem guardado `ToConfirm` se calcula al leer el detalle de la tanda** (`SiigoOrderMark.IsMissingAsync`,
   sólo con su factura ya en Siigo y sin una tanda que tenga el pedido): el ítem no lo guarda. La lista de tandas no lo lleva. Un ítem
   cerrado `Failed` por la de flete tampoco lo guarda: el aviso lo calculan las filas del pedido.

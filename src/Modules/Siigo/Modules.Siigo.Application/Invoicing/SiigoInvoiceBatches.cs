@@ -99,7 +99,7 @@ public sealed record SiigoInvoiceBatchDto(
 /// <paramref name="Missing"/> trae, para un pedido
 /// saltado por <c>siigo.invoice.not_ready</c>, los códigos de lo que le faltaba (la pantalla los traduce igual que los del <c>preview</c>).
 /// <paramref name="OrderMarkFailed"/> avisa que la factura existe pero el pedido no se pudo marcar; en uno que quedó por confirmar se
-/// calcula al leer el detalle. <paramref name="CanResend"/>,
+/// calcula al leer el detalle y en uno cuya factura se anuló en Siigo va en <c>false</c>. <paramref name="CanResend"/>,
 /// <paramref name="CanResolve"/> y <paramref name="MissingAvailableAt"/> (desde cuándo se acepta «No existe», si todavía hay que esperar)
 /// van calculados porque la pantalla no ve desde cuándo se está mandando ni el reloj de 24 horas. <paramref name="CanResend"/> va en
 /// <c>false</c> mientras una tanda sin terminar tenga el pedido (otra respondería 409), aunque este ítem siga por confirmar.
@@ -150,7 +150,8 @@ public sealed record SiigoInvoiceBatchItemDto(
             item.InvoiceId,
             state.InvoiceNumber,
             item.MissingCodes,
-            item.OrderMarkFailed || unmarked,
+            // El aviso guardado era de una factura que ya se anuló: no queda número que marcar.
+            invoice?.Status != SiigoInvoiceStatus.Annulled && (item.OrderMarkFailed || unmarked),
             !queued && state.CanResend,
             state.CanResolve,
             state.MissingAvailableAt,
