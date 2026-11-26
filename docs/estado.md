@@ -622,6 +622,9 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`028ec0c34`, `--no-ff`, sin push) **nombre de sesión en los commits**
+  (`feature/claude-session-line`, `aeb659706`; decisión del owner): la línea `Session:` lleva el título de la pestaña,
+  leído antes de cada commit; el nombre de `ListAgents` queda de respaldo. Sólo `CLAUDE.md`. Rama y worktree borrados.
 - 2026-11-26 — Mergeado a `develop` (`70363e0d5`, `--no-ff`, sin push) **liberar el pedido cuando la factura se anuló en
   Siigo** (`feature/siigo-anular-factura`, hasta `d1353bf72`; spec y plan `2026-11-25-siigo-anular-factura`). QEP consulta
   la factura y, si toda factura vigente del pedido está anulada, la pasa a `Annulled` y le quita al pedido la marca de
