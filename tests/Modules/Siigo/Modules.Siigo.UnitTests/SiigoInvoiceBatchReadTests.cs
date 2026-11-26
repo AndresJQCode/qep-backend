@@ -82,10 +82,53 @@ public sealed class SiigoInvoiceBatchReadTests
         Assert.Equal(0, harness.MarkReads);
     }
 
-    private static SiigoInvoice Row(SiigoInvoiceKind kind) =>
+    [Fact]
+    public async Task AStoredInvoicedItemWithARejectedFreightReadsFailedInTheDetailAndTheList()
+    {
+        var harness = new Harness(Resolved(), Rejected(Freight())) { StoredInvoiced = true };
+
+        var item = Assert.Single((await harness.DetailAsync()).Items);
+        var counts = Assert.Single((await harness.ListAsync()).Items).StatusCounts;
+
+        Assert.Equal(("Failed", "siigo.invoice.freight_not_created"), (item.Status, item.ErrorCode));
+        Assert.Equal(1, counts.Single(count => count.Status == "Failed").Count);
+        Assert.Equal(0, counts.Single(count => count.Status == "Invoiced").Count);
+    }
+
+    // La de flete de un intento anterior del pedido no dice nada de la factura de ahora.
+    [Fact]
+    public async Task AFreightOlderThanTheOrderInvoiceIsIgnored()
+    {
+        var older = Rejected(Row(SiigoInvoiceKind.Freight, Now.AddDays(-1)));
+
+        var item = Assert.Single((await new Harness(Resolved(), older).DetailAsync()).Items);
+
+        Assert.Equal("Invoiced", item.Status);
+    }
+
+    [Fact]
+    public async Task TheNewestFreightOfTheOrderInvoiceDecides()
+    {
+        var first = Rejected(Freight());
+        var newest = Row(SiigoInvoiceKind.Freight, Now.AddMinutes(-20));
+        newest.BeginSend(Now.AddMinutes(-20));
+        newest.MarkCreated("id-2", "FV-1-10", 10m, null, Now.AddMinutes(-20));
+
+        var item = Assert.Single((await new Harness(Resolved(), newest, first).DetailAsync()).Items);
+
+        Assert.Equal("Invoiced", item.Status);
+    }
+
+    private static SiigoInvoice Rejected(SiigoInvoice freight)
+    {
+        freight.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now.AddMinutes(-20));
+        return freight;
+    }
+
+    private static SiigoInvoice Row(SiigoInvoiceKind kind, DateTimeOffset? createdAt = null) =>
         SiigoInvoice.PendingFor(
             Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), OrderId, kind, """{"a":1}""", 7, Guid.CreateVersion7(),
-            Now.AddHours(-1));
+            createdAt ?? Now.AddHours(-1));
 
     private static SiigoInvoice Unanswered()
     {
@@ -115,7 +158,24 @@ public sealed class SiigoInvoiceBatchReadTests
         {
             _rows = rows;
             _batch = SiigoInvoiceBatch.Create(Guid.CreateVersion7(), TenantId, SubjectId, [OrderId], Now.AddMinutes(-40));
-            _batch.Items[0].MarkToConfirm(rows[0].Id, SiigoErrorCodes.InvoiceTimeout, Now.AddMinutes(-30));
+        }
+
+        /// <summary>El ítem se guardó facturado; si no, por confirmar.</summary>
+        public bool StoredInvoiced { get; init; }
+
+        // Se cierra en la primera lectura, cuando ya se sabe cómo.
+        private SiigoInvoiceBatch Settled()
+        {
+            if (StoredInvoiced)
+            {
+                _batch.Items[0].MarkInvoiced("FV-1-9", Now.AddMinutes(-30), _rows[0].Id);
+            }
+            else
+            {
+                _batch.Items[0].MarkToConfirm(_rows[0].Id, SiigoErrorCodes.InvoiceTimeout, Now.AddMinutes(-30));
+            }
+
+            return _batch;
         }
 
         public bool Marked { get; init; } = true;
@@ -144,11 +204,11 @@ public sealed class SiigoInvoiceBatchReadTests
             Task.FromResult<TenantModuleSet?>(null);
 
         Task<SiigoInvoiceBatch?> ISiigoInvoiceBatchRepository.FindAsync(
-            Guid tenantId, Guid batchId, CancellationToken cancellationToken) => Task.FromResult<SiigoInvoiceBatch?>(_batch);
+            Guid tenantId, Guid batchId, CancellationToken cancellationToken) => Task.FromResult<SiigoInvoiceBatch?>(Settled());
 
         public Task<(IReadOnlyList<SiigoInvoiceBatch> Items, int Total)> SearchAsync(
             Guid tenantId, int page, int pageSize, CancellationToken cancellationToken) =>
-            Task.FromResult<(IReadOnlyList<SiigoInvoiceBatch>, int)>(([_batch], 1));
+            Task.FromResult<(IReadOnlyList<SiigoInvoiceBatch>, int)>(([Settled()], 1));
 
         public Task<IReadOnlyList<Guid>> ListOpenOrderIdsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
@@ -164,12 +224,12 @@ public sealed class SiigoInvoiceBatchReadTests
             Task.FromResult<IReadOnlyList<SiigoInvoice>>(
                 [.. _rows.Where(row => row.TenantId == tenantId && invoiceIds.Contains(row.Id))]);
 
-        public Task<IReadOnlyList<SiigoInvoice>> ListPendingFreightAsync(
+        public Task<IReadOnlyList<SiigoInvoice>> ListFreightAsync(
             Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>(
                 [
                     .. _rows.Where(row => row.TenantId == tenantId && orderIds.Contains(row.OrderId)
-                        && row is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }),
+                        && row.Kind == SiigoInvoiceKind.Freight),
                 ]);
 
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>

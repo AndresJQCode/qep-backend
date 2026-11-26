@@ -384,7 +384,7 @@ public sealed class SiigoBatchItemInvokerTests
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && row.OrderId == orderId)]);
 
-        public Task<IReadOnlyList<SiigoInvoice>> ListPendingFreightAsync(
+        public Task<IReadOnlyList<SiigoInvoice>> ListFreightAsync(
             Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

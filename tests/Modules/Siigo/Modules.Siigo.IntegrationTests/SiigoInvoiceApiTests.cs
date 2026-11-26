@@ -254,9 +254,14 @@ public sealed class SiigoInvoiceApiTests
             ? Created("FV-1-123", "id-1", 0m)
             : FakeSiigoApi.Respond(HttpStatusCode.BadRequest, """{"Errors":[{"Code":"invalid_code","Message":"El producto FLETE no existe"}]}"""));
 
-        var rows = await IssueRowsThroughBatchAsync(world);
+        var item = await RunBatchOfOneAsync(world);
 
-        var statuses = rows.EnumerateArray().Select(row => $"{row.GetProperty("kind").GetString()}:{row.GetProperty("status").GetString()}").ToList();
+        // La tanda no lo da por facturado: la de flete no se creó.
+        Assert.Equal(
+            ("Failed", "siigo.invoice.freight_not_created"),
+            (item.GetProperty("status").GetString(), item.GetProperty("errorCode").GetString()));
+        var statuses = (await GetInvoicesAsync(world)).EnumerateArray()
+            .Select(row => $"{row.GetProperty("kind").GetString()}:{row.GetProperty("status").GetString()}").ToList();
         Assert.Equal(["Order:Created", "Freight:Rejected"], statuses);
         Assert.True((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
         Assert.Equal(2, InvoiceCalls(world.Siigo).Count);

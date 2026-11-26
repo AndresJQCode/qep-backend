@@ -122,14 +122,16 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `StampRejected`) → `Invoiced` con su número e id, y `orderMarkFailed` salvo que una lectura confirme la marca (`SiigoOrderMark`, como
   la recuperación de una tanda; decidido el 2026-11-25). **Salvo que la de flete siga `Pending`:** el reenvío era para mandarla, así que
   el ítem sale `Failed` con `siigo.invoice.freight_pending`; «facturado» la dejaría sin mandar sin que nadie lo vea.
-- **Con la del pedido en Siigo y la de flete todavía `Pending`, ningún ítem sale `Invoiced`** (decidido el 2026-11-25): vale en la
-  emisión que sí contestó (`SiigoBatchItemInvoker.Map`), en la recuperación y el corte por apagado
-  (`SiigoInvoiceBatchWorker.RecoverAsync`) y al leer un ítem `ToConfirm` cuya del pedido ya existe
-  (`SiigoInvoiceBatchItem.Effective`; ahí, mientras la de flete se manda, se lee `Sending`). Sale `Failed` con
-  `siigo.invoice.freight_pending` y, al cerrarse así, **sin `invoice_id`**: el código dice que la del pedido existe, para que nadie la
-  cree otra vez en Siigo; el motivo de la de flete se ve en el pedido. Una de flete en cualquier otro estado no cambia el resultado.
-  Reintentar el pedido manda sólo la de flete y vuelve a marcarlo. Un camino nuevo que cierre o lea un ítem como facturado tiene que
-  mirar la de flete: `Effective` la recibe como parámetro opcional y sin ella responde `Invoiced`.
+- **Con la del pedido en Siigo, un ítem sólo sale `Invoiced` si su de flete, cuando la tiene, también está allá** (decidido el
+  2026-11-25). Al cerrar (`SiigoBatchItemInvoker.Map` y `SiigoInvoiceBatchWorker.RecoverAsync`) sólo se mira la `Pending`: sale `Failed`
+  sin `invoice_id` con `siigo.invoice.freight_pending`. **Lo demás se decide al leer** (`SiigoInvoiceBatchItem.Effective`), en ítems
+  guardados `ToConfirm` e `Invoiced`: de flete `Pending` → `Sending` mientras se manda y si no `Failed` con `freight_pending`;
+  `Rejected` o `Failed` → `Failed` con `siigo.invoice.freight_not_created` (QEP no la vuelve a armar: se crea en Siigo); `Unknown` →
+  `ToConfirm` con `siigo.invoice.freight_unconfirmed` y sin acciones (las de la tanda actúan sobre la factura del pedido). Los códigos
+  son propios para que nadie cree otra vez en Siigo la del pedido; el motivo de la de flete se ve en el pedido. La de flete de una
+  factura es la más nueva del pedido creada con ella o después (`SiigoInvoiceBatchViews.FreightsAsync`). Una lectura nueva de ítems
+  tiene que pasársela a `Effective`: es un parámetro opcional y sin él responde `Invoiced`. Reintentar el pedido manda sólo la de flete
+  `Pending` y vuelve a marcarlo.
 - **El `orderMarkFailed` de un ítem guardado `ToConfirm` se calcula al leer el detalle de la tanda** (`SiigoOrderMark.IsMissingAsync`,
   sólo con su factura ya en Siigo y sin una tanda que tenga el pedido): el ítem no lo guarda. La lista de tandas no lo lleva. Un ítem
   cerrado `Failed` por la de flete tampoco lo guarda: el aviso lo calculan las filas del pedido.
@@ -139,6 +141,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   vacío, ves el otro. Por eso el ítem se guarda **después** de su fila y cerrado no se vuelve a escribir: si tocas el `updated_at` de un
   ítem cerrado, o escribes una fila sin mover el suyo, muestras el código equivocado. Cuando el que ves no es el de la fila,
   `siigoErrors` viaja vacío (`SiigoInvoiceBatchItemDto.From`): el `error_detail` de la fila es de otro intento.
+- **«No existe» se ofrece con `canResolveMissing`, no con `canResolve`** (decidido el 2026-11-25): es `canResolve` y ninguna tanda con
+  el pedido, en las filas y en los ítems. «Existe» sí se acepta con una tanda, así que `canResolve` no lo mira.
 - **`canResolve` es el mismo en las filas del pedido y en los ítems de las tandas** (`SiigoInvoice.OffersResolution`: `Unknown`, una
   `Pending` vencida que todavía no se expiró, o por confirmar). El endpoint acepta más (`IsResolvable`: cualquier `Pending` que nadie
   esté mandando); no uses ése para dibujar la acción. `missingAvailableAt` sólo viaja con `canResolve`.
