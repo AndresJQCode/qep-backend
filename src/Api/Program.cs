@@ -79,6 +79,8 @@ using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
 using Modules.Wholesale.Api;
 using Modules.Wholesale.Infrastructure;
+using Modules.Wms.Api;
+using Modules.Wms.Infrastructure;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -443,6 +445,8 @@ app.MapPublicSupportEndpoints(
     RateLimiterPolicies.SupportPublicSubmit,
     RateLimiterPolicies.SupportPublicLookup,
     RateLimiterPolicies.SupportPublicUpload);
+// Spec WMS 2026-10-31: bodegas, ubicaciones, dueños, unidades y perfiles de variante.
+app.MapWmsEndpoints();
 
 // Spec 2026-10-29 (réplicas múltiples), D-2: con más de un pod, dos arranques a la vez migrarían y sembrarían a la vez.
 // Todo el bloque —las migraciones y la semilla— corre bajo pg_advisory_xact_lock(StartupLock.Namespace, StartupLock.Key),
@@ -585,6 +589,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
     // membresías son referencias blandas.
     await services.InitializeApiAccessDatabaseAsync(
+        cancellationToken);
+
+    // Wms (spec WMS 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; variantes, ciudades y
+    // proveedores son referencias blandas.
+    await services.InitializeWmsDatabaseAsync(
         cancellationToken);
 
     // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

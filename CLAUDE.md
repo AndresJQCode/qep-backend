@@ -239,6 +239,7 @@ si vas a tocar un módulo, abre su regla antes (o lee primero un archivo del mó
 | [`infra-valkey-sesiones`](.claude/rules/infra-valkey-sesiones.md) | Valkey, sesiones, permisos, timbres y tiempo real: limitadores, ACL, cachés de sesión y permisos, colas con timbre, listener y presencia |
 | [`tenancy-y-servicios`](.claude/rules/tenancy-y-servicios.md) | Tenancy, Identidad, contratos de servicio y API externa: registro de tenant, roles asignables, módulo billing, claves de API |
 | [`siigo`](.claude/rules/siigo.md) | Siigo (facturación de pedidos): registro legal de facturas, DIAN apagado por defecto, retenciones, `error_detail`, bloqueo de marca manual y anulación |
+| [`wms`](.claude/rules/wms.md) | WMS (bodegas, ledger y saldos): ledger inmutable, clave de `stock_balances`, particiones, ventana de `occurredAt`, idempotencia |
 
 Una regla nueva va al archivo de su módulo, no acá. Si lee o escribe columnas o tablas de otro
 módulo por nombre, va en `sql-entre-modulos`: sus paths (Bootstrapper y migraciones) la cargan

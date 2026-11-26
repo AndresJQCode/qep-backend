@@ -59,7 +59,13 @@ public enum FileOwnerType
     // Spec 2026-11-20 (RRHH): el PDF de un contrato, un salario, un cargo y lugar o una prórroga. OwnerId es el tenantId. Sube sólo por la
     // sesión de Hr (IHrDocumentStore, con hr.contract.manage), nunca por POST /files: por eso es dueño de sistema. Se persiste por nombre
     // en character varying(20), así que no hay migración.
-    HrDocument = 11
+    HrDocument = 11,
+
+    // WMS (spec 2026-10-31, S14): la evidencia de un documento de bodega y el Excel de saldos exportado. Se mapean al módulo `wms` en
+    // FileOwnerModules, para que con el módulo apagado esos archivos tampoco se listen ni se descarguen. Se persiste por nombre en
+    // character varying(20), así que no hay migración.
+    WmsEvidence = 12,
+    WmsExport = 13
 }
 
 /// <summary>
@@ -73,6 +79,19 @@ public static class SystemOwnedFiles
 {
     public static IReadOnlySet<FileOwnerType> OwnerTypes { get; } =
         System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia, FileOwnerType.HrDocument });
+
+    public static bool Includes(FileOwnerType ownerType) => OwnerTypes.Contains(ownerType);
+}
+
+/// <summary>
+/// Los archivos que genera el servidor (el export de saldos de WMS): <c>POST /files</c> no los crea, con el mismo 422 que un tipo que no
+/// existe. A diferencia de <see cref="SystemOwnedFiles"/>, la consola de Storage sí los lista y los descarga, a quien tenga el permiso
+/// que pide su dueño.
+/// </summary>
+public static class ServerGeneratedFiles
+{
+    public static IReadOnlySet<FileOwnerType> OwnerTypes { get; } =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.WmsExport });
 
     public static bool Includes(FileOwnerType ownerType) => OwnerTypes.Contains(ownerType);
 }

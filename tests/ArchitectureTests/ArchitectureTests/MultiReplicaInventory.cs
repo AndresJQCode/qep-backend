@@ -128,6 +128,10 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/Persistence/AutomationInbox.cs:45 — FOR UPDATE SKIP LOCKED con lease, filas bot_kind = 2 (adaptador Bootstrapper/AiConversations.cs:194); los barridos cierran cada sesión bajo pg_try_advisory_xact_lock(ConversationBotLock) y FOR UPDATE de la sesión (Modules/Ai/Modules.Ai.Application/AiSessionSweeper.cs:60-66), así que el segundo pod no encuentra nada; el de delegaciones huérfanas (spec 2026-11-17 §6.5) es una sola sentencia: UPDATE con FOR UPDATE SKIP LOCKED y status = 'Live', que en la misma encola la señal ReleaseRun de cada interrumpida (Bootstrapper/AiDelegationSweep.cs:26-55); la retención del copiloto (CopilotRetentionSweeper) borra cada hilo con DELETE … RETURNING y FOR UPDATE SKIP LOCKED y audita sólo lo que borró, y el registro de preguntas con un DELETE por corte (Modules/Ai/Modules.Ai.Infrastructure/Persistence/CopilotRepository.cs, DeleteThreadAsync y DeleteQuestionsBeforeAsync)"),
         new("Modules.Ai.Infrastructure.AiModelWorker", WorkerClassification.Claimed,
             "Modules/Ai/Modules.Ai.Infrastructure/Persistence/AiRunPersistence.cs:64-75 — FOR UPDATE SKIP LOCKED y lease_until (LeaseMinutes, mayor que el tope de 120 s del trabajo)"),
+        new("Modules.Wms.Infrastructure.Workers.BalanceChangePublisher", WorkerClassification.Claimed,
+            "Modules/Wms/Modules.Wms.Infrastructure/Persistence/BalanceChangeQueue.cs:39-56 — FOR UPDATE SKIP LOCKED y DELETE … RETURNING en la misma transacción que escribe el evento en el outbox"),
+        new("Modules.Wms.Infrastructure.Workers.TaskLeaseSweeper", WorkerClassification.Claimed,
+            "Modules/Wms/Modules.Wms.Infrastructure/Persistence/WarehouseTaskRepository.cs:162-177 (LockExpiredAsync) — toma las tareas vencidas con FOR UPDATE SKIP LOCKED en la transacción de la pasada; dos réplicas reparten filas distintas y el dominio (ExpireLease) no hace nada si el lease ya no está vencido"),
         // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
         new("Modules.Notifications.Infrastructure.TaskNotices.TaskNoticeEscalationWorker", WorkerClassification.Claimed,
@@ -138,6 +142,8 @@ public static class MultiReplicaInventory
             "Modules/Integrations/Modules.Integrations.Infrastructure/Persistence/IntegrationsUnitOfWork.cs:33 — pg_try_advisory_xact_lock(ShopifyTokenLock.Namespace, hashtext(id)) por conexión"),
         new("Modules.Integrations.Infrastructure.Meta.InstagramTokenRefreshWorker", WorkerClassification.AdvisoryLock,
             "Modules/Integrations/Modules.Integrations.Infrastructure/Persistence/IntegrationsUnitOfWork.cs:43 — pg_try_advisory_xact_lock(InstagramTokenLock.Namespace, hashtext(id)) por conexión (owner, 2026-11-14)"),
+        new("Modules.Wms.Infrastructure.Workers.BalanceReconciliationWorker", WorkerClassification.AdvisoryLock,
+            "Modules/Wms/Modules.Wms.Infrastructure/Persistence/BalanceReconciliation.cs:73-79 — pg_advisory_xact_lock(WmsLockNamespace, hashtext('balance-check:{bodega}')) en su propia sentencia antes de cada tanda y en la misma transacción READ COMMITTED que el INSERT con NOT EXISTS (:128): el segundo pod espera, ve la fila ya confirmada y no la duplica (los dos recorren y miden; no corrigen saldos). Lo amarra BalanceReconciliationTests.TwoConcurrentReconciliationsRecordOneCheckPerDriftKey"),
 
         // --- Idempotent: el segundo pod no encuentra nada que hacer. ---
         new("Modules.Integrations.Infrastructure.SecretProtection.ConnectionSecretRekeyWorker", WorkerClassification.Idempotent,
@@ -165,7 +171,12 @@ public static class MultiReplicaInventory
         new("Bootstrapper.Valkey.LegalParameters.LegalParameterCacheStartupBump", WorkerClassification.Idempotent,
             "Bootstrapper/Valkey/LegalParameters/LegalParameterCacheStartupBump.cs — sube qep:legalparams:ver una vez al arrancar, sólo con Valkey:Areas:LegalParameters; cada pod que arranca invalida una vez más y el INCR no daña a otro pod"),
 
+        new("Modules.Wms.Infrastructure.Workers.WmsHousekeepingWorker", WorkerClassification.Idempotent,
+            "Modules/Wms/Modules.Wms.Infrastructure/Workers/WmsHousekeepingWorker.cs:74-89 — DELETE por corte de recibos y previews vencidos, y de saldos en cero"),
+
         // --- Noisy: el segundo choca con el inbox o con Version y sólo deja log o un tick perdido. ---
+        new("Modules.Wms.Infrastructure.Workers.PartitionMaintenanceWorker", WorkerClassification.Noisy,
+            "Modules/Wms/Modules.Wms.Infrastructure/Persistence/InventoryLedgerSql.cs:47-58 — ensure_movement_partition crea sólo si falta; el pod que pierde la carrera falla el CREATE TABLE, lo deja en log (Workers/PartitionMaintenanceWorker.cs) y ve la partición del otro"),
         new("Modules.Support.Infrastructure.SupportAutoCloseWorker", WorkerClassification.Noisy,
             "Modules/Support/Modules.Support.Application/AutoClose/SupportAutoCloser.cs — relee el ticket y cierra con su Version (token de concurrencia): dos réplicas en el mismo tick, la segunda pierde con RequestConcurrencyException y salta el ticket; TicketClosed va en la misma transacción"),
         new("Modules.Audit.Infrastructure.Messaging.AuditProjectionWorker", WorkerClassification.Noisy,
@@ -276,6 +287,10 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/MarketingOptOutButtons.cs:13 — textos de la configuración, inmutables; igual en cada pod"),
         new("Modules.Support.Infrastructure.Legal.CachingSupportHtmlSanitizer", StateClassification.PerPodByDesign,
             "Modules/Support/Modules.Support.Infrastructure/Legal/CachingSupportHtmlSanitizer.cs:24 — MemoryCache acotado por caracteres, con clave SHA-256 de la entrada de una función pura; igual en cada pod"),
+        new("Modules.Wms.Infrastructure.WmsMetrics", StateClassification.PerPodByDesign,
+            "Modules/Wms/Modules.Wms.Infrastructure/WmsMetrics.cs:15-17 — la última lectura de cada gauge en el pod, sin etiqueta de tenant; el dashboard agrega con max"),
+        new("Modules.Wms.Infrastructure.Workers.BalanceReconciliationWorker", StateClassification.PerPodByDesign,
+            "Modules/Wms/Modules.Wms.Infrastructure/Workers/BalanceReconciliationWorker.cs:21-22 — la marca de «hoy ya corrió» es de cada pod; lo que dos pods harían doble lo cubre su entrada AdvisoryLock de Workers"),
     ];
 
     /// <summary>

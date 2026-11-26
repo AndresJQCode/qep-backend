@@ -86,6 +86,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Application\Modules.Buyers.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Domain\Modules.Buyers.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Infrastructure\Modules.Buyers.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wms\Modules.Wms.Api\Modules.Wms.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wms\Modules.Wms.Application\Modules.Wms.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wms\Modules.Wms.Domain\Modules.Wms.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wms\Modules.Wms.Infrastructure\Modules.Wms.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Api\Modules.ApiAccess.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Application\Modules.ApiAccess.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Domain\Modules.ApiAccess.Domain.csproj" />

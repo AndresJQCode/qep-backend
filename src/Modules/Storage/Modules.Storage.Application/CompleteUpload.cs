@@ -49,6 +49,7 @@ public sealed class CompleteUploadHandler(
         // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
+        FileOwnerPermissionGuard.EnsureCallerMayAccess(executionContext, resource);
 
         await _completion.CompleteAsync(resource, executionContext.SubjectId, cancellationToken);
         return resource.ToDto();

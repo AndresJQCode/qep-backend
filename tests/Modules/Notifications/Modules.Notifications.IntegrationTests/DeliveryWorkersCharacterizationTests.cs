@@ -20,6 +20,7 @@ public sealed class DeliveryWorkersCharacterizationTests
         { "quotations.export-ready.v1", QuotationsExportReadyEmailTemplate.TemplateRef },
         { "quotations.export-failed.v1", QuotationsExportFailedEmailTemplate.TemplateRef },
         { "suppliers.export-ready.v1", SupplierExportEmailTemplate.TemplateRef },
+        { "wms.export-ready.v1", WmsExportEmailTemplate.TemplateRef },
     };
 
     [Theory]
@@ -50,6 +51,7 @@ public sealed class DeliveryWorkersCharacterizationTests
     [InlineData("catalog.product-export-ready.v1", ProductExportEmailTemplate.TemplateRef)]
     [InlineData("quotations.export-ready.v1", QuotationsExportReadyEmailTemplate.TemplateRef)]
     [InlineData("suppliers.export-ready.v1", SupplierExportEmailTemplate.TemplateRef)]
+    [InlineData("wms.export-ready.v1", WmsExportEmailTemplate.TemplateRef)]
     public async Task EachExportEmailUsesTheTenantRegionalFormat(string eventName, string templateRef)
     {
         await using var database = await StartDatabaseAsync();
@@ -159,6 +161,16 @@ public sealed class DeliveryWorkersCharacterizationTests
                 downloadUrl = "https://r2.test/exports/proveedores.xlsx?X-Amz-Signature=abc",
                 fileName = "proveedores.xlsx",
                 supplierCount = count,
+                expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
+            }),
+            "wms.export-ready.v1" => JsonSerializer.Serialize(new
+            {
+                tenantId,
+                subjectId,
+                fileId = Guid.CreateVersion7(),
+                downloadUrl = "https://r2.test/exports/saldos.xlsx?X-Amz-Signature=abc",
+                fileName = "saldos.xlsx",
+                rowCount = count,
                 expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
             }),
             _ => throw new ArgumentOutOfRangeException(nameof(eventName), eventName, "No payload for this event."),

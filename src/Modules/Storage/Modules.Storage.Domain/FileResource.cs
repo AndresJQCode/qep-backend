@@ -417,6 +417,21 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
+    /// <summary>Cuánto se puede descargar una exportación de WMS desde su creación. El bucket borra el objeto bajo <c>exports/</c> a los
+    /// dos días (regla de lifecycle, README «Reportes exportados»): la fila sobrevive al objeto, y sin este tope el enlace emitido
+    /// después apuntaría a un objeto que ya no está.</summary>
+    public static readonly TimeSpan ExportDownloadWindow = TimeSpan.FromHours(24);
+
+    public void EnsureNotExpired(DateTimeOffset now)
+    {
+        if (OwnerType is FileOwnerType.WmsExport && now - CreatedAt > ExportDownloadWindow)
+        {
+            throw new StorageDomainException(
+                "storage.file.expired",
+                "The export has expired. Request it again.");
+        }
+    }
+
     // Sólo a un recurso Available se le emite una URL de descarga (invariante de la capacidad).
     public void EnsureDownloadable()
     {

@@ -51,6 +51,47 @@ public sealed class InAppExportsTests
         Assert.NotNull((await FindInboxAsync(database.GetConnectionString(), Consumer, messageId))!.ProcessedAt);
     }
 
+    // The warehouse stock export travels under its own event: the payload names its count rowCount and also carries the fileId, which
+    // is not part of the bell's data.
+    [Fact]
+    public async Task AWmsStockExportReadyCreatesAStockEntryForTheRequesterMembership()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = NewFactory(database.GetConnectionString(), new RecordingMemberPublisher());
+        var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
+        var memberId = await MemberIdOfAsync(database.GetConnectionString(), tenantId, ownerUserId);
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(24);
+        var messageId = await InsertOutboxAsync(
+            database.GetConnectionString(),
+            "wms.export-ready.v1",
+            JsonSerializer.Serialize(new
+            {
+                tenantId,
+                subjectId = ownerUserId,
+                fileId = Guid.CreateVersion7(),
+                downloadUrl = "https://r2.test/exports/saldos.xlsx?X-Amz-Signature=abc",
+                fileName = "saldos.xlsx",
+                rowCount = 12,
+                expiresAt,
+            }));
+
+        await DrainAsync(factory, Consumer);
+
+        var entry = Assert.Single(await EntriesAsync(database.GetConnectionString(), tenantId));
+        Assert.Equal(memberId, entry.MemberId);
+        Assert.Equal(nameof(InAppNotificationKind.ExportReady), entry.Kind);
+        Assert.Equal(
+            ["downloadUrl", "expiresAt", "exportKind", "fileName", "rowCount"],
+            entry.Data.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        Assert.Equal("Stock", entry.Data.GetProperty("exportKind").GetString());
+        Assert.Equal("saldos.xlsx", entry.Data.GetProperty("fileName").GetString());
+        Assert.Equal(12, entry.Data.GetProperty("rowCount").GetInt32());
+        Assert.Equal("https://r2.test/exports/saldos.xlsx?X-Amz-Signature=abc", entry.Data.GetProperty("downloadUrl").GetString());
+        Assert.Equal(expiresAt, entry.Data.GetProperty("expiresAt").GetDateTimeOffset());
+        Assert.Equal(messageId.ToString("D"), entry.DedupeKey);
+        Assert.NotNull((await FindInboxAsync(database.GetConnectionString(), Consumer, messageId))!.ProcessedAt);
+    }
+
     [Fact]
     public async Task AnExportOfAUserWithoutMembershipLeavesNoEntry()
     {
