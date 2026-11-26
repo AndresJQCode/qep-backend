@@ -590,6 +590,10 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
     // necesita que existan. Apagada por defecto — ver SeedOptions.
     await services.RunQepSeedAsync(cancellationToken);
+
+    // Spec 2026-11-25 (roles por tenant): después de la semilla, que crea tenants. Siembra los roles de las plantillas en todo
+    // tenant sin la marca; si falla, el arranque falla.
+    await services.SeedTenantRolesAsync(cancellationToken);
 }, app.Lifetime.ApplicationStopping);
 
 await app.RunAsync();

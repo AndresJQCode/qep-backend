@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
@@ -184,6 +185,9 @@ public sealed class AuthSessionApiTests
                 DateTimeOffset.UtcNow));
             await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
+
+        await SeedRolesAsync(factory, secondTenantId);
+        await SeedRolesAsync(factory, suspendedTenantId);
 
         using (var admin = CreateAdminClient(factory))
         {
@@ -603,6 +607,15 @@ public sealed class AuthSessionApiTests
             MembershipId.New(),
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await SeedRolesAsync(factory, Guid.Parse(SeededTenantId));
+    }
+
+    /// <summary>Un tenant insertado directo después del arranque nace sin los roles que el alta le sembraría.</summary>
+    private static async Task SeedRolesAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(tenantId, TestContext.Current.CancellationToken);
     }
 
     private static string NewEmail() => $"login-{Guid.NewGuid():N}@example.com";

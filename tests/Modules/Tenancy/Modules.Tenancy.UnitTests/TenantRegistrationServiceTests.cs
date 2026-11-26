@@ -231,7 +231,7 @@ public sealed class TenantRegistrationServiceTests
             new RecordingOutboxWriter(),
             new FixedClock(Now),
             new RecordingSlugAvailability(),
-            new RecordingProvisioning(steps));
+            [new RecordingProvisioning(steps)]);
 
         await service.RegisterOwnerTenantAsync(Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
 
@@ -254,7 +254,7 @@ public sealed class TenantRegistrationServiceTests
             new RecordingOutboxWriter(),
             new FixedClock(Now),
             new RecordingSlugAvailability(),
-            new RecordingProvisioning(steps));
+            [new RecordingProvisioning(steps)]);
 
         await service.RegisterOwnerTenantAsync(Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
 
@@ -267,13 +267,42 @@ public sealed class TenantRegistrationServiceTests
     {
         var steps = new List<string>();
         var provisioning = new RecordingProvisioning(steps);
-        var service = NewService(steps, new RecordingTenantModuleRepository(steps), new FixedDefaults([]), provisioning: provisioning);
+        var service = NewService(
+            steps, new RecordingTenantModuleRepository(steps), new FixedDefaults([]), provisioning: [provisioning]);
 
         var tenantId = await service.RegisterOwnerTenantAsync(
             Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
 
         Assert.Equal([new TenantId(tenantId)], provisioning.Provisioned);
         Assert.Equal(["commit", "provision"], steps.TakeLast(2));
+    }
+
+    // Spec 2026-11-25 (roles por tenant): hay más de un aprovisionamiento y corren en el orden en que se registraron,
+    // porque un fallo de uno que sube no puede saltarse el que va antes.
+    [Fact]
+    public async Task SignupRunsEveryProvisioningInRegistrationOrder()
+    {
+        var steps = new List<string>();
+        var service = NewService(
+            steps,
+            new RecordingTenantModuleRepository(steps),
+            new FixedDefaults([]),
+            provisioning: [new RecordingProvisioning(steps, "provision:a"), new RecordingProvisioning(steps, "provision:b")]);
+
+        await service.RegisterOwnerTenantAsync(Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Equal(["commit", "provision:a", "provision:b"], steps.TakeLast(3));
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantRunsEveryProvisioningInRegistrationOrder()
+    {
+        var invited = new InvitedFixture(provisioningSteps: ["provision:a", "provision:b"]);
+
+        await invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(), Guid.CreateVersion7(), Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Equal(["commit", "provision:a", "provision:b"], invited.Steps.TakeLast(3));
     }
 
     [Fact]
@@ -376,10 +405,16 @@ public sealed class TenantRegistrationServiceTests
 
     private sealed class InvitedFixture
     {
-        public InvitedFixture(ITenantModuleDefaults? defaults = null)
+        /// <param name="provisioningSteps">Un doble por nombre, en ese orden; sin ellos, uno solo llamado <c>provision</c>.
+        /// <see cref="Provisioning"/> es el primero.</param>
+        public InvitedFixture(ITenantModuleDefaults? defaults = null, string[]? provisioningSteps = null)
         {
             Tenants = new StoringTenantRepository(Steps);
             Modules = new RecordingTenantModuleRepository(Steps);
+            var provisionings = (provisioningSteps ?? ["provision"])
+                .Select(step => new RecordingProvisioning(Steps, step))
+                .ToArray();
+            Provisioning = provisionings[0];
             Service = new TenantRegistrationService(
                 Tenants,
                 Memberships,
@@ -390,7 +425,7 @@ public sealed class TenantRegistrationServiceTests
                 new RecordingOutboxWriter(),
                 new FixedClock(Now),
                 new RecordingSlugAvailability(),
-                Provisioning = new RecordingProvisioning(Steps));
+                provisionings);
         }
 
         public RecordingProvisioning Provisioning { get; }
@@ -442,7 +477,7 @@ public sealed class TenantRegistrationServiceTests
         RecordingTenantModuleRepository modules,
         ITenantModuleDefaults defaults,
         ITenantSlugAvailability? slugAvailability = null,
-        INewTenantProvisioning? provisioning = null) =>
+        INewTenantProvisioning[]? provisioning = null) =>
         new(
             new RecordingTenantRepository(steps),
             new InMemoryMembershipRepository(),
@@ -453,15 +488,15 @@ public sealed class TenantRegistrationServiceTests
             new RecordingOutboxWriter(),
             new FixedClock(Now),
             slugAvailability ?? new RecordingSlugAvailability(),
-            provisioning ?? new RecordingProvisioning(steps));
+            provisioning ?? [new RecordingProvisioning(steps)]);
 
-    private sealed class RecordingProvisioning(List<string> steps) : INewTenantProvisioning
+    private sealed class RecordingProvisioning(List<string> steps, string step = "provision") : INewTenantProvisioning
     {
         public List<TenantId> Provisioned { get; } = [];
 
         public Task ProvisionAsync(TenantId tenantId, CancellationToken cancellationToken)
         {
-            steps.Add("provision");
+            steps.Add(step);
             Provisioned.Add(tenantId);
             return Task.CompletedTask;
         }

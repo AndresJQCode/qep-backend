@@ -1632,6 +1632,9 @@ public static class QepServiceCollectionExtensions
         // distribuidor para la línea que el mayorista agrega al editar (D-5).
         services.AddScoped<IWholesaleOrderGateway, WholesaleOrderGateway>();
         services.AddScoped<IWholesaleLinePricing, QuotationsWholesaleLinePricing>();
+        // El alta los corre en el orden en que se registran. El de roles va primero (spec 2026-11-25): un fallo de Quotations sube,
+        // y no puede dejar al tenant sin sus roles.
+        services.AddScoped<Modules.Tenancy.Application.INewTenantProvisioning, TenantRolesProvisioning>();
         services.AddScoped<Modules.Tenancy.Application.INewTenantProvisioning, QuotationsNewTenantProvisioning>();
         // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
         services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
@@ -2916,9 +2919,9 @@ public static class QepServiceCollectionExtensions
         return services;
     }
 
-    // Registra la capacidad Authorization y el catálogo de roles de sistema de tenancy.
-    // Las definiciones de rol se versionan en código; las referencias de rol de la membresía
-    // (ADR 0016) mapean a estos permisos. Los roles custom/de base y los globales van después.
+    // Registra la capacidad Authorization, el catálogo de sistema (sólo admin) y las plantillas de los roles que se siembran en
+    // cada tenant. Las referencias de rol de la membresía (ADR 0016) mapean a la definición de admin o a una fila de
+    // authorization.roles del tenant.
     private static void AddAuthorizationCapability(
         IServiceCollection services,
         IConfiguration configuration)
@@ -2933,6 +2936,10 @@ public static class QepServiceCollectionExtensions
         // por request sea correcto — el scope dura lo que el request.
         services.AddScoped<ITenantRoleCatalog, TenantRoleCatalog>();
         services.AddAuthorizationInfrastructure(configuration);
+        // Spec 2026-11-25 (roles por tenant): se llaman en el alta del tenant y al arrancar, nunca al resolver permisos. La lista
+        // de tenants sale de Tenancy por este adaptador: Authorization no lee sus tablas.
+        services.AddScoped<ITenantRoleSeeder, TenantRoleSeeder>();
+        services.AddScoped<IRoleSeedTenantSource, TenancyRoleSeedTenantSource>();
         // IAuthorizationService lo registra AddQepValkey (spec 2026-11-13, D-5): AuthorizationService tal cual con
         // Valkey:Areas:Permissions apagado, o decorado por la caché de permisos con el área prendida.
         services.AddScoped<IRolePermissionChecker, RolePermissionChecker>();
@@ -3101,7 +3108,7 @@ public static class QepServiceCollectionExtensions
                 PayrollPermissions.PeriodManage,
                 PayrollPermissions.PeriodApprove,
                 PayrollPermissions.SettingsManage,
-                // Spec 2026-11-21 (Agenda): admin lleva los cinco; los dos roles de sistema de la Agenda llevan los operativos y ninguno
+                // Spec 2026-11-21 (Agenda): admin lleva los cinco; las dos plantillas de la Agenda llevan los operativos y ninguna
                 // la configuración (servicios, reglas y estructura son del administrador).
                 SchedulingPermissions.AppointmentRead,
                 SchedulingPermissions.AppointmentManage,
@@ -3126,12 +3133,13 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.PriceListManage,
                 ReportingPermissions.MarginRead
             ]));
-        services.AddSingleton(new RoleDefinition(
-            "advisor",
+        // Spec 2026-11-25 (roles por tenant): admin es el único rol de sistema. Los cinco de abajo son plantillas: no conceden
+        // nada ni salen en ningún catálogo; TenantRoleSeeder crea con ellas las filas de authorization.roles de cada tenant, que
+        // el tenant edita o borra. Un permiso nuevo en una plantilla sólo llega a los tenants nuevos.
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.Advisor,
             "Asesor",
             "Gestiona clientes y consulta los datos maestros con los que cotiza.",
-            "Tenancy",
-            "medium",
             [
                 TenancyPermissions.SettingsRead,
                 TenancyPermissions.AdvisorshipRead,
@@ -3192,12 +3200,10 @@ public static class QepServiceCollectionExtensions
                 // editar y bloquear, y las listas de precios, son de admin.
                 WholesalePermissions.DistributorRead
             ]));
-        services.AddSingleton(new RoleDefinition(
-            "billing",
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.Billing,
             "Facturación",
             "Consulta la información de clientes necesaria para facturar.",
-            "Tenancy",
-            "medium",
             [
                 TenancyPermissions.SettingsRead,
                 CustomersPermissions.CustomerRead,
@@ -3245,14 +3251,12 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
         // dibuja y elige o crea el cliente de la venta por /pos/customers, sin el padrón de Clientes
-        // (spec 2026-10-14, decisión 4). Un tenant que quiera cajeros con descuento hace un
-        // rol custom.
-        services.AddSingleton(new RoleDefinition(
-            "cashier",
+        // (spec 2026-10-14, decisión 4). Un tenant que quiera cajeros con descuento edita este
+        // rol o hace uno propio.
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.Cashier,
             "Cajero",
             "Vende en el punto de venta y abre y cierra su propia caja.",
-            "Tenancy",
-            "medium",
             [
                 PosPermissions.SaleRead,
                 PosPermissions.SaleCreate,
@@ -3261,28 +3265,25 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
             ]));
-        // Spec 2026-11-21 (Agenda), D-13: roles de sistema en código, no se crean al activar el módulo; con el módulo apagado no son
-        // asignables (RoleAssignability). Llevan sólo permisos de la Agenda, a propósito: uno de núcleo (Clientes) los haría asignables
-        // en un tenant sin Agenda, así que la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS.
-        // Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador.
-        services.AddSingleton(new RoleDefinition(
-            SystemRoleKeys.SchedulingManager,
+        // Spec 2026-11-21 (Agenda): su D-13 (roles de sistema en código) la reemplaza el spec 2026-11-25; se siembran como los
+        // demás, en todo tenant y no al activar el módulo, y con el módulo apagado no son asignables (RoleAssignability). Llevan
+        // sólo permisos de la Agenda, a propósito: uno de núcleo (Clientes) los haría asignables en un tenant sin Agenda, así que
+        // la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS. Ninguno lleva
+        // `settings.manage`: servicios, reglas y estructura son del administrador.
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.SchedulingManager,
             "Gestor de agenda",
             "Ve y administra las agendas de todos los médicos o recursos: citas, franjas y bloqueos.",
-            "Tenancy",
-            "medium",
             [
                 SchedulingPermissions.AppointmentRead,
                 SchedulingPermissions.AppointmentManage,
                 SchedulingPermissions.AvailabilityManage,
                 SchedulingPermissions.AgendaReadAll
             ]));
-        services.AddSingleton(new RoleDefinition(
-            SystemRoleKeys.SchedulingProvider,
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.SchedulingProvider,
             "Profesional de agenda",
             "Ve y administra su propia agenda: la del recurso vinculado a su usuario.",
-            "Tenancy",
-            "medium",
             [
                 SchedulingPermissions.AppointmentRead,
                 SchedulingPermissions.AppointmentManage,

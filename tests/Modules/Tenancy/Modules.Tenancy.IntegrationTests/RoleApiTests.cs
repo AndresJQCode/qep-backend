@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
 
 namespace Modules.Tenancy.IntegrationTests;
@@ -140,10 +142,18 @@ public sealed class RoleApiTests(SharedTenancyHost host) : IClassFixture<SharedT
         Assert.Contains("authorization.role.key_reserved", body, StringComparison.Ordinal);
     }
 
+    /// <summary>Spec 2026-11-25 (roles por tenant): <c>cashier</c> ya no está reservada; lo que impide repetirla es la fila
+    /// sembrada del propio tenant.</summary>
     [Fact]
-    public async Task CreateWithTheCashierKeyIsRejected()
+    public async Task CreateWithASeededKeyIsTaken()
     {
         var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await using (var seeding = factory.Services.CreateAsyncScope())
+        {
+            await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+                .SeedAsync(Guid.Parse(TenantId), TestContext.Current.CancellationToken);
+        }
+
         using var client = Manager(factory);
 
         var response = await CreateAsync(client, "cashier", "Mi cajero");
@@ -151,7 +161,7 @@ public sealed class RoleApiTests(SharedTenancyHost host) : IClassFixture<SharedT
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);
-        Assert.Contains("authorization.role.key_reserved", body, StringComparison.Ordinal);
+        Assert.Contains("authorization.role.key_taken", body, StringComparison.Ordinal);
     }
 
     [Fact]
