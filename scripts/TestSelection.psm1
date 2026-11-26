@@ -72,11 +72,29 @@ function Test-DeclaresSharedSupport($Classes, [hashtable]$Sources, [string]$Proj
     return $false
 }
 
+# Referencias de proyecto que un diff unificado agrega entre módulos. Bootstrapper, Api y las pruebas componen módulos
+# a propósito: sólo cuentan los proyectos de src/Modules. Una referencia que se quita y se vuelve a poner sólo se movió.
+function Get-NewModuleReferences([string[]]$Diff) {
+    $added = @(); $removed = @{}; $path = ""
+    foreach ($line in $Diff) {
+        if ($line -match '^diff --git a/.+ b/(?<path>.+)$') { $path = $Matches.path; continue }
+        if ($path -notmatch '^src/Modules/(?<module>[^/]+)/') { continue }
+        $source = $Matches.module
+        if ($line -notmatch '^(?<sign>[+-])\s*<ProjectReference\s+Include="[^"]*?Modules\.(?<target>\w+)\.(?<layer>\w+)\.csproj"') { continue }
+        if ($Matches.target -eq $source) { continue }
+        $key = "$path|$($Matches.target).$($Matches.layer)"
+        if ($Matches.sign -eq "-") { $removed[$key] = $true }
+        else { $added += [pscustomobject]@{ Key = $key; Source = $source; Target = $Matches.target; Path = $path } }
+    }
+    return @($added | Where-Object { -not $removed.ContainsKey($_.Key) })
+}
+
 function Get-TestPlan {
     param(
         [string[]]$ChangedFiles = @(),
         [string[]]$Projects = @(),
-        [hashtable]$TestSources = @{}
+        [hashtable]$TestSources = @{},
+        [string[]]$ProjectDiff = @()
     )
 
     $files = @($ChangedFiles | Where-Object { $_ } | ForEach-Object { $_ -replace '\\', '/' } | Sort-Object -Unique)
@@ -135,6 +153,14 @@ function Get-TestPlan {
     $migrated = @($files | ForEach-Object { if ($_ -match '^src/Modules/([^/]+)/.*/Migrations/') { $Matches[1] } } | Sort-Object -Unique)
     if (($files -match '^(src/(BuildingBlocks|Bootstrapper|Api)/|Directory\.[^/]*\.props$)') -or $migrated.Count -gt 1) {
         [void]$warnings.Add($script:CrossCuttingWarning)
+    }
+
+    # Lo que ninguna prueba puede decidir sola: aflojar una regla de arquitectura o acoplar dos módulos lo autoriza el owner.
+    foreach ($file in $files | Where-Object { $_ -like "tests/ArchitectureTests/*" -and $_ -notlike "*/packages.lock.json" }) {
+        [void]$warnings.Add("Requiere autorización del owner: cambió una prueba de arquitectura: $file")
+    }
+    foreach ($ref in Get-NewModuleReferences $ProjectDiff) {
+        [void]$warnings.Add("Requiere autorización del owner: referencia nueva entre módulos, $($ref.Source) -> $($ref.Target): $($ref.Path)")
     }
 
     return [pscustomobject]@{ Steps = @($steps); Warnings = [string[]]@($warnings) }

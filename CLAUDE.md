@@ -70,6 +70,13 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
 - **Prohibido mergear a `main`** (decisión del owner, 2026-10-10). Los merges de un agente
   terminan en `develop`; llevar `develop` a `main` lo hace el owner, nunca un agente. Un pedido de
   "mergear" o "publicar" sin destino significa `develop`.
+- **Un cambio de arquitectura lo autoriza el owner antes del merge** (decisión del owner, 2026-11-25). Es cambio de
+  arquitectura cualquier aviso «Requiere autorización del owner» de `.\scripts\test-feature.ps1` (una prueba de
+  `tests/ArchitectureTests/` modificada o una referencia nueva entre módulos) y, aunque el script no lo vea, un contrato
+  HTTP que cambia (ruta, campo, código de error o permiso) sin un spec aprobado que lo diga. Se le muestra cada
+  desviación con su archivo y el motivo, y se espera su respuesta: una prueba en verde no es autorización, y aprobar
+  una no aprueba las demás. La revisión final de la rama la hace un subagente de solo lectura, sin el contexto de quien
+  implementó.
 - **[`docs/estado.md`](docs/estado.md) se actualiza en `develop`, al mergear.** Es el estado global
   del proyecto, y sin esta regla se queda viejo. El 2026-10-21, a un día de creado, decía «sin empezar» para
   variantes con el backend ya mergeado, y once specs construidos seguían en «Por verificar». Cada merge a
