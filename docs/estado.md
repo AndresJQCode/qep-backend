@@ -31,6 +31,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
+| Siigo: liberar el pedido cuando la factura se anuló en Siigo | **Backend construido y mergeado en `develop`** (2026-11-26, `--no-ff`, sin push; merge `70363e0d5`, rama `feature/siigo-anular-factura` borrada). **Sin `test-feature.ps1`** (orden del owner). Falta el frontend | `ConfirmSiigoAnnulmentHandler`, `POST …/orders/{orderId}/siigo-invoice/annulment`; spec y plan `2026-11-25-siigo-anular-factura` |
 | Roles por tenant: `admin` como único rol de sistema | **Backend construido y mergeado en `develop`** (2026-11-25, `--no-ff`, sin push; merge `5fdf11863`, rama `feature/roles-por-tenant` borrada). `advisor`, `billing`, `cashier`, `scheduling_manager` y `scheduling_provider` pasan a ser plantillas que se siembran en cada tenant (alta y arranque, marca en `authorization.role_seeds`), editables y borrables. **Mergeado sin `test-feature.ps1` ni integración** (orden del owner); el frontend no cambia | [spec](superpowers/specs/2026-11-25-roles-por-tenant-design.md), [plan](superpowers/plans/2026-11-25-roles-por-tenant.md) |
 | Teléfono con indicativo del país (formularios, cliente de Siigo y Excel de pedidos) | **Backend y frontend construidos y mergeados en `develop`** (2026-11-25, `--no-ff`, sin push; backend `da98b8e20`, rama `feature/telefono-pais` hasta `1c9c7c1c9`; frontend `494cbeed4`, hasta `aa50f7d2`). Los formularios del frontend que guardan el teléfono de una persona o empresa usan selector de país (el «Teléfono fijo» de soporte sigue como texto libre), el campo del número no admite «+» y el selector ofrece más países (**no todos todavía: pendiente**). El cliente que se crea en Siigo lleva `indicative` y `number`, `id_type` como texto y el documento sin separadores (el NIT sin dígito de verificación). WhatsApp de cotización y pedido usa tal cual los dígitos de un número con «+». El Excel de pedidos tiene por tenant el interruptor «Exportar el indicativo del país» (`includePhoneDialCode`, encendido por defecto; migración aditiva `20261125232432_AddOrdersExportLayoutPhoneDialCode`, **pendiente de desplegar**). **Mergeado sin correr ninguna prueba** (orden del owner), tampoco `test-feature.ps1`: sólo build del backend, `tsc -b` y lint del frontend. **Sin verificar contra Siigo real.** **Orden de salida:** backend primero; antes de publicar el cambio del WhatsApp de la tienda, revisar `qep-storefront` | [spec Siigo](superpowers/specs/2026-11-25-siigo-telefono-indicativo-design.md), [spec Excel](superpowers/specs/2026-11-25-excel-pedidos-indicativo-design.md), [plan](superpowers/plans/2026-11-25-siigo-telefono-indicativo.md); frontend `2026-11-25-telefono-selector-pais-design.md` en su repo |
 | Perfiles de facturación del cliente y entrega editable en el pedido (con Shopify fuera de Colombia) | **Backend construido y mergeado en `develop`** (2026-11-25, `--no-ff`; `d65658756`, rama `feature/billing-profiles` hasta `589783868`). Los perfiles y la entrega editable (`8c41506e5`) ya están en `origin/main`; **la parte de Shopify (`d65658756`) está sólo en `develop`, sin push**. Directorio de hasta 50 perfiles por cliente, con retenciones y excedente de IVA, en los bloques `client` de cotización y pedido; `PUT /orders/{id}` y su preview cambian recoger/enviar y la dirección de envío; en pedidos de Shopify el cambio se valida y se empuja a Shopify, también fuera de Colombia. **Falta el frontend.** Pruebas unitarias escritas y **nunca ejecutadas**; `test-feature.ps1` no se corrió (owner) | [spec](superpowers/specs/2026-11-24-perfiles-de-facturacion-backend-handoff.md), [plan](superpowers/plans/2026-11-25-perfiles-de-facturacion-backend.md) |
@@ -326,6 +327,13 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **Anulación de facturas de Siigo (`70363e0d5`): correr las pruebas antes.** Se mergeó sin `test-feature.ps1`; después de
+  integrar `develop` no corrieron `SiigoInvoiceBatchApiTests`, buena parte de `SiigoInvoiceApiTests`, la clase
+  `SiigoInvoiceAnnulmentApiTests` completa ni las pruebas de la última corrección de tandas. Al desplegar: migración
+  aditiva `AddSiigoInvoiceAnnulled`; el botón del frontend sale **después** de terminar el rollout (un pod viejo que lea
+  una fila `Annulled` responde 500), y devolver el backend con filas `Annulled` ya creadas deja esas pantallas en 500.
+  **Sin verificar contra Siigo real:** qué responde la consulta de una factura anulada o borrada
+  (`InvoiceNotFoundCodes` vacía: borrar en Siigo todavía no libera el pedido).
 - **Roles por tenant (`5fdf11863`): correr las pruebas antes.** Se mergeó **sin ejecutar** nada que toque PostgreSQL ni las
   pruebas escritas o modificadas después de la orden del owner. Prioridad: `TenantRoleSeedingTests`,
   `TenantRoleSeedStoreTests`, `MembershipRoleUsageTests`, `RoleApiTests`, `MembershipApiTests`, `ArchitectureTests` y las
@@ -614,6 +622,14 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`70363e0d5`, `--no-ff`, sin push) **liberar el pedido cuando la factura se anuló en
+  Siigo** (`feature/siigo-anular-factura`, hasta `d1353bf72`; spec y plan `2026-11-25-siigo-anular-factura`). QEP consulta
+  la factura y, si toda factura vigente del pedido está anulada, la pasa a `Annulled` y le quita al pedido la marca de
+  facturado; ante cualquier duda rechaza sin cambiar nada. Revisiones por bloque y final sin críticos. Build de la rama con
+  `develop` integrado: 0 advertencias y 0 errores (después sólo entraron cambios de `CLAUDE.md`). **`test-feature.ps1` sin
+  correr** (orden del owner). Pendientes: frontend (spec propio en `qep-frontend`); decidir sobre facturas resueltas a mano,
+  facturas con nota crédito y conexiones pausadas; conocido sin corregir: generar la factura mientras se confirma la
+  anulación puede volver a marcar el pedido (se repara repitiendo la acción). Rama y worktree borrados.
 - 2026-11-25 — Mergeado a `develop` (`5fdf11863`, `--no-ff`, sin push) **roles por tenant** (`feature/roles-por-tenant`,
   hasta `934146db6`): `admin` queda como único rol de sistema; los otros cinco se siembran por tenant; un rol no se borra si
   lo tiene una membresía `Invited`, `Active` o `Suspended`; una función nueva no agrega permisos a los roles de tenants
