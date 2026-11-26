@@ -118,6 +118,17 @@ internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsU
         {
             throw new RequestConcurrencyException("concurrency.conflict", "The adjustment number was taken by another request.", exception);
         }
+        // El operario ya tenía otra tarea en curso: el lock del handler lo evita al pedir la siguiente, pero reanudar una confirmación
+        // tardía llega hasta acá.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.TaskMemberInProgressIndex))
+        {
+            throw new TaskMemberBusyException(null, exception);
+        }
+        // Último recurso, como el número de ajuste: el lock de la numeración serializa las creaciones.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.TaskNumberIndex))
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The task number was taken by another request.", exception);
+        }
         // Dos peticiones con la misma Idempotency-Key a la vez: la PK del recibo frena a la segunda. El filtro del API releerá el recibo
         // de la ganadora cuando el handler haya deshecho su transacción.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.OperationReceiptPrimaryKey))

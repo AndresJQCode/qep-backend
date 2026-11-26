@@ -829,6 +829,293 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTask", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AssignedMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_member_id");
+
+                    b.Property<string>("CancelReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("cancel_reason");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<Guid?>("ClaimedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claimed_by_member_id");
+
+                    b.Property<string>("ClaimedDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("claimed_device_id");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset?>("DueAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("due_at");
+
+                    b.Property<DateTimeOffset?>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_activity_at");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_token");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<string>("Number")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("number");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<short>("Priority")
+                        .HasColumnType("smallint")
+                        .HasColumnName("priority");
+
+                    b.Property<DateTimeOffset?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("released_at");
+
+                    b.Property<Guid?>("SourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_id");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("source_type");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("type");
+
+                    b.Property<bool>("Urgent")
+                        .HasColumnType("boolean")
+                        .HasColumnName("urgent");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("warehouse_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId");
+
+                    b.HasIndex("WarehouseId");
+
+                    b.HasIndex("TenantId", "Number")
+                        .IsUnique()
+                        .HasDatabaseName("IX_tasks_tenant_number");
+
+                    b.HasIndex(new[] { "LeaseExpiresAt" }, "IX_tasks_lease")
+                        .HasFilter("status = 'InProgress'");
+
+                    b.HasIndex(new[] { "TenantId", "ClaimedByMemberId" }, "IX_tasks_member_in_progress")
+                        .IsUnique()
+                        .HasFilter("status = 'InProgress'");
+
+                    b.HasIndex(new[] { "TenantId", "WarehouseId", "Status" }, "IX_tasks_pool")
+                        .HasFilter("status IN ('Ready','Assigned')");
+
+                    b.HasIndex(new[] { "TenantId", "SourceType", "SourceId" }, "IX_tasks_source");
+
+                    b.ToTable("tasks", "wms", t =>
+                        {
+                            t.HasCheckConstraint("CK_tasks_assigned", "status <> 'Assigned' OR assigned_member_id IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_tasks_claim", "status <> 'InProgress' OR (claimed_by_member_id IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_tasks_priority", "priority BETWEEN 1 AND 9");
+
+                            t.HasCheckConstraint("CK_tasks_released", "status NOT IN ('Ready','Assigned','InProgress') OR released_at IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_tasks_status", "status IN ('Planned','Ready','Assigned','InProgress','Done','Cancelled')");
+
+                            t.HasCheckConstraint("CK_tasks_type", "type IN ('Move')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTaskEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("detail");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid?>("LineId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("line_id");
+
+                    b.Property<Guid?>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<decimal?>("Quantity")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("quantity");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("task_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "TaskId", "OccurredAt" }, "IX_task_events_task");
+
+                    b.ToTable("task_events", "wms");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTaskLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CancelReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("cancel_reason");
+
+                    b.Property<Guid>("FromLocationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("from_location_id");
+
+                    b.Property<Guid?>("LotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lot_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<decimal>("QuantityConfirmed")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("quantity_confirmed");
+
+                    b.Property<decimal>("QuantityPlanned")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("quantity_planned");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("line_status");
+
+                    b.Property<string>("StockStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("stock_status");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("task_id");
+
+                    b.Property<Guid?>("ToLocationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("to_location_id");
+
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromLocationId");
+
+                    b.HasIndex("LotId");
+
+                    b.HasIndex("ToLocationId");
+
+                    b.HasIndex("TaskId", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("IX_task_lines_position");
+
+                    b.ToTable("task_lines", "wms", t =>
+                        {
+                            t.HasCheckConstraint("CK_task_lines_quantity", "quantity_planned > 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned");
+
+                            t.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Cancelled')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Wms.Domain.Warehousing.Identifier", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1376,6 +1663,62 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasConstraintName("FK_adjustment_lines_adjustment");
                 });
 
+            modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTask", b =>
+                {
+                    b.HasOne("Modules.Wms.Domain.Warehousing.Owner", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_tasks_owner");
+
+                    b.HasOne("Modules.Wms.Domain.Warehousing.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("WarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_tasks_warehouse");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTaskEvent", b =>
+                {
+                    b.HasOne("Modules.Wms.Domain.Tasks.WarehouseTask", null)
+                        .WithMany("Events")
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_task_events_task");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTaskLine", b =>
+                {
+                    b.HasOne("Modules.Wms.Domain.Warehousing.Location", null)
+                        .WithMany()
+                        .HasForeignKey("FromLocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_task_lines_from_location");
+
+                    b.HasOne("Modules.Wms.Domain.Inventory.Lot", null)
+                        .WithMany()
+                        .HasForeignKey("LotId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_task_lines_lot");
+
+                    b.HasOne("Modules.Wms.Domain.Tasks.WarehouseTask", null)
+                        .WithMany("Lines")
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_task_lines_task");
+
+                    b.HasOne("Modules.Wms.Domain.Warehousing.Location", null)
+                        .WithMany()
+                        .HasForeignKey("ToLocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_task_lines_to_location");
+                });
+
             modelBuilder.Entity("Modules.Wms.Domain.Warehousing.Location", b =>
                 {
                     b.HasOne("Modules.Wms.Domain.Warehousing.Location", null)
@@ -1404,6 +1747,13 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Wms.Domain.Control.Adjustment", b =>
                 {
+                    b.Navigation("Lines");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTask", b =>
+                {
+                    b.Navigation("Events");
+
                     b.Navigation("Lines");
                 });
 

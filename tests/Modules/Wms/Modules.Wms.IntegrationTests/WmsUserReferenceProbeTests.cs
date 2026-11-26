@@ -1,5 +1,7 @@
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Application;
+using Modules.Wms.IntegrationTests.Tasks;
 using static Modules.Wms.IntegrationTests.AdjustmentTestSupport;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
 using static Modules.Wms.IntegrationTests.WmsLedgerSeeding;
@@ -77,5 +79,48 @@ public sealed class WmsUserReferenceProbeTests
                 await WithStampsAsync("@stranger", "@user", "NULL"),
                 await WithStampsAsync("@stranger", "NULL", "@user"),
                 await WithStampsAsync("@stranger", "NULL", "NULL")));
+    }
+
+    // Las cuatro columnas del motor de tareas guardan la membresía, como actor_id.
+    [Fact]
+    public async Task AMemberNamedByATaskRetainsTheUser()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var user = Guid.Parse(SubjectId);
+        Guid membership;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var directory = scope.ServiceProvider.GetRequiredService<IMembershipDirectory>();
+            membership = Assert.Single(await directory.ListMembershipIdsByUserAsync(user, Ct));
+        }
+
+        var stranger = Guid.CreateVersion7();
+        var destination = await TaskTestSupport.CreateDestinationAsync(s);
+        await TaskTestSupport.SaveAsync(factory, TaskTestSupport.NewMove(s, s.BinA, destination, createdBy: stranger));
+
+        // Deja todo a nombre de un extraño y, si se pide, una sola columna con la membresía.
+        async Task<bool> WithMemberInAsync(string? update)
+        {
+            await ExecuteAsync(
+                database,
+                "UPDATE wms.tasks SET created_by = @stranger, assigned_member_id = NULL, claimed_by_member_id = NULL; "
+                + "UPDATE wms.task_events SET member_id = @stranger; "
+                + update,
+                ("stranger", stranger),
+                ("member", membership));
+            return await HasReferencesAsync(factory, user);
+        }
+
+        Assert.Equal(
+            (true, true, true, true, false),
+            (
+                await WithMemberInAsync("UPDATE wms.tasks SET created_by = @member"),
+                await WithMemberInAsync("UPDATE wms.tasks SET assigned_member_id = @member"),
+                await WithMemberInAsync("UPDATE wms.tasks SET claimed_by_member_id = @member"),
+                await WithMemberInAsync("UPDATE wms.task_events SET member_id = @member"),
+                await WithMemberInAsync(null)));
     }
 }

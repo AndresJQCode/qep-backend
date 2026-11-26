@@ -39,18 +39,23 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public const string ReservationOpenIndex = "IX_reservations_open_key";
     public const string AdjustmentNumberIndex = "IX_adjustments_tenant_number";
 
-    // FKs internas del ledger hacia ubicaciones y dueños (spec §11.2, creadas por InventoryLedgerSql.CreateInternalForeignKeys). Borrar
-    // una ubicación o un dueño con historia da 23001 (RESTRICT): WmsUnitOfWork lo traduce por nombre.
+    // Motor de tareas (spec 2026-11-26 §6.1).
+    public const string TaskNumberIndex = "IX_tasks_tenant_number";
+    public const string TaskMemberInProgressIndex = "IX_tasks_member_in_progress";
+
+    // FKs internas del ledger hacia ubicaciones y dueños (spec §11.2, creadas por InventoryLedgerSql.CreateInternalForeignKeys) y las de
+    // las tareas, que declara WarehouseTaskModel. Borrar una ubicación o un dueño con historia da 23001 (RESTRICT): WmsUnitOfWork lo
+    // traduce por nombre.
     public static readonly string[] LocationReferenceForeignKeys =
     [
         "FK_stock_movements_from_location", "FK_stock_movements_to_location", "FK_stock_balances_location", "FK_serial_units_location",
-        "FK_reservations_location", "FK_adjustment_lines_location",
+        "FK_reservations_location", "FK_adjustment_lines_location", "FK_task_lines_from_location", "FK_task_lines_to_location",
     ];
 
     public static readonly string[] OwnerReferenceForeignKeys =
     [
         "FK_stock_movements_owner", "FK_stock_balances_owner", "FK_lots_owner", "FK_serial_units_owner", "FK_reservations_owner",
-        "FK_adjustments_owner",
+        "FK_adjustments_owner", "FK_tasks_owner",
     ];
 
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
@@ -86,6 +91,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         ConfigureIdentifier(modelBuilder);
         ConfigureMemberScope(modelBuilder);
         InventoryLedgerModel.Configure(modelBuilder);
+        WarehouseTaskModel.Configure(modelBuilder);
     }
 
     // Los enums van como texto y los `version` como bigint fijado a mano: un cambio futuro del tipo CLR no cambia el esquema. Los

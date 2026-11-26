@@ -44,6 +44,7 @@ public static class WmsInfrastructureExtensions
         // Fábrica tipada con el concreto: el inventario multi-réplica (spec 2026-10-29 D-6) así ve el tipo.
         services.AddSingleton<IWmsConfirmMetrics, WmsMetrics>(provider => provider.GetRequiredService<WmsMetrics>());
         services.AddScoped<IAdjustmentRepository, AdjustmentRepository>();
+        services.AddScoped<IWarehouseTaskRepository, WarehouseTaskRepository>();
         services.AddScoped<IWmsEventPublisher, WmsEventPublisher>();
         services.AddScoped<AdjustmentDtoComposer>();
         services.AddScoped<IImportPreviewStore, ImportPreviewStore>();
