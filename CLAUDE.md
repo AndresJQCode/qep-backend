@@ -59,7 +59,18 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
   el código. Lo que falte se registra explícitamente como decisión pendiente, no se asume.
 - **La autoridad es el código.** Ante discrepancia entre el código y un documento, gana el
   código y el documento se corrige.
-- **Commits:** conventional commits. **Sin atribución de IA.**
+- **Commits:** conventional commits. **Cada commit hecho por un agente declara sesión y
+  autoría** (decisión del owner, 2026-11-26; en este repo manda sobre la regla global «sin
+  atribución de IA»). El mensaje termina con estas dos líneas, juntas y tras una línea en blanco:
+
+  ```
+  Session: <nombre de la sesión>
+  Co-Authored-By: Claude <modelo que escribió el cambio> <noreply@anthropic.com>
+  ```
+
+  El nombre sale de la primera línea de `ListAgents` («This session is …»). Un subagente no lo
+  deduce: quien lo lanza le pasa las dos líneas en el encargo. El autor de Git no se cambia. Los
+  commits ya hechos no se reescriben.
 - **Antes de commitear se comprueba la rama, y si es la por defecto (`main`) se crea una
   primero.** La comprobación es `git branch --show-current` **en ese momento**, no lo que se
   haya leído al abrir la sesión: el 2026-09-05 el snapshot del arranque decía `main` mientras
