@@ -210,8 +210,117 @@ public sealed class ShopifyEditPlannerTests
 
         var group = Assert.Single(plan.Groups);
         Assert.Equal(
-            (ShopifyEditGroupKind.ShippingAddress, ShopifyEditGroupOutcome.Conflict, "city_unresolved"),
+            (ShopifyEditGroupKind.ShippingAddress, ShopifyEditGroupOutcome.Conflict, "qep_changed"),
             (group.Kind, group.Outcome, group.Reason));
+    }
+
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000d1");
+
+    private static readonly ShopifyAddress Alcala = Madrid with { Address1 = "Calle de Alcalá 20" };
+
+    private static ShopifyShippingFingerprint SpanishParty(Guid? regionId, string address = "Calle Mayor 1") =>
+        new("Laura Gómez", "600111222", "laura@verde.co", address, null, null, "28013", "ES", "Madrid", regionId);
+
+    // imported: lo que QEP escribió desde Shopify (la proyección). current: el pedido de ahora.
+    private static async Task<(ShopifyEditTestWorld World, ShopifyEditPlan Plan)> PlanSpanishAsync(
+        ShopifyAddress incoming, ShopifyShippingFingerprint? imported, ShopifyShippingFingerprint? current,
+        ShopifyAddress? applied = null)
+    {
+        var world = new ShopifyEditTestWorld();
+        world.World.Geography.Regions[MadridRegionId] = ("ES", "28");
+        world.Applied = Snapshot(address: applied ?? Madrid);
+        world.Order = world.Order with { ShippingParty = imported, ShippingCountry = imported?.Country };
+        var projection = world.Projection;
+        world.Order = world.Order with { ShippingParty = current, ShippingCountry = current?.Country };
+        var plan = await world.Planner.PlanAsync(
+            world.World.Store, world.ImportedRow(), world.Applied, projection, Snapshot(address: incoming), world.Order, null,
+            TestContext.Current.CancellationToken);
+        return (world, plan);
+    }
+
+    [Fact]
+    public async Task AForeignAddressEditAppliesWhenQepDidNotTouchIt()
+    {
+        var (_, plan) = await PlanSpanishAsync(Alcala, SpanishParty(MadridRegionId), SpanishParty(MadridRegionId));
+
+        Assert.Equal(ShopifyEditGroupOutcome.Apply, Assert.Single(plan.Groups).Outcome);
+        Assert.Equal(
+            new ShopifyPartyDraft(
+                "Laura Gómez", "+34 600 111 222", "laura@verde.co", "Calle de Alcalá 20", null, null, "28013", "ES", "Madrid",
+                MadridRegionId),
+            plan.Draft!.ShippingParty);
+    }
+
+    [Fact]
+    public async Task AForeignAddressEditOverAnAdvisorChangeIsAConflict()
+    {
+        var (_, plan) = await PlanSpanishAsync(
+            Alcala, SpanishParty(MadridRegionId), SpanishParty(MadridRegionId, "Calle Nueva 2"));
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal((ShopifyEditGroupOutcome.Conflict, "qep_changed"), (group.Outcome, group.Reason));
+        Assert.Null(plan.Draft);
+    }
+
+    [Fact]
+    public async Task AForeignAddressQepAlreadyHasIsAnEcho()
+    {
+        var (_, plan) = await PlanSpanishAsync(
+            Alcala, SpanishParty(MadridRegionId), SpanishParty(MadridRegionId, "Calle de Alcalá 20"));
+
+        Assert.Equal([ShopifyEditGroupKind.ShippingAddress], plan.Echoes);
+        Assert.Empty(plan.Groups);
+    }
+
+    [Fact]
+    public async Task TheEchoOfARegionChosenByTheAdvisorIsNotAGroup()
+    {
+        // Importado sin región; el asesor la eligió y Shopify devuelve lo que se le mandó.
+        var (_, plan) = await PlanSpanishAsync(
+            Madrid, SpanishParty(null), SpanishParty(MadridRegionId),
+            applied: Madrid with { Province = null, ProvinceCode = null });
+
+        Assert.Equal([ShopifyEditGroupKind.ShippingAddress], plan.Echoes);
+        Assert.Empty(plan.Groups);
+    }
+
+    [Fact]
+    public async Task AForeignAddressAppliesOverAnOrderWithoutParty()
+    {
+        var (_, plan) = await PlanSpanishAsync(Alcala, imported: null, current: null);
+
+        Assert.Equal(ShopifyEditGroupOutcome.Apply, Assert.Single(plan.Groups).Outcome);
+        Assert.Equal("ES", plan.Draft!.ShippingParty!.Country);
+    }
+
+    [Fact]
+    public async Task AZipOnlyForeignEditKeepsTheRegion()
+    {
+        var (_, plan) = await PlanSpanishAsync(
+            Madrid with { Zip = "28001" }, SpanishParty(MadridRegionId), SpanishParty(MadridRegionId));
+
+        Assert.Equal(
+            ("28001", (Guid?)MadridRegionId), (plan.Draft!.ShippingParty!.PostalCode, plan.Draft.ShippingParty.RegionId));
+    }
+
+    [Fact]
+    public async Task AForeignEditWithoutTranslatableProvinceAppliesWithoutRegion()
+    {
+        var (_, plan) = await PlanSpanishAsync(
+            Alcala with { ProvinceCode = "XX" }, SpanishParty(MadridRegionId), SpanishParty(MadridRegionId));
+
+        Assert.Equal(ShopifyEditGroupOutcome.Apply, Assert.Single(plan.Groups).Outcome);
+        Assert.Null(plan.Draft!.ShippingParty!.RegionId);
+    }
+
+    [Fact]
+    public async Task AForeignEditWithoutCityIsUnresolvedAndNeverReported()
+    {
+        var (world, plan) = await PlanSpanishAsync(
+            Alcala with { City = " " }, SpanishParty(MadridRegionId), SpanishParty(MadridRegionId));
+
+        Assert.Equal("city_unresolved", Assert.Single(plan.Groups).Reason);
+        Assert.Empty(world.World.UnresolvedCities.Reports);
     }
 
     [Fact]
