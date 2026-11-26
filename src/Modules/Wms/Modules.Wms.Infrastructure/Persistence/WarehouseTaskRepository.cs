@@ -117,6 +117,46 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .FirstOrDefaultAsync(
                 task => task.ClaimedByMemberId == memberId && task.Status == WarehouseTaskStatus.InProgress, cancellationToken);
 
+    // Los pesos (10 de urgente, un punto por cada 1200 s en el pool con tope 3, y los tramos del corte) repiten TaskPriority:
+    // TaskCandidateQueryTests amarra las dos versiones y cambiar una sin la otra lo pone en rojo. SKIP LOCKED hace que dos operarios
+    // que piden a la vez reciban tareas distintas sin esperarse. Como en LockAsync, va sin composición de EF encima.
+    public async Task<Guid?> LockNextCandidateAsync(
+        Guid tenantId,
+        Guid warehouseId,
+        Guid memberId,
+        IReadOnlyCollection<WarehouseTaskType> types,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        EnsureTransaction(nameof(LockNextCandidateAsync));
+        var typeNames = types.Select(type => type.ToString()).ToArray();
+
+        var candidates = await dbContext.Database
+            .SqlQuery<Guid>(
+                $"""
+                SELECT t.id AS "Value" FROM wms.tasks t
+                WHERE t.tenant_id = {tenantId} AND t.warehouse_id = {warehouseId}
+                  AND t.status IN ('Ready','Assigned')
+                  AND (t.assigned_member_id IS NULL OR t.assigned_member_id = {memberId})
+                  AND t.type = ANY({typeNames})
+                ORDER BY (t.assigned_member_id IS NOT NULL) DESC,
+                  (t.priority
+                   + CASE WHEN t.urgent THEN 10 ELSE 0 END
+                   + LEAST(3, GREATEST(0, FLOOR(EXTRACT(EPOCH FROM ({now} - t.released_at)) / 1200)))::int
+                   + CASE WHEN t.due_at IS NULL THEN 0
+                          WHEN t.due_at <= {now} THEN 4
+                          WHEN t.due_at <= {now} + interval '30 minutes' THEN 3
+                          WHEN t.due_at <= {now} + interval '1 hour' THEN 2
+                          WHEN t.due_at <= {now} + interval '2 hours' THEN 1
+                          ELSE 0 END) DESC,
+                  t.due_at NULLS LAST, t.released_at, t.id
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+                """)
+            .ToListAsync(cancellationToken);
+        return candidates.Count == 0 ? null : candidates[0];
+    }
+
     // Mismo mecanismo que la numeración de ajustes (S26): lock bloqueante antes del conteo, vivo hasta que la transacción confirme.
     public async Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken)
     {

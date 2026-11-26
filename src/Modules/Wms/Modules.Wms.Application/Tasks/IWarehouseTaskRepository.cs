@@ -49,6 +49,18 @@ public interface IWarehouseTaskRepository
     /// <see cref="GetAsync"/>.</summary>
     Task<WarehouseTask?> FindInProgressOfMemberAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
 
+    /// <summary>La mejor tarea elegible que nadie tenga bloqueada, y la deja bloqueada por esta transacción (exige la de
+    /// <see cref="IWmsUnitOfWork.BeginTransactionAsync"/>); <c>null</c> si no hay ninguna. El orden es el de
+    /// <see cref="TaskPriority"/> (spec §6.6) calculado en la base con <paramref name="now"/>: primero lo asignado a la membresía,
+    /// luego el puntaje, el corte más próximo, la antigüedad en el pool y el id.</summary>
+    Task<Guid?> LockNextCandidateAsync(
+        Guid tenantId,
+        Guid warehouseId,
+        Guid memberId,
+        IReadOnlyCollection<WarehouseTaskType> types,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
     /// <summary><c>TSK-{yyyyMMdd}-{NNNN}</c>, consecutivo por tenant y día. Toma un lock bloqueante de transacción antes de contar;
     /// exige la transacción de <see cref="IWmsUnitOfWork.BeginTransactionAsync"/> y el lock vive hasta que ella confirme o se
     /// deshaga.</summary>
