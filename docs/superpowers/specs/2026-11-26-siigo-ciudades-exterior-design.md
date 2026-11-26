@@ -1,6 +1,6 @@
 # Facturar en Siigo a clientes de otros países — diseño
 
-Fecha: 2026-11-26. Rama: `feature/siigo-foreign-cities`. Estado: **por aprobar**.
+Fecha: 2026-11-26. Rama: `feature/siigo-foreign-cities`. Estado: **aprobado por el owner** (2026-11-26).
 
 ## Intención
 
