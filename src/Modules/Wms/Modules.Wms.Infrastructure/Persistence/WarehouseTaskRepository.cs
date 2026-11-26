@@ -87,6 +87,38 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return [.. counts.Select(value => new TaskStatusCount(value.Status, value.Count))];
     }
 
+    public async Task<IReadOnlyList<TaskTypeCount>> CountOpenByTypeAsync(
+        Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
+    {
+        var id = new WarehouseId(warehouseId);
+        var counts = await OfTenant(tenantId)
+            .Where(task => task.WarehouseId == id
+                && task.Status != WarehouseTaskStatus.Done
+                && task.Status != WarehouseTaskStatus.Cancelled)
+            .GroupBy(task => task.Type)
+            .Select(group => new { Type = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+        return [.. counts.Select(value => new TaskTypeCount(value.Type, value.Count))];
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken)
+    {
+        if (taskIds.Count == 0)
+        {
+            return new Dictionary<Guid, DateTimeOffset>();
+        }
+
+        var ids = taskIds.ToArray();
+        var claims = await dbContext.Set<WarehouseTaskEvent>()
+            .AsNoTracking()
+            .Where(value => value.TenantId == tenantId && ids.Contains(value.TaskId) && value.Kind == TaskEventKind.Claimed)
+            .GroupBy(value => value.TaskId)
+            .Select(group => new { TaskId = group.Key, At = group.Max(value => value.OccurredAt) })
+            .ToListAsync(cancellationToken);
+        return claims.ToDictionary(value => value.TaskId, value => value.At);
+    }
+
     public async Task<IReadOnlyList<WarehouseTask>> ListInProgressAsync(
         Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
     {

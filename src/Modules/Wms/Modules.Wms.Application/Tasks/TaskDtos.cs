@@ -109,3 +109,43 @@ public sealed record TaskDto(
     IReadOnlyList<TaskEventDto> Events);
 
 public sealed record TaskPageDto(IReadOnlyList<TaskSummaryDto> Items, int Page, int PageSize, int TotalCount);
+
+public sealed record TaskStatusSliceDto(string Status, int Count);
+
+public sealed record TaskTypeSliceDto(string Type, int Open);
+
+/// <summary>Quién tiene una tarea en curso. <c>Since</c> es cuándo la reclamó.</summary>
+public sealed record TaskOperatorDto(
+    Guid MemberId,
+    string Name,
+    Guid TaskId,
+    string TaskNumber,
+    string Type,
+    DateTimeOffset? Since,
+    DateTimeOffset? LastActivityAt);
+
+/// <summary>El tablero de una bodega (BFF, spec 2026-11-26 §6.10). <c>ByStatus</c> y <c>ByType</c> vienen completos, también en cero:
+/// la pantalla no conoce los enums.</summary>
+public sealed record TaskBoardDto(
+    Guid WarehouseId,
+    IReadOnlyList<TaskStatusSliceDto> ByStatus,
+    IReadOnlyList<TaskTypeSliceDto> ByType,
+    IReadOnlyList<TaskOperatorDto> Operators);
+
+public sealed record TaskAssigneeDto(Guid MemberId, string Name);
+
+public sealed record TaskAssigneesDto(IReadOnlyList<TaskAssigneeDto> Items);
+
+/// <summary>Cuerpo de <c>publish</c> y <c>unassign</c>. Las acciones del supervisor llevan la versión que leyó (412 si cambió).
+/// </summary>
+public sealed record TaskVersionRequest(long Version);
+
+public sealed record HoldTaskRequest(long Version, string? Reason);
+
+/// <summary>El motivo es obligatorio si la tarea estaba en curso.</summary>
+public sealed record AssignTaskRequest(Guid MemberId, long Version, string? Reason);
+
+public sealed record ChangeTaskPriorityRequest(int Priority, bool Urgent, long Version);
+
+/// <summary>Cuerpo de <c>cancel</c> y de <c>lines/{lineId}/cancel</c>.</summary>
+public sealed record CancelTaskRequest(string? Reason, long Version);

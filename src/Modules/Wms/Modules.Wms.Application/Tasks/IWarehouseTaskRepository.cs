@@ -6,6 +6,8 @@ public sealed record WarehouseTaskPage(IReadOnlyList<WarehouseTask> Items, int T
 
 public sealed record TaskStatusCount(WarehouseTaskStatus Status, int Count);
 
+public sealed record TaskTypeCount(WarehouseTaskType Type, int Count);
+
 /// <summary>Una tarea con el lease vencido, con su tenant para cargarla.</summary>
 public sealed record ExpiredTaskLease(Guid TenantId, Guid TaskId);
 
@@ -41,6 +43,14 @@ public interface IWarehouseTaskRepository
 
     /// <summary>Sólo los estados con tareas: quien arma el tablero completa los ceros.</summary>
     Task<IReadOnlyList<TaskStatusCount>> CountByStatusAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);
+
+    /// <summary>Las abiertas (ni <c>Done</c> ni <c>Cancelled</c>) por tipo. Sólo los tipos que tienen: quien arma el tablero completa
+    /// los ceros.</summary>
+    Task<IReadOnlyList<TaskTypeCount>> CountOpenByTypeAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);
+
+    /// <summary>La fecha del último reclamo (evento <c>Claimed</c>) de cada tarea; la que nunca se reclamó no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
 
     /// <summary>Sin rastreo.</summary>
     Task<IReadOnlyList<WarehouseTask>> ListInProgressAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);

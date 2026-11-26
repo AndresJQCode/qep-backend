@@ -1324,6 +1324,33 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Wms.Application.ListTasksQuery, Modules.Wms.Application.TaskPageDto>,
             Modules.Wms.Application.ListTasksHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.PublishTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.PublishTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.HoldTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.HoldTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.AssignTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.AssignTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UnassignTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.UnassignTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ChangeTaskPriorityCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ChangeTaskPriorityHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CancelTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CancelTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CancelTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CancelTaskLineHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetTaskBoardQuery, Modules.Wms.Application.TaskBoardDto>,
+            Modules.Wms.Application.GetTaskBoardHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListTaskAssigneesQuery, Modules.Wms.Application.TaskAssigneesDto>,
+            Modules.Wms.Application.ListTaskAssigneesHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

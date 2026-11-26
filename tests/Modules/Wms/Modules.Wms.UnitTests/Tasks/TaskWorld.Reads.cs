@@ -84,10 +84,10 @@ internal sealed partial class TaskWorld
                 world.Names.Where(pair => memberIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
 
         public Task<bool> CanPerformAsync(Guid tenantId, Guid memberId, string permission, CancellationToken ct) =>
-            throw new NotSupportedException();
+            Task.FromResult(world.Eligible.Contains(memberId));
 
         public Task<IReadOnlyList<Guid>> ListWithPermissionAsync(Guid tenantId, string permission, CancellationToken ct) =>
-            throw new NotSupportedException();
+            Task.FromResult<IReadOnlyList<Guid>>([.. world.Eligible]);
     }
 
     public List<Lot> Lots { get; } = [];
