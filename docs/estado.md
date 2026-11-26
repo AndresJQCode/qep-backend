@@ -617,7 +617,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 - 2026-11-25 — Mergeado a `develop` (`5fdf11863`, `--no-ff`, sin push) **roles por tenant** (`feature/roles-por-tenant`,
   hasta `934146db6`): `admin` queda como único rol de sistema; los otros cinco se siembran por tenant; un rol no se borra si
   lo tiene una membresía `Invited`, `Active` o `Suspended`; una función nueva no agrega permisos a los roles de tenants
-  existentes (decisión del owner). Cambia `CompositionRootTests` y `MultiReplicaInventoryTests`. Build del commit de merge
+  existentes (decisión del owner). Cambia `CompositionRootTests` y `MultiReplicaInventoryTests` (cambio de arquitectura autorizado por el owner, después del merge). Build del commit de merge
   con 0 advertencias y 0 errores; revisión final sin críticos ni importantes. **Pruebas sin correr** salvo la línea base y
   las unitarias de la primera tarea (orden del owner), tampoco `test-feature.ps1`. Rama y worktree borrados.
 - 2026-11-25 — Mergeado a `develop` (`2b8bd0637`, `--no-ff`, sin push) **los dos menores del aviso de autorización**
