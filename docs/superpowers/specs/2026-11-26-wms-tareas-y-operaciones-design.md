@@ -380,7 +380,8 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
   `operation_receipts` devuelve la misma respuesta con 200 y el ledger guarda la misma clave en su lote.
 - La cola local (Room) es por usuario y por tarea, en orden FIFO. Si el servidor rechaza una operación, las siguientes de **esa** tarea
   se pausan y la app lo muestra; las de otras tareas siguen.
-- `occurredAt` es la hora del escaneo, dentro de la ventana del ledger (`[now − 30 días, now + 5 min]`).
+- `occurredAt` es la hora del escaneo, dentro de la ventana del ledger (`[now − 30 días, now + 5 min]`). Es también la fecha de los
+  eventos que la confirmación deja en `task_events` (`LeaseResumed`, `LineConfirmed`, `Completed`) y de `completed_at` (DA-36).
 - La doble lectura del mismo código es UX, no idempotencia: la app ignora el mismo código en menos de 1 s y el servidor no deja
   superar lo planeado (`wms.task.quantity_exceeds_remaining`).
 
@@ -980,6 +981,7 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-30 | Recepción no ciega (la app muestra lo esperado), como el supuesto P-7 del spec de recepción | Ciega por tenant | Un parámetro |
 | DA-31 | Sin plantillas de rol nuevas («Operario de bodega», «Supervisor de bodega»); el tenant arma sus roles | Plantillas de fábrica | `RoleTemplate` nuevos (sólo llegan a tenants nuevos) |
 | DA-34 | La misma persona que retoma desde el mismo celular su reclamo vencido conserva el `leaseToken`: lo que dejó en cola sigue valiendo. Desde otro celular, o si otro la tuvo en medio, el token cambia | Token nuevo en cada reclamo | La cola offline se rechaza con `wms.task.lease_lost` |
+| DA-36 | Los eventos que deja una confirmación y `completed_at` llevan la hora del escaneo (`occurredAt`, dentro de la ventana del ledger), no la de sincronización; el lease y `last_activity_at` usan la del servidor | Hora del servidor | Los indicadores medirían la sincronización, no el trabajo |
 
 ## 14. Preguntas para el owner
 

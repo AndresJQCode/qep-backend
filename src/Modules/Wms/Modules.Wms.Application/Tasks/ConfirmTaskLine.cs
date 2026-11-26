@@ -41,7 +41,7 @@ public sealed record ConfirmTaskLineCommand(
     }
 }
 
-/// <summary>La ventana de <c>OccurredAt</c> no se mira aquí: la aplica el ledger, con su código.</summary>
+/// <summary>La ventana de <c>OccurredAt</c> no se mira aquí: la aplican la tarea y el ledger, con el código del ledger.</summary>
 public sealed class ConfirmTaskLineValidator : AbstractValidator<ConfirmTaskLineCommand>
 {
     public const int OverrideReasonMaxLength = 200;
@@ -110,7 +110,8 @@ public sealed class ConfirmTaskLineHandler(
 
         var lot = line.LotId?.Value ?? command.LotId;
         var occurredAt = command.OccurredAt!.Value;
-        task.ConfirmLine(member, command.LeaseToken, command.DeviceId, line.Id, command.Quantity, clock.UtcNow);
+        task.ConfirmLine(
+            member, command.LeaseToken, command.DeviceId, line.Id, command.Quantity, clock.UtcNow, occurredAt);
 
         var owner = task.OwnerId.Value;
         var entry = new LedgerEntry(

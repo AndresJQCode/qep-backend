@@ -1,3 +1,4 @@
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Warehousing;
 
 namespace Modules.Wms.Domain.Tasks;
@@ -338,8 +339,17 @@ public sealed class WarehouseTask
     /// <summary>Confirma parte o todo de una línea. Con un lease reanudable, reanuda la tarea antes: la mercancía ya se movió en el
     /// piso. El llamador responde antes el lease perdido (<see cref="CheckLease"/>) y la línea inexistente
     /// (<see cref="FindLine"/>).</summary>
+    /// <param name="occurredAt">Cuándo se escaneó, dentro de la ventana del ledger; sin él, <paramref name="now"/>. Es la fecha de
+    /// los hechos que la confirmación deja en la historia y la de cierre (DA-36); el lease y la actividad usan
+    /// <paramref name="now"/>.</param>
     public WarehouseTaskLine ConfirmLine(
-        Guid memberId, Guid leaseToken, string deviceId, Guid lineId, decimal quantity, DateTimeOffset now)
+        Guid memberId,
+        Guid leaseToken,
+        string deviceId,
+        Guid lineId,
+        decimal quantity,
+        DateTimeOffset now,
+        DateTimeOffset? occurredAt = null)
     {
         var lease = CheckLease(memberId, leaseToken);
         if (lease == LeaseCheck.Lost)
@@ -365,18 +375,22 @@ public sealed class WarehouseTask
                 WmsErrorCodes.TaskQuantityExceedsRemaining, "La cantidad confirmada supera lo que falta de la línea.");
         }
 
+        // timestamptz sólo admite offset cero.
+        var scannedAt = (occurredAt ?? now).ToUniversalTime();
+        LedgerEntryRules.EnsureOccurredAtInWindow(scannedAt, now);
+
         // Después de validar: una confirmación rechazada no reanuda nada.
         if (lease == LeaseCheck.Resumable)
         {
             Status = WarehouseTaskStatus.InProgress;
-            Record(TaskEventKind.LeaseResumed, memberId, now, deviceId: device);
+            Record(TaskEventKind.LeaseResumed, memberId, scannedAt, deviceId: device);
         }
 
         line.Confirm(quantity);
         Renew(now);
         Version++;
-        Record(TaskEventKind.LineConfirmed, memberId, now, deviceId: device, lineId: lineId, quantity: quantity);
-        CloseIfFinished(memberId, now);
+        Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity);
+        CloseIfFinished(memberId, scannedAt);
         return line;
     }
 

@@ -462,6 +462,46 @@ public sealed class WarehouseTaskLeaseTests
         Assert.Equal(TaskEventKind.LeaseExpired, task.Events[^1].Kind);
     }
 
+    // DA-36: los hechos de una confirmación llevan la hora del escaneo; el lease y la actividad, la del servidor.
+    [Fact]
+    public void ALateSyncKeepsTheScanTimeInTheHistory()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+        var scanned = Now.AddMinutes(5).ToOffset(TimeSpan.FromHours(-5));
+        var synced = Expired.AddMinutes(20);
+
+        task.ConfirmLine(Member, token, Device, task.Lines[0].Id, 5, synced, scanned);
+
+        Assert.Equal(
+            [TaskEventKind.LeaseResumed, TaskEventKind.LineConfirmed, TaskEventKind.Completed],
+            task.Events.TakeLast(3).Select(e => e.Kind));
+        Assert.All(task.Events.TakeLast(3), e =>
+        {
+            Assert.Equal(scanned, e.OccurredAt);
+            // timestamptz sólo admite offset cero.
+            Assert.Equal(TimeSpan.Zero, e.OccurredAt.Offset);
+        });
+        Assert.Equal(scanned, task.CompletedAt);
+        Assert.Equal(synced, task.LastActivityAt);
+    }
+
+    [Theory]
+    [InlineData(-43201)]
+    [InlineData(6)]
+    public void AScanOutsideTheLedgerWindowIsRejectedWithoutResuming(int minutes)
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        var error = Assert.Throws<WmsDomainException>(() => task.ConfirmLine(
+            Member, token, Device, task.Lines[0].Id, 1, Expired, Expired.AddMinutes(minutes)));
+
+        Assert.Equal(WmsErrorCodes.MovementOccurredAtOutOfRange, error.Code);
+        Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
+        Assert.Equal(0, task.Lines[0].QuantityConfirmed);
+    }
+
     [Fact]
     public void ConfirmingWithALostLeaseIsAWiringError()
     {

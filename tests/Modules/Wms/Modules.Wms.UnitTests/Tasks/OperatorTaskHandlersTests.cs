@@ -128,6 +128,34 @@ public sealed class OperatorTaskHandlersTests
         Assert.Equal(3m, Assert.Single(dto.Lines).QuantityRemaining);
     }
 
+    // DA-36: la historia de la tarea cuenta cuándo se escaneó, no cuándo llegó.
+    [Fact]
+    public async Task TheTaskHistoryKeepsTheScanTimeNotTheSyncTime()
+    {
+        var world = new TaskWorld();
+        var (task, command) = ClaimedByCaller(world);
+        var scanned = TaskWorld.Start.AddMinutes(1);
+        world.Now = TaskWorld.Start.AddMinutes(9);
+
+        await ConfirmAsync(world, command with { OccurredAt = scanned });
+
+        Assert.All(task.Events.TakeLast(2), value => Assert.Equal(scanned, value.OccurredAt));
+        Assert.Equal(scanned, task.CompletedAt);
+        Assert.Equal(world.Now, task.LastActivityAt);
+    }
+
+    [Fact]
+    public async Task AScanOutsideTheWindowIs422BeforeTheLedger()
+    {
+        var world = new TaskWorld();
+        var (_, command) = ClaimedByCaller(world);
+
+        await AssertDomainAsync(
+            world, command with { OccurredAt = TaskWorld.Start.AddDays(-31) }, WmsErrorCodes.MovementOccurredAtOutOfRange);
+        await AssertDomainAsync(
+            world, command with { OccurredAt = TaskWorld.Start.AddMinutes(6) }, WmsErrorCodes.MovementOccurredAtOutOfRange);
+    }
+
     [Fact]
     public async Task AnUnknownTaskOrLineIs404()
     {
