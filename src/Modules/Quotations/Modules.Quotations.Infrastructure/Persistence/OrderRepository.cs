@@ -94,7 +94,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
     }
 
     // La regla de Order.RequiresShipping en SQL (spec 2026-11-18 §5), como la de cotizaciones: la búsqueda del listado no
-    // trae las líneas, y cargarlas para esto sería toda la página de líneas para un booleano.
+    // trae las líneas, y cargarlas para esto sería toda la página de líneas para un booleano. Un proyecto nunca se despacha
+    // (spec 2026-11-26 §6.4).
     public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken)
     {
@@ -108,6 +109,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .AsNoTracking()
             .Where(order => order.TenantId == tenantId
                 && ids.Contains(order.Id)
+                && order.Kind != QuotationKind.Project
                 && (!order.Items.Any() || order.Items.Any(item => item.Kind == ProductKind.Physical)))
             .Select(order => order.Id)
             .ToListAsync(cancellationToken);

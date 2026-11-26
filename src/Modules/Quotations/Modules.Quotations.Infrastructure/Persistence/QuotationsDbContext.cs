@@ -1,8 +1,12 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Infrastructure.Persistence;
@@ -83,7 +87,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     {
         var quotation = modelBuilder.Entity<Quotation>();
         quotation.ToTable("quotations", "quotations", table =>
-            table.HasCheckConstraint("CK_quotations_freight_charge_mode", FreightChargeModeCheck));
+        {
+            table.HasCheckConstraint("CK_quotations_freight_charge_mode", FreightChargeModeCheck);
+            table.HasCheckConstraint("CK_quotations_kind", DocumentKindCheck);
+            table.HasCheckConstraint(
+                "CK_quotations_project_pricing_mode", "project_pricing_mode IN ('Global','PerPhase')");
+        });
         quotation.HasKey(value => value.Id);
         quotation.Property(value => value.Id)
             .HasColumnName("id")
@@ -103,6 +112,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("status")
             .HasConversion<string>()
             .HasMaxLength(20);
+        ConfigureProject(
+            quotation.Property(value => value.Kind), quotation.Property(value => value.ProjectScope));
+        // Espejo del modo del alcance: el listado lo lee sin abrir el jsonb (spec 2026-11-26 §5).
+        quotation.Property(value => value.ProjectPricingMode)
+            .HasColumnName("project_pricing_mode")
+            .HasConversion<string>();
         quotation.Property(value => value.GlobalScaleFloor)
             .HasColumnName("global_scale_floor");
         quotation.Property(value => value.CreatedAt).HasColumnName("created_at");
@@ -351,6 +366,36 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasDefaultValue(false);
         document.Ignore("ProductsTotal");
         document.Ignore("ShippingDetails");
+    }
+
+    private const string DocumentKindCheck = "kind IN ('Standard','Project')";
+
+    // El alcance viaja entero y con los modos por nombre. Los derivados (total, completitud) no se guardan.
+    private static readonly JsonSerializerOptions ProjectScopeJson =
+        new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
+
+    // Spec 2026-11-26 §5: tipo del documento y alcance, igual en quotations y orders. El default de la base es el valor de
+    // todo documento de antes y de lo que inserte un pod viejo o un INSERT crudo (expand/contract), y coincide con el
+    // default CLR: no hace falta sentinel. El alcance es jsonb y no tablas: es una foto que no se consulta por campo. Es un
+    // record con listas, así que el comparador también va por el JSON. Nulo en la base es nulo en el modelo.
+    private static void ConfigureProject(
+        PropertyBuilder<QuotationKind> kind, PropertyBuilder<ProjectScope?> scope)
+    {
+        kind.HasColumnName("kind").HasConversion<string>().HasDefaultValue(QuotationKind.Standard);
+        scope.HasColumnName("project_scope")
+            .HasColumnType("jsonb")
+            .HasConversion(
+                new ValueConverter<ProjectScope?, string?>(
+                    value => value == null ? null : JsonSerializer.Serialize(value, ProjectScopeJson),
+                    json => json == null ? null : JsonSerializer.Deserialize<ProjectScope>(json, ProjectScopeJson)),
+                new ValueComparer<ProjectScope?>(
+                    (left, right) => JsonSerializer.Serialize(left, ProjectScopeJson)
+                        == JsonSerializer.Serialize(right, ProjectScopeJson),
+                    value => JsonSerializer.Serialize(value, ProjectScopeJson).GetHashCode(StringComparison.Ordinal),
+                    value => value == null
+                        ? null
+                        : JsonSerializer.Deserialize<ProjectScope>(
+                            JsonSerializer.Serialize(value, ProjectScopeJson), ProjectScopeJson)));
     }
 
     // Spec 2026-11-18 §3.4: tipo y unidad de la línea, por nombre, text not null. El default de la base es el valor de
@@ -623,7 +668,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             // Mayorista fase 3: 'Wholesale' es el pedido que crea la orden de compra de un distribuidor vinculado.
             table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store','Wholesale')");
             table.HasCheckConstraint("CK_orders_freight_charge_mode", FreightChargeModeCheck);
+            table.HasCheckConstraint("CK_orders_kind", DocumentKindCheck);
         });
+        ConfigureProject(order.Property(value => value.Kind), order.Property(value => value.ProjectScope));
         order.HasKey(value => value.Id);
         order.Property(value => value.Id)
             .HasColumnName("id")
