@@ -85,8 +85,10 @@ las sondas si algún registro de Hr todavía usa el archivo; si ninguno, borra e
 y audita `storage.file.purged`. Si algo falla, no marca el inbox y reintenta en el tick siguiente. Sin sondas no borra
 nada. El consumidor sólo purga archivos `HrDocument`.
 
-El fallo queda en el log (`Error`, con el id del mensaje). El tablero de colas no lo muestra: la cola `outbox` cuenta
-filas sin `processed_at`, que marca el despachador de plataforma, no este consumidor.
+El fallo queda en el log (`Error`, con el id del mensaje). La cola `outbox` no lo cuenta (mira `processed_at`, que marca
+el despachador de plataforma), así que `QueueMetricsSource` suma la cola `hr_document_release`: avisos del evento que
+todavía no están en el inbox de Storage, con la edad del más viejo y `retrying` en cero (no se cuentan intentos). Sin
+tabla nueva. Sale en Grafana y en la vista de plataforma (<https://trello.com/c/CN1QTtcc>).
 
 ## Enfoques considerados (nómina)
 
