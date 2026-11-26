@@ -244,6 +244,16 @@ public sealed class QuotationItem
     internal void ApplyChargesVat(bool chargesVat, string currency, PriceRounding rounding, DateTimeOffset occurredAt) =>
         Apply(Quantity, UnitPrice, DiscountPercentage, ProductTaxRate, chargesVat, currency, rounding, occurredAt);
 
+    /// <summary>La línea de un proyecto sigue al total de su alcance (spec 2026-11-26 §5): cambia el precio y conserva
+    /// cantidad, descuento y tasa del producto, como <c>OrderItem.ChangeUnitPrice</c>.</summary>
+    internal void ChangeUnitPrice(
+        decimal unitPrice,
+        bool chargesVat,
+        string currency,
+        PriceRounding rounding,
+        DateTimeOffset occurredAt) =>
+        Apply(Quantity, unitPrice, DiscountPercentage, ProductTaxRate, chargesVat, currency, rounding, occurredAt);
+
     /// <summary>Cambia sólo el descuento y rehace los importes de la línea, conservando cantidad,
     /// precio y tasa. Lo usa el recálculo global de la cotización
     /// (<see cref="Quotation.ApplyGroupDiscounts"/>): la agrupación de escalas, el piso global y

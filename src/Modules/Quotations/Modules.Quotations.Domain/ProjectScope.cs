@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 
 namespace Modules.Quotations.Domain;
@@ -36,6 +37,15 @@ public sealed record ProjectPhase(Guid Id, string Name, decimal? Price, IReadOnl
 
     public override int GetHashCode() => HashCode.Combine(Id, Name, Price, Items.Count);
 }
+
+/// <summary>Lo que el catálogo dice del servicio elegido, para armar la línea de la cotización
+/// (<see cref="Quotation.ReplaceProjectScope"/>): se congela en la línea como en cualquier otra.</summary>
+public sealed record ProjectServiceLine(
+    Guid VariantId,
+    Guid ProductId,
+    int TaxPercentage,
+    ProductKind Kind,
+    SalesUnit SalesUnit);
 
 /// <summary>Los topes del alcance (spec 2026-11-26, P6). El de ítems cuenta los de las fases más los sueltos.</summary>
 public static class ProjectScopeLimits
