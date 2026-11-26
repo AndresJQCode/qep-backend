@@ -209,6 +209,62 @@ public sealed class TaskCandidateQueryTests
         Assert.Equal(task.Id, await picker.NextAsync(a.Setup.TenantId, a.Setup.WarehouseId, member));
     }
 
+    // DA-33: saltar la propuesta no puede devolver la misma en el toque siguiente.
+    [Fact]
+    public async Task ATaskISkippedIsNotOfferedToMeAgainForTheCooldown()
+    {
+        await using var a = await ArrangeTasksAsync();
+        var member = Guid.CreateVersion7();
+        var inside = Now - TaskTypePolicy.SkipCooldown + TimeSpan.FromSeconds(1);
+        var skipped = a.Move(priority: 9, releasedMinutesAgo: 30);
+        Release(skipped, member, TaskUnclaimReason.Skipped, inside);
+        var other = a.Move(priority: 1);
+        await a.SaveAsync(skipped, other);
+
+        Assert.Equal(other.Id, await PickAsync(a, member));
+        Assert.Equal(skipped.Id, await PickAsync(a));
+
+        // Al cumplirse el plazo vuelve a ser elegible para quien la saltó.
+        await ExecuteAsync(a.Database, "UPDATE wms.task_events SET occurred_at = @at WHERE task_id = @id AND kind = 'Unclaimed'",
+            ("at", Now - TaskTypePolicy.SkipCooldown), ("id", skipped.Id));
+        Assert.Equal(skipped.Id, await PickAsync(a, member));
+    }
+
+    [Theory]
+    [InlineData(TaskUnclaimReason.ShiftEnd)]
+    [InlineData(TaskUnclaimReason.CannotReach)]
+    [InlineData(TaskUnclaimReason.Other)]
+    public async Task OnlySkippingHidesTheTask(TaskUnclaimReason reason)
+    {
+        await using var a = await ArrangeTasksAsync();
+        var member = Guid.CreateVersion7();
+        var task = a.Move();
+        Release(task, member, reason, Now);
+        await a.SaveAsync(task);
+
+        Assert.Equal(task.Id, await PickAsync(a, member));
+    }
+
+    // La asignación del supervisor manda sobre el salto (spec §6.5: lo asignado se entrega primero).
+    [Fact]
+    public async Task ASkippedTaskAssignedToMeIsOfferedAgain()
+    {
+        await using var a = await ArrangeTasksAsync();
+        var member = Guid.CreateVersion7();
+        var task = a.Move();
+        Release(task, member, TaskUnclaimReason.Skipped, Now);
+        task.Assign(member, Guid.CreateVersion7(), null, Now);
+        await a.SaveAsync(task);
+
+        Assert.Equal(task.Id, await PickAsync(a, member));
+    }
+
+    private static void Release(WarehouseTask task, Guid member, TaskUnclaimReason reason, DateTimeOffset at)
+    {
+        task.Claim(member, "device-1", at);
+        task.Unclaim(member, task.LeaseToken!.Value, reason, at);
+    }
+
     [Fact]
     public async Task TwoTransactionsGetDifferentTasks()
     {

@@ -66,7 +66,8 @@ public interface IWarehouseTaskRepository
     /// <summary>La mejor tarea elegible que nadie tenga bloqueada, y la deja bloqueada por esta transacción (exige la de
     /// <see cref="IWmsUnitOfWork.BeginTransactionAsync"/>); <c>null</c> si no hay ninguna. El orden es el de
     /// <see cref="TaskPriority"/> (spec §6.6) calculado en la base con <paramref name="now"/>: primero lo asignado a la membresía,
-    /// luego el puntaje, el corte más próximo, la antigüedad en el pool y el id.</summary>
+    /// luego el puntaje, el corte más próximo, la antigüedad en el pool y el id. No ofrece la que la membresía saltó hace menos de
+    /// <see cref="TaskTypePolicy.SkipCooldown"/>, salvo que la tenga asignada.</summary>
     Task<Guid?> LockNextCandidateAsync(
         Guid tenantId,
         Guid warehouseId,

@@ -357,7 +357,8 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
      ```
 
      `SKIP LOCKED` hace que dos operarios que piden a la vez reciban tareas distintas sin esperarse: «la mejor no bloqueada en este
-     instante».
+     instante». La consulta excluye además lo que esa persona soltó con motivo `Skipped` en los últimos 15 minutos, salvo que se lo
+     hayan asignado (DA-33).
   4. EF carga el agregado (la fila ya está bloqueada por esta transacción) y el dominio aplica `Claim`. El índice único
      `IX_tasks_member_in_progress` es la última red: si algo lo viola, 409 `wms.task.member_busy`.
 - **Reclamar una tarea concreta** (`claim`, desde «Mis tareas»): `SELECT … FOR UPDATE` de esa fila (bloqueante, corto) y `Claim` del
@@ -983,6 +984,7 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-30 | Recepción no ciega (la app muestra lo esperado), como el supuesto P-7 del spec de recepción | Ciega por tenant | Un parámetro |
 | DA-31 | Sin plantillas de rol nuevas («Operario de bodega», «Supervisor de bodega»); el tenant arma sus roles | Plantillas de fábrica | `RoleTemplate` nuevos (sólo llegan a tenants nuevos) |
 | DA-32 | Una confirmación tardía de quien ya tiene otra tarea en curso se aplica sin devolver la vieja a `InProgress` ni darle lease: queda donde está (`Ready` o `Assigned`) o se cierra si era lo último | 409 `wms.task.member_busy` | Mercancía ya movida que el sistema no registra |
+| DA-33 | «Siguiente tarea» no le vuelve a ofrecer a una persona lo que soltó con motivo `Skipped` en los últimos 15 minutos; si el supervisor se lo asigna después, sí. `claim` no cambia | Ofrecerlo de inmediato | Saltar devuelve la misma tarea |
 | DA-34 | La misma persona que retoma desde el mismo celular su reclamo vencido conserva el `leaseToken`: lo que dejó en cola sigue valiendo. Desde otro celular, o si otro la tuvo en medio, el token cambia | Token nuevo en cada reclamo | La cola offline se rechaza con `wms.task.lease_lost` |
 | DA-36 | Los eventos que deja una confirmación y `completed_at` llevan la hora del escaneo (`occurredAt`, dentro de la ventana del ledger), no la de sincronización; el lease y `last_activity_at` usan la del servidor | Hora del servidor | Los indicadores medirían la sincronización, no el trabajo |
 

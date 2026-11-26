@@ -162,7 +162,10 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
     {
         EnsureTransaction(nameof(LockNextCandidateAsync));
         var typeNames = types.Select(type => type.ToString()).ToArray();
+        var skippedSince = now - TaskTypePolicy.SkipCooldown;
 
+        // DA-33: lo que la persona saltó hace poco no se le vuelve a ofrecer, salvo que se lo hayan asignado. El FOR UPDATE sólo
+        // bloquea la fila de la tarea: la subconsulta de la historia no bloquea nada.
         var candidates = await dbContext.Database
             .SqlQuery<Guid>(
                 $"""
@@ -171,6 +174,10 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
                   AND t.status IN ('Ready','Assigned')
                   AND (t.assigned_member_id IS NULL OR t.assigned_member_id = {memberId})
                   AND t.type = ANY({typeNames})
+                  AND (t.assigned_member_id = {memberId} OR NOT EXISTS (
+                        SELECT 1 FROM wms.task_events e
+                        WHERE e.task_id = t.id AND e.kind = 'Unclaimed' AND e.detail = 'Skipped'
+                          AND e.member_id = {memberId} AND e.occurred_at > {skippedSince}))
                 ORDER BY (t.assigned_member_id IS NOT NULL) DESC,
                   (t.priority
                    + CASE WHEN t.urgent THEN 10 ELSE 0 END
