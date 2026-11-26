@@ -785,7 +785,37 @@ en `develop`.
 - **El envejecimiento nunca es negativo** (relojes corridos entre réplicas). El SQL de la tarea 5 debe usar
   `LEAST(3, GREATEST(0, FLOOR(…)))`.
 
-### Pendiente para los bloques B y C
+### Bloque B
+
+- **`LockExpiredAsync` devuelve `ExpiredTaskLease(TenantId, TaskId)`**, no sólo ids: `GetAsync` pide el tenant. Es la única lectura del
+  puerto que cruza tenants.
+- **El barrido termina cuando un lote no vence ninguna** (incluye el lote vacío): no puede quedar girando sobre una fila que el dominio
+  no cambie.
+- **`WmsUserReferenceProbe` cuenta las tareas** (no estaba en el plan): `tasks.created_by`, `assigned_member_id`, `claimed_by_member_id`
+  y `task_events.member_id` guardan membresías; sin esto la limpieza de huérfanos borraría a quien sólo figura en la historia de una
+  tarea.
+- **`WmsPersistenceTests.TheMigrationCreatesTheEightTablesWithTheirUniqueIndexes`** excluye las tres tablas nuevas: sin eso se pone en
+  rojo.
+- **Puerto:** `ListInProgressAsync`, `ListAssignedToAsync` y `FindInProgressOfMemberAsync` leen sin rastreo (una instancia rastreada
+  antes de `LockAsync` quedaría vieja); `ListAssignedToAsync` trae sólo las `Assigned`, ordenadas por corte, antigüedad e id;
+  `ListAsync` normaliza la página con `WmsPaging`.
+- **Modelo:** `priority` es `smallint` por conversión a `short`; el índice único de posición se llama `IX_task_lines_position`; EF
+  agrega por convención `IX_tasks_owner_id`, `IX_tasks_warehouse_id` e `IX_task_lines_{from_location_id,to_location_id,lot_id}`.
+- **Sin ejecutar:** ninguna prueba de integración de este bloque ni la verificación previa (`InventoryLedgerPostingTests`): había otra
+  suite con contenedores en la máquina. Se verificó con build, `ArchitectureTests`, `Modules.Wms.UnitTests`,
+  `has-pending-model-changes` y la traducción de las consultas LINQ sin conexión. Hay que correr, antes de mergear,
+  `--filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Tasks"`, `WmsPersistenceTests`, `WmsUnitOfWorkTests`,
+  `WmsUserReferenceProbeTests` e `InventoryLedgerPostingTests`.
+
+### Pendiente para el bloque C
+
+- `GetWithEventsAsync` trae los eventos sin orden: el composer los ordena (viñeta siguiente).
+- `TaskBoardDto.byType` no tiene consulta en el puerto (`CountByStatusAsync` es por estado).
+- Reclamar con otra tarea en curso: el handler consulta `FindInProgressOfMemberAsync` antes para dar `taskId`; el índice lanza
+  `TaskMemberBusyException` sin él.
+- `CatalogVariantUsageChecker` no cuenta las líneas de tareas abiertas, que todavía pueden escribir en el ledger (como las de un
+  ajuste abierto): decidir antes de mergear.
+- La tabla de workers del README y la frase de `WorkerStartupSeconds` («los tres workers del ledger») necesitan el barrido (tarea 10).
 
 - Los eventos de una misma transacción comparten `occurred_at`, y `Guid.CreateVersion7` no ordena dentro del mismo milisegundo: la ficha
   y las pruebas ordenan por `(occurred_at, kind en el orden del enum, id)`. El enum está declarado en orden causal.
