@@ -405,8 +405,10 @@ public sealed class SiigoInvoiceAnnulmentApiTests
         other.Siigo.OnRequest("/v1/invoices", _ => Interlocked.Increment(ref sends) == 1
             ? Created("FV-1-123", OrderInvoiceId, 0m)
             : FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
-        await IssueRowsThroughBatchAsync(other);
+        var item = await RunBatchOfOneAsync(other);
 
+        // La tanda no lo da por facturado: la de flete no salió.
+        Assert.Equal(("Failed", "siigo.invoice.freight_pending"), (Text(item, "status"), Text(item, "errorCode")));
         Assert.Equal("Order:Created,Freight:Pending", await StatusesAsync(other));
         Assert.Equal(["Order:False:False", "Freight:False:False"], await FlagsAsync(other));
     }
