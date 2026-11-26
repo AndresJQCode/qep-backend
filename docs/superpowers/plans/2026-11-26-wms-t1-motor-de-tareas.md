@@ -766,3 +766,31 @@ en `develop`.
   cancelación de la última línea decide `Done`/`Cancelled` por si quedó alguna `Done`; `Assign` desde `InProgress` exige motivo.
 - **Riesgo conocido:** si `SeedCallerMembershipAsync` sólo siembra `admin`, las pruebas de «miembro sin permiso» necesitan el parámetro
   `roles` (anotado en T7). La base del ledger (WMS-D T18) se verifica antes de empezar.
+
+## Desviaciones
+
+### Bloque A
+
+- **Orden de las tareas 2 y 3.** `Assign` desde `InProgress`, `ChangePriority` en `Done` y el cierre en `Done` necesitan `Claim` y
+  `ConfirmLine`: se implementaron y probaron en la tarea 3.
+- **Asignar revoca el reclamo vencido.** `Assign` desde `InProgress`, o a una membresía distinta de la que reclamó, limpia el reclamo:
+  su confirmación tardía recibe `wms.task.lease_lost` (§6.5). Sin esto quedaría una tarea en curso de una persona y asignada a otra.
+- **Campos del reclamo.** `Done`, `Cancelled` y `Unclaim` limpian los cuatro. `ExpireLease` conserva membresía, dispositivo y token, y
+  limpia `LeaseExpiresAt`: quien componga los DTO sólo muestra reclamo y `leaseToken` con la tarea `InProgress`.
+- **`ReleasedAt`.** `Hold` lo borra (`Publish` lo fija de nuevo); `Unclaim` y `ExpireLease` lo conservan.
+- **`Unassign` de una `Planned` sin asignado** es `wms.task.invalid_transition`.
+- **Línea inexistente.** El dominio expone `FindLine`; `CancelLine` y `ConfirmLine` con otra línea lanzan `InvalidOperationException`:
+  el handler responde antes el 404.
+- **`deviceId` fuera de 1..64** y nota de más de 500 lanzan `ArgumentException`: los validadores de la tarea 9 y la 7 dan el 422.
+- **El envejecimiento nunca es negativo** (relojes corridos entre réplicas). El SQL de la tarea 5 debe usar
+  `LEAST(3, GREATEST(0, FLOOR(…)))`.
+
+### Pendiente para los bloques B y C
+
+- Los eventos de una misma transacción comparten `occurred_at`, y `Guid.CreateVersion7` no ordena dentro del mismo milisegundo: la ficha
+  y las pruebas ordenan por `(occurred_at, kind en el orden del enum, id)`. El enum está declarado en orden causal.
+- `TwoConfirmationsOfTheSameTaskSerialize` termina en versión 4, no 3 (crear 1, reclamar 2, dos confirmaciones).
+- `TaskBoardDto.operators.since` no tiene columna: sale del evento `Claimed` o hay que decidirlo.
+- Decisiones del owner: (1) tras soltar con `Skipped`, `next` puede devolver la misma tarea; (2) una confirmación tardía de quien ya
+  tiene otra tarea en curso choca con `IX_tasks_member_in_progress`, y si vuelve a reclamar la misma, el token cambia y su cola se
+  rechaza; (3) cancelar la única línea, confirmada en parte, deja la tarea `Cancelled` (§6.3 al pie de la letra).
