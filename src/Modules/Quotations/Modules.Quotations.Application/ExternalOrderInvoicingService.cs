@@ -318,7 +318,8 @@ public sealed class ExternalOrderInvoicingService(
             FirstNonBlank(billing?.Address, customer?.Address),
             billingCityComplete ? billing!.CityId : customer?.CityId,
             billingCityComplete ? billing!.DepartmentId : customer?.DepartmentId,
-            FirstNonBlank(billing?.Country, customer?.Country),
+            // El país va con la ciudad: una parte colombiana lo guarda null, y completarlo con el de la ficha la volvería extranjera.
+            billingCityComplete ? billing!.Country : FirstNonBlank(billing?.Country, customer?.Country),
             FirstNonBlank(billing?.Email, customer?.Email),
             FirstNonBlank(billing?.Phone, customer?.Phone));
     }
