@@ -473,6 +473,57 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal(10_000m, invoicing.ProductsTotal);
     }
 
+    // La parte colombiana guarda el país como null: con su propia ciudad, ese null es Colombia y no «toma el de la ficha». Sin parte de
+    // facturación, la ciudad sale de la ficha del cliente y el país va con ella.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetForInvoicingTakesTheBilledCountryFromWhereTheCityComesFrom(bool hasBillingParty)
+    {
+        var billingCityId = Guid.CreateVersion7();
+        var billing = new QuotationPartyDetails
+        {
+            Name = "Distribuidora Andina",
+            IdentificationNumber = "900123456",
+            IdentificationType = PartyIdentificationType.Nit,
+            PersonType = PartyPersonType.Juridica,
+            Phone = "3001234567",
+            Email = "facturas@andina.co",
+            Address = "Calle 1 # 2-3",
+            Country = "CO",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = billingCityId,
+        };
+        var order = Order.CreateManual(
+            OrderId.New(),
+            TenantId,
+            "PED-2026-0005",
+            new OrderHeader(ClientId, Advisor, "COP", "Transferencia", false, null, false, []),
+            hasBillingParty ? new QuotationParties(billing, null, BillingVatSurplus: false) : QuotationParties.Empty,
+            Account,
+            ShippingDetails.None,
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
+            null,
+            Advisor,
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)],
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+        var service = NewService(
+            order,
+            new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Andean Supplies", "+13055550100", "100 Main St",
+                WithRetention: false, VatSurplus: false, CityName: "Miami", IdentificationNumber: "123456789",
+                IdentificationType: "Nit", PersonType: "Juridica", Country: "US"),
+            new Dictionary<Guid, string>());
+
+        var invoicing = await service.GetForInvoicingAsync(TenantId, order.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(invoicing);
+        Assert.Equal(
+            hasBillingParty ? (billingCityId, null) : ((Guid?)null, "US"),
+            (invoicing.BilledParty.CityId, invoicing.BilledParty.Country));
+    }
+
     private static ExternalOrderInvoicingService NewService(
         Order order, QuotationCustomerRef customer, IReadOnlyDictionary<Guid, string> cityNames) =>
         new(
