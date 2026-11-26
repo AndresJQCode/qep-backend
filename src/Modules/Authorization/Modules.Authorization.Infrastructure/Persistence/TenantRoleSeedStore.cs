@@ -52,9 +52,13 @@ internal sealed class TenantRoleSeedStore(AuthorizationDbContext dbContext) : IT
             ConstraintName: "PK_role_seeds" or "IX_roles_tenant_key",
         })
         {
-            // Lo que no se guardó sigue en el ChangeTracker y se colaría en el próximo guardado.
-            dbContext.ChangeTracker.Clear();
             return false;
+        }
+        finally
+        {
+            // Falle como falle, lo que no se guardó seguiría en el ChangeTracker y se colaría en el próximo guardado; y lo
+            // guardado se acumularía tenant tras tenant en la siembra del arranque.
+            dbContext.ChangeTracker.Clear();
         }
     }
 }

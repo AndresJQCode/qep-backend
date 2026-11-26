@@ -8,6 +8,9 @@ paths:
   - "tests/Modules/ServiceContracts/**"
   - "src/Modules/ApiAccess/**"
   - "tests/Modules/ApiAccess/**"
+  - "src/Modules/Authorization/**"
+  - "tests/Modules/Authorization/**"
+  - "src/Bootstrapper/QepServiceCollectionExtensions.cs"
 ---
 
 # Tenancy, Identidad, contratos de servicio y API externa
