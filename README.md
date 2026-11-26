@@ -6888,7 +6888,8 @@ saldo, la fila trae el issue bloqueante `wms.import.stock_exists`, así que un c
 con `{ previewId, version }` y `Idempotency-Key` responde 201, o **422 `wms.import.invalid_file` si queda algún issue**. El preview vive 30 minutos.
 
 **Export.** `POST /stock/export` responde 202 y no devuelve el archivo: arma el Excel, lo guarda en Storage y publica `wms.export-ready.v1`;
-`WmsExportDeliveryWorker` manda el enlace de descarga por correo.
+`WmsExportDeliveryWorker` manda el enlace de descarga por correo y la campana de quien lo pidió recibe un `ExportReady` con
+`exportKind: "Stock"`.
 
 **Regla pendiente de confirmación del owner.** Con saldo, además del rastreo, no se puede cambiar la unidad base, bajar la precisión
 ni cambiar el factor de una presentación existente: 422 `wms.profile.base_uom_change_requires_identification`. RF-010 sólo nombra el

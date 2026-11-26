@@ -9,8 +9,8 @@ namespace Modules.Notifications.Infrastructure.InApp;
 /// <summary>
 /// Spec 2026-11-22 §6: an export that is ready, or (for Quotations and Orders) failed, reaches the bell of whoever asked for it. The
 /// events carry the requesting <b>user</b> (<c>subjectId</c>); a bell entry belongs to a <b>membership</b> (D-5), so it is translated, and
-/// without an active membership the message is processed with no entry. Products, customers and suppliers only have «ready»: their
-/// failures are synchronous HTTP errors and leave no event.
+/// without an active membership the message is processed with no entry. Products, customers, suppliers and warehouse stock only have
+/// «ready»: their failures are synchronous HTTP errors and leave no event.
 /// </summary>
 internal sealed partial class ExportsInAppConsumer(IServiceScopeFactory scopeFactory, ILogger<ExportsInAppConsumer> logger)
     : InAppOutboxConsumer(scopeFactory, logger)
@@ -24,6 +24,7 @@ internal sealed partial class ExportsInAppConsumer(IServiceScopeFactory scopeFac
             ["catalog.product-export-ready.v1"] = ("Products", "productCount"),
             ["customers.export-ready.v1"] = ("Customers", "customerCount"),
             ["suppliers.export-ready.v1"] = ("Suppliers", "supplierCount"),
+            ["wms.export-ready.v1"] = ("Stock", "rowCount"),
         };
 
     private readonly ILogger<ExportsInAppConsumer> _logger = logger;

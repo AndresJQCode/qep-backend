@@ -852,7 +852,8 @@ una ubicación con movimientos no se borra, se desactiva.
   con `ExcludeFromMigrations`, patrón Pipeline, no una tabla de outbox del esquema `wms` (S19). Payload camelCase,
   contrato versionado: `wms.receipt.confirmed.v1`, `wms.putaway.completed.v1`, `wms.transfer.dispatched.v1`,
   `wms.transfer.received.v1`, `wms.adjustment.posted.v1`, `wms.discrepancy.resolved.v1`, `wms.shipment.dispatched.v1`,
-  `wms.export-ready.v1` (el Excel de saldos quedó en Storage; lo consume `WmsExportDeliveryWorker`, S15),
+  `wms.export-ready.v1` (el Excel de saldos quedó en Storage; lo consumen `WmsExportDeliveryWorker`, S15, y la campana con
+  `notifications.in-app.exports`),
   `wms.balance.changed.v1` (agregado por `(owner, warehouse, variant)` con `available`, para Shopify/ERP; coalescido por
   worker cada N segundos para no publicar uno por movimiento).
 - **Consumidos (fase 4):** `quotations.order.approved.v1` (D-09, **aún no existe**) y `quotations.order.cancelled.v1`,
