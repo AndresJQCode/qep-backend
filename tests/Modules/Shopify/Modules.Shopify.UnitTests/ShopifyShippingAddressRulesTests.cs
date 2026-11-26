@@ -40,4 +40,19 @@ public sealed class ShopifyShippingAddressRulesTests
     [InlineData("PT", null, null)]
     public void TheProvinceCodeComesFromTheCountryTable(string country, string? regionCode, string? expected) =>
         Assert.Equal(expected, ShopifyShippingAddressRules.ProvinceCodeFor(country, regionCode));
+
+    [Theory]
+    [InlineData("ES", true)]
+    [InlineData("es", true)]
+    [InlineData("FR", false)]
+    [InlineData("CO", false)]
+    public void OnlySpainHasARegionCatalog(string country, bool expected) =>
+        Assert.Equal(expected, ShopifyShippingAddressRules.HasRegionCatalog(country));
+
+    [Theory]
+    [InlineData("ES", "M", "28")]
+    [InlineData("ES", null, null)]
+    [InlineData("FR", "M", null)]
+    public void TheRegionCodeComesFromTheProvinceCode(string country, string? province, string? expected) =>
+        Assert.Equal(expected, ShopifyShippingAddressRules.RegionCodeFor(country, province));
 }

@@ -37,7 +37,7 @@ public static class ShopifyShippingAddressRules
 
         if (string.IsNullOrWhiteSpace(regionCode))
         {
-            return CountriesWithCatalog.Contains(country.Trim())
+            return HasRegionCatalog(country)
                 ? ShopifyShippingAddressIssue.RegionRequired
                 : ShopifyShippingAddressIssue.None;
         }
@@ -46,6 +46,23 @@ public static class ShopifyShippingAddressRules
         return ProvinceCodeFor(country, regionCode) is null
             ? ShopifyShippingAddressIssue.RegionUnmapped
             : ShopifyShippingAddressIssue.None;
+    }
+
+    /// <summary>Si Geography siembra las regiones de ese país.</summary>
+    public static bool HasRegionCatalog(string country)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(country);
+        return CountriesWithCatalog.Contains(country.Trim());
+    }
+
+    /// <summary>El inverso de <see cref="ProvinceCodeFor"/>: el código oficial de la región (Geography) para un
+    /// <c>provinceCode</c> de Shopify, o <c>null</c> si el país no tiene tabla o el código no está en ella.</summary>
+    public static string? RegionCodeFor(string country, string? provinceCode)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(country);
+        return string.Equals(country.Trim(), Spain, StringComparison.OrdinalIgnoreCase)
+            ? SpainProvinceCodes.IneFor(provinceCode)
+            : null;
     }
 
     /// <summary>El <c>provinceCode</c> de Shopify de una región fuera de Colombia, o <c>null</c> si el país no tiene tabla o la
