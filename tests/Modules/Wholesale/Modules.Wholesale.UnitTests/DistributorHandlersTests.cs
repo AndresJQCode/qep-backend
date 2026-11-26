@@ -969,7 +969,10 @@ public sealed class DistributorHandlersTests
         var detail = await _world.UpdateHandler().HandleAsync(
             UpdateCommand(active, null, null) with
             {
-                BusinessName = " Distribuciones 900123456 ", Email = "ANA@distri.co", Country = "co", Address = "",
+                BusinessName = " Distribuciones 900123456 ",
+                Email = "ANA@distri.co",
+                Country = "co",
+                Address = "",
                 // En «CO» la ciudad es el id: el nombre que pinta el detalle puede volver sin contar como cambio.
                 CityName = "Medellín",
             },

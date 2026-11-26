@@ -30,7 +30,9 @@ public sealed record ShopifyGroupDiff(ShopifyEditGroupKind Kind, IReadOnlyList<S
 /// el precio, el descuento, el SKU y el título. Una línea quitada (<see cref="ShopifyLine.IsRemoved"/>) o ausente tiene
 /// <c>after</c> nulo; una nueva, <c>before</c> nulo.</item>
 /// <item>Envío: título de la transportadora, valor, recogida y contraentrega, con las mismas reglas del importador.</item>
-/// <item>Dirección: nombre, teléfono, dirección 1 y 2, ciudad y departamento, recortados; vacío es <c>null</c>.</item>
+/// <item>Dirección: nombre, teléfono, dirección 1 y 2, ciudad, departamento y código postal, recortados; vacío es
+/// <c>null</c>. Sin fila de código postal si uno de los dos payloads no lo guardó
+/// (<see cref="ShopifyAddress.ZipUnrecorded"/>).</item>
 /// <item>Comprador: documento (de la fuente que configuró la tienda), correo y teléfono.</item>
 /// <item>Nota y atributos (sólo las claves que cambiaron).</item>
 /// </list>
@@ -142,7 +144,11 @@ public static class ShopifyOrderDiff
             Row("address1", null, Text(before?.Address1), Text(after?.Address1)),
             Row("address2", null, Text(before?.Address2), Text(after?.Address2)),
             Row("city", null, Text(before?.City), Text(after?.City)),
-            Row("province", null, Text(Province(before)), Text(Province(after))));
+            Row("province", null, Text(Province(before)), Text(Province(after))),
+            // De un zip que un payload viejo no guardó no se sabe si cambió.
+            before is { ZipUnrecorded: true } || after is { ZipUnrecorded: true }
+                ? null
+                : Row("zip", null, Text(before?.Zip), Text(after?.Zip)));
 
     private static List<ShopifyEditRow> BuyerRows(ShopifyOrderSnapshot before, ShopifyOrderSnapshot after, ShopifyStore store) =>
         Rows(

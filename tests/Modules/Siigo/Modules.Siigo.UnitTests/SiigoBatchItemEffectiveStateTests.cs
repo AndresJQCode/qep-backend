@@ -355,6 +355,219 @@ public sealed class SiigoBatchItemEffectiveStateTests
         Assert.Equal(stored, item.Effective(null, Now));
     }
 
+    // La del pedido existe pero la de flete no salió, o salió y no tuvo respuesta: «facturado» la dejaría sin mandar a la vista de nadie.
+    [Theory]
+    [InlineData("waiting")]
+    [InlineData("unanswered")]
+    [InlineData("dead-send")]
+    public void AToConfirmWhoseOrderInvoiceExistsWithAPendingFreightLooksFailedAsFreightPending(string freightCase)
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+        var freight = PendingFreight(invoice);
+        if (freightCase != "waiting")
+        {
+            freight.BeginSend(Now);
+        }
+
+        if (freightCase == "unanswered")
+        {
+            freight.MarkUnanswered("siigo.invoice.timeout", "request_timeout", Now);
+        }
+
+        var state = item.Effective(invoice, Now + SiigoInvoice.SendLease, freight);
+
+        Assert.Equal(
+            new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_pending", null, false, false, null), state);
+    }
+
+    [Fact]
+    public void AToConfirmWhoseFreightIsBeingSentLooksSending()
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+        var freight = PendingFreight(invoice);
+        freight.BeginSend(Now);
+
+        var state = item.Effective(invoice, Now.AddMinutes(1), freight);
+
+        Assert.Equal(new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Sending, null, null, false, false, null), state);
+    }
+
+    [Fact]
+    public void AFreightThatIsNoLongerPendingLeavesTheItemInvoiced()
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+        var freight = PendingFreight(invoice);
+        freight.BeginSend(Now);
+        freight.MarkCreated("id-2", "FV-1-10", 10m, null, Now);
+
+        var state = item.Effective(invoice, Now, freight);
+
+        Assert.Equal(new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, "FV-1-9", false, false, null), state);
+    }
+
+    [Fact]
+    public void APendingFreightDoesNotChangeAnOrderInvoiceStillToConfirm()
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice);
+
+        var state = item.Effective(invoice, Now, PendingFreight(invoice));
+
+        Assert.Equal((SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.timeout"), (state.Status, state.ErrorCode));
+    }
+
+    [Theory]
+    [InlineData("rejected", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_not_created")]
+    [InlineData("failed", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_not_created")]
+    [InlineData("unknown", SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.freight_unconfirmed")]
+    [InlineData("pending", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_pending")]
+    public void AnOrderWhoseFreightIsNotInSiigoNeverLooksInvoiced(
+        string freightCase, SiigoInvoiceBatchItemStatus status, string code)
+    {
+        var invoice = Unanswered();
+        var resolved = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+        // El que se guardó facturado, porque la de flete fue rechazada en la misma emisión o cambió después, se lee igual.
+        var stored = NewItem();
+        stored.MarkInvoiced("FV-1-9", Now, invoice.Id);
+
+        foreach (var item in new[] { resolved, stored })
+        {
+            var state = item.Effective(invoice, Now, FreightIn(invoice, freightCase));
+
+            Assert.Equal(new SiigoBatchItemState(status, code, null, false, false, null), state);
+        }
+    }
+
+    [Fact]
+    public void AStoredInvoicedItemWithItsFreightInSiigoKeepsWhatItSaved()
+    {
+        var invoice = Unanswered();
+        invoice.ResolveExists("FV-1-9", Now);
+        var item = NewItem();
+        item.MarkInvoiced("FV-1-9", Now, invoice.Id);
+
+        var state = item.Effective(invoice, Now, FreightIn(invoice, "created"));
+
+        Assert.Equal(new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, "FV-1-9", false, false, null), state);
+    }
+
+    [Fact]
+    public void AStoredInvoicedItemWhoseFreightIsBeingSentLooksSending()
+    {
+        var invoice = Unanswered();
+        invoice.ResolveExists("FV-1-9", Now);
+        var item = NewItem();
+        item.MarkInvoiced("FV-1-9", Now, invoice.Id);
+        var freight = PendingFreight(invoice);
+        freight.BeginSend(Now);
+
+        var state = item.Effective(invoice, Now.AddMinutes(1), freight);
+
+        Assert.Equal(SiigoInvoiceBatchItemStatus.Sending, state.Status);
+    }
+
+    [Theory]
+    [InlineData("rejected")]
+    [InlineData("unknown")]
+    public void AFreightCodeCarriesNoSiigoErrorsOfTheOrderRow(string freightCase)
+    {
+        var invoice = UnansweredByADeadService();
+        var item = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+
+        var dto = SiigoInvoiceBatchItemDto.From(
+            item, item.Effective(invoice, Now, FreightIn(invoice, freightCase)), invoice, null, false);
+
+        Assert.Empty(dto.SiigoErrors);
+        Assert.False(dto.CanResend);
+        Assert.False(dto.CanResolve);
+    }
+
+    // «Existe» se acepta con el pedido en una tanda; «No existe» responde 409.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void MissingIsNotOfferedWhileABatchHoldsTheOrder(bool queued, bool canResolveMissing)
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice);
+        var now = Now.AddMinutes(10);
+
+        var dto = SiigoInvoiceBatchItemDto.From(item, item.Effective(invoice, now), invoice, null, queued);
+        var row = SiigoInvoiceDto.From(invoice, now, queued: queued);
+
+        Assert.Equal((true, canResolveMissing), (dto.CanResolve, dto.CanResolveMissing));
+        Assert.Equal((true, canResolveMissing), (row.CanResolve, row.CanResolveMissing));
+    }
+
+    [Fact]
+    public void ARowThatOffersNoResolutionDoesNotOfferMissingEither()
+    {
+        var invoice = NewInvoice();
+        invoice.BeginSend(Now);
+
+        var row = SiigoInvoiceDto.From(invoice, Now);
+
+        Assert.Equal((false, false), (row.CanResolve, row.CanResolveMissing));
+    }
+
+    private static SiigoInvoice FreightIn(SiigoInvoice order, string freightCase)
+    {
+        var freight = PendingFreight(order);
+        switch (freightCase)
+        {
+            case "created":
+                freight.BeginSend(Now);
+                freight.MarkCreated("id-2", "FV-1-10", 10m, null, Now);
+                break;
+            case "rejected":
+                freight.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now);
+                break;
+            case "failed":
+                freight.MarkFailed("siigo.invoice.order_rejected", "Discarded.", Now);
+                break;
+            case "unknown":
+                freight.ExpireIfStale(Now + SiigoInvoice.StaleAfter + TimeSpan.FromMinutes(1));
+                break;
+        }
+
+        return freight;
+    }
+
+    // El detalle de la fila del pedido es de otro intento: no explica que falte la de flete.
+    [Fact]
+    public void AFreightPendingItemCarriesNoSiigoErrors()
+    {
+        var invoice = UnansweredByADeadService();
+        var item = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+
+        var dto = SiigoInvoiceBatchItemDto.From(
+            item, item.Effective(invoice, Now, PendingFreight(invoice)), invoice, null, false);
+
+        Assert.Equal("siigo.invoice.freight_pending", dto.ErrorCode);
+        Assert.Empty(dto.SiigoErrors);
+    }
+
+    private static SiigoInvoice PendingFreight(SiigoInvoice order) =>
+        SiigoInvoice.PendingFor(
+            Guid.CreateVersion7(),
+            order.TenantId,
+            order.ConnectionId,
+            order.OrderId,
+            SiigoInvoiceKind.Freight,
+            """{"a":1}""",
+            7,
+            Guid.CreateVersion7(),
+            Now);
+
     [Fact]
     public void TheCountOrderIsFixed() =>
         Assert.Equal(

@@ -51,20 +51,20 @@ public sealed class Charge
 
     public static Charge Generate(
         ServiceContract service, DateOnly periodDate, DateOnly dueDate, bool priceUnreviewed, DateTimeOffset now) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = service.TenantId,
-        ServiceId = service.Id,
-        CustomerId = service.CustomerId,
-        Amount = service.Price,
-        Currency = service.Currency,
-        PeriodDate = periodDate,
-        DueDate = dueDate,
-        PriceUnreviewed = priceUnreviewed,
-        Status = ChargeStatus.Pending,
-        Version = 1,
-        CreatedAt = now,
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = service.TenantId,
+            ServiceId = service.Id,
+            CustomerId = service.CustomerId,
+            Amount = service.Price,
+            Currency = service.Currency,
+            PeriodDate = periodDate,
+            DueDate = dueDate,
+            PriceUnreviewed = priceUnreviewed,
+            Status = ChargeStatus.Pending,
+            Version = 1,
+            CreatedAt = now,
+        };
 
     public void MarkPaid(DateOnly paidOn, string? note, Guid paidByMemberId, DateOnly today, DateTimeOffset now)
     {

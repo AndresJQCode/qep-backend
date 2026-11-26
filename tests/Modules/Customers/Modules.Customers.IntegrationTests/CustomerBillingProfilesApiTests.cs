@@ -19,19 +19,19 @@ public sealed class CustomerBillingProfilesApiTests
     // Diccionarios y no records: cada prueba necesita omitir o mandar campos sueltos.
     private static Dictionary<string, object?> ColombianBody(
         Guid cityId, string name = "Comercial Andina SAS", string identificationNumber = "900123456") => new()
-    {
-        ["name"] = name,
-        ["personType"] = "Juridica",
-        ["identificationType"] = "NIT",
-        ["identificationNumber"] = identificationNumber,
-        ["phone"] = "3001234567",
-        ["email"] = "facturas@andina.co",
-        ["address"] = "Cra 43A # 1-50",
-        ["country"] = "CO",
-        ["cityId"] = cityId,
-        ["vatSurplus"] = true,
-        ["isPrincipal"] = false
-    };
+        {
+            ["name"] = name,
+            ["personType"] = "Juridica",
+            ["identificationType"] = "NIT",
+            ["identificationNumber"] = identificationNumber,
+            ["phone"] = "3001234567",
+            ["email"] = "facturas@andina.co",
+            ["address"] = "Cra 43A # 1-50",
+            ["country"] = "CO",
+            ["cityId"] = cityId,
+            ["vatSurplus"] = true,
+            ["isPrincipal"] = false
+        };
 
     private static Dictionary<string, object?> SpanishBody(Guid? regionId, string name = "Andina Iberia SL") => new()
     {

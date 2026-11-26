@@ -50,7 +50,8 @@ public sealed class ShopifyCityCorrectionProcessorTests
         Assert.Equal(
             (TenantId, OrderId, new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", ValleId, CaliId),
                 ShopifyOrderImporter.RawAddressLabel),
-            attached);
+            (attached.TenantId, attached.OrderId, attached.Party, attached.NotesLinePrefix));
+        Assert.Equal([CaliId], attached.Requested);
         Assert.Equal((ShopifyCityCorrectionJobStatus.Applied, (string?)null, (DateTimeOffset?)Now), (job.Status, job.SkipReason, job.ProcessedAt));
         var correction = Assert.Single(world.Shop.Database.CityCorrections);
         Assert.Equal(
@@ -65,6 +66,20 @@ public sealed class ShopifyCityCorrectionProcessorTests
             (SynonymId, OperatorId, CaliId, (Guid?)null, "Correction", job.Id),
             AuditFields(entry.Fields));
         Assert.Equal(1, world.Shop.UnitOfWork.Saves);
+    }
+
+    // Resolver es una importación tardía: la parte lleva el zip de Shopify, y la huella lo guarda para la próxima recorrección.
+    [Fact]
+    public async Task AResolveOrderJobAttachesTheShopifyZip()
+    {
+        var world = new CorrectionWorld(Order(address: Calli with { Zip = "760001" }, attributes: Document));
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        var job = world.Seed(world.ResolveOrder());
+
+        await world.ProcessAsync(job);
+
+        Assert.Equal("760001", Assert.Single(world.Writer.Attached).Party.PostalCode);
+        Assert.Equal(PartyIn(CaliId) with { PostalCode = "760001" }, Assert.Single(world.Shop.Database.CityCorrections).Party);
     }
 
     // Spec 2026-11-14 §5 y plan D3: la ciudad que corrige el sistema no es del asesor, así que mueve la proyección (una edición
@@ -248,7 +263,11 @@ public sealed class ShopifyCityCorrectionProcessorTests
 
         await world.ProcessAsync(job);
 
-        Assert.Equal((TenantId, OrderId, PartyIn(CalimaId), ValleId, CaliId), Assert.Single(world.Writer.Corrected));
+        var corrected = Assert.Single(world.Writer.Corrected);
+        Assert.Equal(
+            (TenantId, OrderId, PartyIn(CalimaId), ValleId, CaliId),
+            (corrected.TenantId, corrected.OrderId, corrected.Expected, corrected.DepartmentId, corrected.CityId));
+        Assert.Equal([CaliId], corrected.Requested);
         Assert.Equal(
             (ShopifyCityCorrectionOrigin.Import, PartyIn(CaliId), (Guid?)CalimaId, Now),
             (correction.Origin, correction.Party, correction.PreviousCityId, correction.UpdatedAt));
@@ -471,6 +490,26 @@ public sealed class ShopifyCityCorrectionProcessorTests
         Assert.Equal([CalimaId, CaliId], world.Queue.Requested[job.Id]);
     }
 
+    // Lo mismo con un pedido, en los dos tipos de trabajo: Quotations recibe las ciudades de los intentos anteriores.
+    [Fact]
+    public async Task AnOrderRetryPassesEveryCityTheJobRequested()
+    {
+        var world = new CorrectionWorld();
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        var resolve = world.Seed(world.ResolveOrder());
+        world.Queue.Requested[resolve.Id] = [CalimaId];
+        await world.ProcessAsync(resolve);
+
+        var correction = Assert.Single(world.Shop.Database.CityCorrections);
+        world.Synonyms.Point(SynonymId, ValleId, CalimaId);
+        var recorrect = world.Seed(ShopifyCityCorrectionJob.Recorrect(correction, OperatorId, MessageId, Now));
+        world.Queue.Requested[recorrect.Id] = [CaliId];
+        await world.ProcessAsync(recorrect);
+
+        Assert.Equal([CalimaId, CaliId], Assert.Single(world.Writer.Attached).Requested);
+        Assert.Equal([CaliId, CalimaId], Assert.Single(world.Writer.Corrected).Requested);
+    }
+
     // Cada rechazo de Quotations o Customers termina el trabajo con su motivo, sin huella ni auditoría. Lo que el espejo no trae
     // ni se intenta.
     [Theory]
@@ -665,31 +704,43 @@ internal sealed class FakeCityCorrectionWriter : IShopifyCityCorrectionWriter
 
     public int Calls { get; private set; }
 
-    public List<(Guid TenantId, Guid OrderId, ShopifyPartyDraft Party, string NotesLinePrefix)> Attached { get; } = [];
+    public List<(Guid TenantId, Guid OrderId, ShopifyPartyDraft Party, string NotesLinePrefix, IReadOnlyCollection<Guid> Requested)> Attached { get; } = [];
 
-    public List<(Guid TenantId, Guid OrderId, ShopifyShippingFingerprint Expected, Guid DepartmentId, Guid CityId)> Corrected { get; } = [];
+    public List<(Guid TenantId, Guid OrderId, ShopifyShippingFingerprint Expected, Guid DepartmentId, Guid CityId, IReadOnlyCollection<Guid> Requested)> Corrected { get; } = [];
 
     public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, ShopifyCompleteCustomer Data, IReadOnlyCollection<Guid> Requested)> Completed { get; } = [];
 
     public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, Guid PreviousCityId, Guid CityId, IReadOnlyCollection<Guid> Requested)> CustomerCities { get; } = [];
 
     public Task<ShopifyCityWriteResult> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ShopifyPartyDraft party,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        Attached.Add((tenantId, orderId, party, notesLinePrefix));
+        Attached.Add((tenantId, orderId, party, notesLinePrefix, [.. requestedCityIds]));
         return Task.FromResult(OnAttach?.Invoke(party) ?? new ShopifyCityWriteResult(
             ShopifyCityWriteKind.Applied,
-            new ShopifyShippingFingerprint(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId!.Value, party.CityId!.Value),
+            new ShopifyShippingFingerprint(
+                party.Name, party.Phone, party.Email, party.Address, party.DepartmentId!.Value, party.CityId!.Value, party.PostalCode),
             null,
             null));
     }
 
     public Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ShopifyShippingFingerprint expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        Corrected.Add((tenantId, orderId, expected, departmentId, cityId));
+        Corrected.Add((tenantId, orderId, expected, departmentId, cityId, [.. requestedCityIds]));
         return Task.FromResult(OnCorrect?.Invoke(expected) ?? new ShopifyCityWriteResult(
             ShopifyCityWriteKind.Applied, expected with { DepartmentId = departmentId, CityId = cityId }, null, null));
     }

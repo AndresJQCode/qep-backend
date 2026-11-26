@@ -26,7 +26,30 @@ public sealed class ShopifyOrderPushProcessorTests
             }
         }
 
+        public static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000d1");
+
         public ShopifyEditTestWorld Edit { get; } = new();
+
+        /// <summary>La parte de envío del pedido fuera de Colombia, como la guarda Quotations: país, ciudad escrita y, si el país
+        /// tiene regiones, la región (la de Madrid está sembrada en Geography).</summary>
+        public void ForeignParty(string country, string cityName, Guid? regionId, string? postalCode = null)
+        {
+            Edit.World.Geography.Regions[MadridRegionId] = ("ES", "28");
+            var order = Edit.World.Writer.States[ShopifyEditTestWorld.OrderId];
+            Edit.World.Writer.States[ShopifyEditTestWorld.OrderId] = order with
+            {
+                ShippingParty = order.ShippingParty! with
+                {
+                    DepartmentId = null,
+                    CityId = null,
+                    Country = country,
+                    CityName = cityName,
+                    RegionId = regionId,
+                    PostalCode = postalCode,
+                },
+                ShippingCountry = country,
+            };
+        }
 
         public ShopifyOrderMirror Row { get; }
 
@@ -154,6 +177,84 @@ public sealed class ShopifyOrderPushProcessorTests
         await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
 
         Assert.Null(world.Sent.ShippingAddress!.Zip);
+    }
+
+    // Fuera de Colombia: el país y la ciudad escrita de la parte, y la región de Geography traducida a su código ISO.
+    [Fact]
+    public async Task ThePushBuildsASpanishAddress()
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { CountryCode = "ES", ProvinceCode = "M", Zip = "28001", Company = "1036000111" });
+        world.ForeignParty("ES", "Madrid", PushWorld.MadridRegionId);
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        var address = world.Sent.ShippingAddress!;
+        Assert.Equal(("ES", "Madrid", "M", "28001"), (address.CountryCode, address.City, address.ProvinceCode, address.Zip));
+        Assert.Equal(("Laura Gómez", "Cra 5 # 10-20", "1036000111"), (address.FirstName, address.Address1, address.Company));
+    }
+
+    [Fact]
+    public async Task ThePartyPostalCodeWinsOverTheSnapshotZip()
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { CountryCode = "ES", ProvinceCode = "M", Zip = "28001" });
+        world.ForeignParty("ES", "Madrid", PushWorld.MadridRegionId, "28013");
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        Assert.Equal("28013", world.Sent.ShippingAddress!.Zip);
+    }
+
+    [Fact]
+    public async Task AnotherProvinceWithoutPostalCodeSendsNoZip()
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { CountryCode = "ES", ProvinceCode = "B", Zip = "08001" });
+        world.ForeignParty("ES", "Madrid", PushWorld.MadridRegionId);
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        Assert.Equal(("M", (string?)null), (world.Sent.ShippingAddress!.ProvinceCode, world.Sent.ShippingAddress.Zip));
+    }
+
+    [Fact]
+    public async Task ACountryWithoutCatalogSendsNoProvinceAndNoKeptZip()
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { CountryCode = "PT", ProvinceCode = null, Zip = "1000-001" });
+        world.ForeignParty("PT", "Lisboa", regionId: null);
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        var address = world.Sent.ShippingAddress!;
+        Assert.Equal(("PT", "Lisboa", (string?)null, (string?)null), (address.CountryCode, address.City, address.ProvinceCode, address.Zip));
+    }
+
+    // La entrega editable puede devolver a Colombia un pedido cuyo último Shopify está en otro país: manda el de la parte.
+    [Fact]
+    public async Task AColombianPartyOverAForeignSnapshotIsSentAsColombia()
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { CountryCode = "ES", ProvinceCode = "M", Zip = "28001" });
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        var address = world.Sent.ShippingAddress!;
+        Assert.Equal(("CO", "ANT", (string?)null), (address.CountryCode, address.ProvinceCode, address.Zip));
+    }
+
+    // El guardado del pedido la rechaza antes; si llegara, no se manda una dirección a medias.
+    [Fact]
+    public async Task AForeignPartyTheRulesRejectIsNotSent()
+    {
+        var world = new PushWorld();
+        world.ForeignParty("ES", "Madrid", regionId: null);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress)));
+
+        Assert.Empty(world.Updater.Updates);
     }
 
     // Plan D12: MailingAddressInput no tiene «name»; el eco compara name y address1 + address2 con los de QEP.

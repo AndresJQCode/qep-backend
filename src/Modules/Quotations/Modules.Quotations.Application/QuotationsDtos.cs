@@ -733,7 +733,10 @@ public sealed record QuotationClientResponse(
     IReadOnlyList<QuotationClientBillingProfileResponse>? BillingProfiles = null,
     /// <summary>Cuántos perfiles admite un cliente: viaja para que la pantalla no ofrezca guardar uno más sin escribir el
     /// número en el frontend (BFF).</summary>
-    int BillingProfileLimit = 0)
+    int BillingProfileLimit = 0,
+    /// <summary>El número del documento de la ficha, sin el tipo (que viaja en <c>IdentificationType</c>): el detalle del
+    /// pedido lo muestra cuando se factura con los datos del cliente. Null si la ficha no lo tiene.</summary>
+    string? IdentificationNumber = null)
 {
     /// <summary>Nunca <c>null</c>.</summary>
     public IReadOnlyList<QuotationClientBillingProfileResponse> BillingProfiles { get; init; } = BillingProfiles ?? [];

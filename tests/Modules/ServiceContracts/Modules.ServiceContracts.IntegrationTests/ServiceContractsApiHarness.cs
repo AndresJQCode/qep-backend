@@ -92,7 +92,8 @@ internal static class ServiceContractsApiHarness
         Guid tenantId,
         string name,
         string? phoneE164 = null,
-        string? email = null)
+        string? email = null,
+        string? businessName = null)
     {
         var id = Guid.CreateVersion7();
         var connectionString = factory.Services
@@ -102,8 +103,8 @@ internal static class ServiceContractsApiHarness
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var insert = new NpgsqlCommand(
             """
-            INSERT INTO customers.customers (id, tenant_id, name, is_active, phone_e164, email, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
-            VALUES (@id, @tenantId, @name, true, @phone, @email, 'Incomplete', @whatsAppUserId, false, false, 1, now(), now())
+            INSERT INTO customers.customers (id, tenant_id, name, business_name, is_active, phone_e164, email, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenantId, @name, @businessName, true, @phone, @email, 'Incomplete', @whatsAppUserId, false, false, 1, now(), now())
             """,
             connection);
         insert.Parameters.AddWithValue("id", id);
@@ -115,6 +116,7 @@ internal static class ServiceContractsApiHarness
         insert.Parameters.AddWithValue("whatsAppUserId", $"CO.{id:N}");
         insert.Parameters.AddWithValue("phone", (object?)phoneE164 ?? DBNull.Value);
         insert.Parameters.AddWithValue("email", (object?)email ?? DBNull.Value);
+        insert.Parameters.AddWithValue("businessName", (object?)businessName ?? DBNull.Value);
         await insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         return id;
     }

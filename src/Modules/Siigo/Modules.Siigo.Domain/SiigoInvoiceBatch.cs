@@ -224,11 +224,30 @@ public sealed class SiigoInvoiceBatchItem
     /// código es el del ítem si la fila no cambió después de que se cerró (dice por qué no salió un reenvío que no tocó la fila) y el de
     /// la fila si cambió después; si el que manda viene vacío, el otro.</summary>
     /// <param name="invoice">La fila enlazada (<see cref="InvoiceId"/>); otra, o ninguna, deja lo guardado.</param>
-    public SiigoBatchItemState Effective(SiigoInvoice? invoice, DateTimeOffset now)
+    /// <param name="freight">La de flete de esa factura del pedido, si tiene (la más nueva). Con la del pedido ya en Siigo, el ítem
+    /// —guardado <c>ToConfirm</c> o <c>Invoiced</c>— sólo se lee facturado si la de flete también existe allá (decidido el
+    /// 2026-11-25): <c>Sending</c> mientras se manda; <c>Failed</c> con <c>siigo.invoice.freight_pending</c> si está <c>Pending</c> y
+    /// con <c>siigo.invoice.freight_not_created</c> si quedó <c>Rejected</c> o <c>Failed</c>; <c>ToConfirm</c> con
+    /// <c>siigo.invoice.freight_unconfirmed</c>, sin nada que ofrecer, si quedó <c>Unknown</c>. Una lectura que no la pase la daría por
+    /// facturada.</param>
+    public SiigoBatchItemState Effective(SiigoInvoice? invoice, DateTimeOffset now, SiigoInvoice? freight = null)
     {
-        if (Status != SiigoInvoiceBatchItemStatus.ToConfirm || invoice is null || invoice.Id != InvoiceId)
+        var stored = new SiigoBatchItemState(Status, ErrorCode, InvoiceNumber, false, false, null);
+        if (invoice is null || invoice.Id != InvoiceId)
         {
-            return new SiigoBatchItemState(Status, ErrorCode, InvoiceNumber, false, false, null);
+            return stored;
+        }
+
+        if (Status == SiigoInvoiceBatchItemStatus.Invoiced)
+        {
+            return invoice.Status is SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected
+                ? WithItsFreight(stored, freight, now)
+                : stored;
+        }
+
+        if (Status != SiigoInvoiceBatchItemStatus.ToConfirm)
+        {
+            return stored;
         }
 
         return invoice.Status switch
@@ -245,7 +264,8 @@ public sealed class SiigoInvoiceBatchItem
                 invoice.OffersResolution(now),
                 invoice.OffersResolution(now) ? invoice.MissingAvailableAt(now) : null),
             SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected =>
-                new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, invoice.Number, false, false, null),
+                WithItsFreight(
+                    new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, invoice.Number, false, false, null), freight, now),
             SiigoInvoiceStatus.Failed => new SiigoBatchItemState(
                 SiigoInvoiceBatchItemStatus.Failed, SiigoErrorCodes.InvoiceResolvedMissing, null, false, false, null),
             SiigoInvoiceStatus.Rejected =>
@@ -253,6 +273,26 @@ public sealed class SiigoInvoiceBatchItem
             _ => throw new InvalidOperationException($"Unknown invoice status '{invoice.Status}'."),
         };
     }
+
+    // Lo que se lee de un pedido cuya factura existe: facturado sólo si su de flete, cuando la tiene, también.
+    private static SiigoBatchItemState WithItsFreight(SiigoBatchItemState invoiced, SiigoInvoice? freight, DateTimeOffset now) =>
+        freight is not { Kind: SiigoInvoiceKind.Freight }
+            ? invoiced
+            : freight.Status switch
+            {
+                SiigoInvoiceStatus.Pending when freight.IsBeingSent(now) =>
+                    new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Sending, null, null, false, false, null),
+                SiigoInvoiceStatus.Pending => OfFreight(SiigoInvoiceBatchItemStatus.Failed, SiigoErrorCodes.InvoiceFreightPending),
+                SiigoInvoiceStatus.Unknown =>
+                    OfFreight(SiigoInvoiceBatchItemStatus.ToConfirm, SiigoErrorCodes.InvoiceFreightUnconfirmed),
+                SiigoInvoiceStatus.Rejected or SiigoInvoiceStatus.Failed =>
+                    OfFreight(SiigoInvoiceBatchItemStatus.Failed, SiigoErrorCodes.InvoiceFreightNotCreated),
+                _ => invoiced,
+            };
+
+    // Sin acciones: la de flete se reintenta o se resuelve desde el pedido; las de la tanda actúan sobre la factura del pedido.
+    private static SiigoBatchItemState OfFreight(SiigoInvoiceBatchItemStatus status, string errorCode) =>
+        new(status, errorCode, null, false, false, null);
 
     private void Settle(string? errorCode, IReadOnlyList<string> missingCodes, DateTimeOffset now)
     {
