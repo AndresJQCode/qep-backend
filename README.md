@@ -5606,26 +5606,6 @@ Siigo cuando el pedido no lleva su marca (o no se pudo leer) y ninguna tanda sin
 sin crear otra factura. La de flete siempre va en `false`. Mientras una tanda sin terminar tenga el pedido, `canResend` va en `false`,
 en esas filas y en los ítems de las tandas.
 
-**Anulada en Siigo** (spec `2026-11-25-siigo-anular-factura-design.md`). QEP no anula facturas: una persona la anula (o la borra) en
-Siigo Nube y después llama `POST …/siigo-invoice/annulment` (sin cuerpo, permiso `siigo.invoice.issue`). QEP lee en Siigo cada factura
-vigente del pedido y, **sólo si todas están anuladas** (la del pedido y la de flete), pasan a `Annulled` (con `errorCode`
-`siigo.invoice.annulled_in_siigo` o `siigo.invoice.deleted_in_siigo`), el pedido pierde la marca de facturado y se puede volver a
-facturar. Responde `200` con las filas actuales. Ante cualquier duda no cambia nada: `422` `siigo.invoice.annulment_unverifiable`
-(una factura `Pending`, `Unknown` o resuelta a mano sin id de Siigo), `siigo.invoice.not_annulled` o
-`siigo.invoice.annulment_unclear` (respuesta no reconocida, o anulada y aprobada por la DIAN a la vez), los tres con
-`details = { kind, number }`; además `404 siigo.invoice.not_found`, `409 siigo.invoice_batch.order_in_progress` o
-`siigo.connection_unavailable`, `502 siigo.invoice.siigo_service`, `503 siigo.unavailable` y `422 siigo.invoice.state_invalid` si no
-hay nada que anular. Hasta verificar qué contesta Siigo con una factura **borrada**, borrarla no libera el pedido: sale como respuesta
-no reconocida y queda en `call_failures` (operación `InvoiceRead`).
-
-`GET …/siigo-invoice` y la respuesta de `/annulment` suman dos campos a cada fila (en `/stamp` y `/resolve` van en `false`):
-
-- `canConfirmAnnulment`: sólo en la fila del pedido; la pantalla ofrece «Ya la anulé en Siigo» cuando va en `true`. Exige que ninguna
-  tanda sin terminar tenga el pedido y que toda factura vigente se pueda verificar, o que haya que reintentar la marca.
-- `orderUnmarkFailed`: la factura del pedido quedó `Annulled` pero el pedido sigue marcado con su número. Repetir la acción reintenta
-  sólo la marca, sin llamar a Siigo.
-
-
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
   `Rejected`, `Failed` y `Annulled` arman una fila nueva.
@@ -5650,8 +5630,27 @@ no reconocida y queda en `call_failures` (operación `InvoiceRead`).
 - El flete va como un ítem de la factura del pedido o, si la conexión lo pide (`freight_separate_invoice`), en su propia factura.
 - Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
   Un pedido facturado en Siigo no se revierte con la acción manual (`422 order.order.invoiced_externally`): el pedido se libera cuando
-  QEP verifica que la factura se anuló en Siigo (`/annulment`, arriba). Una factura aprobada por la DIAN se corrige con una nota
+  QEP verifica que la factura se anuló en Siigo (`/annulment`, abajo). Una factura aprobada por la DIAN se corrige con una nota
   crédito, que QEP no maneja.
+
+**Anulada en Siigo** (spec `2026-11-25-siigo-anular-factura-design.md`). QEP no anula facturas: una persona la anula (o la borra) en
+Siigo Nube y después llama `POST …/siigo-invoice/annulment` (sin cuerpo, permiso `siigo.invoice.issue`). QEP lee en Siigo cada factura
+vigente del pedido y, **sólo si todas están anuladas** (la del pedido y la de flete), pasan a `Annulled` (con `errorCode`
+`siigo.invoice.annulled_in_siigo` o `siigo.invoice.deleted_in_siigo`), el pedido pierde la marca de facturado y se puede volver a
+facturar. Responde `200` con las filas actuales. Ante cualquier duda no cambia nada: `422` `siigo.invoice.annulment_unverifiable`
+(una factura `Pending`, `Unknown` o resuelta a mano sin id de Siigo), `siigo.invoice.not_annulled` o
+`siigo.invoice.annulment_unclear` (respuesta no reconocida, o anulada y aprobada por la DIAN a la vez), los tres con
+`details = { kind, number }`; además `404 siigo.invoice.not_found`, `409 siigo.invoice_batch.order_in_progress` o
+`siigo.connection_unavailable`, `502 siigo.invoice.siigo_service`, `503 siigo.unavailable` y `422 siigo.invoice.state_invalid` si no
+hay nada que anular. Hasta verificar qué contesta Siigo con una factura **borrada**, borrarla no libera el pedido: sale como respuesta
+no reconocida y queda en `call_failures` (operación `InvoiceRead`).
+
+`GET …/siigo-invoice` y la respuesta de `/annulment` suman dos campos a cada fila (en `/stamp` y `/resolve` van en `false`):
+
+- `canConfirmAnnulment`: sólo en la fila del pedido; la pantalla ofrece «Ya la anulé en Siigo» cuando va en `true`. Exige que ninguna
+  tanda sin terminar tenga el pedido y que toda factura vigente se pueda verificar, o que haya que reintentar la marca.
+- `orderUnmarkFailed`: la factura del pedido quedó `Annulled` pero el pedido sigue marcado con su número. Repetir la acción reintenta
+  sólo la marca, sin llamar a Siigo.
 
 **Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
 `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
