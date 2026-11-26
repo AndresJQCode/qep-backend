@@ -112,6 +112,27 @@ public sealed class FileOwnerModulesTests
         Assert.Empty(FileOwnerModules.OwnerTypesLackingPermission(_ => true));
     }
 
+    // Un miembro nuevo de FileOwnerType no pasa sin decidir las dos cosas: si un miembro lo sube por POST /files y si otro módulo puede
+    // referenciarlo. Dueño de sistema, generado por el servidor y con permiso extra son las tres razones para que no.
+    [Fact]
+    public void EveryOwnerTypeIsUploadableByMembersOrDeliberatelyNot()
+    {
+        Assert.Equal([FileOwnerType.WmsExport], ServerGeneratedFiles.OwnerTypes);
+        Assert.Equal(
+            [FileOwnerType.User, FileOwnerType.Entity, FileOwnerType.System, FileOwnerType.Product, FileOwnerType.PaymentProof,
+                FileOwnerType.Tenant, FileOwnerType.Store, FileOwnerType.WmsEvidence],
+            Enum.GetValues<FileOwnerType>().Except(SystemOwnedFiles.OwnerTypes).Except(ServerGeneratedFiles.OwnerTypes).Order());
+    }
+
+    [Fact]
+    public void SystemOwnedAndPermissionedFilesAreNotReferenceableByOtherModules()
+    {
+        Assert.Equal(
+            [FileOwnerType.User, FileOwnerType.Entity, FileOwnerType.System, FileOwnerType.Product, FileOwnerType.PaymentProof,
+                FileOwnerType.Tenant, FileOwnerType.Store, FileOwnerType.WmsEvidence],
+            Enum.GetValues<FileOwnerType>().Where(FileOwnerModules.IsReferenceableByOtherModules).Order());
+    }
+
     [Fact]
     public void OwnerTypesDisabledInListsTheOnesWhoseModuleIsOff()
     {

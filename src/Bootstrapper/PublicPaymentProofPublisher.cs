@@ -51,8 +51,9 @@ internal sealed class PublicPaymentProofPublisher(
 
         // OrderPaymentProofResolver ya lo validó antes de llegar acá, pero la frontera de tenant se
         // revisa igual, con sus mismos códigos: "no existe" y "es de otro tenant" no se distinguen
-        // desde afuera. Un archivo de dueño de sistema (adjunto de Soporte) tampoco existe acá: nunca se copia al bucket público.
-        if (resource is null || resource.TenantId != tenantId || SystemOwnedFiles.Includes(resource.OwnerType))
+        // desde afuera. Un archivo de dueño de sistema (adjunto de Soporte) o que pide un permiso extra (export de WMS) tampoco existe
+        // acá: nunca se copia al bucket público.
+        if (resource is null || resource.TenantId != tenantId || !FileOwnerModules.IsReferenceableByOtherModules(resource.OwnerType))
         {
             throw new QuotationsDomainException(
                 "order.payment_proof.file_not_found",

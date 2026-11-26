@@ -3269,6 +3269,12 @@ storage.file.not_found` (el mismo de otro tenant) y `POST /files` con ese `owner
 completan y bajan sólo por `IStorageSystemUploads`, desde el módulo dueño. Ver [Formulario público de
 Soporte](#formulario-público-de-soporte-fase-3).
 
+**Archivos que piden un permiso extra.** Los tipos de `FileOwnerModules.RequiredPermissionByOwnerType` (hoy `WmsExport`, el Excel de
+saldos de Bodegas, con `wms.stock.export`) exigen ese permiso además del `storage.file.*` de la ruta: sin él, `GET /files` no los lista y
+toda ruta por id (descarga, publicación, despublicación, metadatos, completar, cancelar, borrar) responde `403 authorization.denied`.
+Tampoco los ven Catalog ni Quotations: para ellos el id no existe. `WmsExport` además lo genera el servidor (`ServerGeneratedFiles`), así
+que `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`.
+
 ### Reportes exportados (`exports/`)
 
 La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y las de los

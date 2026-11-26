@@ -39,9 +39,9 @@ public static class FileOwnerModules
     public static TenantModuleKey? ModuleOf(FileOwnerType ownerType) => ByOwnerType[ownerType];
 
     /// <summary>
-    /// El permiso que, además de <c>storage.file.read</c>, exige listar o descargar un archivo de ese dueño. <c>storage.file.read</c>
-    /// es núcleo y lo tiene cualquier miembro del tenant, así que un archivo cuyo contenido es de otro módulo (el export de saldos de
-    /// WMS) necesita el permiso de ese módulo. Es una tabla dispersa: un tipo ausente no pide nada más. Los permisos van como
+    /// El permiso que, además del <c>storage.file.*</c> de cada ruta, exige tocar un archivo de ese dueño: listarlo y cualquier ruta por
+    /// id. <c>storage.file.read</c> es núcleo y lo tiene cualquier miembro del tenant, así que un archivo cuyo contenido es de otro
+    /// módulo (el export de saldos de WMS) necesita el permiso de ese módulo. Es una tabla dispersa: un tipo ausente no pide nada más. Los permisos van como
     /// literal porque Storage no referencia a ningún módulo de negocio (misma razón por la que <see cref="ByOwnerType"/> habla de
     /// <c>TenantModuleKeys</c> y no de los módulos); una prueba amarra el literal a <c>WmsPermissions.StockExport</c>.
     /// </summary>
@@ -53,6 +53,14 @@ public static class FileOwnerModules
 
     public static string? RequiredPermissionOf(FileOwnerType ownerType) =>
         RequiredPermissionByOwnerType.TryGetValue(ownerType, out var permission) ? permission : null;
+
+    /// <summary>
+    /// Si otro módulo puede referenciar por id un archivo de ese dueño (foto de producto, comprobante de un pedido). Ni los de dueño de
+    /// sistema ni los que piden un permiso extra: el adaptador no ve los permisos del archivo, y referenciarlo lo sacaría de debajo de
+    /// ellos. Los adaptadores de Bootstrapper tratan al que no, como a un id que no existe.
+    /// </summary>
+    public static bool IsReferenceableByOtherModules(FileOwnerType ownerType) =>
+        !SystemOwnedFiles.Includes(ownerType) && RequiredPermissionOf(ownerType) is null;
 
     /// <summary>Los tipos de dueño cuyo permiso extra le falta al llamador: el listado los excluye en SQL.</summary>
     public static IReadOnlyCollection<FileOwnerType> OwnerTypesLackingPermission(Func<string, bool> hasPermission) =>
@@ -70,8 +78,9 @@ public static class FileOwnerModules
 }
 
 /// <summary>
-/// El permiso extra que pide el dueño del archivo (<see cref="FileOwnerModules.RequiredPermissionByOwnerType"/>). Mismo 403
-/// <c>authorization.denied</c> que el resto de Storage, y mismo lugar que el guard de módulo: después del 404 de otro tenant.
+/// El permiso extra que pide el dueño del archivo (<see cref="FileOwnerModules.RequiredPermissionByOwnerType"/>). Lo llama todo handler
+/// de Storage que carga un archivo por id, justo después del guard de módulo y antes de cualquier otra regla o efecto. Mismo 403
+/// <c>authorization.denied</c> que el resto de Storage.
 /// </summary>
 public static class FileOwnerPermissionGuard
 {

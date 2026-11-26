@@ -19,11 +19,119 @@ public sealed class FileOwnerModuleHandlersTests
     private static readonly Guid TenantId = Guid.CreateVersion7();
     private static readonly DateTimeOffset Now = new(2026, 10, 7, 12, 0, 0, TimeSpan.Zero);
 
-    public static TheoryData<string> Handlers =>
+    private static readonly string[] HandlerNames =
     [
         "IssueDownloadUrl", "CompleteUpload", "CancelUpload", "UpdateFileMetadata",
         "PublishFile", "UnpublishFile", "SoftDeleteFile",
     ];
+
+    public static TheoryData<string> Handlers => [.. HandlerNames];
+
+    // Cada handler contra cada tipo de dueño que pide un permiso extra: un tipo nuevo en esa tabla entra solo.
+    public static TheoryData<string, FileOwnerType> HandlersByPermissionedOwner
+    {
+        get
+        {
+            var data = new TheoryData<string, FileOwnerType>();
+            foreach (var ownerType in FileOwnerModules.RequiredPermissionByOwnerType.Keys)
+            {
+                foreach (var handler in HandlerNames)
+                {
+                    data.Add(handler, ownerType);
+                }
+            }
+
+            return data;
+        }
+    }
+
+    // Un handler nuevo que use el repositorio de archivos tiene que entrar a HandlerNames, y con eso queda bajo las reglas de esta
+    // clase. Las dos excepciones no cargan por id: el listado filtra en SQL y la sesión de subida crea el archivo.
+    [Fact]
+    public void EveryHandlerThatUsesTheFileRepositoryIsCovered()
+    {
+        var handlers = typeof(IssueDownloadUrlHandler).Assembly.GetTypes()
+            .Where(type => type is { IsClass: true, IsAbstract: false }
+                && type.GetInterfaces().Any(contract => contract.IsGenericType
+                    && (contract.GetGenericTypeDefinition() == typeof(ICommandHandler<,>)
+                        || contract.GetGenericTypeDefinition() == typeof(IQueryHandler<,>)))
+                && type.GetConstructors().Any(constructor => constructor.GetParameters()
+                    .Any(parameter => parameter.ParameterType == typeof(IFileResourceRepository))))
+            .Select(type => type.Name)
+            .Order(StringComparer.Ordinal);
+        string[] expected = [.. HandlerNames.Select(name => $"{name}Handler"), "CreateUploadSessionHandler", "ListFilesHandler"];
+
+        Assert.Equal(expected.Order(StringComparer.Ordinal), handlers);
+    }
+
+    // I-2: storage.file.* es núcleo; sin el permiso del dueño, 403 authorization.denied y ningún efecto, en las siete rutas por id.
+    [Theory]
+    [MemberData(nameof(HandlersByPermissionedOwner))]
+    public async Task WithoutTheOwnerPermissionTheFileIsForbiddenWithoutAnyEffect(string handler, FileOwnerType ownerType)
+    {
+        var effects = new Effects();
+        var context = new ExecutionContextLacking(TenantId, FileOwnerModules.RequiredPermissionOf(ownerType)!);
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => Run(
+            handler, PermissionedFileFor(handler, ownerType), TenantId, FixedTenantModules.AllBut(), effects, context));
+
+        Assert.Equal("authorization.denied", error.Code);
+        Assert.Empty(effects.Audit.Actions);
+        Assert.Equal(0, effects.UnitOfWork.Saves);
+        Assert.Empty(effects.PublicStorage.Copies);
+        Assert.Empty(effects.PublicStorage.DeletedKeys);
+        Assert.Empty(effects.Probe.Asked);
+    }
+
+    // Mismo orden que en IssueDownloadUrl: primero el 404 de otro tenant, después el módulo y recién ahí el permiso del dueño.
+    [Theory]
+    [MemberData(nameof(HandlersByPermissionedOwner))]
+    public async Task TheNotFoundAndTheModuleGoBeforeTheOwnerPermission(string handler, FileOwnerType ownerType)
+    {
+        var otherTenant = Guid.CreateVersion7();
+        var permission = FileOwnerModules.RequiredPermissionOf(ownerType)!;
+
+        await Assert.ThrowsAsync<ResourceNotFoundException>(() => Run(
+            handler, PermissionedFileFor(handler, ownerType), otherTenant, FixedTenantModules.AllBut(), new Effects(),
+            new ExecutionContextLacking(otherTenant, permission)));
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => Run(
+            handler, PermissionedFileFor(handler, ownerType), TenantId,
+            FixedTenantModules.AllBut(FileOwnerModules.ModuleOf(ownerType)!), new Effects(),
+            new ExecutionContextLacking(TenantId, permission)));
+
+        Assert.Equal("tenancy.module_not_enabled", error.Code);
+    }
+
+    // La prueba de control: con el permiso, cada handler sigue hasta su propia regla.
+    [Theory]
+    [MemberData(nameof(HandlersByPermissionedOwner))]
+    public async Task WithTheOwnerPermissionTheGuardDoesNotStopIt(string handler, FileOwnerType ownerType)
+    {
+        var error = await Record.ExceptionAsync(() => Run(
+            handler, PermissionedFileFor(handler, ownerType), TenantId, FixedTenantModules.AllBut(), new Effects()));
+
+        Assert.False(
+            error is RequestForbiddenException { Code: "authorization.denied" },
+            $"{handler} denied a caller that holds the owner permission.");
+    }
+
+    // El export lo genera el servidor (WmsExportStorage): ni con todos los permisos lo crea POST /files. Mismo 422 que un tipo que no
+    // existe.
+    [Fact]
+    public async Task AMemberCannotOpenAnUploadForAWmsExport()
+    {
+        var unitOfWork = new CountingStorageUnitOfWork();
+        var handler = new CreateUploadSessionHandler(
+            new InMemoryFileResourceRepository(), new UntouchableObjectStorage(), unitOfWork,
+            new AllowAllExecutionContext(TenantId), new FixedClock(Now));
+
+        var error = await Assert.ThrowsAsync<StorageDomainException>(() => handler.HandleAsync(
+            new CreateUploadSessionCommand(TenantId, TenantId, FileOwnerType.WmsExport, "saldos.pdf", "application/pdf", 10),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("storage.file.owner_type_invalid", error.Code);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
 
     [Theory]
     [MemberData(nameof(Handlers))]
@@ -144,12 +252,29 @@ public sealed class FileOwnerModuleHandlersTests
         return proof;
     }
 
-    private static Task Run(string handler, FileResource resource, Guid tenantId, ITenantModules modules, Effects effects)
+    // Como el comprobante: pendiente para las dos rutas de subida y disponible para las demás.
+    private static FileResource PermissionedFileFor(string handler, FileOwnerType ownerType)
+    {
+        var file = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, TenantId, ownerType,
+            "saldos.pdf", "application/pdf", 2048, $"staging/tenants/{TenantId:N}/saldos", Now);
+        if (handler is not ("CompleteUpload" or "CancelUpload"))
+        {
+            file.CompleteUpload("checksum", 2048, Now);
+            file.MarkClean(Now);
+        }
+
+        return file;
+    }
+
+    private static Task Run(
+        string handler, FileResource resource, Guid tenantId, ITenantModules modules, Effects effects,
+        IExecutionContext? executionContext = null)
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         var repository = new InMemoryFileResourceRepository(resource);
         var clock = new FixedClock(Now);
-        var context = new AllowAllExecutionContext(tenantId);
+        var context = executionContext ?? new AllowAllExecutionContext(tenantId);
         var publication = new FilePublication(effects.PublicStorage, clock);
         var fileId = resource.Id.Value;
 

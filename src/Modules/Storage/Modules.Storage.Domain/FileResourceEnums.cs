@@ -82,3 +82,16 @@ public static class SystemOwnedFiles
 
     public static bool Includes(FileOwnerType ownerType) => OwnerTypes.Contains(ownerType);
 }
+
+/// <summary>
+/// Los archivos que genera el servidor (el export de saldos de WMS): <c>POST /files</c> no los crea, con el mismo 422 que un tipo que no
+/// existe. A diferencia de <see cref="SystemOwnedFiles"/>, la consola de Storage sí los lista y los descarga, a quien tenga el permiso
+/// que pide su dueño.
+/// </summary>
+public static class ServerGeneratedFiles
+{
+    public static IReadOnlySet<FileOwnerType> OwnerTypes { get; } =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.WmsExport });
+
+    public static bool Includes(FileOwnerType ownerType) => OwnerTypes.Contains(ownerType);
+}
