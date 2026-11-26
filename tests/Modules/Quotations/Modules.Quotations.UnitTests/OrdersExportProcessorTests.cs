@@ -2894,7 +2894,8 @@ public sealed class OrdersExportProcessorTests
             "PED-2026-0001",
             parties: new QuotationParties(
                 Billing: CompleteBillingParty("Facturas SL") with { Phone = billingPhone },
-                Shipping: CompleteShippingParty("Bodega Norte", CityId) with { Phone = shippingPhone }));
+                Shipping: CompleteShippingParty("Bodega Norte", CityId) with { Phone = shippingPhone },
+                BillingVatSurplus: false));
 
     private static StubQuotationPhoneNumbers SplittablePhones() =>
         new(new Dictionary<string, string>
