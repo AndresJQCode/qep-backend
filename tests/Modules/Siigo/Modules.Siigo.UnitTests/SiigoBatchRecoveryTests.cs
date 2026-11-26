@@ -164,6 +164,10 @@ public sealed class SiigoBatchRecoveryTests
             Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<bool> UnmarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

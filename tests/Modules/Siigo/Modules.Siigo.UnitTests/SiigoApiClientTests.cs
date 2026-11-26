@@ -892,6 +892,114 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.Equal("siigo.unavailable", error.Code);
     }
 
+    // --- Lectura de una factura para verificar su anulación (spec 2026-11-25, anulación §2): ante cualquier duda, no reconocida ---
+
+    [Fact]
+    public async Task AnAnnulledInvoiceIsFoundAnnulledWithItsStampStatus()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/id-1", HttpStatusCode.OK, """{"id":"id-1","annulled":true,"stamp":{"status":"Draft"}}""");
+
+        var lookup = await _client.GetInvoiceAsync(Credentials, "id-1", TestContext.Current.CancellationToken);
+
+        var found = Assert.IsType<SiigoInvoiceLookup.Found>(lookup);
+        Assert.Equal((true, "Draft"), (found.Annulled, found.StampStatus));
+        Assert.Equal(HttpMethod.Get, _api.Requests.Single(request => request.Path == "/v1/invoices/id-1").Method);
+        Assert.Empty(_failures.Recorded);
+    }
+
+    [Fact]
+    public async Task ANotAnnulledInvoiceIsFoundNotAnnulled()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/id-1", HttpStatusCode.OK, """{"id":"id-1","annulled":false}""");
+
+        var lookup = await _client.GetInvoiceAsync(Credentials, "id-1", TestContext.Current.CancellationToken);
+
+        var found = Assert.IsType<SiigoInvoiceLookup.Found>(lookup);
+        Assert.False(found.Annulled);
+        Assert.Null(found.StampStatus);
+        Assert.Empty(_failures.Recorded);
+    }
+
+    [Theory]
+    [InlineData("""{"id":"id-1"}""")]
+    [InlineData("""{"id":"id-1","annulled":"true"}""")]
+    [InlineData("""{"id":"id-2","annulled":true}""")]
+    [InlineData("<html>ok</html>")]
+    public async Task AnAnswerWithoutAnnulledOrWithAnotherIdIsUnrecognizedAndLeavesItsReport(string body)
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/id-1", HttpStatusCode.OK, body);
+
+        var lookup = await _client.GetInvoiceAsync(Credentials, "id-1", TestContext.Current.CancellationToken);
+
+        Assert.Equal(200, Assert.IsType<SiigoInvoiceLookup.Unrecognized>(lookup).Status);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(
+            (SiigoCallOperation.InvoiceRead, "invalid_response", 200, "id-1"),
+            (report.Operation, report.Reason, report.Status, report.SiigoInvoiceId));
+    }
+
+    // Un 404 pelado también es una ruta mal armada o una BaseUrl equivocada: nunca se toma como «borrada».
+    [Theory]
+    [InlineData("""{"Errors":[{"Code":"some_code","Message":"x"}]}""")]
+    [InlineData("")]
+    public async Task ABare404IsUnrecognizedAndLeavesItsReport(string body)
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/id-1", HttpStatusCode.NotFound, body);
+
+        var lookup = await _client.GetInvoiceAsync(Credentials, "id-1", TestContext.Current.CancellationToken);
+
+        Assert.Equal(404, Assert.IsType<SiigoInvoiceLookup.Unrecognized>(lookup).Status);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(
+            (SiigoCallOperation.InvoiceRead, "http_404", 404, "id-1"),
+            (report.Operation, report.Reason, report.Status, report.SiigoInvoiceId));
+    }
+
+    [Fact]
+    public async Task AServiceErrorOnTheInvoiceReadSaysSiigoIsDown()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/id-1", HttpStatusCode.BadRequest, """{"Status":400,"Errors":[{"Code":"documents_service","Message":"x"}]}""");
+
+        var failure = await Assert.ThrowsAsync<UpstreamServiceException>(
+            () => _client.GetInvoiceAsync(Credentials, "id-1", TestContext.Current.CancellationToken));
+
+        Assert.Equal("siigo.invoice.siigo_service", failure.Code);
+        Assert.Equal(SiigoCallOperation.InvoiceRead, Assert.Single(_failures.Recorded).Operation);
+    }
+
+    [Fact]
+    public async Task ATimeoutOnTheInvoiceReadIsUnavailable()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/id-1", HttpStatusCode.ServiceUnavailable, "{}");
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(
+            () => _client.GetInvoiceAsync(Credentials, "id-1", TestContext.Current.CancellationToken));
+
+        Assert.Equal("siigo.unavailable", error.Code);
+        Assert.Equal(SiigoCallOperation.InvoiceRead, Assert.Single(_failures.Recorded).Operation);
+    }
+
+    [Fact]
+    public async Task RejectedCredentialsOnTheInvoiceReadRaiseConnectionUnavailable()
+    {
+        _api.On("/auth", HttpStatusCode.Forbidden, "{}");
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(
+            () => _client.GetInvoiceAsync(Credentials, "id-1", TestContext.Current.CancellationToken));
+
+        Assert.Equal("siigo.connection_unavailable", error.Code);
+    }
+
+    // Si alguien llena la lista, que sea a propósito y con la respuesta real de Siigo (spec, «Verificación pendiente»).
+    [Fact]
+    public void TheNotFoundCodesStartEmpty() => Assert.Empty(SiigoApiErrors.InvoiceNotFoundCodes);
+
     [Fact]
     public async Task AFailedListCallThatIsTransientRaisesServiceUnavailable()
     {

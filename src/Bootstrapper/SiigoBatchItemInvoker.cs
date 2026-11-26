@@ -170,7 +170,8 @@ internal sealed partial class SiigoBatchItemInvoker(
         {
             nameof(SiigoInvoiceStatus.Created) or nameof(SiigoInvoiceStatus.Stamped) or nameof(SiigoInvoiceStatus.StampRejected) =>
                 new SiigoBatchItemOutcome.Invoiced(order.Number ?? string.Empty, order.Id, order.OrderMarkFailed),
-            nameof(SiigoInvoiceStatus.Rejected) or nameof(SiigoInvoiceStatus.Failed) =>
+            // Una emisión nunca devuelve como vigente una Annulled: se nombra aquí para que no caiga en «por confirmar».
+            nameof(SiigoInvoiceStatus.Rejected) or nameof(SiigoInvoiceStatus.Failed) or nameof(SiigoInvoiceStatus.Annulled) =>
                 new SiigoBatchItemOutcome.Failed(order.ErrorCode ?? "siigo.invoice.rejected", order.Id),
             // Pending o Unknown: no se sabe si Siigo la creó. La tanda no la reenvía; una persona la reenvía con los mismos bytes y la misma
             // clave, o la resuelve. La fila trae el motivo (timeout, red, límite, caída).

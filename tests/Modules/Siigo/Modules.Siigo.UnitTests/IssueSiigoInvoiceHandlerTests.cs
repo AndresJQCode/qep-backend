@@ -706,6 +706,10 @@ public sealed class IssueSiigoInvoiceHandlerTests
         public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken) =>
             Task.FromResult(Marked);
 
+        public Task<bool> UnmarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

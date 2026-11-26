@@ -7,7 +7,7 @@ namespace Modules.Siigo.Domain;
 /// Siigo devuelve la que ya creó (la única excepción es <see cref="ResendAdjusted"/>, cuando Siigo la rechazó por el redondeo de los
 /// pagos). <see cref="RequestJson"/> lleva datos del cliente: sólo lo leen los handlers del módulo, nunca sale en
 /// un <c>GET</c> ni en un log, y el <c>ToString</c> no lo escribe. Una fila por pedido y tipo está «vigente» salvo que esté
-/// <c>Rejected</c> o <c>Failed</c> (índice único parcial <c>IX_invoices_tenant_order_kind</c>).
+/// <c>Rejected</c>, <c>Failed</c> o <c>Annulled</c> (índice único parcial <c>IX_invoices_tenant_order_kind</c>).
 /// <para>«Por confirmar» (spec 2026-11-24 §3) no es un estado aparte: es una <c>Pending</c> con <see cref="UnansweredAt"/>, es decir,
 /// con un envío del que no se sabe si Siigo creó la factura. Una así nunca pasa a <c>Rejected</c>: la reenvía una persona con la misma
 /// clave o declara si existe en Siigo.</para>
@@ -100,8 +100,8 @@ public sealed class SiigoInvoice
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
-    /// <summary>Vigente: cuenta para el pedido (todo menos <c>Rejected</c> y <c>Failed</c>).</summary>
-    public bool IsLive => Status is not (SiigoInvoiceStatus.Rejected or SiigoInvoiceStatus.Failed);
+    /// <summary>Vigente: cuenta para el pedido (todo menos <c>Rejected</c>, <c>Failed</c> y <c>Annulled</c>).</summary>
+    public bool IsLive => Status is not (SiigoInvoiceStatus.Rejected or SiigoInvoiceStatus.Failed or SiigoInvoiceStatus.Annulled);
 
     /// <summary>Saliendo o sin resolver (<c>Pending</c> o <c>Unknown</c>): la marca manual del pedido espera.</summary>
     public bool IsOpen => Status is SiigoInvoiceStatus.Pending or SiigoInvoiceStatus.Unknown;
@@ -113,6 +113,11 @@ public sealed class SiigoInvoice
     /// no tiene id, así que no se puede pedir.</summary>
     public bool HasPdf =>
         SiigoInvoiceId is not null && Status is (SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected);
+
+    /// <summary>Se puede preguntar a Siigo si está anulada (spec 2026-11-25 §1): existe allá con su id (una <c>Created</c>,
+    /// <c>Stamped</c> o <c>StampRejected</c>). Una resuelta a mano no tiene id, así que no hay qué verificar.</summary>
+    public bool IsAnnulmentVerifiable =>
+        Status is (SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected) && SiigoInvoiceId is not null;
 
     public static SiigoInvoice PendingFor(
         Guid id,
@@ -406,6 +411,26 @@ public sealed class SiigoInvoice
         }
 
         Status = SiigoInvoiceStatus.Failed;
+        SendingSince = null;
+        UpdatedAt = now;
+    }
+
+    /// <summary>QEP verificó en Siigo que una persona la anuló o la borró allá (spec 2026-11-25 §1): <c>Annulled</c>, deja de ser
+    /// vigente y el motivo viaja en <see cref="ErrorCode"/> (pisa el rechazo de la DIAN de una <c>StampRejected</c>). Conserva el id de
+    /// Siigo, el número, el CUFE y el total: es el registro de un documento que existió.</summary>
+    /// <param name="deleted">Siigo contestó que ya no existe; con <c>false</c>, que está anulada.</param>
+    public void MarkAnnulled(bool deleted, DateTimeOffset now)
+    {
+        if (!IsAnnulmentVerifiable)
+        {
+            throw new SiigoDomainException(
+                SiigoErrorCodes.InvoiceStateInvalid, "Only an invoice that exists in Siigo with its id can be marked as annulled.");
+        }
+
+        Status = SiigoInvoiceStatus.Annulled;
+        ErrorCode = deleted ? SiigoErrorCodes.InvoiceDeletedInSiigo : SiigoErrorCodes.InvoiceAnnulledInSiigo;
+        ErrorDetail = null;
+        ExpectedPaymentsTotal = null;
         SendingSince = null;
         UpdatedAt = now;
     }

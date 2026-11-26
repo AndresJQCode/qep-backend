@@ -119,6 +119,52 @@ public sealed class SiigoInvoiceBatchReadTests
         Assert.Equal("Invoiced", item.Status);
     }
 
+    // Spec 2026-11-25 §1: se leía fallido por la de flete; anulada la del pedido, dice la anulación y no vuelve a leerse facturado.
+    [Fact]
+    public async Task AStoredInvoicedItemWhoseInvoiceWasAnnulledReadsFailedInTheDetailAndTheList()
+    {
+        var harness = new Harness(Annulled(), Rejected(Freight())) { StoredInvoiced = true, Marked = false };
+
+        var detail = await harness.DetailAsync();
+        var counts = Assert.Single((await harness.ListAsync()).Items).StatusCounts;
+
+        var item = Assert.Single(detail.Items);
+        Assert.Equal(("Failed", "siigo.invoice.annulled_in_siigo"), (item.Status, item.ErrorCode));
+        Assert.Null(item.InvoiceNumber);
+        Assert.False(item.OrderMarkFailed);
+        Assert.Equal((false, false), (item.CanResend, item.CanResolve));
+        Assert.Equal((0, 1), (detail.Invoiced, detail.Failed));
+        Assert.Equal(1, counts.Single(count => count.Status == "Failed").Count);
+        Assert.Equal(0, counts.Single(count => count.Status == "Invoiced").Count);
+        Assert.Equal(0, harness.MarkReads);
+    }
+
+    // El pedido se volvió a facturar: el ítem de antes sigue enlazado a su fila anulada y no toma nada de las nuevas.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnItemOfAnAnnulledInvoiceStaysAnnulledAfterTheOrderIsInvoicedAgain(bool storedInvoiced)
+    {
+        var again = Row(SiigoInvoiceKind.Order, Now.AddMinutes(-2));
+        again.BeginSend(Now.AddMinutes(-2));
+        again.MarkCreated("id-3", "FV-1-11", 100m, null, Now.AddMinutes(-2));
+        var freight = Row(SiigoInvoiceKind.Freight, Now.AddMinutes(-2));
+        var harness = new Harness(Annulled(), again, freight) { StoredInvoiced = storedInvoiced };
+
+        var item = Assert.Single((await harness.DetailAsync()).Items);
+
+        Assert.Equal(("Failed", "siigo.invoice.annulled_in_siigo"), (item.Status, item.ErrorCode));
+        Assert.Null(item.InvoiceNumber);
+    }
+
+    private static SiigoInvoice Annulled()
+    {
+        var row = Unanswered();
+        row.MarkCreated("id-1", "FV-1-9", 100m, null, Now.AddMinutes(-5));
+        row.MarkAnnulled(false, Now.AddMinutes(-3));
+        return row;
+    }
+
     private static SiigoInvoice Rejected(SiigoInvoice freight)
     {
         freight.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now.AddMinutes(-20));
@@ -255,6 +301,10 @@ public sealed class SiigoInvoiceBatchReadTests
 
         public Task MarkInvoicedAsync(
             Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> UnmarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

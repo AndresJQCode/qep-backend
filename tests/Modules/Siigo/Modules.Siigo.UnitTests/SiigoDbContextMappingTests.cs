@@ -67,6 +67,20 @@ public sealed class SiigoDbContextMappingTests
         Assert.Equal("status IN ('Pending', 'Sending')", index.GetFilter());
     }
 
+    // Spec 2026-11-25 §1: una anulada en Siigo no es vigente, así que no ocupa el lugar de la factura nueva del pedido.
+    [Fact]
+    public void TheCurrentInvoiceIndexLeavesOutAnnulledRows()
+    {
+        using var context = new SiigoDbContextFactory().CreateDbContext([]);
+
+        var invoice = context.Model.FindEntityType(typeof(SiigoInvoice))!;
+
+        var index = Assert.Single(
+            invoice.GetIndexes(), value => value.GetDatabaseName() == SiigoDbContext.InvoicesTenantOrderKindIndex);
+        Assert.True(index.IsUnique);
+        Assert.Equal("status NOT IN ('Rejected', 'Failed', 'Annulled')", index.GetFilter());
+    }
+
     [Fact]
     public void TheSellerColumnIsNoLongerMapped()
     {

@@ -337,6 +337,10 @@ public sealed class SiigoBatchItemInvokerTests
                 : Task.FromException<bool>(new InvalidOperationException("The order cannot be read."));
         }
 
+        public Task<bool> UnmarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

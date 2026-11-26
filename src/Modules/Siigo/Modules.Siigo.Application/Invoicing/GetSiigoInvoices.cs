@@ -12,7 +12,8 @@ public sealed record GetSiigoInvoicesQuery(Guid TenantId, Guid OrderId) : IQuery
 /// Spec 2026-11-18 §5.6: las filas vigentes del pedido, una por tipo (la del pedido y, si hay, la de flete), o 404 si nunca se facturó
 /// en Siigo. Si el último intento de un tipo fue rechazado, esa fila sigue a la vista para que la pantalla muestre el rechazo. Leer es
 /// el momento de la transición perezosa: una <c>Pending</c> de más de 24 horas pasa a <c>Unknown</c>. Nunca devuelve la petición.
-/// La fila del pedido que existe en Siigo avisa con <c>orderMarkFailed</c> si el pedido no lleva su marca (<see cref="SiigoOrderMark"/>).
+/// La fila del pedido que existe en Siigo avisa con <c>orderMarkFailed</c> si el pedido no lleva su marca (<see cref="SiigoOrderMark"/>),
+/// y la anulada, con <c>orderUnmarkFailed</c> si todavía la lleva; <c>canConfirmAnnulment</c> dice si se ofrece «Ya la anulé en Siigo».
 /// </summary>
 public sealed partial class GetSiigoInvoicesHandler(
     IExecutionContext executionContext,
@@ -59,7 +60,10 @@ public sealed partial class GetSiigoInvoicesHandler(
         {
             var orderMarkFailed = await SiigoOrderMark.IsMissingAsync(orders, row, queued, logger, cancellationToken);
             var waitsForOrder = SiigoInvoiceSupport.IsFreightWaitingForTheOrder(row, current);
-            result.Add(SiigoInvoiceDto.From(row, now, orderMarkFailed, canSend, queued, waitsForOrder));
+            var orderUnmarkFailed = await SiigoOrderMark.IsStillMarkedAfterAnnulmentAsync(orders, row, logger, cancellationToken);
+            var canConfirmAnnulment = SiigoOrderMark.CanConfirmAnnulment(row, current, queued, orderUnmarkFailed);
+            result.Add(SiigoInvoiceDto.From(
+                row, now, orderMarkFailed, canSend, queued, waitsForOrder, canConfirmAnnulment, orderUnmarkFailed));
         }
 
         return result;

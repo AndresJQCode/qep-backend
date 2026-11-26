@@ -91,10 +91,21 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   errores) y cada escritura borra de paso hasta 200 filas de más de 7 días, de todos los tenants (sin worker). Se leen con `siigo.calls.read`
   (de fábrica `admin` y `billing`, éste por decisión del owner del 2026-11-25; soporte recibe un rol personalizado) en `GET …/siigo/call-failures` (sin curl ni cuerpo) y `…/{id}` (con ellos):
   llevan datos del cliente. El log de requests (`platform/request-log`) conserva sólo la excepción, ligada por `TraceId`; no lleva el curl.
-- **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected` y
-  `Failed`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`, `order_id` o
-  `tenant_id` compila y deja ambas operaciones en 500.
+- **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected`,
+  `Failed` y `Annulled`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`,
+  `order_id` o `tenant_id` compila y deja ambas operaciones en 500. La misma lista está en el filtro del índice
+  `IX_invoices_tenant_order_kind` y en `SiigoInvoice.IsLive`: un estado nuevo se decide en los tres.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
+- **Soltar un pedido por una factura anulada en Siigo se verifica, es todo o nada y guarda Siigo primero** (spec 2026-11-25, `POST
+  …/siigo-invoice/annulment`). QEP no anula allá: lee cada factura viva y sólo si **todas** (la del pedido y la de flete) contestan
+  anuladas pasan a `Annulled`. Falla cerrado: lo que no se entiende, y una anulada que además dice `stamp.status = Accepted`, no cambia
+  nada; liberar con la factura viva deja facturar otra vez y duplica un documento legal. **`SiigoApiErrors.InvoiceNotFoundCodes` está
+  vacía a propósito:** ningún 404 cuenta como «borrada» (un 404 pelado también es una ruta o una `BaseUrl` mal armada) hasta tener la
+  respuesta real de Siigo, que queda en `call_failures` como `InvoiceRead`; se llena sólo con esa evidencia y su prueba. Las filas se
+  guardan con el candado del pedido y **la marca se quita después del commit**: al revés, un fallo al guardar dejaría el pedido libre
+  con la fila `Created` y la siguiente emisión lo volvería a marcar. Si falla la marca, `orderUnmarkFailed` lo dice y repetir la acción
+  la reintenta sin llamar a Siigo. Una marca manual o de otro número no se toca. Una respuesta nueva con filas del pedido tiene que
+  calcular `canConfirmAnnulment` y `orderUnmarkFailed`.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
   `Created` y el ítem de la tanda lleva `orderMarkFailed`; la siguiente tanda del pedido reintenta sólo la marca. Nunca deja la
   emisión fallando.
@@ -126,12 +137,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   2026-11-25). Al cerrar (`SiigoBatchItemInvoker.Map` y `SiigoInvoiceBatchWorker.RecoverAsync`) sólo se mira la `Pending`: sale `Failed`
   sin `invoice_id` con `siigo.invoice.freight_pending`. **Lo demás se decide al leer** (`SiigoInvoiceBatchItem.Effective`), en ítems
   guardados `ToConfirm` e `Invoiced`: de flete `Pending` → `Sending` mientras se manda y si no `Failed` con `freight_pending`;
-  `Rejected` o `Failed` → `Failed` con `siigo.invoice.freight_not_created` (QEP no la vuelve a armar: se crea en Siigo); `Unknown` →
+  `Rejected`, `Failed` o `Annulled` → `Failed` con `siigo.invoice.freight_not_created` (QEP no la vuelve a armar: se crea en Siigo); `Unknown` →
   `ToConfirm` con `siigo.invoice.freight_unconfirmed` y sin acciones (las de la tanda actúan sobre la factura del pedido). Los códigos
   son propios para que nadie cree otra vez en Siigo la del pedido; el motivo de la de flete se ve en el pedido. La de flete de una
   factura es la más nueva del pedido creada con ella o después (`SiigoInvoiceBatchViews.FreightsAsync`). Una lectura nueva de ítems
   tiene que pasársela a `Effective`: es un parámetro opcional y sin él responde `Invoiced`. Reintentar el pedido manda sólo la de flete
   `Pending` y vuelve a marcarlo.
+- **Un ítem enlazado a una fila `Annulled` se lee `Failed` con el código de la fila, esté guardado `ToConfirm` o `Invoiced`** (spec
+  2026-11-25 §1), sin número ni acciones y con `orderMarkFailed` en `false`. Se decide antes que la de flete, así que ninguno vuelve a
+  leerse facturado, tampoco el ítem viejo de un pedido que se volvió a facturar.
 - **El `orderMarkFailed` de un ítem guardado `ToConfirm` se calcula al leer el detalle de la tanda** (`SiigoOrderMark.IsMissingAsync`,
   sólo con su factura ya en Siigo y sin una tanda que tenga el pedido): el ítem no lo guarda. La lista de tandas no lo lleva. Un ítem
   cerrado `Failed` por la de flete tampoco lo guarda: el aviso lo calculan las filas del pedido.
