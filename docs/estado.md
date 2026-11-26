@@ -606,6 +606,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`46daf9b63`, `--no-ff`, sin push) **aviso de autorización para cambios de
+  arquitectura** (`feature/architecture-guardian`, `d569d2276`). `.\scripts\test-feature.ps1` avisa «Requiere
+  autorización del owner» cuando la rama cambia una prueba de `tests/ArchitectureTests/` o agrega una referencia entre
+  módulos; el aviso no bloquea. `CLAUDE.md` registra que esos cambios, y un contrato HTTP que cambia sin spec aprobado,
+  los autoriza el owner antes del merge. Se descartó crear una skill de revisión. Pruebas sobre la rama con `develop`
+  mergeado (`757d3fd8f`): `TestSelection.Tests.ps1` en verde y `test-feature.ps1` con `ArchitectureTests` 325/325.
+  Revisión de solo lectura sin bloqueantes; quedan dos menores: el aviso de referencias no saldría con
+  `diff.noprefix`, `diff.mnemonicprefix`, color forzado o un diff externo en la configuración de git, y renombrar un
+  `.csproj` reporta como nuevas sus referencias que ya existían.
 - 2026-11-25 — Mergeado a `develop` (`555832473`, `--no-ff`, sin push) **estados del flete y «No existe» en las tandas
   de Siigo** (`fix/siigo-flete-estados`, `3b0fd032d`; frontend `e666c6cb`, que incluye `94343fe1`, el aviso de pedido
   sin marcar de `fix/siigo-aviso-marca-tanda`). Un ítem sólo se lee «Facturado» si la de flete, cuando la tiene, existe
