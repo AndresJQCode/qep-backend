@@ -73,7 +73,8 @@ function Test-DeclaresSharedSupport($Classes, [hashtable]$Sources, [string]$Proj
 }
 
 # Referencias de proyecto que un diff unificado agrega entre módulos. Bootstrapper, Api y las pruebas componen módulos
-# a propósito: sólo cuentan los proyectos de src/Modules. Una referencia que se quita y se vuelve a poner sólo se movió.
+# a propósito: sólo cuentan los proyectos de src/Modules. Una referencia que se quita y se vuelve a poner en la misma
+# capa del mismo módulo sólo se movió: así renombrar un proyecto no pide autorizar lo que ya existía.
 function Get-NewModuleReferences([string[]]$Diff) {
     $added = @(); $removed = @{}; $path = ""
     foreach ($line in $Diff) {
@@ -82,7 +83,9 @@ function Get-NewModuleReferences([string[]]$Diff) {
         $source = $Matches.module
         if ($line -notmatch '^(?<sign>[+-])\s*<ProjectReference\s+Include="[^"]*?Modules\.(?<target>\w+)\.(?<layer>\w+)\.csproj"') { continue }
         if ($Matches.target -eq $source) { continue }
-        $key = "$path|$($Matches.target).$($Matches.layer)"
+        # La capa es el último segmento del nombre del .csproj que declara la referencia.
+        $sourceLayer = ($path -replace '\.csproj$', '') -replace '^.*[./]', ''
+        $key = "$source.$sourceLayer|$($Matches.target).$($Matches.layer)"
         if ($Matches.sign -eq "-") { $removed[$key] = $true }
         else { $added += [pscustomobject]@{ Key = $key; Source = $source; Target = $Matches.target; Path = $path } }
     }

@@ -146,6 +146,24 @@ Assert-Equal "referencia quitada: sin aviso" "" (Approvals $p)
 $p = DiffPlan $app @((Ref "-" "Customers" "Application"), (Ref "+" "Customers" "Application"))
 Assert-Equal "referencia movida: sin aviso" "" (Approvals $p)
 
+# Renombrar un proyecto llega como un borrado y un archivo nuevo (--no-renames).
+function RenamePlan([string]$old, [string]$new) {
+    Get-TestPlan -ChangedFiles @($old, $new) -Projects $projects -ProjectDiff @(
+        "diff --git a/$old b/$old", (Ref "-" "Customers" "Application"),
+        "diff --git a/$new b/$new", (Ref "+" "Customers" "Application"))
+}
+
+$p = RenamePlan $app "src/Modules/Pipeline/Pipeline.App/Modules.Pipeline.Core.Application.csproj"
+Assert-Equal "proyecto renombrado: sin aviso" "" (Approvals $p)
+
+$domain = "src/Modules/Pipeline/Modules.Pipeline.Domain/Modules.Pipeline.Domain.csproj"
+$p = RenamePlan $app $domain
+Assert-Equal "referencia pasada a otra capa: aviso" "Requiere autorización del owner: referencia nueva entre módulos, Pipeline -> Customers: $domain" (Approvals $p)
+
+$other = "src/Modules/Catalog/Modules.Catalog.Application/Modules.Catalog.Application.csproj"
+$p = RenamePlan $app $other
+Assert-Equal "referencia pasada a otro modulo: aviso" "Requiere autorización del owner: referencia nueva entre módulos, Catalog -> Customers: $other" (Approvals $p)
+
 $p = DiffPlan "src/Bootstrapper/Bootstrapper.csproj" @((Ref "+" "Customers" "Application"))
 Assert-Equal "Bootstrapper compone modulos: sin aviso" "" (Approvals $p)
 
