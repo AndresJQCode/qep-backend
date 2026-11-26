@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// <c>If-Match</c>) y su cálculo previo (<c>POST /quotations/{quotationId}/preview</c>), contra
 /// Postgres real. Gemelo de <see cref="OrderEditsApiTests"/> por el lado de la cotización.
 /// </summary>
-public sealed class QuotationEditsApiTests
+public sealed class QuotationEditsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string QuotationUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}";
@@ -21,8 +21,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task TheQuotationResponseCarriesTheVersionAndTheSaveSetsTheETag()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -44,8 +43,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task SaveAppliesTheHeaderAndTheItemDiffInOneRequest()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, keptProductId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -99,8 +97,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task SaveRequiresAFreshIfMatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -126,14 +123,13 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task SaveOnAConvertedQuotationIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         var reloaded = await GetQuotationAsync(client, tenantId, quotation.Id);
@@ -156,8 +152,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task PreviewReturnsTheRecalculatedDocumentWithoutPersistingIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -187,8 +182,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task PreviewReportsTheSameDomainErrorAsSaving()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -212,8 +206,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task AnUnknownQuotationIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -234,8 +227,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateReplacesTheEditableHeaderFields()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -274,8 +266,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateWithStorePickupDropsTheShippingPartyAndPersists()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -316,17 +307,19 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateBillingToTheFinalConsumerDropsRetentionAndVatSurplusAndPersists()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
+        // Retención del cliente: una Retefuente asignada (spec impuestos por tipo §7.4); sólo retiene con empresa
+        // facturadora colombiana, así que la cotización nace con cuenta de cobro.
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
         var clientId = await CreateActiveCustomerAsync(
-            client, tenantId, withRetention: true, vatSurplus: true);
+            client, tenantId, vatSurplus: true, withholdingTaxRateIds: [retefuente]);
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         // 119_000 con el IVA del 19% ya adentro: base 100_000 e IVA 19_000 redondos.
         var productId = await CreateProductWithScalesAsync(
             client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
-        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        var created = await CreateSendableQuotationAsync(client, tenantId, clientId);
         var added = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, created.Id)}/items",
             new AddQuotationItemRequest(productId, 1m),
@@ -381,8 +374,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateBillingToTheFinalConsumerWithABillingPartyIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -408,8 +400,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task PreviewWithABillingPartyNamedButWithoutIdentificationIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -436,8 +427,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateWithABillingPartyNamedButWithoutIdentificationIsUnprocessableOnTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -472,6 +462,109 @@ public sealed class QuotationEditsApiTests
         Assert.NotEmpty(fieldErrors.EnumerateArray());
         var fetched = await GetQuotationAsync(client, tenantId, created.Id);
         Assert.Empty(fetched.Parties);
+    }
+
+    // Spec 2026-11-08 (D-8): borrar un producto no deja la cotización enviada sin poder editarse. La línea cuya
+    // variante desapareció queda fuera de la pasada de descuentos y conserva el 5 % de escala con el que se vendió.
+    [Fact]
+    public async Task SavingASentQuotationWithADeletedLineKeepsItsDiscount()
+    {
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, keptProductId, deletedProductId) =
+            await CreateQuotationWithADeletedLineAsync(client, factory, database.GetConnectionString(), tenantId);
+        var before = Assert.Single(quotation.Items, item => item.ProductId == deletedProductId);
+        Assert.Equal(5m, before.DiscountPercentage);
+
+        var response = await PutEditsAsync(
+            client, tenantId, quotation.Id, quotation.Version,
+            RequestFor(
+                quotation,
+                notes: "Solo cambian las notas",
+                items:
+                [
+                    new QuotationEditItemRequest(keptProductId, 1m),
+                    new QuotationEditItemRequest(deletedProductId, 10m),
+                ]));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadQuotationAsync(response);
+        var line = Assert.Single(saved.Items, item => item.ProductId == deletedProductId);
+        Assert.Equal(5m, line.DiscountPercentage);
+        Assert.Equal((before.ProductCode, before.ProductName), (line.ProductCode, line.ProductName));
+        Assert.Equal("Solo cambian las notas", saved.Notes);
+    }
+
+    // P5 (plan 2026-11-08): cambiar de moneda revaloriza todas las líneas, y la de una variante borrada no tiene un
+    // precio en la moneda nueva que se pueda inventar. Se rechaza entera y no se guarda nada. Caracteriza el
+    // comportamiento vigente: pasa desde el primer intento.
+    [Fact]
+    public async Task ChangingCurrencyWithADeletedLineIsRejected()
+    {
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, keptProductId, deletedProductId) =
+            await CreateQuotationWithADeletedLineAsync(client, factory, database.GetConnectionString(), tenantId);
+        var usd = await CreateCompanyWithBankAccountAsync(client, tenantId, currency: "USD");
+
+        var response = await PutEditsAsync(
+            client, tenantId, quotation.Id, quotation.Version,
+            RequestFor(
+                quotation,
+                items:
+                [
+                    new QuotationEditItemRequest(keptProductId, 1m),
+                    new QuotationEditItemRequest(deletedProductId, 10m),
+                ]) with
+            {
+                BillingAccount = new QuotationBillingAccountRequest(
+                    usd.CompanyId, usd.BankName, usd.AccountNumber, usd.Currency),
+            });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("quotation.item.product_not_found", (await ReadProblemAsync(response)).Code);
+        var reloaded = await GetQuotationAsync(client, tenantId, quotation.Id);
+        Assert.Equal((quotation.Currency, quotation.Version), (reloaded.Currency, reloaded.Version));
+    }
+
+    /// <summary>Una cotización enviada con una línea de un producto con precio en COP y USD (cantidad 1) y otra de 10
+    /// unidades (5 % por <c>DefaultScales</c>) cuyo producto se borra por SQL: la cascada de Catalog simula el
+    /// borrado.</summary>
+    private static async Task<(QuotationResponse Quotation, Guid KeptProductId, Guid DeletedProductId)>
+        CreateQuotationWithADeletedLineAsync(
+            HttpClient client, QepApiFactory factory, string connectionString, Guid tenantId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var keptProductId = await CreateProductWithScalesAsync(
+            client, tenantId,
+            prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m });
+        var deletedProductId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        // Se envía con el producto que se va a borrar: la foto de código y nombre se congela al enviar.
+        var sent = await CreateSentQuotationAsync(client, factory, tenantId, clientId, deletedProductId);
+        var saved = await PutEditsAsync(
+            client, tenantId, sent.Id, sent.Version,
+            RequestFor(
+                sent,
+                items:
+                [
+                    new QuotationEditItemRequest(deletedProductId, 10m),
+                    new QuotationEditItemRequest(keptProductId, 1m),
+                ]));
+        saved.EnsureSuccessStatusCode();
+        var withTenUnits = await ReadQuotationAsync(saved);
+
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(
+            "DELETE FROM catalog.products WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", deletedProductId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+
+        return (withTenUnits, keptProductId, deletedProductId);
     }
 
     /// <summary>Una cotización enviada —todavía editable— con un producto de 100.000 COP sin

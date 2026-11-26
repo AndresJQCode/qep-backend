@@ -1,5 +1,4 @@
 using Modules.Quotations.Domain;
-using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -15,52 +14,66 @@ namespace Modules.Quotations.Application;
 /// Compara con la misma clave con la que <c>CompanyBankAccount</c> detecta duplicados: banco sin
 /// distinguir mayúsculas, número tal cual. Usar otra dejaría entrar como "cuenta distinta" lo que
 /// la empresa considera repetido, o al revés.
+///
+/// <b>Empresa sin cuenta</b> (spec 2026-11-17, R3): un request sin banco ni número arma la cuenta con la empresa y banco
+/// y número nulos. Su moneda es <c>currencyWithoutAccount</c>, la que decide quien llama (la por defecto del tenant en un
+/// documento nuevo, la del documento al editarlo, la de la tienda o la del pedido de origen); el <c>Currency</c> del
+/// request se ignora.
 /// </summary>
 internal static class QuotationBillingAccountResolver
 {
+    /// <summary>
+    /// La variante de las vistas previas (spec 2026-11-16, retenciones por empresa): sin cuenta pero con empresa, arma la
+    /// empresa sin cuenta, como un request <c>(companyId, null, null, null)</c>. La cuenta, si viene, ya nombra la empresa
+    /// y gana.
+    /// </summary>
+    public static Task<QuotationBillingAccount?> ResolveAsync(
+        IQuotationCompanyLookup lookup,
+        Guid tenantId,
+        QuotationBillingAccountRequest? request,
+        Guid? billingCompanyId,
+        string currencyWithoutAccount,
+        CancellationToken cancellationToken)
+    {
+        var effective = request
+            ?? (billingCompanyId is { } companyId
+                ? new QuotationBillingAccountRequest(companyId, null, null, null)
+                : null);
+        return ResolveAsync(lookup, tenantId, effective, currencyWithoutAccount, cancellationToken);
+    }
+
     public static async Task<QuotationBillingAccount?> ResolveAsync(
         IQuotationCompanyLookup lookup,
         Guid tenantId,
         QuotationBillingAccountRequest? request,
+        string currencyWithoutAccount,
         CancellationToken cancellationToken)
     {
-        // Null es "no se eligió cuenta" y es válido: un borrador nace así, y el PATCH reemplaza
+        // Null es "no se eligió empresa" y es válido: un borrador nace así, y el PATCH reemplaza
         // el recurso entero, así que mandarlo en null la limpia.
         if (request is null) return null;
 
-        // Before the company lookup: a currency outside the catalogue can never be quoted, whatever
-        // the company has on file (spec D6; replaces the former Quotations-only currency code).
-        var currency = Currencies.Normalize(request.Currency);
+        var withoutAccount = string.IsNullOrWhiteSpace(request.BankName) && string.IsNullOrWhiteSpace(request.AccountNumber);
 
-        var company = await lookup.FindAsync(tenantId, request.CompanyId, cancellationToken);
-
-        // Mismo código para "no existe" y "es de otro tenant", igual que con el cliente:
-        // distinguirlos confirmaría que el id existe en otro tenant.
-        if (company is null)
-        {
-            throw new QuotationsDomainException(
-                "quotation.billing.company_not_found",
-                $"Company '{request.CompanyId}' was not found in this tenant.");
-        }
-
-        var matches = company.BankAccounts.Any(account =>
-            string.Equals(account.BankName, request.BankName?.Trim(), StringComparison.OrdinalIgnoreCase) &&
-            account.AccountNumber == request.AccountNumber?.Trim() &&
-            string.Equals(account.Currency, currency, StringComparison.OrdinalIgnoreCase));
-
-        if (!matches)
-        {
-            throw new QuotationsDomainException(
-                "quotation.billing.account_not_found",
-                "The bank account does not belong to the selected company.");
-        }
+        // La comprobación vive en un solo lugar (QuotationBillingAccountVerifier), compartida con la tienda pública.
+        var verified = await QuotationBillingAccountVerifier.VerifyAsync(
+            lookup,
+            tenantId,
+            request.CompanyId,
+            request.BankName,
+            request.AccountNumber,
+            withoutAccount ? currencyWithoutAccount : request.Currency,
+            cancellationToken);
 
         return new QuotationBillingAccount
         {
-            CompanyId = company.Id,
-            BankName = request.BankName,
-            AccountNumber = request.AccountNumber,
-            Currency = currency
+            CompanyId = verified.CompanyId,
+            BankName = withoutAccount ? null : request.BankName,
+            AccountNumber = withoutAccount ? null : request.AccountNumber,
+            Currency = verified.Currency,
+            Country = verified.Country,
+            CityId = verified.CityId,
+            ChargesVat = verified.ChargesVat,
         };
     }
 }

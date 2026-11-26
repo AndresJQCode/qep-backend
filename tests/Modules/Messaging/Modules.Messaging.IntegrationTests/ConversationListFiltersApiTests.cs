@@ -67,11 +67,11 @@ public sealed class ConversationListFiltersApiTests
         var (active, _) = await IngestAsync(f, "CO.A", "w1", 1760000100, "Ana");
         var (plain, _) = await IngestAsync(f, "CO.B", "w2", 1760000200, "Beto");
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = gen_random_uuid() WHERE id = @id", ("id", active));
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = gen_random_uuid(), automation_bot_kind = 1 WHERE id = @id", ("id", active));
 
         var (paused, _) = await IngestAsync(f, "CO.C", "w3", 1760000300, "Caro");
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_paused_at = now(), automation_pause_reason = 'Manual', automation_chatbot_id = gen_random_uuid() WHERE id = @id", ("id", paused));
+            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_paused_at = now(), automation_pause_reason = 'Manual', automation_chatbot_id = gen_random_uuid(), automation_bot_kind = 1 WHERE id = @id", ("id", paused));
 
         var all = await ListAsync(f, "");
         Assert.Equal([paused, plain, active], Ids(all));
@@ -116,6 +116,39 @@ public sealed class ConversationListFiltersApiTests
         Assert.Empty(Ids(foreign));
         // §5.4: los contadores cuentan el tenant entero, sin filtros.
         Assert.Equal(all.GetProperty("counts").GetRawText(), tagged.GetProperty("counts").GetRawText());
+    }
+
+    // Spec qep-frontend 2026-11-17 (chip y filtro por conexión): connectionId acota la lista a un número; los counts no se mueven.
+    [Fact]
+    public async Task TheConnectionFilterKeepsOnlyConversationsOfThatNumberInBothTabsAndTheCountsDoNotMove()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var ventas = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT id FROM integrations.connections WHERE tenant_id = @t AND name = 'Ventas'", ("t", f.Tenant.TenantId));
+        var soporte = await SeedWhatsAppConnectionAsync(f.Factory, f.Tenant.TenantId, "Soporte", "333", "444");
+        var (laura, _) = await IngestAsync(f, "CO.L", "w1", 1760000100, "Laura");
+        using (var anonymous = f.Factory.CreateClient())
+        {
+            await PostWebhookAsync(anonymous, MetaPayloads.Inbound("333", "CO.M", null, "w2", 1760000200, "hola", profileName: "Mateo"));
+            await DrainDeliveriesAsync(f.Factory);
+        }
+        var mateo = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations WHERE user_id = 'CO.M'");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET status = 'Resolved' WHERE id = @id", ("id", mateo));
+
+        var all = await ListAsync(f, "");
+        var onlyVentas = await ListAsync(f, $"?connectionId={ventas}");
+        var resolvedSoporte = await ListAsync(f, $"?status=Resolved&connectionId={soporte}");
+        var resolvedVentas = await ListAsync(f, $"?status=Resolved&connectionId={ventas}");
+        var foreign = await ListAsync(f, $"?connectionId={Guid.CreateVersion7()}");
+
+        Assert.Equal([laura], Ids(all));
+        Assert.Equal([laura], Ids(onlyVentas));
+        Assert.Equal([mateo], Ids(resolvedSoporte));
+        Assert.Empty(Ids(resolvedVentas));
+        Assert.Empty(Ids(foreign));
+        Assert.Equal(all.GetProperty("counts").GetRawText(), onlyVentas.GetProperty("counts").GetRawText());
     }
 
     [Fact]

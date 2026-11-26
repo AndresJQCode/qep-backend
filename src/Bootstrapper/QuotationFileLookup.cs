@@ -28,16 +28,38 @@ internal sealed class QuotationFileLookup(
         Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
         var resource = await repository.GetAsync(new FileResourceId(fileId), cancellationToken);
-        return resource is null
+        // Un archivo de dueño de sistema (adjunto de Soporte) no existe para Quotations: no se adjunta a un pedido (fix round 1 del
+        // Bloque D de Soporte fase 3).
+        return resource is null || SystemOwnedFiles.Includes(resource.OwnerType)
             ? null
-            : new QuotationFileRef(
-                resource.Id.Value,
-                resource.TenantId,
-                resource.MimeType,
-                resource.SizeBytes,
-                IsAvailableToAttach(resource),
-                resource.OwnerType == FileOwnerType.PaymentProof);
+            : ToRef(resource);
     }
+
+    // Una sola lectura (id = ANY) para los comprobantes de un cuerpo. ListByIdsAsync no filtra por tenant, así que el filtro va
+    // acá, sobre lo que ya llegó en ese mismo viaje: otro tenant no viene, como un archivo que no existe.
+    public async Task<IReadOnlyDictionary<Guid, QuotationFileRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken)
+    {
+        if (fileIds.Count == 0)
+        {
+            return new Dictionary<Guid, QuotationFileRef>();
+        }
+
+        var resources = await repository.ListByIdsAsync(
+            fileIds.Distinct().Select(fileId => new FileResourceId(fileId)).ToArray(), cancellationToken);
+        return resources
+            .Where(resource => resource.TenantId == tenantId && !SystemOwnedFiles.Includes(resource.OwnerType))
+            .ToDictionary(resource => resource.Id.Value, ToRef);
+    }
+
+    private static QuotationFileRef ToRef(FileResource resource) =>
+        new(
+            resource.Id.Value,
+            resource.TenantId,
+            resource.MimeType,
+            resource.SizeBytes,
+            IsAvailableToAttach(resource),
+            resource.OwnerType == FileOwnerType.PaymentProof);
 
     // Spec 2026-09-16, D16: un PaymentProof con PublicStorageKey ya se movió al bucket público y su
     // temporal se borró, así que PublicPaymentProofPublisher no tendría de dónde copiarlo para otro
@@ -55,7 +77,7 @@ internal sealed class QuotationFileLookup(
 
         // Mismo código para "no existe" y "es de otro tenant": distinguirlos confirmaría que el
         // id existe en otro tenant, justo lo que la frontera esconde.
-        if (resource.TenantId != tenantId)
+        if (resource.TenantId != tenantId || SystemOwnedFiles.Includes(resource.OwnerType))
         {
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");

@@ -31,7 +31,7 @@ public sealed class QuotationDiscountedUnitPriceTests
 
         var item = quotation.ToDto().Items.Single();
 
-        Assert.Equal(64_620m, item.DiscountAmount);
+        Assert.Equal(54_302.52m, item.DiscountAmount); // sin IVA (spec 2026-11-23); con IVA eran 64.620
         Assert.Equal(30_515m, item.DiscountedUnitPrice);
     }
 
@@ -65,7 +65,10 @@ public sealed class QuotationDiscountedUnitPriceTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new UnknownProductLookup(),
             new UnresolvedCompanyLookup(),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            new FixedTenantClock(DateTimeOffset.UtcNow));
 
         var response = await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -97,8 +100,9 @@ public sealed class QuotationDiscountedUnitPriceTests
                 Currency = "COP"
             },
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

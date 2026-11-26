@@ -75,9 +75,7 @@ internal sealed class QCodePdfRenderer(
 
     // Una sola plantilla para los dos documentos (owner): el archivo dice cuál es, igual que el membrete.
     private static string FileNameFor(QuotationPdfDocument document) =>
-        document.Kind == QuotationPdfKind.Order
-            ? $"Pedido-{document.QuotationNumber}.pdf"
-            : $"Cotizacion-{document.QuotationNumber}.pdf";
+        QuotationPdfFileName.For(document.Kind, document.QuotationNumber, document.Language);
 
     // La plantilla viaja adentro del ensamblado: es parte del contrato con el servicio, no
     // configuración, y un archivo suelto en disco se pierde al publicar la imagen.

@@ -89,6 +89,17 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-17: la conversación del cliente sin enviar nada. 201 si se creó, 200 si ya existía. Sin If-Match: quien llama no
+        // tiene una versión que defender (puede no existir aún la conversación).
+        group.MapPost("/conversations/open", OpenCustomerConversationAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<OpenCustomerConversationRequest>("application/json")
+            .Produces<OpenedCustomerConversationDto>(StatusCodes.Status201Created)
+            .Produces<OpenedCustomerConversationDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Spec 2026-10-11 §4.1: nota de voz en multipart. Ruta propia, para que el Accepts del texto siga en JSON.
         // DisableAntiforgery con el criterio de CustomerEndpoints (/import); el CSRF por X-Qep-Client sigue aplicando.
         // Sin .Accepts("multipart/form-data") a propósito: esa metadata activa el AcceptsMatcherPolicy del routing, que
@@ -288,6 +299,8 @@ public static class MessagingEndpoints
 
         // Spec 2026-10-11 §6.2: campañas, con su propio permiso (decisión 16).
         group.MapCampaignEndpoints();
+        // Spec 2026-11-09: el mensaje programado de una conversación.
+        group.MapScheduledMessageEndpoints();
         // Spec 2026-10-12 §3.6: respuestas rápidas.
         group.MapQuickReplyEndpoints();
         group.MapResolutionReasonEndpoints();
@@ -309,16 +322,17 @@ public static class MessagingEndpoints
         Guid tenantId, Guid messageId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
         var media = await dispatcher.QueryAsync(new GetMediaQuery(tenantId, messageId, httpContext.Request.Headers.Range.ToString()), cancellationToken);
-        if (media is null)
-        {
-            return Results.NotFound();
-        }
+        return media is null ? Results.NotFound() : WriteMedia(httpContext, media, messageId);
+    }
 
+    /// <summary>Las cabeceras y el rango de la respuesta de un medio. Lo comparten el medio de un mensaje y el de un programado.</summary>
+    internal static IResult WriteMedia(HttpContext httpContext, MediaStreamDto media, Guid id)
+    {
         var headers = httpContext.Response.Headers;
         headers.XContentTypeOptions = "nosniff";
         headers.ContentSecurityPolicy = "sandbox; default-src 'none'";
         headers.CacheControl = "private, max-age=3600";
-        headers.ContentDisposition = ContentDispositionFor(media.ContentType, media.FileName, messageId);
+        headers.ContentDisposition = ContentDispositionFor(media.ContentType, media.FileName, id);
 
         // Spec 2026-10-20 D10: Safari no adelanta un <video> sin 206. El rango lo resuelve el handler y lo lee R2; acá sólo se arma la
         // respuesta. enableRangeProcessing no sirve: el stream de R2 no admite búsqueda.
@@ -358,10 +372,10 @@ public static class MessagingEndpoints
         || contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IResult> ListConversationsAsync(
-        Guid tenantId, string? status, string? search, string? cursor, int? pageSize, string? assigned, string? channel, Guid? tagId, bool? unread, string? sort, string? automation,
+        Guid tenantId, string? status, string? search, string? cursor, int? pageSize, string? assigned, string? channel, Guid? tagId, bool? unread, string? sort, string? automation, Guid? connectionId,
         IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListConversationsQuery(tenantId, status, search, cursor, pageSize, assigned, channel, tagId, unread, sort, automation), cancellationToken));
+            new ListConversationsQuery(tenantId, status, search, cursor, pageSize, assigned, channel, tagId, unread, sort, automation, connectionId), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAssigneesQuery(tenantId), cancellationToken));
@@ -426,6 +440,14 @@ public static class MessagingEndpoints
         return result.Created ? Results.Created((string?)null, result.Body) : Results.Ok(result.Body);
     }
 
+    private static async Task<IResult> OpenCustomerConversationAsync(
+        Guid tenantId, OpenCustomerConversationRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync(
+            new OpenCustomerConversationCommand(tenantId, request.CustomerId, request.ConnectionId), cancellationToken);
+        return result.Created ? Results.Created((string?)null, result.Body) : Results.Ok(result.Body);
+    }
+
     /// <summary>
     /// Spec 2026-10-11 §6.1. El form se lee a mano y no con un <c>IFormFile</c> en la firma: el binder lo leería entero
     /// antes de entrar acá, con el tope global, y fijar el del endpoint ya no serviría. Primero el tope, después el form.
@@ -436,6 +458,23 @@ public static class MessagingEndpoints
     private static async Task<IResult> SendAudioMessageAsync(
         Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
+        var (form, rejection) = await ReadAudioFormAsync(httpContext, cancellationToken);
+        if (rejection is not null)
+        {
+            return rejection;
+        }
+
+        var command = new SendAudioMessageCommand(
+            tenantId, conversationId, ParseClientId(form!["clientId"]), await ReadAudioAsync(form.Files.GetFile("file"), cancellationToken), ParseReplyTo(form["replyTo"]));
+        var message = await dispatcher.SendAsync(command, cancellationToken);
+        // Sin Location, igual que el texto.
+        return Results.Created((string?)null, message);
+    }
+
+    /// <summary>El tope del cuerpo y la lectura manual del form de una ruta de nota de voz (también la del programado): o el form, o la
+    /// respuesta que corta el request (413 por tamaño). Primero el tope, después el form.</summary>
+    internal static async Task<(IFormCollection? Form, IResult? Rejection)> ReadAudioFormAsync(HttpContext httpContext, CancellationToken cancellationToken)
+    {
         if (httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sizeFeature)
         {
             sizeFeature.MaxRequestBodySize = AudioBodyMaxBytes;
@@ -444,33 +483,27 @@ public static class MessagingEndpoints
         var request = httpContext.Request;
         if (request.ContentLength > AudioBodyMaxBytes)
         {
-            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
         }
 
-        IFormCollection form;
         try
         {
-            form = request.HasFormContentType
+            var form = request.HasFormContentType
                 ? await request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = AudioBodyMaxBytes }, cancellationToken)
                 : FormCollection.Empty;
+            return (form, null);
         }
         catch (InvalidDataException)
         {
             // MultipartBodyLengthLimit superado en un cuerpo sin Content-Length.
-            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
         }
         catch (BadHttpRequestException exception)
         {
             // Lo que Kestrel corta al leer (el tope superado, o un cuerpo más corto que su Content-Length): un request malo,
             // no una falla nuestra. Sin esto ApiExceptionHandler lo volvería un 500 (mismo criterio que WebhookBodyReader).
-            return Results.StatusCode(exception.StatusCode);
+            return (null, Results.StatusCode(exception.StatusCode));
         }
-
-        var command = new SendAudioMessageCommand(
-            tenantId, conversationId, ParseClientId(form["clientId"]), await ReadAudioAsync(form.Files.GetFile("file"), cancellationToken), ParseReplyTo(form["replyTo"]));
-        var message = await dispatcher.SendAsync(command, cancellationToken);
-        // Sin Location, igual que el texto.
-        return Results.Created((string?)null, message);
     }
 
     // ≤ 17 MB por el tope del cuerpo; el validador decide si cabe en los 16 MB de Meta. Un solo arreglo del tamaño del
@@ -488,7 +521,7 @@ public static class MessagingEndpoints
         return audio;
     }
 
-    private static Guid? ParseClientId(StringValues value) => Guid.TryParse(value.ToString(), out var id) ? id : null;
+    internal static Guid? ParseClientId(StringValues value) => Guid.TryParse(value.ToString(), out var id) ? id : null;
 
     /// <summary>Ausente o vacío: sin cita. Presente y no GUID: <c>Guid.Empty</c>, para que el validador lo marque en
     /// <c>errors.replyTo</c> en vez de ignorar la cita en silencio.</summary>
@@ -621,5 +654,8 @@ public sealed record SendTemplateRequest(Guid? ClientId, string? Name, string? L
 
 /// <summary>Spec 2026-10-11 §5.2: <c>POST /conversations</c>.</summary>
 public sealed record StartConversationRequest(Guid? ClientId, Guid? ConnectionId, Guid? CustomerId, StartConversationTemplateRequest? Template);
+
+/// <summary>Spec 2026-11-17: <c>POST /conversations/open</c>. Sin <c>connectionId</c>, la única conexión de WhatsApp activa.</summary>
+public sealed record OpenCustomerConversationRequest(Guid? CustomerId, Guid? ConnectionId);
 
 public sealed record StartConversationTemplateRequest(string? Name, string? Language, Dictionary<string, string?>? Parameters);

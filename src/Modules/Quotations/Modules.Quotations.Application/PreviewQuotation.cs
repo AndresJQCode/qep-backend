@@ -21,7 +21,11 @@ public sealed record PreviewQuotationQuery(
     IReadOnlyList<QuotationItemAddition> Items,
     int? GlobalScaleFloor,
     bool IsRetail,
-    ShippingRequest? Shipping = null) : IQuery<QuotationDto>, IQuotationEdits;
+    ShippingRequest? Shipping = null,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    Guid? BillingCompanyId = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las mismas reglas que el guardado salvo el documento de la facturación, que el cálculo
 /// previo no exige: corre mientras la persona escribe (ver <c>Quotation.EnsureBillingIdentified</c>).</summary>
@@ -39,12 +43,14 @@ public sealed class PreviewQuotationValidator()
 /// </summary>
 public sealed class PreviewQuotationHandler(
     IQuotationRepository repository,
-    IQuotationCustomerLookup customerLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationGeographyLookup geographyLookup,
+    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -73,8 +79,10 @@ public sealed class PreviewQuotationHandler(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
 
         await QuotationEditsApplication.ApplyAsync(
-            quotation, query, query.TenantId, customerLookup, companyLookup, pricingLookup, settingsStore, priceRounding,
-            shippingResolver, updatedBy, clock.UtcNow, cancellationToken);
+            quotation, query, query.TenantId, companyLookup, pricingLookup, settingsStore, priceRounding,
+            shippingResolver,
+            QuotationWithholdingContext.For(withholdingLookup, geographyLookup, tenantClock, query.TenantId, quotation),
+            updatedBy, clock.UtcNow, cancellationToken);
 
         return quotation.ToDto() with { Version = storedVersion };
     }

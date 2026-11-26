@@ -59,7 +59,8 @@ public sealed partial class EngineEndToEndTests
 
     private static async Task<Fixture> ArrangeAsync(
         TestDatabase database, string trigger = "NewConversation", string[]? keywords = null, bool enqueue = true, string flowJson = FlowJson,
-        int? inboxBatchSize = null)
+        int? inboxBatchSize = null, IReadOnlyDictionary<string, string>? settings = null,
+        Func<WebApplicationFactory<Program>, RegisteredTenant, Task<string>>? flowOf = null)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString, enqueueAutomation: enqueue);
@@ -75,11 +76,22 @@ public sealed partial class EngineEndToEndTests
             {
                 builder.UseSetting("Automations:Workers:InboxBatchSize", size.ToString(CultureInfo.InvariantCulture));
             }
+
+            foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+            {
+                builder.UseSetting(key, value);
+            }
         });
         var tenant = await RegisterTenantAsync(host);
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
         var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio", PhoneNumberId, "222");
         using var admin = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        // A flow that names tenant data (a tag, a stage) seeds it and is written once the tenant exists, before publishing validates it.
+        if (flowOf is not null)
+        {
+            flowJson = await flowOf(host, tenant);
+        }
+
         var chatbotId = await PublishChatbotAsync(admin, tenant.TenantId, flowJson, connectionId, trigger, keywords ?? []);
         var meta = new BotMeta(factory.MetaHandler);
         return new Fixture(factory, host, connectionString, tenant, connectionId, chatbotId, host.CreateClient(), notifier, meta);
@@ -112,9 +124,13 @@ public sealed partial class EngineEndToEndTests
     private static Task<string> RunAsync(Fixture f, string columns) =>
         ScalarAsync<string>(f.ConnectionString, $"SELECT {columns} FROM automations.conversation_runs ORDER BY started_at DESC LIMIT 1");
 
+    // Sólo las filas del motor: la señal ReleaseRun de una acción humana (spec 2026-11-03) se asierta aparte con ReleaseRowsAsync.
     private static Task<string> OutcomesAsync(Fixture f) =>
         ScalarAsync<string>(f.ConnectionString,
-            "SELECT coalesce(string_agg(coalesce(outcome, '-'), ',' ORDER BY created_at, message_id), '') FROM messaging.automation_inbox");
+            "SELECT coalesce(string_agg(coalesce(outcome, '-'), ',' ORDER BY created_at, message_id), '') FROM messaging.automation_inbox WHERE kind = 'Engine'");
+
+    private static Task<long> ReleaseRowsAsync(Fixture f) =>
+        CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.automation_inbox WHERE kind = 'ReleaseRun'");
 
     private static Task<long> BotMessagesAsync(Fixture f) =>
         CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE sent_by_kind = 2 AND status <> 4");
@@ -417,7 +433,7 @@ public sealed partial class EngineEndToEndTests
 
         // «Devolver al asistente» (spec 1): Active sin corrida.
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, version = version + 1",
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, version = version + 1",
             ("c", f.ChatbotId));
         await InboundAsync(f, "w2", "cualquier cosa");
         await DrainAutomationsAsync(f.Host);
@@ -649,7 +665,10 @@ public sealed partial class EngineEndToEndTests
         public static string InboundText(string phoneNumberId, string waId, string wamid, long timestamp, string text) =>
             Messages(phoneNumberId, waId, new JsonObject
             {
-                ["from"] = waId, ["id"] = wamid, ["timestamp"] = Seconds(timestamp), ["type"] = "text",
+                ["from"] = waId,
+                ["id"] = wamid,
+                ["timestamp"] = Seconds(timestamp),
+                ["type"] = "text",
                 ["text"] = new JsonObject { ["body"] = text },
             });
 
@@ -658,10 +677,14 @@ public sealed partial class EngineEndToEndTests
         {
             var message = new JsonObject
             {
-                ["from"] = waId, ["id"] = wamid, ["timestamp"] = Seconds(timestamp), ["type"] = "interactive",
+                ["from"] = waId,
+                ["id"] = wamid,
+                ["timestamp"] = Seconds(timestamp),
+                ["type"] = "interactive",
                 ["interactive"] = new JsonObject
                 {
-                    ["type"] = "button_reply", ["button_reply"] = new JsonObject { ["id"] = replyId, ["title"] = title },
+                    ["type"] = "button_reply",
+                    ["button_reply"] = new JsonObject { ["id"] = replyId, ["title"] = title },
                 },
             };
             if (quotedWamid is not null)
@@ -682,7 +705,9 @@ public sealed partial class EngineEndToEndTests
                 ["metadata"] = new JsonObject { ["display_phone_number"] = "15550000000", ["phone_number_id"] = phoneNumberId },
                 ["contacts"] = new JsonArray(new JsonObject
                 {
-                    ["profile"] = new JsonObject { ["name"] = "Laura" }, ["user_id"] = userId, ["wa_id"] = waId,
+                    ["profile"] = new JsonObject { ["name"] = "Laura" },
+                    ["user_id"] = userId,
+                    ["wa_id"] = waId,
                 }),
                 ["messages"] = new JsonArray(message),
             };

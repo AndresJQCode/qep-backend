@@ -14,10 +14,17 @@
          registro vive acá. Los LayerTests siguen comparando ensamblados de módulo entre sí: esta
          referencia no los afecta. -->
     <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
+    <!-- MultiReplicaInventoryTests repite los registros que Program.cs hace fuera de AddQepPlatform (AddWebTelemetry,
+         AddMessagingRealtime…): sin el ensamblado Api, un singleton con estado registrado ahí quedaría sin clasificar. -->
+    <ProjectReference Include="..\..\..\src\Api\Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Application\Modules.Audit.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Authorization\Modules.Authorization.Application\Modules.Authorization.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Api\Modules.Ai.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Application\Modules.Ai.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Domain\Modules.Ai.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Infrastructure\Modules.Ai.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Automations\Modules.Automations.Api\Modules.Automations.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Automations\Modules.Automations.Application\Modules.Automations.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Automations\Modules.Automations.Domain\Modules.Automations.Domain.csproj" />
@@ -39,10 +46,46 @@
     <ProjectReference Include="..\..\..\src\Modules\ServiceContracts\Modules.ServiceContracts.Application\Modules.ServiceContracts.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ServiceContracts\Modules.ServiceContracts.Domain\Modules.ServiceContracts.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ServiceContracts\Modules.ServiceContracts.Infrastructure\Modules.ServiceContracts.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Hr\Modules.Hr.Api\Modules.Hr.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Hr\Modules.Hr.Application\Modules.Hr.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Hr\Modules.Hr.Domain\Modules.Hr.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Hr\Modules.Hr.Infrastructure\Modules.Hr.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Payroll\Modules.Payroll.Api\Modules.Payroll.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Payroll\Modules.Payroll.Application\Modules.Payroll.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Payroll\Modules.Payroll.Domain\Modules.Payroll.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Payroll\Modules.Payroll.Infrastructure\Modules.Payroll.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Api\Modules.Scheduling.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Application\Modules.Scheduling.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Domain\Modules.Scheduling.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Infrastructure\Modules.Scheduling.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Api\Modules.Loans.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Domain\Modules.Loans.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Api\Modules.Purchases.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Application\Modules.Purchases.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Domain\Modules.Purchases.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Infrastructure\Modules.Purchases.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wholesale\Modules.Wholesale.Api\Modules.Wholesale.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wholesale\Modules.Wholesale.Application\Modules.Wholesale.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wholesale\Modules.Wholesale.Domain\Modules.Wholesale.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Wholesale\Modules.Wholesale.Infrastructure\Modules.Wholesale.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Siigo\Modules.Siigo.Api\Modules.Siigo.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Siigo\Modules.Siigo.Application\Modules.Siigo.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Siigo\Modules.Siigo.Domain\Modules.Siigo.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Siigo\Modules.Siigo.Infrastructure\Modules.Siigo.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Api\Modules.Support.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Application\Modules.Support.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Domain\Modules.Support.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Infrastructure\Modules.Support.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Api\Modules.Store.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Application\Modules.Store.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Domain\Modules.Store.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Api\Modules.Buyers.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Application\Modules.Buyers.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Domain\Modules.Buyers.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Infrastructure\Modules.Buyers.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Wms\Modules.Wms.Api\Modules.Wms.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Wms\Modules.Wms.Application\Modules.Wms.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Wms\Modules.Wms.Domain\Modules.Wms.Domain.csproj" />
@@ -78,6 +121,7 @@
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Domain\Modules.Identity.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Api\Modules.Notifications.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Application\Modules.Notifications.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Quotations\Modules.Quotations.Api\Modules.Quotations.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Quotations\Modules.Quotations.Application\Modules.Quotations.Application.csproj" />

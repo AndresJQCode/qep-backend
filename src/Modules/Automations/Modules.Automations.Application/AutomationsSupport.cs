@@ -56,6 +56,9 @@ internal static class AutomationsNotFound
     public static ResourceNotFoundException Chatbot(Guid id) =>
         new(AutomationsErrorCodes.ChatbotNotFound, $"Chatbot '{id}' was not found.");
 
+    public static ResourceNotFoundException ChatbotVersion(int number) =>
+        new(AutomationsErrorCodes.ChatbotVersionNotFound, $"Chatbot version '{number}' was not found.");
+
     /// <summary>El id llega como texto: el de una plantilla del sistema o el Guid de una del tenant.</summary>
     public static ResourceNotFoundException Template(string id) =>
         new(AutomationsErrorCodes.TemplateNotFound, $"Chatbot template '{id}' was not found.");

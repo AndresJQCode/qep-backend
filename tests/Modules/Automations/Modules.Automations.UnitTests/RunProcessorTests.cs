@@ -1170,7 +1170,10 @@ public sealed partial class RunProcessorTests
         var variables = RunVariables.Empty();
         variables.Set("factura", new System.Text.Json.Nodes.JsonObject
         {
-            ["messageId"] = messageId.ToString(), ["fileName"] = "f.pdf", ["mimeType"] = "application/pdf", ["stored"] = false,
+            ["messageId"] = messageId.ToString(),
+            ["fileName"] = "f.pdf",
+            ["mimeType"] = "application/pdf",
+            ["stored"] = false,
         });
         return variables;
     }
@@ -1186,9 +1189,12 @@ public sealed partial class RunProcessorTests
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
         IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
         EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation,
-        bool hoursOpen = true, bool resolvedAfterRun = false)
+        bool hoursOpen = true, bool resolvedAfterRun = false, bool aiEnabled = true, IChatbotMediaStore? chatbotMedia = null,
+        RecordingCrm? crm = null)
     {
         public RecordingInbox Inbox { get; } = new();
+
+        public RecordingCrm Crm { get; } = crm ?? new();
 
         public RecordingDataConsents DataConsents { get; } = dataConsents ?? new(DataConsentCheck.NotAccepted);
 
@@ -1200,6 +1206,8 @@ public sealed partial class RunProcessorTests
 
         public RecordingAudit Audit { get; } = new();
 
+        public NoUnitOfWork Unit { get; } = new(onLock, lockBusy);
+
         public RunProcessor Processor()
         {
             var conversations = Conversations;
@@ -1207,11 +1215,12 @@ public sealed partial class RunProcessorTests
             var hours = new OpenHours(hoursOpen);
             var files = media ?? new NoMedia();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings, trigger),
-                NullLogger<RunEffects>.Instance);
+                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, chatbotMedia ?? new MemoryChatbotMedia(), audit, DataConsents,
+                Crm, new ServingChatbots(flow, engineSettings, trigger),
+                new ModuleStatus(moduleEnabled, aiEnabled), NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,
-                files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
+                Unit, Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                files, new ModuleStatus(moduleEnabled, aiEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
 
@@ -1356,6 +1365,29 @@ public sealed partial class RunProcessorTests
     private sealed class Conversations(Exception? startFailure, AutomationConversationState? state, Exception? endFailure, bool resolvedAfterRun = false)
         : IAutomationConversations
     {
+        /// <summary>Spec 2026-11-17: cada delegación pedida, en orden.</summary>
+        public List<DelegationRequest> Delegations { get; } = [];
+
+        /// <summary>Lo que lanza la delegación cuando la conversación ya no es del chatbot.</summary>
+        public Exception? DelegateFailure { get; set; }
+
+        /// <summary>Spec 2026-11-17 §6.3: las delegaciones que lee el retorno, por id.</summary>
+        public Dictionary<Guid, DelegationResult> DelegationResults { get; } = [];
+
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken)
+        {
+            if (DelegateFailure is not null)
+            {
+                return Task.FromException<Guid>(DelegateFailure);
+            }
+
+            Delegations.Add(request);
+            return Task.FromResult(Guid.CreateVersion7());
+        }
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            Task.FromResult(DelegationResults.GetValueOrDefault(delegationId));
+
         /// <summary>Spec 2026-10-26 D-12b: las veces que el procesador preguntó por una resolución y desde cuándo.</summary>
         public List<DateTimeOffset> ResolvedChecks { get; } = [];
 
@@ -1382,9 +1414,25 @@ public sealed partial class RunProcessorTests
 
         public int Reads { get; private set; }
 
+        /// <summary>Spec 2026-11-03: la conversación ya no existe (<c>GetAsync</c> responde <c>null</c>).</summary>
+        public bool Missing { get; set; }
+
+        /// <summary>Spec 2026-11-03: la lectura de la conversación falla con una excepción no prevista.</summary>
+        public Exception? ReadFailure { get; set; }
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
         {
             Reads++;
+            if (ReadFailure is not null)
+            {
+                return Task.FromException<AutomationConversationState?>(ReadFailure);
+            }
+
+            if (Missing)
+            {
+                return Task.FromResult<AutomationConversationState?>(null);
+            }
+
             return Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
         }
@@ -1463,6 +1511,17 @@ public sealed partial class RunProcessorTests
             Interactives.Add((message, messageId));
             return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(messageId));
         }
+
+        /// <summary>Spec 2026-11-18: cada archivo con su clientId; siempre sale (los rechazos de estas pruebas son del texto).</summary>
+        public List<(Guid ClientId, BotMediaMessage Message)> MediaSends { get; } = [];
+
+        public Task<BotSendOutcome> SendMediaAsync(
+            Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, BotMediaMessage message, CancellationToken cancellationToken)
+        {
+            Sent.Add(clientId);
+            MediaSends.Add((clientId, message));
+            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
+        }
     }
 
     private sealed class OpenHours(bool open = true) : IAutomationBusinessHours
@@ -1518,9 +1577,11 @@ public sealed partial class RunProcessorTests
         public Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class ModuleStatus(bool enabled) : IAutomationsModuleStatus
+    private sealed class ModuleStatus(bool enabled, bool aiEnabled = true) : IAutomationsModuleStatus
     {
         public Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(enabled);
+
+        public Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(aiEnabled);
     }
 
     private sealed class RecordingAudit : IAutomationsAuditRecorder

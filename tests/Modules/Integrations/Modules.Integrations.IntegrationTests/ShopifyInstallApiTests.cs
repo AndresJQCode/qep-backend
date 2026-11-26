@@ -99,7 +99,7 @@ public sealed class ShopifyInstallApiTests
         var authorize = await response.Content.ReadFromJsonAsync<ShopifyAuthorizeResponse>(Ct);
         Assert.NotNull(authorize);
         Assert.StartsWith(
-            $"https://mi-tienda.myshopify.com/admin/oauth/authorize?client_id={ShopifyClientId}&scope=read_orders%2Cread_customers&redirect_uri={Uri.EscapeDataString(ShopifyRedirectUri)}&state=",
+            $"https://mi-tienda.myshopify.com/admin/oauth/authorize?client_id={ShopifyClientId}&scope=read_orders%2Cwrite_orders%2Cread_customers&redirect_uri={Uri.EscapeDataString(ShopifyRedirectUri)}&state=",
             authorize.AuthorizeUrl,
             StringComparison.Ordinal);
         Assert.DoesNotContain("grant_options", authorize.AuthorizeUrl, StringComparison.Ordinal);
@@ -251,7 +251,11 @@ public sealed class ShopifyInstallApiTests
         var state = await StartFromTenantAsync(owner, tenant.TenantId);
         using var anonymous = factory.CreateClient();
 
+        // El canje fecha con el reloj de la API (SystemClock, el del host), no con el de Postgres: el contenedor
+        // puede ir corrido respecto del host, así que la ventana se arma con el reloj del host alrededor del canje.
+        var beforeExchange = DateTimeOffset.UtcNow;
         var completed = await SendAsync(anonymous, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+        var afterExchange = DateTimeOffset.UtcNow;
         var completedText = await completed.Content.ReadAsStringAsync(Ct);
 
         Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
@@ -268,18 +272,38 @@ public sealed class ShopifyInstallApiTests
             connectionString,
             """
             SELECT count(*) FROM integrations.shopify_installs
-            WHERE id = @id AND shop_id = '12345678' AND shop_name = 'Mi Tienda' AND scopes = 'read_orders,read_customers'
+            WHERE id = @id AND shop_id = '12345678' AND shop_name = 'Mi Tienda' AND scopes = 'read_orders,write_orders,read_customers'
               AND access_token_protected IS NOT NULL AND key_id = 'test'
-              AND expires_at > now() + interval '6 days 23 hours' AND expires_at <= now() + interval '7 days'
+              AND expires_at >= @earliest AND expires_at <= @latest
               AND position(convert_to(@token, 'UTF8') in access_token_protected) = 0
             """,
             ("id", install.InstallId),
+            ("earliest", beforeExchange.AddDays(7)),
+            ("latest", afterExchange.AddDays(7)),
             ("token", SentinelShopifyAccessToken)));
+
+        // Spec 2026-11-12 §6.1: el refresh token cifrado (nunca el texto) y los dos vencimientos, a 1 hora y a 90 días.
+        Assert.Equal(1, await ScalarAsync<long>(
+            connectionString,
+            """
+            SELECT count(*) FROM integrations.shopify_installs
+            WHERE id = @id AND refresh_token_protected IS NOT NULL
+              AND access_token_expires_at >= @tokenEarliest AND access_token_expires_at <= @tokenLatest
+              AND refresh_token_expires_at >= @refreshEarliest AND refresh_token_expires_at <= @refreshLatest
+              AND position(convert_to(@refresh, 'UTF8') in refresh_token_protected) = 0
+            """,
+            ("id", install.InstallId),
+            ("tokenEarliest", beforeExchange.AddHours(1)),
+            ("tokenLatest", afterExchange.AddHours(1)),
+            ("refreshEarliest", beforeExchange.AddDays(90)),
+            ("refreshLatest", afterExchange.AddDays(90)),
+            ("refresh", "shprt_install-refresh-SENTINEL")));
 
         // A Shopify: el canje con el par de la app y el code; la Admin API con el token recién canjeado.
         var requests = factory.ShopifyHandler.Requests.ToArray();
         Assert.Equal(2, requests.Length);
         Assert.Equal($"https://{Shop}/admin/oauth/access_token", requests[0].Uri!.ToString());
+        Assert.Contains("\"expiring\":\"1\"", requests[0].Body, StringComparison.Ordinal);
         Assert.Contains(SentinelShopifyCode, requests[0].Body, StringComparison.Ordinal);
         Assert.Contains(SentinelShopifyClientSecret, requests[0].Body, StringComparison.Ordinal);
         Assert.Equal($"https://{Shop}/admin/api/2026-10/graphql.json", requests[1].Uri!.ToString());
@@ -438,6 +462,28 @@ public sealed class ShopifyInstallApiTests
         Assert.DoesNotContain("SENTINEL", await RequestFailuresTextAsync(connectionString), StringComparison.Ordinal);
         Assert.Equal(1, await ScalarAsync<long>(
             connectionString, "SELECT count(*) FROM integrations.shopify_installs WHERE access_token_protected IS NULL AND shop_id IS NULL"));
+    }
+
+    // Spec 2026-11-12 §6.1: un token que no expira (sin refresh_token) no se guarda; desde el 2027-01-01 no serviría.
+    [Fact]
+    public async Task CompleteWithANonExpiringTokenReturns422AndStoresNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.ShopifyHandler.Respond(
+            "/admin/oauth/access_token$", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelShopifyAccessToken}}","scope":"read_orders,write_orders,read_customers"}""");
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var state = await StartFromTenantAsync(owner, tenant.TenantId);
+        using var anonymous = factory.CreateClient();
+
+        var response = await SendAsync(anonymous, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("integrations.shopify.code_exchange_failed", (await ProblemAsync(response)).Code);
+        Assert.Equal(1, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM integrations.shopify_installs WHERE access_token_protected IS NULL AND refresh_token_protected IS NULL"));
     }
 
     // El canje lo llama el SPA con fetch —Shopify sólo redirige el navegador a /shopify/callback, una página del

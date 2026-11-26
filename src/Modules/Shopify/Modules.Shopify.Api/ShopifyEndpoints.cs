@@ -26,6 +26,11 @@ public static class ShopifyEndpoints
             .Produces<ShopifyStoreDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        group.MapGet("/stores/{connectionId:guid}/document-sources", GetDocumentSourcesAsync)
+            .RequireAuthorization(ShopifyPermissions.ConnectionRead)
+            .Produces<ShopifyDocumentSourcesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapPut("/stores/{connectionId:guid}", UpdateStoreAsync)
             .RequireAuthorization(ShopifyPermissions.ConnectionManage)
             .Produces<ShopifyStoreDto>()
@@ -33,6 +38,23 @@ public static class ShopifyEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        // Spec 2026-11-17 (onboarding) §4.1: el asistente de la tienda (BFF).
+        group.MapGet("/stores/{connectionId:guid}/setup", GetSetupAsync)
+            .RequireAuthorization(ShopifyPermissions.ConnectionManage)
+            .Produces<ShopifySetupDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        // §4.2: crear o elegir la empresa de la tienda. 201 si la creó, 200 si sólo la asignó; If-Match con la versión de la tienda.
+        group.MapPost("/stores/{connectionId:guid}/setup/company", AssignSetupCompanyAsync)
+            .RequireAuthorization(ShopifyPermissions.ConnectionManage)
+            .Produces<ShopifySetupCompanyResultDto>(StatusCodes.Status201Created)
+            .Produces<ShopifySetupCompanyResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
         group.MapPost("/stores/{connectionId:guid}/sync", SyncStoreAsync)
             .RequireAuthorization(ShopifyPermissions.OrderManage)
@@ -81,6 +103,10 @@ public static class ShopifyEndpoints
         return Results.Ok(store);
     }
 
+    private static async Task<IResult> GetDocumentSourcesAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetShopifyDocumentSourcesQuery(tenantId, connectionId), cancellationToken));
+
     // Mismo contrato que el resto del repo: sin If-Match 428, versión vieja 412 (en el handler), y el ETag trae la nueva.
     private static async Task<IResult> UpdateStoreAsync(
         Guid tenantId,
@@ -103,15 +129,57 @@ public static class ShopifyEndpoints
                 request.DocumentAttributeKey,
                 request.DocumentTypeAttributeKey,
                 request.DefaultIdentificationType,
+                request.HistoryDays,
+                request.EditSync,
+                request.EditPaymentStatuses,
                 RequireVersion(httpContext)),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{store.Version}\"";
         return Results.Ok(store);
     }
 
+    private static async Task<IResult> GetSetupAsync(
+        Guid tenantId,
+        Guid connectionId,
+        [FromQuery] string? redirectUri,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetShopifySetupQuery(tenantId, connectionId, redirectUri), cancellationToken));
+
+    private static async Task<IResult> AssignSetupCompanyAsync(
+        Guid tenantId,
+        Guid connectionId,
+        ShopifySetupCompanyRequest request,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync(
+            new AssignShopifySetupCompanyCommand(
+                tenantId,
+                connectionId,
+                request.CompanyId,
+                request.Name,
+                request.TaxId,
+                request.DocumentType,
+                request.Country,
+                request.CityId,
+                request.CityName,
+                request.Address,
+                request.Phone,
+                request.Email,
+                request.ChargesVat,
+                request.BankAccount,
+                RequireVersion(httpContext)),
+            cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{result.StoreVersion}\"";
+        return result.Created ? Results.Json(result, statusCode: StatusCodes.Status201Created) : Results.Ok(result);
+    }
+
+    // Spec 2026-11-17 (onboarding) §7: ?source=setup (el paso «Historial») guarda el resumen; la respuesta no cambia.
     private static async Task<IResult> SyncStoreAsync(
-        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.SendAsync(new SyncShopifyStoreCommand(tenantId, connectionId), cancellationToken));
+        Guid tenantId, Guid connectionId, [FromQuery] string? source, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new SyncShopifyStoreCommand(tenantId, connectionId, source), cancellationToken));
 
     // §7: state acepta varios, repetido (?state=Waiting&state=Ignored) o separado por comas (?state=Waiting,Ignored).
     private static async Task<IResult> ListOrdersAsync(
@@ -151,7 +219,7 @@ public static class ShopifyEndpoints
                 "A valid If-Match header containing the loaded store version is required.");
 
     // Acepta lo que la SPA ya manda en el resto del repo: "7" y también el débil W/"7".
-    private static bool TryParseVersion(string? etag, out long version)
+    internal static bool TryParseVersion(string? etag, out long version)
     {
         version = 0;
         if (string.IsNullOrWhiteSpace(etag))
@@ -170,6 +238,22 @@ public static class ShopifyEndpoints
     }
 }
 
+/// <summary>El cuerpo de <c>POST /stores/{connectionId}/setup/company</c> (spec 2026-11-17 onboarding §4.2). Todo opcional en el
+/// binding: lo que falte lo dice el validador con <c>errors</c>.</summary>
+public sealed record ShopifySetupCompanyRequest(
+    Guid? CompanyId,
+    string? Name,
+    string? TaxId,
+    string? DocumentType,
+    string? Country,
+    Guid? CityId,
+    string? CityName,
+    string? Address,
+    string? Phone,
+    string? Email,
+    bool? ChargesVat,
+    ShopifySetupBankAccountInput? BankAccount);
+
 /// <summary>El cuerpo de <c>PUT /stores/{connectionId}</c> (§6.1). Todo opcional en el binding para que un campo ausente sea un
 /// 422 con <c>errors</c> del validador y no un 400 del deserializador.</summary>
 public sealed record UpdateShopifyStoreRequest(
@@ -181,4 +265,7 @@ public sealed record UpdateShopifyStoreRequest(
     Guid? DefaultClassificationId,
     string? DocumentAttributeKey,
     string? DocumentTypeAttributeKey,
-    string? DefaultIdentificationType);
+    string? DefaultIdentificationType,
+    int? HistoryDays,
+    string? EditSync = null,
+    IReadOnlyList<string>? EditPaymentStatuses = null);

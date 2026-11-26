@@ -40,8 +40,9 @@ public sealed class QuotationRetailTests
             QuotationParties.Empty,
             billingAccount,
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -155,6 +156,7 @@ public sealed class QuotationRetailTests
             repricing: null,
             isRetail,
             globalScaleFloor,
+            MunicipalContext.None,
             AdvisorId,
             Now.AddHours(3));
 

@@ -19,7 +19,7 @@ public sealed record QuotationPartyDetails
     /// <see cref="QuotationParty"/> lo descarta en la de entrega.</summary>
     public PartyPersonType? PersonType { get; init; }
 
-    /// <summary>NIT, CC, CE o PASAPORTE: el tipo del <see cref="IdentificationNumber"/>. Misma
+    /// <summary>Uno de los siete códigos (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID; qué país acepta cuáles lo dice <c>DocumentTypesByCountry</c>): el tipo del <see cref="IdentificationNumber"/>. Misma
     /// suerte que el número: sólo existe en facturación y se exige donde el número se exige.</summary>
     public PartyIdentificationType? IdentificationType { get; init; }
 
@@ -32,6 +32,32 @@ public sealed record QuotationPartyDetails
     public Guid? DepartmentId { get; init; }
 
     public Guid? CityId { get; init; }
+
+    /// <summary>País ISO 3166-1 alfa-2. <c>null</c> es Colombia (<c>CO</c>), que es lo que tienen todas las
+    /// filas guardadas antes de la columna y lo que sigue mandando Shopify. Un país distinto trae la
+    /// ciudad escrita (<see cref="CityName"/>) y ningún id de DIVIPOLA.</summary>
+    public string? Country { get; init; }
+
+    /// <summary>La ciudad como texto, sólo fuera de Colombia: no hay catálogo contra el cual validarla.</summary>
+    public string? CityName { get; init; }
+
+    /// <summary>The region (province, state) of a party outside Colombia, a soft reference to
+    /// <c>geography</c> for countries with a region catalogue. Colombia derives it from the department
+    /// and city ids, so a Colombian party never carries one.</summary>
+    public Guid? RegionId { get; init; }
+
+    /// <summary>The postal code of the delivery party (spec 2026-11-24), in Colombia and abroad. Only the shipping
+    /// party stores it: <see cref="QuotationParty"/> and <see cref="OrderParty"/> drop it on billing. Trimmed and
+    /// capped, with no per-country format: there is no table of formats.</summary>
+    public string? PostalCode { get; init; }
+
+    public const string ColombiaCountryCode = "CO";
+
+    public const int CountryLength = 2;
+
+    public const int CityNameMaxLength = 120;
+
+    public const int PostalCodeMaxLength = 20;
 
     // Mismos topes que Customer para los campos que son el mismo dato: una parte es una copia
     // puntual de la ficha del cliente, no puede aceptar más de lo que la ficha acepta.
@@ -48,8 +74,117 @@ public sealed record QuotationPartyDetails
     // el dominio de Customers; si allá cambia, cambia acá también.
     public const int IdentificationNumberMaxLength = 32;
 
-    internal QuotationPartyDetails Normalized() => new()
+    /// <summary>Colombia por omisión: <c>null</c>, vacío y <c>CO</c> son la misma parte.</summary>
+    public bool IsColombian =>
+        string.IsNullOrWhiteSpace(Country)
+        || string.Equals(Country.Trim(), ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>El carril de la ciudad, igual que en la libreta de direcciones: Colombia lleva
+    /// departamento y ciudad de DIVIPOLA, el resto el nombre de la ciudad. Completa si están los dos.</summary>
+    public bool HasCompleteCity => IsColombian
+        ? DepartmentId is not null && CityId is not null
+        : !string.IsNullOrWhiteSpace(CityName);
+
+    internal QuotationPartyDetails Normalized(string fieldPrefix)
     {
+        var country = NormalizeCountry(Country);
+        var normalized = this with { Country = country };
+        normalized.EnsureLane(fieldPrefix);
+        normalized.EnsureDocumentTypeAllowed(fieldPrefix);
+        normalized.EnsurePostalCodeFits(fieldPrefix);
+        return normalized.NormalizedFields(country);
+    }
+
+    // Con el campo en errors y su propio código: el formulario marca el input y no hace falta una regla repetida en
+    // cada validador (cotización, pedido y sus previews pasan todos por acá).
+    private void EnsurePostalCodeFits(string fieldPrefix)
+    {
+        if (PostalCode?.Trim().Length > PostalCodeMaxLength)
+        {
+            var message = $"The party postal code cannot exceed {PostalCodeMaxLength} characters.";
+            throw new QuotationsDomainException(
+                "quotations.party.postal_code_too_long",
+                message,
+                new Dictionary<string, string[]>(StringComparer.Ordinal) { [$"{fieldPrefix}.PostalCode"] = [message] });
+        }
+    }
+
+    // Se rechaza en vez de limpiar el campo que sobra: un id con un país de afuera (o una ciudad escrita
+    // con CO) es una contradicción de quien escribe, y descartarla en silencio guardaría otra ciudad.
+    private void EnsureLane(string fieldPrefix)
+    {
+        if (IsColombian && !string.IsNullOrWhiteSpace(CityName))
+        {
+            throw LaneInvalid(
+                $"{fieldPrefix}.CityName",
+                "A Colombian party takes its city from the department and city ids, not from a city name.");
+        }
+
+        if (IsColombian && RegionId is not null && RegionId != Guid.Empty)
+        {
+            throw LaneInvalid(
+                $"{fieldPrefix}.RegionId",
+                "A Colombian party takes its region from the department, not from a region id.");
+        }
+
+        if (!IsColombian && (DepartmentId is not null && DepartmentId != Guid.Empty
+            || CityId is not null && CityId != Guid.Empty))
+        {
+            throw LaneInvalid(
+                $"{fieldPrefix}.CityId",
+                "A party outside Colombia takes its city as text, not from the department and city ids.");
+        }
+    }
+
+    // Sólo se comprueba al escribir (Normalized), nunca al cargar de la base: una fila guardada antes de la regla
+    // se lee igual y recién falla cuando alguien la guarda de nuevo.
+    private void EnsureDocumentTypeAllowed(string fieldPrefix)
+    {
+        if (IdentificationType is { } type && !type.IsAllowedFor(Country))
+        {
+            const string message = "The identification type is not allowed for the country.";
+            throw new QuotationsDomainException(
+                "quotations.party.document_type_not_allowed",
+                message,
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    [$"{fieldPrefix}.IdentificationType"] = [message]
+                });
+        }
+    }
+
+    private static QuotationsDomainException LaneInvalid(string field, string message) =>
+        new("quotations.party.city_lane_invalid", message,
+            new Dictionary<string, string[]>(StringComparer.Ordinal) { [field] = [message] });
+
+    // CO se guarda como null: una sola forma para Colombia, así las filas nuevas son iguales a las viejas y
+    // la igualdad de registros (Shopify compara partes) no depende de cómo se escribió el país.
+    private static string? NormalizeCountry(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var code = value.Trim().ToUpperInvariant();
+        if (code.Length != CountryLength || !code.All(char.IsAsciiLetterUpper))
+        {
+            throw new QuotationsDomainException(
+                "quotations.party.country_invalid",
+                "The party country must be an ISO 3166-1 alpha-2 code.");
+        }
+
+        return code == ColombiaCountryCode ? null : code;
+    }
+
+    private QuotationPartyDetails NormalizedFields(string? country) => new()
+    {
+        Country = country,
+        CityName = NormalizeOptional(
+            CityName,
+            CityNameMaxLength,
+            "quotation.party.city_name_too_long",
+            $"The party city name cannot exceed {CityNameMaxLength} characters."),
         Name = NormalizeOptional(
             Name,
             NameMaxLength,
@@ -80,7 +215,10 @@ public sealed record QuotationPartyDetails
             "quotation.party.address_too_long",
             $"The party address cannot exceed {AddressMaxLength} characters."),
         DepartmentId = NormalizeOptionalId(DepartmentId),
-        CityId = NormalizeOptionalId(CityId)
+        CityId = NormalizeOptionalId(CityId),
+        RegionId = NormalizeOptionalId(RegionId),
+        // El largo ya se comprobó (EnsurePostalCodeFits): acá sólo se recorta y vacío queda en null.
+        PostalCode = string.IsNullOrWhiteSpace(PostalCode) ? null : PostalCode.Trim()
     };
 
     // Vacio y ausente son lo mismo para un campo opcional, mismo criterio que
@@ -134,17 +272,10 @@ public sealed record QuotationParties(
     /// combinación — son dos nombres distintos para la misma factura y no hay uno que gane.
     /// </summary>
     bool BillsToFinalConsumer = false,
-    /// <summary>
-    /// Si quien recibe la factura —cuando <see cref="Billing"/> trae datos propios— practica
-    /// retención en la fuente. Con los datos del cliente, ese hecho lo dice el cliente
-    /// (<c>Customer.WithRetention</c>, ver <see cref="Quotation.CustomerWithRetention"/>); con
-    /// datos propios nadie más lo sabe, así que hay que preguntarlo — <c>null</c> mientras no se
-    /// contestó no es "no aplica", es "todavía no se sabe" (ver <see cref="Quotation.EnsureConvertibleToOrder"/>).
-    /// Se ignora cuando <see cref="Billing"/> es null: ahí manda el cliente.
-    /// </summary>
-    bool? BillingWithRetention = null,
-    /// <summary>Mismo criterio que <see cref="BillingWithRetention"/> pero para el excedente de
-    /// IVA (<c>Customer.VatSurplus</c> / <see cref="Quotation.CustomerVatSurplus"/>).</summary>
+    /// <summary>Si quien recibe la factura —cuando <see cref="Billing"/> trae datos propios— tiene
+    /// excedente de IVA. Con los datos del cliente lo dice el cliente (<c>Customer.VatSurplus</c> /
+    /// <see cref="Quotation.CustomerVatSurplus"/>); con datos propios hay que preguntarlo — <c>null</c>
+    /// mientras no se contestó es "todavía no se sabe" (ver <see cref="Quotation.EnsureConvertibleToOrder"/>).</summary>
     bool? BillingVatSurplus = null)
 {
     /// <summary>Las dos partes tomadas del cliente: ninguna fila. El estado por defecto de una

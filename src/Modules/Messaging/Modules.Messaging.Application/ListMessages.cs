@@ -31,7 +31,8 @@ public sealed class ListMessagesHandler(
     IMessagingCustomerDirectory customers,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IValidator<ListMessagesQuery> validator)
+    IValidator<ListMessagesQuery> validator,
+    IMessagingTicketNames ticketNames)
     : IQueryHandler<ListMessagesQuery, MessagePageDto>
 {
     public const int DefaultLimit = 50;
@@ -61,6 +62,14 @@ public sealed class ListMessagesHandler(
         var chatbots = await chatbotNames.ResolveAsync(query.TenantId, MessageMapping.ChatbotIdsOf(page), cancellationToken);
         var customerIds = MessageMapping.CustomerIdsOf(page);
         var customerRefs = customerIds.Count == 0 ? null : await customers.FindRefsAsync(query.TenantId, customerIds, cancellationToken);
-        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets, reasons, chatbots, customerRefs)).ToArray(), hasMore);
+        // Spec 2026-11-10: los teléfonos de todas las tarjetas de la página, en una sola llamada y sólo si hay tarjetas.
+        var sharedWaIds = MessageMapping.SharedContactWaIdsOf(page);
+        var sharedPhones = sharedWaIds.Count == 0 ? null : await customers.ResolveSharedPhonesAsync(query.TenantId, sharedWaIds, cancellationToken);
+        // Soporte fase 2: los números de los tickets de los eventos de la página, en una sola llamada y sólo si hay alguno.
+        var ticketIds = MessageMapping.TicketIdsOf(page);
+        var tickets = ticketIds.Count == 0 ? null : await ticketNames.FindNumbersAsync(query.TenantId, ticketIds, cancellationToken);
+        return new MessagePageDto(
+            page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets, reasons, chatbots, customerRefs, sharedPhones, tickets)).ToArray(),
+            hasMore);
     }
 }

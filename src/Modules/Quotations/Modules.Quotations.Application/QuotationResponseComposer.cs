@@ -1,3 +1,6 @@
+using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -27,7 +30,10 @@ public sealed class QuotationResponseComposer(
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
     IQuotationCompanyLookup companyLookup,
-    IQuotationSettingsStore settingsStore)
+    IQuotationSettingsStore settingsStore,
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationGeographyLookup geographyLookup,
+    ITenantClock tenantClock)
     : IQuotationResponseComposer
 {
     public async Task<QuotationResponse> ComposeAsync(
@@ -40,8 +46,8 @@ public sealed class QuotationResponseComposer(
             tenantId, [quotation.AdvisorId], cancellationToken);
         var advisor = advisors.GetValueOrDefault(quotation.AdvisorId);
 
-        // Sólo cuando la cotización eligió cuenta: una consulta más por pantalla, y ninguna en
-        // el caso normal de un borrador recién creado.
+        // Sólo cuando la cotización eligió empresa (con o sin cuenta): una consulta más por pantalla, y ninguna en el
+        // caso normal de un borrador recién creado.
         var company = quotation.BillingAccount is { } billing
             ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
             : null;
@@ -54,6 +60,25 @@ public sealed class QuotationResponseComposer(
         // Here and not in QuotationDto: every quotation response passes through this composer, and it
         // is async with DI — the static mapper called by ~25 handlers is neither (plan decision A13).
         var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
+
+        var clientContacts = await ClientContactsAsync(customerLookup, tenantId, customer, cancellationToken);
+
+        // Con parte de facturación propia la fuente vigente son sus selectores (Quotation.ActiveWithholdings).
+        var ownBilling = quotation.Parties.Any(party => party.Role == nameof(QuotationPartyRole.Billing));
+        var municipal = await MunicipalWithholdingExplanation.ExplainAsync(
+            withholdingLookup,
+            geographyLookup,
+            tenantId,
+            quotation.ClientId,
+            quotation.BillingAccount,
+            quotation.OperationCityId,
+            ownBilling,
+            ownBilling ? quotation.BillingWithholdingTaxRates : quotation.CustomerWithholdingTaxRates,
+            MunicipalWithholdingExplanation.DateOf(quotation.CreatedAt),
+            cancellationToken);
+        var taxUnits = await TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, quotation.CreatedAt, quotation.WithholdingBreakdown, cancellationToken);
+        var regionsById = await PartyRegionsAsync(geographyLookup, quotation.Parties, cancellationToken);
 
         return new QuotationResponse(
             quotation.Id,
@@ -77,7 +102,7 @@ public sealed class QuotationResponseComposer(
             quotation.RetentionAmount,
             quotation.NetTotal,
             quotation.Notes,
-            quotation.Parties.Select(ToPartyResponse).ToArray(),
+            quotation.Parties.Select(party => ToPartyResponse(party, regionsById)).ToArray(),
             quotation.BillingUsesBusinessName,
             quotation.BillingWithRetention,
             quotation.BillingVatSurplus,
@@ -103,8 +128,127 @@ public sealed class QuotationResponseComposer(
             AvailableFloors(quotation, products),
             ShippingResponse.From(quotation.Shipping),
             quotation.FreightSubtotal,
-            quotation.FreightTaxAmount);
+            quotation.FreightTaxAmount,
+            [.. quotation.Withholdings.Select(ToWithholdingResponse)],
+            [.. quotation.CustomerWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
+            [.. quotation.BillingWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
+            clientContacts,
+            municipal.OperationCity,
+            municipal.BillingCompanyCity,
+            municipal.Entries,
+            ToBreakdownResponse(quotation.WithholdingBreakdown, taxUnits),
+            quotation.RequiresShipping);
     }
+
+    /// <summary>Los contactos de la empresa del cliente (spec 2026-11-10 §4.6), en una consulta por documento. Un cliente que no
+    /// resuelve no tiene contactos que mostrar. Lo usa también el compositor del pedido: se escribe una vez.</summary>
+    internal static async Task<IReadOnlyList<ClientContactDto>> ClientContactsAsync(
+        IQuotationCustomerLookup customerLookup, Guid tenantId, QuotationCustomerRef? customer, CancellationToken cancellationToken)
+    {
+        if (customer is null)
+        {
+            return [];
+        }
+
+        var contacts = await customerLookup.ListContactsAsync(tenantId, customer.Id, cancellationToken);
+        return [.. contacts.Select(contact => new ClientContactDto(contact.Id, contact.Name, contact.Phone))];
+    }
+
+    /// <summary>
+    /// Lo que el desglose necesita del calendario y de Catalog para decir si la UVT de cada fila está vieja y cuál tomaría
+    /// hoy. El año del documento (spec retenciones por UVT §5.2) es el de su <c>CreatedAt</c> en la zona del tenant, la
+    /// misma fecha con que se congeló la foto: el 31 de diciembre a las 20:00 en Bogotá ya es el año siguiente en UTC. El
+    /// último año cargado por país (spec alerta UVT §5.4) sale de <see cref="IQuotationWithholdingLookup.TaxUnitsAsync"/>
+    /// con esa misma fecha, la regla del refresco, para que lo que se anuncia sea lo que el guardado aplicaría.
+    ///
+    /// Perezoso: el calendario se lee sólo si alguna fila trae año o unidad, y Catalog sólo si alguna trae unidad, una vez
+    /// por respuesta con los países distintos.
+    /// </summary>
+    internal static async Task<TaxUnitContext> TaxUnitContextAsync(
+        ITenantClock tenantClock,
+        IQuotationWithholdingLookup withholdingLookup,
+        Guid tenantId,
+        DateTimeOffset createdAt,
+        IReadOnlyList<WithholdingVerdictDto>? breakdown,
+        CancellationToken cancellationToken)
+    {
+        var rows = breakdown ?? [];
+        if (!rows.Any(verdict => verdict.TaxUnitYear is not null || verdict.MinimumBaseUnit is not null))
+        {
+            return TaxUnitContext.None;
+        }
+
+        var documentDate = DocumentDates.LocalDate(await tenantClock.GetAsync(tenantId, cancellationToken), createdAt);
+        string[] countries =
+        [
+            .. rows
+                .Where(verdict => verdict.MinimumBaseUnit is not null)
+                .Select(verdict => verdict.Country)
+                .Distinct(StringComparer.Ordinal),
+        ];
+        if (countries.Length == 0)
+        {
+            return new TaxUnitContext(documentDate.Year, TaxUnitContext.None.LatestYearByCountry);
+        }
+
+        var units = await withholdingLookup.TaxUnitsAsync(countries, documentDate, cancellationToken);
+        return new TaxUnitContext(
+            documentDate.Year, units.ToDictionary(unit => unit.Key, unit => unit.Value.Year, StringComparer.Ordinal));
+    }
+
+    /// <summary>El desglose tal como viaja. Una fila sin año (sin unidad o legada sin casar) nunca está desactualizada, y
+    /// una sin unidad no tiene último año que ofrecer.</summary>
+    internal static IReadOnlyList<WithholdingBreakdownResponse> ToBreakdownResponse(
+        IReadOnlyList<WithholdingVerdictDto>? breakdown, TaxUnitContext context) =>
+        [
+            .. (breakdown ?? []).Select(verdict => new WithholdingBreakdownResponse(
+                verdict.TaxRateId,
+                verdict.Name,
+                verdict.Type,
+                verdict.Country,
+                verdict.Percentage,
+                verdict.CatalogPercentage,
+                verdict.PercentageOverridden,
+                verdict.CityId,
+                verdict.Applies,
+                verdict.Reason,
+                verdict.Base,
+                verdict.MinimumBase,
+                verdict.MinimumBaseUnit,
+                verdict.MinimumBaseAmount,
+                verdict.TaxUnitValue,
+                verdict.TaxUnitYear,
+                IsOutdated(verdict.TaxUnitYear, context.DocumentYear),
+                verdict.MinimumBaseUnit is not null && context.LatestYearByCountry.TryGetValue(verdict.Country, out var latest)
+                    ? latest
+                    : null,
+                verdict.Amount,
+                verdict.AppliesTo)),
+        ];
+
+    internal static bool IsOutdated(int? taxUnitYear, int? documentYear) =>
+        taxUnitYear is { } year && documentYear is { } document && year < document;
+
+    // Internos por el mismo motivo que ToClientResponse: el detalle del pedido los pinta igual (OrderResponses).
+    internal static WithholdingResponse ToWithholdingResponse(WithholdingDto withholding) => new(
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.MinimumBase,
+        withholding.MinimumBaseUnit,
+        withholding.TaxUnitValue,
+        withholding.Base,
+        withholding.Amount,
+        withholding.CatalogPercentage,
+        withholding.PercentageOverridden,
+        withholding.CityId,
+        withholding.AppliesTo);
+
+    internal static WithholdingTaxRateResponse ToWithholdingTaxRateResponse(WithholdingTaxRateDto rate) =>
+        new(rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.CatalogPercentage, rate.PercentageOverridden,
+            rate.CityId, rate.AppliesTo);
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
     // respuesta abajo: `ClientId` es una referencia blanda entre módulos, y una cotización
@@ -142,11 +286,38 @@ public sealed class QuotationResponseComposer(
                         address.CityName,
                         address.DepartmentId,
                         address.DepartmentName,
-                        address.IsPrincipal))
+                        address.IsPrincipal,
+                        address.Country,
+                        address.Region))
                     .ToArray(),
                 customer.Country,
                 customer.PersonType,
-                customer.IdentificationType);
+                customer.IdentificationType,
+                customer.Region,
+                (customer.BillingProfiles ?? []).Select(ToBillingProfileResponse).ToArray(),
+                customer.BillingProfileLimit,
+                customer.IdentificationNumber);
+
+    private static QuotationClientBillingProfileResponse ToBillingProfileResponse(
+        QuotationCustomerBillingProfileRef profile) =>
+        new(
+            profile.Id,
+            profile.Name,
+            profile.PersonType,
+            profile.IdentificationType,
+            profile.IdentificationNumber,
+            profile.Phone,
+            profile.Email,
+            profile.Address,
+            profile.Country,
+            profile.CityId,
+            profile.CityName,
+            profile.DepartmentId,
+            profile.DepartmentName,
+            profile.Region,
+            profile.WithholdingTaxRates,
+            profile.VatSurplus,
+            profile.IsPrincipal);
 
     // La variante puede no existir más (se borró): la línea conserva lo que la cotización
     // congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único que este lado
@@ -200,7 +371,10 @@ public sealed class QuotationResponseComposer(
                     item.DiscountPercentage,
                     item.DiscountOrigin,
                     product.Scales,
-                    globalScaleFloor));
+                    globalScaleFloor),
+            // Los de la línea, nunca los del catálogo de hoy (spec 2026-11-18 §3.4).
+            item.Kind,
+            item.SalesUnit);
     }
 
     /// <summary>
@@ -233,6 +407,8 @@ public sealed class QuotationResponseComposer(
     // La empresa que no resuelve deja el bloque con la cuenta guardada y sin razón social, por
     // el mismo motivo que el cliente: la cotización es histórica y tiene que poder leerse aunque
     // la empresa se haya borrado. Lo que se muestra es lo que se congeló, no lo que hay hoy.
+    // Una empresa sin cuenta (spec 2026-11-17, R3) se responde con la empresa y banco y número nulos: la pantalla pinta
+    // «Pago: por definir».
     internal static QuotationBillingResponse? ToBillingResponse(
         QuotationBillingAccountDto? account, QuotationCompanyRef? company) =>
         account is null
@@ -241,11 +417,13 @@ public sealed class QuotationResponseComposer(
                 account.CompanyId,
                 company?.Name,
                 company?.TaxId,
+                company?.DocumentType,
                 company?.Address,
                 company?.Phone,
                 account.BankName,
                 account.AccountNumber,
-                account.Currency);
+                account.Currency,
+                account.ChargesVat);
 
     // Field-by-field copy: the computation is QuotationMinimumPurchase.DescribeFor, the single
     // source of truth.
@@ -259,7 +437,27 @@ public sealed class QuotationResponseComposer(
             minimum.MissingUnits,
             minimum.MissingTotal);
 
-    private static QuotationPartyResponse ToPartyResponse(QuotationPartyDto party) => new(
+    /// <summary>The names of the regions the parties carry, in one geography call (none when no party has a region).
+    /// Internal because the order composer resolves its parties the same way.</summary>
+    internal static async Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> PartyRegionsAsync(
+        IQuotationGeographyLookup geographyLookup,
+        IEnumerable<QuotationPartyDto> parties,
+        CancellationToken cancellationToken)
+    {
+        Guid[] regionIds = [.. parties.Where(party => party.RegionId is not null).Select(party => party.RegionId!.Value).Distinct()];
+        return regionIds.Length == 0
+            ? new Dictionary<Guid, QuotationRegionRef>()
+            : await geographyLookup.FindRegionsAsync(regionIds, cancellationToken);
+    }
+
+    internal static QuotationRegionDto? ToRegionDto(
+        Guid? regionId, IReadOnlyDictionary<Guid, QuotationRegionRef> regionsById) =>
+        regionId is { } id && regionsById.TryGetValue(id, out var region)
+            ? new QuotationRegionDto(region.Id, region.Name)
+            : null;
+
+    private static QuotationPartyResponse ToPartyResponse(
+        QuotationPartyDto party, IReadOnlyDictionary<Guid, QuotationRegionRef> regionsById) => new(
         party.Id,
         party.Role,
         party.Name,
@@ -270,7 +468,11 @@ public sealed class QuotationResponseComposer(
         party.DepartmentId,
         party.CityId,
         party.PersonType,
-        party.IdentificationType);
+        party.IdentificationType,
+        party.Country,
+        party.CityName,
+        ToRegionDto(party.RegionId, regionsById),
+        party.PostalCode);
 
     // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
     // tiene el frontend y tiene que ser uno solo para los dos módulos. Null también igual que
@@ -282,4 +484,14 @@ public sealed class QuotationResponseComposer(
         QuotationPriceScaleRestriction.PackagingUnit => "packaging_unit",
         _ => throw new ArgumentOutOfRangeException(nameof(restriction))
     };
+}
+
+/// <summary>
+/// El año del documento y el último año de UVT cargado por país, que <see cref="QuotationResponseComposer.ToBreakdownResponse"/>
+/// necesita y un mapeo estático no puede leer (spec alerta UVT §5.4). <see cref="None"/> es «ninguna fila trae año ni
+/// unidad»: no se leyó nada y no hay nada que decir.
+/// </summary>
+internal sealed record TaxUnitContext(int? DocumentYear, IReadOnlyDictionary<string, int> LatestYearByCountry)
+{
+    public static TaxUnitContext None { get; } = new(null, new Dictionary<string, int>());
 }

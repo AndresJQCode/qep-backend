@@ -1,0 +1,76 @@
+{
+  "name": "transport-flips-in-second-half-first",
+  "source": "synthetic",
+  "description": "Salario 3 000 000 con base salario + ingresos: la primera quincena conserva el auxilio (3 000 000 <= 3 501 810).",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-01",
+      "end": "2026-11-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryAndSalaryIncome",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    }
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 1500000 },
+      { "code": "transport_allowance", "amount": 124548 },
+      { "code": "ibc", "amount": 1500000 },
+      { "code": "health_employee", "amount": 60000 },
+      { "code": "pension_employee", "amount": 60000 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 180000 },
+      { "code": "arl", "amount": 7900 },
+      { "code": "compensation_fund", "amount": 60000 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 135325 },
+      { "code": "severance_interest", "amount": 16245 },
+      { "code": "premium", "amount": 135325 },
+      { "code": "vacation", "amount": 62550 }
+    ],
+    "net": 1504548,
+    "employerCost": 2221893
+  },
+  "notes": [
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 3 000 000 ÷ 30 × 15 = 1500000; salary = round(0 + 1500000) − 0 = 1 500 000",
+    "transport_allowance = round(0 + 249 095 ÷ 30 × 15) − 0 = round(124547.5) − 0 = 124 548",
+    "SalDev_m = 0 + 1500000 + 0 + 0 = 1500000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(1500000) = 1 500 000",
+    "health_employee = al peso(1 500 000 × 0,04 = 60000) − 0 = 60 000",
+    "pension_employee = al peso(1 500 000 × 0,04) − 0 = 60 000",
+    "solidarity_fund: ≈1.7134 SMMLV < 4 y sin retención previa ⇒ sin línea",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 3 000 000 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(1 500 000 × 0.12) − 0 = 180 000",
+    "arl = techo100(1500000 × 0.00522 = 7830) − 0 = 7 900",
+    "compensation_fund = techo100(1500000 × 0,04) − 0 = 60 000",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 1500000 + 124548 + 0 + 0 = 1624548; severance = round(135324.8484) = 135 325; severance_interest = round(16245.48) = 16 245; premium = 135 325; vacation = round((1500000 + 0) × 0,0417 = 62550) = 62 550",
+    "totalEarned = 1500000 + 124548 + 0 + 0 + 0 = 1624548; totalDeductions = 120000; net = 1504548; employerCost = 1624548 + aportes 247900 + provisiones 349445 = 2221893"
+  ]
+}

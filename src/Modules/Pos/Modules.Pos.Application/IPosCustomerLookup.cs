@@ -2,11 +2,12 @@ namespace Modules.Pos.Application;
 
 /// <summary>
 /// Un cliente tal como lo necesita el selector de la caja: id, nombre y el documento ya como cadena del contrato (<c>CC</c>,
-/// no el enum de Customers). Lleva documento obligatorio porque sólo se ofrecen clientes con documento (spec 2026-10-14);
-/// <see cref="IsComplete"/> y <see cref="IsActive"/> viajan para que la pantalla marque la ficha sin otra consulta.
+/// no el enum de Customers). El documento es opcional (spec 2026-11-09): el selector ofrece a los clientes activos con
+/// documento o completos, y uno completo puede no tenerlo. <see cref="IsComplete"/> y <see cref="IsActive"/> viajan
+/// para que la pantalla marque la ficha sin otra consulta.
 /// </summary>
 public sealed record PosCustomerRef(
-    Guid Id, string Name, string IdentificationType, string IdentificationNumber, bool IsComplete, bool IsActive);
+    Guid Id, string Name, string? IdentificationType, string? IdentificationNumber, bool IsComplete, bool IsActive);
 
 /// <summary>
 /// Lo que la venta congela del comprador. A diferencia de <see cref="PosCustomerRef"/> el documento es opcional: un cliente
@@ -15,8 +16,11 @@ public sealed record PosCustomerRef(
 public sealed record PosCustomerSnapshot(
     Guid Id, string Name, string? IdentificationType, string? IdentificationNumber, bool IsActive);
 
-/// <summary>Lo que el cajero teclea para dar de alta al comprador: nombre, documento y, si lo dio, teléfono.</summary>
-public sealed record NewPosCustomer(string Name, string IdentificationType, string IdentificationNumber, string? Phone);
+/// <summary>
+/// Lo que el cajero teclea para dar de alta al comprador: nombre, teléfono si lo dio y, según la política del tenant,
+/// el documento (los dos campos juntos o ninguno).
+/// </summary>
+public sealed record NewPosCustomer(string Name, string? IdentificationType, string? IdentificationNumber, string? Phone);
 
 /// <summary>
 /// Pos → Customers, siempre acotado por <c>tenantId</c>. Pos.Application no ve Customers (PosLayerTests), así que el
@@ -24,7 +28,10 @@ public sealed record NewPosCustomer(string Name, string IdentificationType, stri
 /// </summary>
 public interface IPosCustomerLookup
 {
-    Task<IReadOnlyList<PosCustomerRef>> SearchAsync(Guid tenantId, string? search, int take, CancellationToken cancellationToken);
+    /// <summary>Los que la caja puede elegir; con <paramref name="includeIncompleteWithoutDocument"/> también los incompletos sin
+    /// documento (el tenant no lo exige al facturar).</summary>
+    Task<IReadOnlyList<PosCustomerRef>> SearchAsync(
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken);
 
     /// <summary>El cliente del tenant, activo o no; <c>null</c> si no existe en este tenant.</summary>
     Task<PosCustomerSnapshot?> FindAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);

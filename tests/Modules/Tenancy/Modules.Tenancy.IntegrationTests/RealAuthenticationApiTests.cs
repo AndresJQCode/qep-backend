@@ -15,7 +15,7 @@ using Modules.Authorization.Infrastructure.Persistence;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -78,6 +78,10 @@ public sealed class RealAuthenticationApiTests
                         .SetProperty(module => module.Status, TenantModuleStatus.Inactive)
                         .SetProperty(module => module.StatusChangedAt, now),
                     TestContext.Current.CancellationToken);
+            // El bump que da el handler real (ChangeTenantModules): la caché de permisos del pod sirve lo resuelto en el
+            // GET de arriba hasta 60 s, y un UPDATE directo no la entera.
+            await scope.ServiceProvider.GetRequiredService<ITenantAccessVersion>()
+                .BumpAsync(tenantId, TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(HttpStatusCode.Forbidden, (await GetProductsAsync(owner, tenantId)).StatusCode);
@@ -198,7 +202,8 @@ public sealed class RealAuthenticationApiTests
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    // Por el agregado, no por SQL: es el mismo camino que usará el handler de la consola.
+    // Por el agregado, no por SQL: es el mismo camino que usará el handler de la consola. Y con el bump de la versión de acceso
+    // que ese handler da (ChangeTenantStatus): sin él, la caché de permisos del pod seguiría sirviendo lo de antes hasta 60 s.
     private static async Task SetTenantStatusAsync(QepApiFactory factory, Guid tenantId, bool suspend)
     {
         await using var scope = factory.Services.CreateAsyncScope();
@@ -215,6 +220,8 @@ public sealed class RealAuthenticationApiTests
         }
 
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await scope.ServiceProvider.GetRequiredService<ITenantAccessVersion>()
+            .BumpAsync(tenantId, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -794,17 +801,6 @@ public sealed class RealAuthenticationApiTests
         Assert.Fail($"Condition was not met within {PollTimeout.TotalSeconds:0} seconds.");
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private sealed record RegisterTenantPayload(Guid TenantId, Guid OwnerUserId);
 
     private sealed record MembershipPayload(Guid Id, Guid UserId, long Version);
@@ -868,11 +864,17 @@ public sealed class RealAuthenticationApiTests
             // "Development" y "Local" mantiene la rama de auth real sin ese override. SDD-CT-14.
             builder.UseEnvironment("IntegrationTests");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Fuera de Development y Testing la tienda exige sus dos secretos al arrancar (StoreOptionsValidator.cs:13, regla de la
+            // tarea 7); valores de prueba, igual que los de R2.
+            builder.UseSetting("Store:Storefront:SharedSecret", "test-storefront-shared-secret-0123456789");
+            builder.UseSetting("Store:Turnstile:SecretKey", "test-turnstile-secret");
             // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
             // producto, y una suite de integración que depende de eso termina dependiendo de las
             // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,

@@ -73,4 +73,20 @@ public sealed class SendMediaMessageValidatorTests
     [InlineData("a.3gp")]
     public void AVideoAcceptsACaption(string fileName) =>
         Assert.True(new SendMediaMessageValidator().Validate(Command(fileName: fileName, caption: "Mira el producto")).IsValid);
+
+    // Un sticker, como un audio, viaja sin texto.
+    [Fact]
+    public void AStickerWithACaptionFailsOnCaption()
+    {
+        Assert.Equal(["caption"], KeysOf(Command(fileName: "a.webp", caption: "Mira")));
+        Assert.True(new SendMediaMessageValidator().Validate(Command(fileName: "a.webp")).IsValid);
+        Assert.True(new SendMediaMessageValidator().Validate(Command(fileName: "a.webp", caption: "  ")).IsValid);
+    }
+
+    [Theory]
+    [InlineData("a.txt")]
+    [InlineData("a.ppt")]
+    [InlineData("a.pptx")]
+    public void ADocumentAcceptsACaption(string fileName) =>
+        Assert.True(new SendMediaMessageValidator().Validate(Command(fileName: fileName, caption: "Revísalo")).IsValid);
 }

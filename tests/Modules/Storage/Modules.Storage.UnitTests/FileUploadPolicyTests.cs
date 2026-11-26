@@ -30,6 +30,40 @@ public sealed class FileUploadPolicyTests
         Assert.Throws<StorageDomainException>(
             () => FileUploadPolicy.ValidateDeclaration(name, mimeType, 1024));
 
+    // Spec 2026-11-18: el multimedia de un chatbot acepta los formatos que el bot manda por WhatsApp.
+    [Theory]
+    [InlineData("a.mp4", "video/mp4")]
+    [InlineData("a.3gp", "video/3gpp")]
+    [InlineData("a.mp3", "audio/mpeg")]
+    [InlineData("a.m4a", "audio/mp4")]
+    [InlineData("a.aac", "audio/aac")]
+    [InlineData("a.amr", "audio/amr")]
+    [InlineData("a.ogg", "audio/ogg")]
+    public void ChatbotMediaAcceptsEveryOutboundMediaFormat(string name, string mimeType) =>
+        FileUploadPolicy.ValidateDeclaration(name, mimeType, 1024, 16L * 1024 * 1024, FileOwnerType.ChatbotMedia);
+
+    // La consola no cambia: video y audio siguen fuera de su tabla.
+    [Fact]
+    public void TheConsoleStillRejectsVideo()
+    {
+        var error = Assert.Throws<StorageDomainException>(
+            () => FileUploadPolicy.ValidateDeclaration("a.mp4", "video/mp4", 10, FileUploadPolicy.MaxSizeBytes));
+
+        Assert.Equal("storage.file.type_not_allowed", error.Code);
+    }
+
+    // El tope de 100 MB es del dueño ChatbotMedia; para cualquier otro sigue siendo un error de programación.
+    [Fact]
+    public void ChatbotMediaAllowsAHundredMegabyteDocument()
+    {
+        const long hundredMegabytes = 100L * 1024 * 1024;
+
+        FileUploadPolicy.ValidateDeclaration(
+            "a.pdf", "application/pdf", hundredMegabytes, hundredMegabytes, FileOwnerType.ChatbotMedia);
+        Assert.Throws<ArgumentOutOfRangeException>(() => FileUploadPolicy.ValidateDeclaration(
+            "a.pdf", "application/pdf", hundredMegabytes, hundredMegabytes, FileOwnerType.Product));
+    }
+
     [Fact]
     public void InspectorRejectsSpoofedPdf()
     {

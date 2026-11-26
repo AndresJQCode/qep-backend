@@ -1,0 +1,77 @@
+{
+  "name": "ibc-cap-and-top-bracket-first",
+  "source": "synthetic",
+  "description": "Salario 50 000 000: IBC topado en 25 SMMLV y tramo superior del fondo de solidaridad desde la primera (B-1).",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "SolidarityFundRule"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-01",
+      "end": "2026-11-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 50000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    }
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 25000000 },
+      { "code": "transport_allowance", "amount": 0 },
+      { "code": "ibc", "amount": 25000000 },
+      { "code": "health_employee", "amount": 1000000 },
+      { "code": "pension_employee", "amount": 1000000 },
+      { "code": "solidarity_fund", "amount": 500000 },
+      { "code": "health_employer", "amount": 2125000 },
+      { "code": "pension_employer", "amount": 3000000 },
+      { "code": "arl", "amount": 130500 },
+      { "code": "compensation_fund", "amount": 1000000 },
+      { "code": "icbf", "amount": 750000 },
+      { "code": "sena", "amount": 500000 },
+      { "code": "severance", "amount": 2082500 },
+      { "code": "severance_interest", "amount": 250000 },
+      { "code": "premium", "amount": 2082500 },
+      { "code": "vacation", "amount": 1042500 }
+    ],
+    "net": 22500000,
+    "employerCost": 37963000
+  },
+  "notes": [
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 50 000 000 ÷ 30 × 15 = 25000000; salary = round(0 + 25000000) − 0 = 25 000 000",
+    "transport_allowance = 0: ingreso para el tope 50 000 000 > 3 501 810 (2 × SMMLV)",
+    "SalDev_m = 0 + 25000000 + 0 + 0 = 25000000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(25000000) = 25 000 000",
+    "health_employee = al peso(25 000 000 × 0,04 = 1000000) − 0 = 1 000 000",
+    "pension_employee = al peso(25 000 000 × 0,04) − 0 = 1 000 000",
+    "solidarity_fund: tramo por 25 SMMLV = 0.02; techo100(25 000 000 × 0.02) − 0 = 500 000",
+    "exonerado = false (empresa exonerada = true; ingreso salarial del mes 50 000 000 ≥ 17 509 050)",
+    "health_employer = techo100(25 000 000 × 0,085) − 0 = 2 125 000",
+    "pension_employer = techo100(25 000 000 × 0.12) − 0 = 3 000 000",
+    "arl = techo100(25000000 × 0.00522 = 130500) − 0 = 130 500",
+    "compensation_fund = techo100(25000000 × 0,04) − 0 = 1 000 000",
+    "icbf = techo100(25000000 × 0,03) − 0 = 750 000",
+    "sena = techo100(25000000 × 0,02) − 0 = 500 000",
+    "provisiones: base = 25000000 + 0 + 0 + 0 = 25000000; severance = round(2082500) = 2 082 500; severance_interest = round(250000) = 250 000; premium = 2 082 500; vacation = round((25000000 + 0) × 0,0417 = 1042500) = 1 042 500",
+    "totalEarned = 25000000 + 0 + 0 + 0 + 0 = 25000000; totalDeductions = 2500000; net = 22500000; employerCost = 25000000 + aportes 7505500 + provisiones 5457500 = 37963000"
+  ]
+}

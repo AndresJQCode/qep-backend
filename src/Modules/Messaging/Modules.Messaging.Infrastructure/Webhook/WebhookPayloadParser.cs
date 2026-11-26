@@ -504,18 +504,36 @@ internal static partial class WebhookPayloadParser
     private static SmbEchoesChange ParseEchoes(JsonElement value)
     {
         var echoes = new List<(string WaId, CoexistenceMessage Message)>();
+        var userEchoes = new List<(string UserId, CoexistenceMessage Message)>();
+        var unattributable = 0;
         if (TryArray(value, "message_echoes", out var items))
         {
             foreach (var item in items.EnumerateArray())
             {
-                if (DigitsOnly(ReadString(item, "to")) is { } waId && ParseCoexistenceMessage(item, MessageDirection.Outbound) is { } message)
+                // Sin `id` o sin `timestamp` válidos el eco no se puede leer: también cuenta como perdido.
+                if (ParseCoexistenceMessage(item, MessageDirection.Outbound) is not { } message)
+                {
+                    unattributable++;
+                    continue;
+                }
+
+                // El teléfono manda si viene; un contacto que sólo usa username llega con `to_user_id` y sin `to`.
+                if (DigitsOnly(ReadString(item, "to")) is { } waId)
                 {
                     echoes.Add((waId, message));
+                }
+                else if (ReadString(item, "to_user_id") is { } userId && Conversation.IsValidUserId(userId))
+                {
+                    userEchoes.Add((userId, message));
+                }
+                else
+                {
+                    unattributable++;
                 }
             }
         }
 
-        return new SmbEchoesChange(PhoneNumberIdOf(value), echoes);
+        return new SmbEchoesChange(PhoneNumberIdOf(value), echoes, userEchoes, unattributable);
     }
 
     private static ContactsSyncChange ParseContactsSync(JsonElement value)

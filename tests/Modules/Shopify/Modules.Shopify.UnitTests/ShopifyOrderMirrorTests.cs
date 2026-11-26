@@ -25,6 +25,34 @@ public sealed class ShopifyOrderMirrorTests
         return row;
     }
 
+    // Spec 2026-11-14 §2: la versión de Shopify que QEP aplicó y lo que escribió a partir de ella.
+    [Fact]
+    public void RecordAppliedKeepsBothJsonsAndBumpsVersion()
+    {
+        var row = ImportedRow(null);
+        var version = row.Version;
+
+        row.RecordApplied("""{"name":"#1001"}""", """{"lines":[]}""");
+
+        Assert.Equal(("""{"name":"#1001"}""", """{"lines":[]}"""), (row.AppliedPayload, row.AppliedProjection));
+        Assert.Equal(version + 1, row.Version);
+    }
+
+    [Fact]
+    public void AdoptPayloadMovesOnlyTheAppliedPayload()
+    {
+        var row = ImportedRow(null);
+        row.RecordApplied("""{"v":1}""", """{"p":1}""");
+        var version = row.Version;
+
+        row.AdoptPayload("""{"v":2}""");
+        row.RecordProjection("""{"p":2}""");
+        row.SetQepAttributes("""{"Documento":"1"}""");
+
+        Assert.Equal(("""{"v":2}""", """{"p":2}""", """{"Documento":"1"}"""), (row.AppliedPayload, row.AppliedProjection, row.QepAttributes));
+        Assert.Equal(version + 3, row.Version);
+    }
+
     [Fact]
     public void CreateStartsWaitingWithoutReason()
     {

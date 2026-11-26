@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,6 +13,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Messaging.Application;
@@ -18,6 +21,12 @@ using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
+
+// The connection budget below (max_connections=800) only holds for a bounded number of live hosts, and xUnit runs one class
+// per logical processor by default. Each host keeps about 17-24 pooled connections idle, one per worker that ticked, so on a
+// 32-thread machine 32 hosts sat at ~530 idle connections, and the bursts on top hit 53300 (too many clients). An arrange
+// that fails that way used to leak its host and snowball. Fixed here so the suite does not depend on the machine's core count.
+[assembly: CollectionBehavior(MaxParallelThreads = 16)]
 
 namespace Modules.Messaging.IntegrationTests;
 
@@ -178,7 +187,14 @@ internal static class MessagingApiHarness
             // pool de Npgsql, más los 64 INSERT concurrentes de la prueba de carga y los workers: el límite
             // por defecto (100) se agota y la API responde 500 con 53300 (too many clients). Con las campañas (E3) cada host suma
             // los envíos en paralelo del worker, y la prueba de dos pods levanta tres: 800 deja margen a la suite entera.
-            .WithCommand("-c", "max_connections=800")
+            // That margin assumes the class parallelism capped at the top of this file (MaxParallelThreads).
+            // fsync, synchronous_commit y full_page_writes apagados: la base es desechable y lo que se mide es la lógica,
+            // no la durabilidad.
+            .WithCommand(
+                "-c", "max_connections=800",
+                "-c", "fsync=off",
+                "-c", "synchronous_commit=off",
+                "-c", "full_page_writes=off")
             .Build();
         await container.StartAsync(CancellationToken.None);
         return new TestServer(container.GetConnectionString(), container);
@@ -196,6 +212,12 @@ internal static class MessagingApiHarness
         await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
+    // Every started host, with the database it points at. Most tests build their host in an arrange helper and take ownership
+    // only after it returns, so an arrange that throws leaves the host running; its workers would then poll the database
+    // dropped below, fail on every tick and log the exception, and with enough leaked hosts that logging starved the thread
+    // pool and stalled the whole suite. The database stops its hosts before it drops.
+    private static readonly ConcurrentDictionary<QepApiFactory, string> StartedHosts = new();
+
     /// <summary>La base de una prueba.</summary>
     public sealed class TestDatabase(TestServer server, string name) : IAsyncDisposable
     {
@@ -203,6 +225,11 @@ internal static class MessagingApiHarness
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var host in StartedHosts.Where(entry => entry.Value == name).Select(entry => entry.Key).ToList())
+            {
+                await host.DisposeAsync();
+            }
+
             NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
             // FORCE: un worker del host que todavía no soltó su conexión no puede dejar la base viva.
             await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
@@ -215,8 +242,19 @@ internal static class MessagingApiHarness
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Messaging— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        /// <summary>Spec 2026-11-17: la imagen del encabezado de plantilla no pasa por Storage ni por R2 en estas pruebas.</summary>
+        public FakeTemplateImageStore TemplateImages { get; } = new();
+
+        public override async ValueTask DisposeAsync()
+        {
+            StartedHosts.TryRemove(this, out _);
+            await base.DisposeAsync();
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // Runs when the host is first built, so only a host that can be running is tracked.
+            StartedHosts.TryAdd(this, new NpgsqlConnectionStringBuilder(connectionString).Database!);
             builder.UseEnvironment("Development");
             // Siempre fijado, aunque no se pida: un valor en los user-secrets de quien corre las pruebas convertiría en operador
             // a un tenant ajeno (mismo criterio que ShopifyApiHarness). Cambia el comportamiento de las pruebas de Messaging que
@@ -230,7 +268,14 @@ internal static class MessagingApiHarness
             builder.UseSetting("hostBuilder:reloadConfigOnChange", "false");
             // Pool acotado sólo en pruebas: un host no puede acaparar las conexiones del contenedor compartido.
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 80 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
+            // An empty endpoint does not turn the export off: QepObservability always registers the OTLP exporters, which fall back to
+            // localhost:4317. Nothing listens there, so every host spent ~8 s of its dispose flushing traces and metrics into a refused
+            // connection (80% of a typical test), while each live host's listeners also processed every other host's activities and
+            // instruments, which are process-wide. No test here reads the SDK; the metric tests use their own MeterListener.
+            builder.UseSetting("OTEL_SDK_DISABLED", "true");
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
@@ -262,6 +307,7 @@ internal static class MessagingApiHarness
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:ScheduledPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             // Spec 2026-10-21 D-M1: prendido por defecto en el host desde que el motor existe; acá se fija siempre y sólo las pruebas de la
             // cola lo prenden, para que el resto no deje filas en automation_inbox.
@@ -271,6 +317,10 @@ internal static class MessagingApiHarness
 
             builder.ConfigureTestServices(services =>
             {
+                // Last registered, first stopped: frees the rate limiter that would otherwise keep this host alive (see the class).
+                services.AddHostedService<RateLimiterRelease>();
+                services.RemoveAll<IMessagingTemplateImageStore>();
+                services.AddSingleton<IMessagingTemplateImageStore>(TemplateImages);
                 services.AddHttpClient(IntegrationsGraphClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphClientName)
@@ -290,6 +340,12 @@ internal static class MessagingApiHarness
                 // Spec 2026-10-29: el worker de smb_app_data tampoco corre solo; su intervalo no es configuración, así que se reemplaza acá.
                 services.RemoveAll<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule>();
                 services.AddSingleton(new Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule(TimeSpan.FromHours(1)));
+                // Spec 2026-11-10 A-9: el worker de la purga de medios tampoco corre solo (su intervalo es fijo); las pruebas llaman al procesador.
+                foreach (var descriptor in services
+                    .Where(d => d.ImplementationType == typeof(Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeWorker)).ToList())
+                {
+                    services.Remove(descriptor);
+                }
             });
         }
     }
@@ -696,6 +752,14 @@ internal static class MessagingApiHarness
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Spec 2026-11-09: una pasada del worker de programados (recupera, reclama, ejecuta y, si toca, purga), como un tick suyo.</summary>
+    public static async Task DrainScheduledMessagesAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.ScheduledMessages.ScheduledMessageWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
     /// <summary>Un saliente ya guardado, como lo deja el envío (§8.3): Sent con wamid, o Failed -1 sin wamid.</summary>
     public static async Task<Guid> SeedOutboundAsync(
         string connectionString, Guid conversationId, Guid tenantId, Guid connectionId, string? wamid, short status = 1, int? failureCode = null, long occurredAtUnix = 1760000000)
@@ -761,11 +825,11 @@ internal static class MessagingApiHarness
     }
 
     /// <summary>Spec 2026-10-21: deja la conversación abierta y sin asesor con el asistente activo (el motor de bots llega después). Desde
-    /// <c>CK_conversations_automation_chatbot</c> una conversación activa necesita su chatbot.</summary>
+    /// <c>CK_conversations_automation_bot</c> (spec 2026-10-29 §4.4) una conversación activa necesita su chatbot y su tipo de bot.</summary>
     public static async Task ActivateAutomationAsync(string connectionString, Guid conversationId, Guid chatbotId) =>
         Assert.Equal(1, await ExecuteAsync(
             connectionString,
-            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), automation_chatbot_id=@chatbotId, version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
+            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), automation_chatbot_id=@chatbotId, automation_bot_kind=1, version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
             ("id", conversationId), ("chatbotId", chatbotId)));
 
     /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider registrados.</summary>
@@ -856,13 +920,43 @@ internal static class MessagingApiHarness
         return client;
     }
 
+    /// <summary>El emisor que valida el host cuando no se fija <c>Authentication:Authority</c>.</summary>
+    public const string GoogleIssuer = "https://accounts.google.com";
+
+    /// <summary>
+    /// Un id token con forma de Google firmado con <paramref name="signingKey"/>, la clave que el host recibe por
+    /// <c>Authentication:TestSigningKey</c>. Copia de <c>RealAuthenticationApiTests.IssueGoogleIdToken</c>: cada ensamblado
+    /// de pruebas tiene la suya.
+    /// </summary>
+    public static string IssueGoogleIdToken(byte[] signingKey, string audience, string subject, string email)
+    {
+        var credentials = new SigningCredentials(new SymmetricSecurityKey(signingKey), SecurityAlgorithms.HmacSha256);
+        var now = DateTime.UtcNow;
+        var token = new JwtSecurityToken(
+            issuer: GoogleIssuer,
+            audience: audience,
+            claims:
+            [
+                new Claim("sub", subject),
+                new Claim("email", email),
+                new Claim("email_verified", "true"),
+            ],
+            notBefore: now.AddMinutes(-1),
+            expires: now.AddMinutes(30),
+            signingCredentials: credentials);
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
     /// <summary>Auth real con el stub apagado, como corre producción (copia de <c>ShopifyApiHarness.WithRealAuthentication</c>).</summary>
     public static WebApplicationFactory<Program> WithRealAuthentication(this WebApplicationFactory<Program> factory) =>
         factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Authentication:UseDevelopmentStub", "false");
-            builder.UseSetting("Authentication:Audience", "qep-messaging-tests");
+            builder.UseSetting("Authentication:Audience", RealAuthenticationAudience);
         });
+
+    /// <summary>La audiencia que fija <see cref="WithRealAuthentication"/>; un id token de prueba la tiene que llevar.</summary>
+    public const string RealAuthenticationAudience = "qep-messaging-tests";
 
     private sealed record RegisterTenantResponseDto(Guid TenantId, Guid OwnerUserId);
 }

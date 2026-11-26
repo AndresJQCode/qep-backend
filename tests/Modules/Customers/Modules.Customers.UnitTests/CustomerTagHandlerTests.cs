@@ -30,8 +30,37 @@ public sealed class CustomerTagHandlerTests
     private DeleteTagHandler DeleteHandler(params string[] permissions) =>
         new(_tags, _unitOfWork, _audit, new Context(TenantId, UserA, permissions), new FixedClock());
 
+    private readonly FakeCustomerLocks _locks = new();
+
     private SetCustomerTagsHandler SetHandler(params string[] permissions) =>
-        new(_customers, _tags, _unitOfWork, _audit, new Context(TenantId, UserA, permissions), new FixedClock(), new SetCustomerTagsValidator());
+        new(_customers, _locks, _tags, _unitOfWork, _audit, new Context(TenantId, UserA, permissions), new FixedClock(), new SetCustomerTagsValidator());
+
+    /// <summary>The customer row lock the chatbot takes (<see cref="ICustomerDataConsentRepository.LockCustomerAsync"/>).
+    /// <see cref="OnLock"/> runs when it is granted: what a chatbot change that held the lock left behind.</summary>
+    private sealed class FakeCustomerLocks : ICustomerDataConsentRepository
+    {
+        public List<Guid> Locked { get; } = [];
+
+        public Action? OnLock { get; set; }
+
+        public Task<Guid?> LockCustomerAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+        {
+            Locked.Add(customerId);
+            OnLock?.Invoke();
+            return Task.FromResult<Guid?>(customerId);
+        }
+
+        public Task<IReadOnlyList<CustomerDataConsent>> ListAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<CustomerDataConsent?> FindLatestAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> ReplyRecordedAsync(Guid tenantId, Guid replyMessageId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public void Add(CustomerDataConsent consent) => throw new NotSupportedException();
+    }
 
     private Tag Seed(string name, TagColor color = TagColor.Blue)
     {
@@ -217,6 +246,24 @@ public sealed class CustomerTagHandlerTests
     }
 
     [Fact]
+    public async Task SettingTheTagsLocksTheCustomerAndReadsTheSetUnderTheLock()
+    {
+        var requested = Enumerable.Range(0, CustomerTagAssignment.MaxPerCustomer).Select(index => Seed($"Etiqueta {index}")).ToArray();
+        var byTheBot = Seed("Del bot");
+        // A chatbot change that held the row lock commits right before the screen gets it: the screen has to see it.
+        _locks.OnLock = () => _tags.Assignments.Add(
+            CustomerTagAssignment.Create(_customer.Id, byTheBot.Id, TenantId, Guid.Empty, Now));
+
+        await SetHandler(Manager).HandleAsync(
+            new SetCustomerTagsCommand(TenantId, _customer.Id.Value, [.. requested.Select(tag => tag.Id.Value)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal([_customer.Id.Value], _locks.Locked);
+        Assert.Equal(CustomerTagAssignment.MaxPerCustomer, _tags.Assignments.Count);
+        Assert.DoesNotContain(_tags.Assignments, assignment => assignment.TagId == byTheBot.Id);
+    }
+
+    [Fact]
     public async Task SettingAnEmptyListClearsTheTags()
     {
         var tag = Seed("VIP");
@@ -275,7 +322,7 @@ public sealed class CustomerTagHandlerTests
     public async Task SettingTagsFromAnotherTenantIsForbidden()
     {
         var handler = new SetCustomerTagsHandler(
-            _customers, _tags, _unitOfWork, _audit, new Context(OtherTenantId, UserA, Manager), new FixedClock(), new SetCustomerTagsValidator());
+            _customers, _locks, _tags, _unitOfWork, _audit, new Context(OtherTenantId, UserA, Manager), new FixedClock(), new SetCustomerTagsValidator());
 
         await Assert.ThrowsAsync<RequestForbiddenException>(() => handler.HandleAsync(
             new SetCustomerTagsCommand(TenantId, _customer.Id.Value, []), TestContext.Current.CancellationToken));

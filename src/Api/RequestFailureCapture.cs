@@ -41,7 +41,14 @@ internal static class RequestFailureCapture
         MutatingMethods.Contains(httpContext.Request.Method, StringComparer.OrdinalIgnoreCase)
         && !WebhookPaths.IsWebhook(httpContext.Request.Path)
         && !(ExternalApiPaths.IsExternal(httpContext.Request.Path)
-            && statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status429TooManyRequests);
+            && statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status429TooManyRequests)
+        // La tienda pública es igual: un 401 (clave inventada) o un 429 es ruido anónimo que escribiría una fila gratis. La fila
+        // nunca lleva headers, así que la clave presentada no se guarda en ningún caso.
+        && !(StorefrontPaths.IsStorefront(httpContext.Request.Path)
+            && statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status429TooManyRequests)
+        // El formulario público de Soporte (plan fase 3) también: es anónimo, y su 429 es el mismo ruido gratis.
+        && !(SupportPublicPaths.IsSupportPublic(httpContext.Request.Path)
+            && statusCode is StatusCodes.Status429TooManyRequests);
 
     /// <summary>
     /// Arma la fila. No la guarda: quien llama decide cuándo, y el puerto es el que se traga sus
@@ -57,7 +64,8 @@ internal static class RequestFailureCapture
             RequestFailureId.New(),
             SubjectIdOf(httpContext),
             httpContext.Request.Method,
-            httpContext.Request.Path.Value ?? "/",
+            // Sin el token de una invitación (SensitivePaths): la fila la lee la consola de operador.
+            SensitivePaths.Mask(httpContext.Request.Path),
             statusCode,
             errorCode,
             exception.Message,
@@ -84,7 +92,7 @@ internal static class RequestFailureCapture
             RequestFailureId.New(),
             SubjectIdOf(httpContext),
             httpContext.Request.Method,
-            httpContext.Request.Path.Value ?? "/",
+            SensitivePaths.Mask(httpContext.Request.Path),
             statusCode,
             CodeForStatus(statusCode),
             DescriptionForStatus(statusCode),

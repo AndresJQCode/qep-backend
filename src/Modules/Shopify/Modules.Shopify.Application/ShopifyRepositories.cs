@@ -60,12 +60,122 @@ public interface IShopifyOrderMirrorRepository
     Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// <c>GET /stores/{connectionId}/document-sources</c>: los nombres de atributo distintos (crudos, sin recortar) del payload de
+    /// los <paramref name="recentOrders"/> pedidos más recientes de la tienda (<c>shopify_created_at</c>). Sin orden: lo pone
+    /// <see cref="ShopifyDocumentSources.Options"/>.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListAttributeKeysAsync(
+        Guid tenantId, Guid connectionId, int recentOrders, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Spec 2026-10-26 D-C12: el recorrido de la historia previa. Las filas <c>Imported</c> con pedido (<c>qep_order_id</c>) de
     /// <b>todos</b> los tenants, por id y después de <paramref name="afterId"/> (<c>null</c>: desde el principio), hasta
     /// <paramref name="limit"/>. Sin tracking: sólo se leen. Va por la llave primaria; paginar por id no se salta ni repite filas
     /// aunque el recorrido tarde.
     /// </summary>
     Task<IReadOnlyList<ShopifyOrderMirror>> ListImportedAfterAsync(Guid? afterId, int limit, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §6: la fila del espejo de un pedido de QEP, con tracking; <c>null</c> si el pedido no vino de
+    /// Shopify. Va por <c>IX_shopify_orders_tenant_qep_order</c>.</summary>
+    Task<ShopifyOrderMirror?> FindByQepOrderIdAsync(Guid tenantId, Guid qepOrderId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §6: las filas de una página de cambios, en una sola lectura y sin tracking. Las que no son del tenant
+    /// no aparecen.</summary>
+    Task<IReadOnlyList<ShopifyOrderMirror>> ListByIdsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-17 (onboarding) §4.1, plan D11: las filas <c>Waiting</c> de la conexión agrupadas por motivo, con hasta 5
+    /// SKU distintos no nulos de <c>wait_detail-&gt;'skus'</c> para <c>product_unmatched</c> (vacía para los demás). Con
+    /// <paramref name="shopifyOrderIds"/> sólo esos pedidos; <c>null</c> son todos. Orden: cantidad descendente y luego motivo
+    /// ordinal. Siempre filtra por tenant y conexión.
+    /// </summary>
+    Task<IReadOnlyList<ShopifyWaitingGroup>> SummarizeWaitingAsync(
+        Guid tenantId, Guid connectionId, IReadOnlyCollection<long>? shopifyOrderIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (onboarding) §7: los pedidos de la conexión importados desde <paramref name="since"/>
+    /// (<c>imported_at &gt;= since</c>), para la cabecera del asistente.</summary>
+    Task<int> CountImportedSinceAsync(Guid tenantId, Guid connectionId, DateTimeOffset since, CancellationToken cancellationToken);
+}
+
+/// <summary>Los pedidos en espera de una tienda por un motivo. <see cref="Sample"/>: hasta 5 SKU para
+/// <c>product_unmatched</c>; <c>[]</c> para los demás.</summary>
+public sealed record ShopifyWaitingGroup(string Reason, int Count, IReadOnlyList<string> Sample);
+
+/// <summary>Spec 2026-11-14 §3 y §6: los cambios de Shopify (<c>shopify.order_edits</c>). Con tracking salvo las listas; lo
+/// agregado commitea con <see cref="IShopifyUnitOfWork"/>. Todo método recibe <c>tenantId</c>.</summary>
+public interface IShopifyOrderEditRepository
+{
+    /// <summary>El cambio pendiente o bloqueado de la fila, si hay (a lo sumo uno).</summary>
+    Task<ShopifyOrderEdit?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    Task<ShopifyOrderEdit?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+
+    /// <summary>Los cambios de la fila en todos los estados, los más nuevos primero.</summary>
+    Task<IReadOnlyList<ShopifyOrderEdit>> ListByMirrorAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    /// <summary>«Cambios por revisar»: los de esos estados (y de esa tienda, si viene), los más nuevos primero, y el total.</summary>
+    Task<(IReadOnlyList<ShopifyOrderEdit> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ShopifyOrderEditStatus> statuses,
+        Guid? connectionId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>El contador del resumen: los <c>Pending</c> más los <c>Blocked</c>.</summary>
+    Task<int> CountToReviewAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    void Add(ShopifyOrderEdit edit);
+}
+
+/// <summary>Spec 2026-11-14 §5: los envíos a Shopify (<c>shopify.order_pushes</c>). Con tracking; lo agregado commitea con
+/// <see cref="IShopifyUnitOfWork"/>, que traduce el índice único del pendiente (<c>IX_order_pushes_mirror_pending</c>) a
+/// <c>concurrency.conflict</c>.</summary>
+public interface IShopifyOrderPushRepository
+{
+    /// <summary>El envío abierto de la fila (<c>Pending</c> o <c>Held</c>), si hay (a lo sumo uno).</summary>
+    Task<ShopifyOrderPush?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    /// <summary>Owner 2026-11-14: cuántos envíos retenidos tiene cada conexión del tenant (las que no tienen, no salen).</summary>
+    Task<IReadOnlyDictionary<Guid, int>> CountHeldByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Owner 2026-11-14: suelta todos los envíos retenidos de una conexión del tenant en una sentencia que se confirma en el
+    /// acto (<c>Pending</c> desde cero y versión nueva, como <see cref="ShopifyOrderPush.Release"/>). Devuelve cuántos.</summary>
+    Task<int> ReleaseHeldAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>El último envío de la fila, en cualquier estado (lo muestra el detalle del pedido).</summary>
+    Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    /// <summary>Por id, sin tenant: lo usa el worker, que corre fuera de un request.</summary>
+    Task<ShopifyOrderPush?> FindByIdAsync(Guid id, CancellationToken cancellationToken);
+
+    void Add(ShopifyOrderPush push);
+}
+
+/// <summary>
+/// Spec 2026-11-14 §5: la cola del worker de envíos, por SQL. Como <see cref="IShopifyCityCorrectionJobQueue"/>, cada método es una
+/// sentencia que se confirma en el acto, <b>fuera</b> del tracker, y ninguno sube la versión del envío: el reclamo no puede esperar
+/// al guardado (otra réplica lo tomaría a la vez), y una corrección que se fusiona con el pendiente mientras se manda no tiene que
+/// chocar con él.
+/// </summary>
+#pragma warning disable CA1711
+public interface IShopifyOrderPushQueue
+#pragma warning restore CA1711
+{
+    /// <summary>Los <c>Pending</c> sin lease o con el lease vencido, los más viejos primero, hasta <paramref name="limit"/>.</summary>
+    Task<IReadOnlyList<Guid>> ListPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
+
+    /// <summary>Toma el envío (un solo ganador entre réplicas): suma un intento, le pone el lease de envío en vuelo (holgado frente
+    /// a una llamada a Shopify, para que otra réplica no lo reclame a mitad) y marca <c>updated_at</c>. Devuelve el número de
+    /// intento, o <c>null</c> si ya no está <c>Pending</c> o alguien tiene el lease.</summary>
+    Task<int?> TryClaimAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>Después de un intento que hay que repetir, el envío vuelve a estar disponible en <paramref name="until"/> (la
+    /// espera de la escalera o el <c>Retry-After</c> de Shopify), si sigue <c>Pending</c>.</summary>
+    Task ScheduleRetryAsync(Guid id, DateTimeOffset until, CancellationToken cancellationToken);
+
+    /// <summary>Lo cierra <c>Failed</c> con <paramref name="code"/>, si sigue <c>Pending</c>.</summary>
+    Task MarkFailedAsync(Guid id, DateTimeOffset now, string code, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-26 §5: las huellas de los sinónimos (<c>shopify.city_corrections</c>). Con tracking; lo agregado commitea

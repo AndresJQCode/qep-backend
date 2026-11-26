@@ -125,6 +125,8 @@ public static partial class TemplateParameters
             ConditionNode condition => condition with { Title = Text(condition.Title) },
             BusinessHoursNode hours => hours with { Title = Text(hours.Title) },
             HttpNode http => http with { Title = Text(http.Title) },
+            // Spec 2026-11-19: «Acción de CRM» has no text the customer reads either.
+            CrmActionNode crm => crm with { Title = Text(crm.Title) },
             _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin sustitución de parámetros definida."),
         };
 
@@ -245,7 +247,7 @@ public sealed class SaveChatbotAsTemplateHandler(
 
         var now = clock.UtcNow;
         var template = ChatbotTemplate.Create(
-            command.TenantId, command.Name, command.Category, command.Description, WithoutConnections(chatbot.DraftFlowJson),
+            command.TenantId, command.Name, command.Category, command.Description, WithoutTenantReferences(chatbot.DraftFlowJson),
             chatbot.DraftLayoutJson, by, now);
         await templates.AddAsync(template, cancellationToken);
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.TemplateCreated, AutomationsAuditActions.ResourceTemplate, template.Id, now);
@@ -254,8 +256,10 @@ public sealed class SaveChatbotAsTemplateHandler(
         return TemplateCards.From(template);
     }
 
-    /// <summary>Un borrador que no se puede leer no se puede volver plantilla: el mismo 422 con el código bajo <c>flow</c> que guardarlo.</summary>
-    private static string WithoutConnections(string flowJson)
+    /// <summary>Un borrador que no se puede leer no se puede volver plantilla: el mismo 422 con el código bajo <c>flow</c> que guardarlo.
+    /// Spec 2026-11-19: the tag and stage of «Acción de CRM» are tenant data too, so they are cleared like the HTTP connection; the chatbot
+    /// created from the template flags <c>crm.tag_missing</c> / <c>crm.stage_missing</c> until they are chosen.</summary>
+    internal static string WithoutTenantReferences(string flowJson)
     {
         FlowDefinition flow;
         try
@@ -269,7 +273,15 @@ public sealed class SaveChatbotAsTemplateHandler(
 
         return FlowJson.Serialize(flow with
         {
-            Nodes = [.. flow.Nodes.Select(node => node is HttpNode http ? http with { ConnectionId = null } : node)],
+            Nodes =
+            [
+                .. flow.Nodes.Select(node => node switch
+                {
+                    HttpNode http => http with { ConnectionId = null },
+                    CrmActionNode crm => crm with { TagId = null, StageId = null },
+                    _ => node,
+                }),
+            ],
         });
     }
 }

@@ -63,6 +63,39 @@ public sealed class ConsumerPortsTests
         Assert.Equal((ConnectionUnavailableReason.ProviderHidden, "Oculta", true), await Of(hidden.Id));
     }
 
+    // Pausar es dejar de operar, no dejar de configurar: la configuración de un consumidor (Siigo) lee con una pausada. NeedsAttention
+    // sigue afuera: su credencial está rechazada y el proveedor respondería 401 igual.
+    [Fact]
+    public async Task ResolveForSetupAcceptsAPausedConnectionButNotOneThatNeedsAttention()
+    {
+        var bed = new IntegrationsTestBed();
+        var paused = bed.Seed("Pausada");
+        paused.Pause(IntegrationsTestBed.Now);
+        var attention = bed.Seed("Atención");
+        attention.MarkNeedsAttention(ConnectionFailureCodes.CredentialsRejected, IntegrationsTestBed.Now);
+        var unreadable = bed.Seed("Ilegible");
+        unreadable.Pause(IntegrationsTestBed.Now);
+        bed.Protector.Unreadable.Add((unreadable.Id, ZenviaFieldKeys.ApiToken));
+        var port = bed.ConnectionsPort();
+
+        var resolved = await port.ResolveForSetupAsync(bed.TenantId, paused.Id, Ct);
+        Assert.Null(resolved.Unavailable);
+        Assert.Equal(IntegrationsTestBed.Token, resolved.Connection!.Secrets[ZenviaFieldKeys.ApiToken]);
+
+        Assert.Equal(
+            ConnectionUnavailableReason.NeedsAttention,
+            (await port.ResolveForSetupAsync(bed.TenantId, attention.Id, Ct)).Unavailable);
+        Assert.Equal(
+            ConnectionUnavailableReason.SecretUnreadable,
+            (await port.ResolveForSetupAsync(bed.TenantId, unreadable.Id, Ct)).Unavailable);
+        Assert.Equal(
+            ConnectionUnavailableReason.NotFound,
+            (await port.ResolveForSetupAsync(bed.TenantId, Guid.CreateVersion7(), Ct)).Unavailable);
+
+        // Operar sigue exigiendo Active.
+        Assert.Equal(ConnectionUnavailableReason.Paused, (await port.ResolveAsync(bed.TenantId, paused.Id, Ct)).Unavailable);
+    }
+
     // Zenvia exige que el operador lo habilite para el tenant (plan 2026-10-21): un conjunto vacío lo apaga.
     [Fact]
     public async Task ResolveSaysProviderDisabledWhenTheTenantTurnedItOff()
@@ -150,6 +183,84 @@ public sealed class ConsumerPortsTests
         Assert.Equal(ConnectionStatus.Paused, paused.Status);
         Assert.Equal(0, bed.UnitOfWork.Saves);
         Assert.Empty(bed.Audit.Entries);
+    }
+
+    // Spec 2026-11-12 §6.3 (D9): un refresh token muerto saca a la conexión de cualquier estado recuperable, también de
+    // Paused; si no, el worker la reintentaría cada 5 minutos para siempre. Desde Paused no publica: la pausa fue del usuario.
+    [Fact]
+    public async Task ReportTokenExpiredFromPausedMovesItWithoutPublishing()
+    {
+        var bed = new IntegrationsTestBed();
+        var paused = bed.Seed("Pausada");
+        paused.Pause(IntegrationsTestBed.Now);
+        var reporter = bed.HealthReporter();
+
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, paused.Id, Ct);
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, Guid.CreateVersion7(), Ct);
+
+        Assert.Equal(ConnectionStatus.NeedsAttention, paused.Status);
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, paused.LastFailureCode);
+        var audit = Assert.Single(bed.Audit.Entries);
+        Assert.Equal("integrations.connection.needs_attention", audit.Action);
+        Assert.Equal(AuditActorType.Integration, audit.ActorType);
+        Assert.Empty(bed.Events.Published);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+    }
+
+    // Owner, 2026-11-12: el evento identifica el error. Una conexión en atención por otra causa que pasa a token_expired
+    // publica otra vez, con el código nuevo.
+    [Fact]
+    public async Task ReportTokenExpiredFromAnotherAttentionCodePublishesTheNewCode()
+    {
+        var bed = new IntegrationsTestBed();
+        var attention = bed.Seed("Atención");
+        attention.MarkNeedsAttention(ConnectionFailureCodes.WebhooksNotRegistered, IntegrationsTestBed.Now);
+
+        await bed.HealthReporter().ReportTokenExpiredAsync(bed.TenantId, attention.Id, Ct);
+
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, attention.LastFailureCode);
+        var audit = Assert.Single(bed.Audit.Entries);
+        Assert.Equal("integrations.connection.needs_attention", audit.Action);
+        var published = Assert.Single(bed.Events.Published);
+        Assert.Equal("integrations.connection-needs-attention.v1", published.EventName);
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, published.FailureCode);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ReportTokenExpiredOnTokenExpiredNeitherPublishesNorAudits()
+    {
+        var bed = new IntegrationsTestBed();
+        var expired = bed.Seed("Vencida");
+        expired.MarkNeedsAttention(ConnectionFailureCodes.TokenExpired, IntegrationsTestBed.Now);
+
+        await bed.HealthReporter().ReportTokenExpiredAsync(bed.TenantId, expired.Id, Ct);
+
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, expired.LastFailureCode);
+        Assert.Empty(bed.Audit.Entries);
+        Assert.Empty(bed.Events.Published);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ReportTokenExpiredFromActivePublishesOnce()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        var uninstalled = bed.Seed("Desinstalada");
+        uninstalled.MarkNeedsAttention(ConnectionFailureCodes.AppUninstalled, IntegrationsTestBed.Now);
+        var reporter = bed.HealthReporter();
+
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, connection.Id, Ct);
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, connection.Id, Ct);
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, uninstalled.Id, Ct);
+
+        Assert.Equal(ConnectionStatus.NeedsAttention, connection.Status);
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, connection.LastFailureCode);
+        Assert.Equal(ConnectionFailureCodes.AppUninstalled, uninstalled.LastFailureCode);
+        Assert.Single(bed.Audit.Entries);
+        Assert.Equal("integrations.connection-needs-attention.v1", Assert.Single(bed.Events.Published).EventName);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
     }
 
     [Theory]

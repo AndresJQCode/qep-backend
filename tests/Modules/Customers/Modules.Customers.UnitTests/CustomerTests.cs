@@ -33,12 +33,10 @@ public sealed class CustomerTests
 
     private static CustomerCommercialInfo Commercial(
         ClientClassificationId? classificationId = null,
-        bool withRetention = false,
         bool vatSurplus = false) =>
         new()
         {
             ClassificationId = classificationId ?? ClassificationId,
-            WithRetention = withRetention,
             VatSurplus = vatSurplus
         };
 
@@ -121,6 +119,7 @@ public sealed class CustomerTests
         string? cityName = "Madrid") =>
         Create(
             cuc: cuc,
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
             contact: ForeignContact(country, cityName),
             seedAddressBook: false);
 
@@ -524,12 +523,12 @@ public sealed class CustomerTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void AForeignCustomerRequiresTheCityInWriting(string? cityName)
+    public void AForeignCustomerWithoutCityNameHasNoCity(string? cityName)
     {
-        var exception = Assert.Throws<CustomersDomainException>(
-            () => CreateForeign(cityName: cityName));
+        var customer = CreateForeign(cityName: cityName);
 
-        Assert.Equal("customers.customer.city_name_required", exception.Code);
+        Assert.Null(customer.CityId);
+        Assert.Null(customer.CityName);
     }
 
     // Sin ciudad DIVIPOLA no hay departamento, y sin departamento no hay los dos digitos que el
@@ -539,6 +538,7 @@ public sealed class CustomerTests
     public void AForeignCustomerDropsAStrayCityId()
     {
         var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
             contact: ForeignContact() with { CityId = CityId },
             seedAddressBook: false);
 
@@ -556,12 +556,68 @@ public sealed class CustomerTests
     }
 
     [Fact]
-    public void AColombianCustomerStillRequiresItsCityId()
+    public void AColombianCustomerWithoutCityIdHasNoCity()
     {
-        var exception = Assert.Throws<CustomersDomainException>(
-            () => Create(contact: ValidContact() with { CityId = null }));
+        var customer = Create(contact: ValidContact() with { CityId = null });
 
-        Assert.Equal("customers.customer.city_required", exception.Code);
+        Assert.Null(customer.CityId);
+        Assert.Null(customer.CityName);
+    }
+
+    [Fact]
+    public void CreateWithoutIdentificationLeavesBothFieldsNullAndIsComplete()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "CLI08000142", "Verde Esencial", null, null,
+            null, null, ValidContact(), Commercial(), Now);
+
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
+        Assert.Null(customer.Identification);
+        Assert.Equal(CustomerCompleteness.Complete, customer.Completeness);
+        Assert.True(customer.IsComplete);
+    }
+
+    [Fact]
+    public void AJuridicaWithoutIdentificationIsAccepted()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "CLI08000142", "Verde Esencial", null, null,
+            null, PersonType.Juridica, ValidContact(), Commercial(), Now);
+
+        Assert.Equal(PersonType.Juridica, customer.PersonType);
+        Assert.Null(customer.Identification);
+    }
+
+    [Fact]
+    public void UpdateWithoutIdentificationClearsADocumentItHad()
+    {
+        var customer = Create();
+        Assert.NotNull(customer.Identification);
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            identification: null,
+            null,
+            ValidContact(),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
+    }
+
+    [Fact]
+    public void CreateFromRegisterWithoutIdentificationIsIncompleteWithoutDocument()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura Perez", null, "3001234567", Now, new CustomerDomainFixtures.FakeNormalizer());
+
+        Assert.Equal(CustomerCompleteness.Incomplete, customer.Completeness);
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
     }
 
     // La libreta de envios es DIVIPOLA (CustomerAddress.CityId es una FK a geography.cities), asi
@@ -584,7 +640,7 @@ public sealed class CustomerTests
         customer.Update(
             "Verde Esencial",
             businessName: null,
-            Identification(),
+            Identification(IdentificationType.Pasaporte, "X1234567"),
             null,
             ForeignContact(),
             Commercial(),
@@ -663,14 +719,10 @@ public sealed class CustomerTests
         Assert.Equal(1, customer.Version);
     }
 
-    // withRetention es obligatorio en el formulario y no tiene "sin definir": un cliente o retiene
-    // o no. Por eso es bool y no bool?, y por eso Empty lo deja en false.
     [Fact]
-    public void CommercialInfoDefaultsToNoRetention()
+    public void ANewCustomerHasNoWithholdingTaxRates()
     {
-        var customer = Create();
-
-        Assert.False(customer.WithRetention);
+        Assert.Empty(Create().WithholdingTaxRateIds);
     }
 
     [Fact]
@@ -679,11 +731,9 @@ public sealed class CustomerTests
         var classificationId = new ClientClassificationId(Guid.CreateVersion7());
 
         var customer = Create(commercial: Commercial(
-            classificationId: classificationId,
-            withRetention: true));
+            classificationId: classificationId));
 
         Assert.Equal(classificationId, customer.ClassificationId);
-        Assert.True(customer.WithRetention);
     }
 
     // Mismo criterio que withRetention: bool y no bool?, sin "sin definir".
@@ -1317,5 +1367,168 @@ public sealed class CustomerTests
 
         Assert.Null(customer.CityId);
         Assert.Equal(1, customer.Version);
+    }
+
+    // Spec ReteICA por empresa §7.4: los municipios donde el cliente es agente retenedor, por (país, tipo).
+    [Fact]
+    public void AgentCitiesCollapseDuplicates()
+    {
+        var customer = Create();
+
+        Assert.True(customer.SetWithholdingAgentCities(
+            [new("co", "ReteICA", CityId), new("CO", "ReteICA", CityId), new("CO", "ReteICA", OtherCityId)], Later));
+
+        Assert.Equal(2, customer.WithholdingAgentCities.Count);
+        Assert.All(customer.WithholdingAgentCities, city => Assert.Equal("CO", city.Country));
+        Assert.Equal(2, customer.Version);
+    }
+
+    [Fact]
+    public void SameAgentSetDoesNotBumpVersion()
+    {
+        var customer = Create();
+        customer.SetWithholdingAgentCities([new("CO", "ReteICA", CityId), new("CO", "ReteICA", OtherCityId)], Later);
+
+        var changed = customer.SetWithholdingAgentCities(
+            [new("CO", "ReteICA", OtherCityId), new("co", "ReteICA", CityId)], Later.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+    }
+
+    [Fact]
+    public void IsWithholdingAgentMatchesCountryTypeAndCity()
+    {
+        var customer = Create();
+        customer.SetWithholdingAgentCities([new("CO", "ReteICA", CityId)], Later);
+
+        Assert.True(customer.IsWithholdingAgent("CO", "ReteICA", CityId));
+        Assert.True(customer.IsWithholdingAgent(" co ", "ReteICA", CityId));
+        Assert.False(customer.IsWithholdingAgent("CO", "ReteICA", OtherCityId));
+        Assert.False(customer.IsWithholdingAgent("CO", "Retefuente", CityId));
+        Assert.False(customer.IsWithholdingAgent("ES", "ReteICA", CityId));
+    }
+
+    [Fact]
+    public void EmptyAgentListClearsThem()
+    {
+        var customer = Create();
+        customer.SetWithholdingAgentCities([new("CO", "ReteICA", CityId)], Later);
+
+        Assert.True(customer.SetWithholdingAgentCities([], Later.AddHours(1)));
+
+        Assert.Empty(customer.WithholdingAgentCities);
+    }
+
+    private static readonly Guid RateA = Guid.Parse("01900000-0000-7000-8000-0000000000a1");
+    private static readonly Guid RateB = Guid.Parse("01900000-0000-7000-8000-0000000000a2");
+
+    [Fact]
+    public void SettingTheSameRatesIsNotAChange()
+    {
+        var customer = Create();
+        Assert.True(customer.SetWithholdingTaxRates([RateA, RateB], Later));
+
+        var changed = customer.SetWithholdingTaxRates([RateB, RateA], Later.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+    }
+
+    [Fact]
+    public void DuplicatedIdsAreStoredOnce()
+    {
+        var customer = Create();
+
+        customer.SetWithholdingTaxRates([RateA, RateA, RateB, RateA], Later);
+
+        Assert.Equal(2, customer.WithholdingTaxRateIds.Count);
+        Assert.Contains(RateA, customer.WithholdingTaxRateIds);
+        Assert.Contains(RateB, customer.WithholdingTaxRateIds);
+    }
+
+    [Fact]
+    public void EmptyGuidIsRejected()
+    {
+        var customer = Create();
+
+        var error = Assert.Throws<CustomersDomainException>(
+            () => customer.SetWithholdingTaxRates([RateA, Guid.Empty], Later));
+
+        Assert.Equal("customers.customer.withholding_tax_rate_invalid", error.Code);
+        Assert.Empty(customer.WithholdingTaxRateIds);
+        Assert.Equal(1, customer.Version);
+    }
+
+    [Fact]
+    public void SettingRatesBumpsVersion()
+    {
+        var customer = Create();
+
+        var changed = customer.SetWithholdingTaxRates([RateA], Later);
+
+        Assert.True(changed);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+
+        Assert.True(customer.SetWithholdingTaxRates([], Later.AddHours(1)));
+        Assert.Empty(customer.WithholdingTaxRateIds);
+        Assert.Equal(3, customer.Version);
+    }
+
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000a1");
+
+    [Fact]
+    public void ForeignCustomerKeepsRegion()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
+            contact: ForeignContact() with { RegionId = MadridRegionId },
+            seedAddressBook: false);
+
+        Assert.Equal(MadridRegionId, customer.RegionId);
+    }
+
+    [Fact]
+    public void ColombianCustomerWithRegionIsRejected()
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { RegionId = MadridRegionId }));
+
+        Assert.Equal("customers.customer.region_lane_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void EmptyRegionIdIsNoRegion()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
+            contact: ForeignContact() with { RegionId = Guid.Empty },
+            seedAddressBook: false);
+
+        Assert.Null(customer.RegionId);
+    }
+
+    [Fact]
+    public void UpdateWithoutRegionClearsIt()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
+            contact: ForeignContact() with { RegionId = MadridRegionId },
+            seedAddressBook: false);
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(IdentificationType.Pasaporte, "X1234567"),
+            null,
+            ForeignContact(),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.RegionId);
     }
 }

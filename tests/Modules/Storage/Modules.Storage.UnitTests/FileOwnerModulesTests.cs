@@ -29,36 +29,90 @@ public sealed class FileOwnerModulesTests
     }
 
     [Fact]
-    public void ProductsAreCatalogAndProofsAreOrdersAndTheRestIsCore()
+    public void ProductsAreCatalogProofsAreOrdersTheBannerIsTheStoreAndTheRestIsCore()
     {
         Assert.Same(TenantModuleKeys.Catalog, FileOwnerModules.ModuleOf(FileOwnerType.Product));
         Assert.Same(TenantModuleKeys.Orders, FileOwnerModules.ModuleOf(FileOwnerType.PaymentProof));
+        Assert.Same(TenantModuleKeys.Store, FileOwnerModules.ModuleOf(FileOwnerType.Store));
+        Assert.Same(TenantModuleKeys.Support, FileOwnerModules.ModuleOf(FileOwnerType.SupportTicket));
         foreach (var core in new[] { FileOwnerType.User, FileOwnerType.Entity, FileOwnerType.System, FileOwnerType.Tenant })
         {
             Assert.Null(FileOwnerModules.ModuleOf(core));
         }
     }
 
+    // Spec 2026-11-17 (imagen de encabezado de plantilla): la imagen es de Mensajería.
+    [Fact]
+    public void AMessageTemplateFileBelongsToMessaging()
+    {
+        Assert.Equal(TenantModuleKeys.Messaging, FileOwnerModules.ModuleOf(FileOwnerType.MessageTemplate));
+    }
+
+    // Sólo llega por la sesión de Mensajería: la consola de Storage no la ve ni la crea.
+    [Fact]
+    public void AMessageTemplateFileIsSystemOwned()
+    {
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.MessageTemplate));
+    }
+
+    // Spec 2026-11-18 (multimedia del bloque «Mensaje»): el archivo es de los chatbots.
+    [Fact]
+    public void AChatbotMediaFileBelongsToAutomations()
+    {
+        Assert.Equal(TenantModuleKeys.Automations, FileOwnerModules.ModuleOf(FileOwnerType.ChatbotMedia));
+    }
+
+    // Sólo llega por la sesión del editor de chatbots: la consola de Storage no lo ve ni lo crea.
+    [Fact]
+    public void AChatbotMediaFileIsSystemOwned()
+    {
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.ChatbotMedia));
+    }
+
+    // Spec 2026-11-20 (RRHH): el PDF de un contrato o de un registro es de Recursos humanos.
+    [Fact]
+    public void AnHrDocumentBelongsToHr()
+    {
+        Assert.Equal(TenantModuleKeys.Hr, FileOwnerModules.ModuleOf(FileOwnerType.HrDocument));
+    }
+
+    // Sólo llega por la sesión de Hr (hr.contract.manage): la consola de Storage no lo ve ni lo crea.
+    [Fact]
+    public void AnHrDocumentIsSystemOwned()
+    {
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.HrDocument));
+    }
+
+    // owner_type es character varying(20) y se persiste por nombre: un nombre más largo no cabe.
+    [Fact]
+    public void TheOwnerTypeNameFitsItsColumn()
+    {
+        Assert.All(Enum.GetNames<FileOwnerType>(), name => Assert.True(name.Length <= 20, name));
+    }
+
     [Fact]
     public void OwnerTypesDisabledInListsTheOnesWhoseModuleIsOff()
     {
+        // store depende de orders: apagar orders apaga también el banner de la tienda.
         Assert.Equal(
-            [FileOwnerType.PaymentProof],
+            [FileOwnerType.PaymentProof, FileOwnerType.Store],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
-                TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))));
+                TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))).Order());
+        // support no tiene dependencias: sólo sale con su propio módulo apagado.
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket,
+                FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia, FileOwnerType.HrDocument],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }
 
-    // Con catalog apagado el listado excluye a los productos, y por la dependencia orders -> catalog
-    // también a los comprobantes: el módulo apagado se propaga.
+    // Con catalog apagado el listado excluye a los productos, y por las dependencias orders -> catalog y store -> orders
+    // también a los comprobantes y al banner de la tienda: el módulo apagado se propaga.
     [Fact]
     public void OwnerTypesDisabledInExcludesProductsWhenCatalogIsOff()
     {
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
                 TenantModuleKeys.All.Except([TenantModuleKeys.Catalog]))).Order());
     }
@@ -66,6 +120,8 @@ public sealed class FileOwnerModulesTests
     [Theory]
     [InlineData(FileOwnerType.Product, "catalog")]
     [InlineData(FileOwnerType.PaymentProof, "orders")]
+    [InlineData(FileOwnerType.Store, "store")]
+    [InlineData(FileOwnerType.SupportTicket, "support")]
     public async Task AFileWhoseModuleIsOffIsForbidden(FileOwnerType ownerType, string module)
     {
         var modules = FixedTenantModules.AllBut(TenantModuleKey.Parse(module));

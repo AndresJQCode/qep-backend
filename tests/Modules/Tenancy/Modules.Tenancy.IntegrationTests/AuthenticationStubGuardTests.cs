@@ -30,6 +30,8 @@ public sealed class AuthenticationStubGuardTests
             builder.UseSetting(
                 "ConnectionStrings:QepDatabase",
                 "Host=localhost;Port=5432;Database=test;Username=test;Password=test");
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

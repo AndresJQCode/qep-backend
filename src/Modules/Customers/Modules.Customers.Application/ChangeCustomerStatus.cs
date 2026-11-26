@@ -16,7 +16,9 @@ public sealed class DeactivateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -47,7 +49,7 @@ public sealed class DeactivateCustomerHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, cancellationToken);
+        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }
 
@@ -65,7 +67,9 @@ public sealed class ActivateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -94,6 +98,6 @@ public sealed class ActivateCustomerHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, cancellationToken);
+        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }

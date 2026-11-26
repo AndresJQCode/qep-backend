@@ -5,24 +5,18 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
+/// <summary>Convierte una cotización en pedido. El estado de pago no viaja (spec 2026-11-10 §3.2): sale calculado de
+/// los comprobantes y nunca nace pagado.</summary>
 public sealed record ConvertQuotationToOrderCommand(
     Guid TenantId,
     Guid QuotationId,
-    string PaymentStatus,
     string? Notes,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDetailDto>;
 
 public sealed class ConvertQuotationToOrderValidator : AbstractValidator<ConvertQuotationToOrderCommand>
 {
-    private static readonly string[] ValidPaymentStatuses =
-        Enum.GetNames<OrderPaymentStatus>();
-
     public ConvertQuotationToOrderValidator()
     {
-        RuleFor(command => command.PaymentStatus)
-            .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
-            .WithMessage(
-                $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
         // Las notas del pedido no tienen tope (plan 2026-10-15, P2). `Notes` nulo hereda las de la
         // cotización; ver Order.FromQuotation.
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
@@ -62,6 +56,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IExecutionContext executionContext,
     ITenantClock tenantClock,
     ITenantDirectory tenantDirectory,
+    IQuotationWithholdingLookup withholdingLookup,
     IValidator<ConvertQuotationToOrderCommand> validator)
     : ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>
 {
@@ -83,11 +78,14 @@ public sealed class ConvertQuotationToOrderHandler(
             command.TenantId, quotation.ClientId, cancellationToken);
         QuotationCustomerEligibility.Ensure(customer, command.TenantId, quotation.ClientId);
 
-        foreach (var proof in command.PaymentProofs)
-        {
-            await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, orderRepository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
-        }
+        // Todos los comprobantes del cuerpo en dos lecturas, no dos por comprobante (consultas por request, fase 2).
+        await OrderPaymentProofResolver.ResolveManyAsync(
+            fileLookup,
+            orderRepository,
+            command.TenantId,
+            command.PaymentProofs.Select(proof => proof.FileId).ToArray(),
+            exceptProofId: null,
+            cancellationToken);
 
         var convertedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
@@ -102,7 +100,6 @@ public sealed class ConvertQuotationToOrderHandler(
         var format = await numberingFormats.GetAsync(
             command.TenantId, DocumentNumberType.Order, cancellationToken);
         var counterYear = format.IncludeYear ? year : 0;
-        var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
         // Los números de pedido no tienen huecos. Las precondiciones del dominio se revisan antes
         // de pedir el número: una cotización ya convertida, anulada o incompleta sale 422 sin tocar
@@ -111,6 +108,12 @@ public sealed class ConvertQuotationToOrderHandler(
         // Antes de pedir el número, como las demás precondiciones: el 422 no gasta el consecutivo.
         await BillingPersonTypeRequirement.EnsureForQuotationAsync(
             tenantDirectory, command.TenantId, quotation, cancellationToken);
+
+        // Spec alerta UVT §5.2: el pedido nace con la UVT del día del tenant, no con la foto congelada de la cotización.
+        // Antes de la transacción, como las demás lecturas a otro módulo: no tiene por qué hacerse con el lock del
+        // contador tomado. Sin filas con base en unidades no se consulta Catalog.
+        var taxUnits = await TaxUnitRefresh.UnitsForAsync(
+            quotation.ActiveWithholdings, withholdingLookup, DocumentDates.LocalDate(calendar, now), cancellationToken);
 
         // Convertir también saca del borrador: las líneas que todavía no congelaron su producto
         // (un borrador convertido sin enviarse, o una enviada antes del snapshot) lo congelan acá.
@@ -154,11 +157,13 @@ public sealed class ConvertQuotationToOrderHandler(
                 command.TenantId,
                 orderNumber,
                 quotation,
-                paymentStatus,
                 command.Notes,
                 convertedBy,
                 proofs,
-                now);
+                now,
+                // Spec 2026-11-16 §3: el día local de la conversión en el calendario del tenant; el dominio no conoce el huso.
+                DocumentDates.LocalDate(calendar, now),
+                taxUnits);
 
             orderRepository.Add(order);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(

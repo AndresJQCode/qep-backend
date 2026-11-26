@@ -3,10 +3,13 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
-public sealed record ListTaxRatesQuery(Guid TenantId) : IQuery<IReadOnlyList<TaxRateDto>>;
+/// <param name="Types">Si viene y no está vacío, sólo esos tipos; null o vacío, todas las tasas.</param>
+public sealed record ListTaxRatesQuery(Guid TenantId, IReadOnlyCollection<string>? Types = null)
+    : IQuery<IReadOnlyList<TaxRateDto>>;
 
 public sealed class ListTaxRatesHandler(
     ITaxRateRepository repository,
+    ITaxRateGeographyLookup geography,
     IExecutionContext executionContext)
     : IQueryHandler<ListTaxRatesQuery, IReadOnlyList<TaxRateDto>>
 {
@@ -19,6 +22,13 @@ public sealed class ListTaxRatesHandler(
 
         var taxRates = await repository.ListAsync(query.TenantId, cancellationToken);
 
-        return taxRates.Select(taxRate => taxRate.ToDto()).ToArray();
+        // Se filtra en memoria: un tenant tiene un puñado de tasas (ver ITaxRateRepository), así que
+        // una consulta con filtro no resuelve un problema que exista.
+        var filtered = query.Types is { Count: > 0 } types
+            ? taxRates.Where(taxRate => types.Contains(taxRate.Type, StringComparer.Ordinal))
+            : taxRates;
+
+        // Los municipios de toda la lista en una sola consulta a Geography (P8).
+        return await TaxRateMapping.ToDtosAsync(filtered.ToArray(), geography, cancellationToken);
     }
 }

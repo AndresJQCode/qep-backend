@@ -73,8 +73,9 @@ public sealed class QuotationUnitPriceWithoutTaxTests
                 Currency = "COP"
             },
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

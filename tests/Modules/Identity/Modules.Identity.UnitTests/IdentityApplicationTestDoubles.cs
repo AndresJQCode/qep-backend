@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Modules.Audit.Domain;
 using Modules.Identity.Application;
 using Modules.Identity.Domain;
@@ -69,6 +69,9 @@ internal sealed class FakeUserRepository : IUserRepository
 
     public Task<User?> FindByIdAsync(Guid userId, CancellationToken cancellationToken) =>
         Task.FromResult(Stored.FirstOrDefault(user => user.Id.Value == userId));
+
+    public Task<IReadOnlyList<User>> ListByIdsAsync(IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<User>>(Stored.Where(user => userIds.Contains(user.Id.Value)).ToList());
 
     public void Add(User user) => Added.Add(user);
 

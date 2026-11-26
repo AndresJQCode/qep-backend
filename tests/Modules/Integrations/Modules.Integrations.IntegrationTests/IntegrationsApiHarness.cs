@@ -220,6 +220,8 @@ internal static class IntegrationsApiHarness
             builder.UseEnvironment("Development");
             // Pool acotado sólo en pruebas: un host no puede acaparar las conexiones del contenedor compartido.
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 80 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -695,8 +697,12 @@ internal sealed class CapturedLogs : ILoggerProvider
 {
     private readonly ConcurrentQueue<string> _entries = new();
     private readonly ConcurrentQueue<string> _categories = new();
+    private readonly ConcurrentQueue<LogLevel> _levels = new();
 
     public IReadOnlyCollection<string> Entries => _entries;
+
+    /// <summary>El nivel de cada entrada: el control positivo de una prueba que corre el host en <c>Trace</c>.</summary>
+    public IReadOnlyCollection<LogLevel> Levels => _levels;
 
     /// <summary>Categoría de cada entrada registrada (una por entrada, con repetidas): sirve para probar
     /// qué componente NO está logueando, p. ej. los handlers de logging de IHttpClientFactory.</summary>
@@ -704,14 +710,14 @@ internal sealed class CapturedLogs : ILoggerProvider
 
     public string AllText => string.Join('\n', _entries);
 
-    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries, _categories);
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries, _categories, _levels);
 
     public void Dispose()
     {
     }
 
     private sealed class CapturingLogger(
-        string categoryName, ConcurrentQueue<string> entries, ConcurrentQueue<string> categories) : ILogger
+        string categoryName, ConcurrentQueue<string> entries, ConcurrentQueue<string> categories, ConcurrentQueue<LogLevel> levels) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -726,6 +732,7 @@ internal sealed class CapturedLogs : ILoggerProvider
             Func<TState, Exception?, string> formatter)
         {
             categories.Enqueue(categoryName);
+            levels.Enqueue(logLevel);
             entries.Enqueue(formatter(state, exception) + (exception is null ? string.Empty : "\n" + exception));
         }
     }

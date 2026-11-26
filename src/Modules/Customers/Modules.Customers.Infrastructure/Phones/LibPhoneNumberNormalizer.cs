@@ -1,3 +1,5 @@
+using System.Globalization;
+using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using PhoneNumbers;
 
@@ -5,7 +7,7 @@ namespace Modules.Customers.Infrastructure.Phones;
 
 /// <summary>Spec 2026-10-09 §6.5 sobre <c>libphonenumber-csharp</c>. Con «+» la región se ignora; sin «+»
 /// el número es nacional del país del cliente (la librería maneja los prefijos de larga distancia).</summary>
-internal sealed class LibPhoneNumberNormalizer : IPhoneNumberNormalizer
+internal sealed class LibPhoneNumberNormalizer : IPhoneNumberNormalizer, IPhoneNumberSplitter
 {
     /// <summary>La región que la librería usa cuando el número trae «+»: la ignora, pero exige una.</summary>
     internal const string UnknownRegion = "ZZ";
@@ -29,6 +31,37 @@ internal sealed class LibPhoneNumberNormalizer : IPhoneNumberNormalizer
         {
             var region = Util.GetRegionCodeForNumber(Util.Parse(e164.Trim(), UnknownRegion));
             return string.IsNullOrEmpty(region) || region == UnknownRegion ? null : region;
+        }
+        catch (NumberParseException)
+        {
+            return null;
+        }
+    }
+
+    public PhoneNumberParts? Split(string? phone, string? defaultRegion = null)
+    {
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            return null;
+        }
+
+        var parseRegion = string.IsNullOrWhiteSpace(defaultRegion) ? UnknownRegion : defaultRegion.Trim().ToUpperInvariant();
+
+        try
+        {
+            var parsed = Util.Parse(phone.Trim(), parseRegion);
+            if (!Util.IsValidNumber(parsed))
+            {
+                return null;
+            }
+
+            var region = Util.GetRegionCodeForNumber(parsed);
+            return string.IsNullOrEmpty(region) || region == UnknownRegion
+                ? null
+                : new PhoneNumberParts(
+                    region,
+                    Util.GetNationalSignificantNumber(parsed),
+                    parsed.CountryCode.ToString(CultureInfo.InvariantCulture));
         }
         catch (NumberParseException)
         {

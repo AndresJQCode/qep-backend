@@ -70,6 +70,30 @@ internal static class MetaPayloads
         return Change("messages", value.ToJsonString());
     }
 
+    /// <summary>Spec 2026-11-10: un entrante <c>type = "contacts"</c> (el contacto compartido), con la forma del webhook de Meta:
+    /// <c>messages[].contacts</c> es el arreglo que trae <paramref name="contactsJson"/> tal cual (name, phones[].wa_id…). El
+    /// resto es como <see cref="Inbound"/>: BSUID, <c>from</c> y el perfil «Laura».</summary>
+    public static string InboundContacts(string phoneNumberId, string waId, string wamid, long timestamp, string contactsJson)
+    {
+        var message = new JsonObject
+        {
+            ["from"] = waId,
+            ["from_user_id"] = UserIdFor(waId),
+            ["id"] = wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "contacts",
+            ["contacts"] = JsonNode.Parse(contactsJson),
+        };
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550000000"),
+            ["contacts"] = new JsonArray(new JsonObject { ["profile"] = new JsonObject { ["name"] = "Laura" }, ["user_id"] = UserIdFor(waId), ["wa_id"] = waId }),
+            ["messages"] = new JsonArray(message),
+        };
+        return Change("messages", value.ToJsonString());
+    }
+
     public static string InboundText(
         string phoneNumberId,
         string waId,
@@ -151,8 +175,12 @@ internal static class MetaPayloads
     {
         JsonObject Message((string Wamid, string Body) item) => new()
         {
-            ["from"] = waId, ["from_user_id"] = UserIdFor(waId), ["id"] = item.Wamid, ["timestamp"] = Seconds(timestamp),
-            ["type"] = "text", ["text"] = new JsonObject { ["body"] = item.Body },
+            ["from"] = waId,
+            ["from_user_id"] = UserIdFor(waId),
+            ["id"] = item.Wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "text",
+            ["text"] = new JsonObject { ["body"] = item.Body },
         };
         var value = new JsonObject
         {
@@ -180,6 +208,26 @@ internal static class MetaPayloads
                 timestamp = Seconds(timestamp),
                 type = "interactive",
                 interactive = new { type = "button_reply", button_reply = new { id = replyId, title } },
+            });
+
+    /// <summary>El toque de un botón de respuesta rápida de una plantilla, con la forma literal de Meta: <c>type: "button"</c>, el
+    /// <c>text</c> y el <c>payload</c> del botón, y el <c>context.id</c> del mensaje de la plantilla que cita.</summary>
+    public static string InboundTemplateButtonTap(
+        string phoneNumberId, string waId, string wamid, long timestamp, string quotedWamid, string text) =>
+        Messages(
+            phoneNumberId,
+            "15550000000",
+            UserIdFor(waId),
+            waId,
+            "Laura",
+            new
+            {
+                context = new { from = "15550000000", id = quotedWamid },
+                from = waId,
+                id = wamid,
+                timestamp = Seconds(timestamp),
+                type = "button",
+                button = new { text, payload = text },
             });
 
     /// <summary>El <c>value</c> de un <c>messages</c> con un mensaje <c>location</c>, para pasarlo a
@@ -447,6 +495,43 @@ internal static class MetaPayloads
                 ["type"] = "text",
                 ["text"] = new JsonObject { ["body"] = body },
             }),
+        };
+        return Change("smb_message_echoes", value.ToJsonString());
+    }
+
+    /// <summary>
+    /// Un audio que el negocio mandó desde la app a un contacto que sólo usa username. La forma salió de
+    /// <c>messaging.webhook_deliveries</c> en producción el 2026-11-18 (delivery 75687): el eco no trae <c>to</c>, trae
+    /// <c>to_user_id</c>; el audio trae <c>id, url, voice, sha256, mime_type</c>. Con <paramref name="toUserId"/> en <c>null</c> no
+    /// trae ninguno de los dos.
+    /// </summary>
+    public static string SmbEchoToUsername(string phoneNumberId, string? toUserId, string wamid, long timestamp)
+    {
+        var echo = new JsonObject
+        {
+            ["from"] = "15550001111",
+            ["id"] = wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "audio",
+            ["audio"] = new JsonObject
+            {
+                ["id"] = "MEDIA-" + wamid,
+                ["url"] = "https://example.invalid/audio",
+                ["voice"] = true,
+                ["sha256"] = "abc",
+                ["mime_type"] = "audio/ogg; codecs=opus",
+            },
+        };
+        if (toUserId is not null)
+        {
+            echo["to_user_id"] = toUserId;
+        }
+
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            ["message_echoes"] = new JsonArray(echo),
         };
         return Change("smb_message_echoes", value.ToJsonString());
     }

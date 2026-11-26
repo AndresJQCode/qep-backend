@@ -40,6 +40,35 @@ public sealed class RequireCsrfHeaderMiddlewareTests
     public async Task TheShopifyAnonymousInstallStartPassesWithoutTheHeader() =>
         Assert.True((await RunAsync("POST", "/api/v1/integrations/shopify/install/start", null)).Reached);
 
+    // Tienda pública: la excepción es por prefijo explícito. Las rutas se autentican con la clave del storefront y no leen la cookie.
+    [Fact]
+    public async Task ThePublicStorePrefixSkipsTheCsrfHeader() =>
+        Assert.True((await RunAsync("POST", "/api/v1/public/stores/x/order-requests", null)).Reached);
+
+    // Formulario público de Soporte (plan fase 3, F5): la página en otro sitio no puede mandar X-Qep-Client sin preflight, y el
+    // grupo es anónimo y no lee la cookie de sesión (SupportPublicSurfaceApiTests lo prueba con la autenticación real).
+    [Theory]
+    [InlineData("/api/v1/public/support/mi-empresa/tickets")]
+    [InlineData("/api/v1/public/support/mi-empresa/tickets/lookup")]
+    public async Task ThePublicSupportPrefixSkipsTheCsrfHeader(string path) =>
+        Assert.True((await RunAsync("POST", path, null)).Reached);
+
+    [Theory]
+    [InlineData("/api/v1/public/storesx/x/order-requests")]
+    [InlineData("/api/v1/public/stores")]
+    [InlineData("/api/v1/public/supportx/a")]
+    [InlineData("/api/v1/public/support")]
+    [InlineData("/API/v1/public/support/mi-empresa/tickets")]
+    [InlineData("/API/v1/public/stores/x/order-requests")]
+    [InlineData("/api/v1/public/other/x")]
+    public async Task ANearMissPrefixStillNeedsTheCsrfHeader(string path)
+    {
+        var (reached, status) = await RunAsync("POST", path, null);
+
+        Assert.False(reached);
+        Assert.Equal(StatusCodes.Status403Forbidden, status);
+    }
+
     [Theory]
     [InlineData("/api/v1/tenants/x/integrations/shopify/install/start")]
     [InlineData("/api/v1/integrations/shopify/install/start/x")]

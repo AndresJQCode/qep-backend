@@ -9,6 +9,11 @@ public sealed class SystemTemplateVariablesTests
     {
         string[] fixedKeys = ["nombre_contacto", "asesor", "empresa", "saludo"];
         Assert.Equal([.. fixedKeys, "numero_cotizacion", "valor_total", "vigencia"], SystemTemplateVariables.Quotation.Select(v => v.Key));
+        // Spec 2026-11-09 D2: el pedido no tiene vigencia.
+        Assert.Equal([.. fixedKeys, "numero_pedido", "valor_total"], SystemTemplateVariables.Order.Select(v => v.Key));
+        // Spec 2026-11-21: la factura lleva su número, no el del pedido.
+        Assert.Equal([.. fixedKeys, "numero_factura", "valor_total"], SystemTemplateVariables.Invoice.Select(v => v.Key));
+        Assert.Equal(["Número de factura", "Valor total"], SystemTemplateVariables.Invoice.Skip(4).Select(v => v.Label));
         Assert.Equal([.. fixedKeys, "servicio", "valor", "vencimiento"], SystemTemplateVariables.BillingReminder.Select(v => v.Key));
         Assert.Equal([.. fixedKeys, "cantidad_cobros", "total_vencido"], SystemTemplateVariables.BillingOverdue.Select(v => v.Key));
         Assert.Equal(
@@ -16,6 +21,19 @@ public sealed class SystemTemplateVariablesTests
             SystemTemplateVariables.Quotation.Select(v => v.Label));
         Assert.Empty(SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation).Intersect(SystemTemplateVariables.LegacyKeys.Keys));
         Assert.All(SystemTemplateVariables.LegacyKeys.Values, key => Assert.Contains(key, SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation)));
+    }
+
+    /// <summary>Soporte fase 4b: la respuesta formal usa la misma lista que «Aviso de respuesta»; la encuesta, las fijas más el radicado.</summary>
+    [Fact]
+    public void SupportListsStartWithTheFixedOnes()
+    {
+        string[] fixedKeys = ["nombre_contacto", "asesor", "empresa", "saludo"];
+        Assert.Equal([.. fixedKeys, "radicado", "respuesta"], SystemTemplateVariables.SupportReply.Select(v => v.Key));
+        Assert.Equal(SystemTemplateVariables.SupportReply, SystemTemplateVariables.SupportFormalReply);
+        Assert.Equal([.. fixedKeys, "radicado"], SystemTemplateVariables.SupportSurvey.Select(v => v.Key));
+        Assert.Equal(
+            SystemTemplateVariables.SupportReply.Single(v => v.Key == "radicado"),
+            SystemTemplateVariables.SupportSurvey.Single(v => v.Key == "radicado"));
     }
 
     [Theory]

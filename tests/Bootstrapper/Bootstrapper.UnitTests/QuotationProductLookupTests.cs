@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Quotations.Application;
@@ -120,10 +121,10 @@ public sealed class QuotationProductLookupTests
     [Fact]
     public async Task PricingLookupReturnsVariantPricesAndProductTax()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, null, Now);
         var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id);
         var lookup = new QuotationProductPricingLookup(
-            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(rate));
+            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(rate), new FakePriceListPricing());
 
         var large = await lookup.FindVariantAsync(TenantId, world.Large.Id.Value, Ct);
 
@@ -139,13 +140,43 @@ public sealed class QuotationProductLookupTests
         Assert.Equal(19, large.TaxPercentage);
     }
 
+    // Spec 2026-11-22 (D-5): la cotización y el pedido manual se precian con la lista de Quotations; la tienda y sus pedidos, con la
+    // de Store. El método sin canal es el de cotizaciones.
+    [Fact]
+    public async Task PricingLookupUsesTheQuotationsListByDefault()
+    {
+        var world = VariantWorld.Create(TenantId, Now);
+        var pricing = new FakePriceListPricing(PriceChannel.Quotations, factor: 2m);
+        var lookup = new QuotationProductPricingLookup(
+            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(), pricing);
+
+        var large = await lookup.FindVariantAsync(TenantId, world.Large.Id.Value, Ct);
+
+        Assert.Equal(64_000m, large!.Prices["COP"]);
+        Assert.Equal([PriceChannel.Quotations], pricing.RequestedChannels);
+    }
+
+    [Fact]
+    public async Task PricingLookupUsesTheStoreListForTheStoreChannel()
+    {
+        var world = VariantWorld.Create(TenantId, Now);
+        var pricing = new FakePriceListPricing(PriceChannel.Store, factor: 1.5m);
+        var lookup = new QuotationProductPricingLookup(
+            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(), pricing);
+
+        var found = await lookup.FindManyAsync(TenantId, [world.Large.Id.Value], QuotationPriceChannel.Store, Ct);
+
+        Assert.Equal(48_000m, found[world.Large.Id.Value].Prices["COP"]);
+        Assert.Equal([PriceChannel.Store], pricing.RequestedChannels);
+    }
+
     // Cada variante con sus escalas y sus empaques: los de M no se le prestan a L.
     [Fact]
     public async Task PricingLookupFindManyKeepsEachVariantScales()
     {
         var world = VariantWorld.Create(TenantId, Now);
         var lookup = new QuotationProductPricingLookup(
-            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository());
+            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(), new FakePriceListPricing());
 
         var found = await lookup.FindManyAsync(TenantId, [world.Medium.Id.Value, world.Large.Id.Value], Ct);
 
@@ -162,7 +193,7 @@ public sealed class QuotationProductLookupTests
         var world = VariantWorld.Create(TenantId, Now);
         world.Product.Deactivate(Now);
         var lookup = new QuotationProductPricingLookup(
-            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository());
+            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(), new FakePriceListPricing());
 
         var medium = await lookup.FindVariantAsync(TenantId, world.Medium.Id.Value, Ct);
 
@@ -175,18 +206,46 @@ public sealed class QuotationProductLookupTests
     {
         var world = VariantWorld.Create(TenantId, Now);
         var lookup = new QuotationProductPricingLookup(
-            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository());
+            new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(), new FakePriceListPricing());
 
         Assert.Null(await lookup.FindVariantAsync(TenantId, Guid.CreateVersion7(), Ct));
         Assert.Null(await lookup.FindVariantAsync(Guid.CreateVersion7(), world.Medium.Id.Value, Ct));
     }
 
+    // Spec 2026-11-18 §3.4: la línea fija tipo y unidad al nacer, y los dos puertos los traen del producto.
+    [Fact]
+    public async Task PricingLookupCarriesTheProductKindAndSalesUnit()
+    {
+        var service = SimpleProduct("SOP-1", new ProductDetails { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour });
+        var lookup = new QuotationProductPricingLookup(
+            new FakeProductRepository(service), new FakeOptionDefinitionRepository(), new FakeTaxRateRepository(), new FakePriceListPricing());
+
+        var found = await lookup.FindVariantAsync(TenantId, service.Id.Value, Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal((ProductKind.Service, SalesUnit.Hour), (found.Kind, found.SalesUnit));
+    }
+
+    [Fact]
+    public async Task QuotationLookupCarriesTheProductKindAndSalesUnit()
+    {
+        var service = SimpleProduct("SOP-1", new ProductDetails { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour });
+        var physical = SimpleProduct("SH-400");
+        var lookup = new QuotationProductLookup(
+            new FakeProductRepository(service, physical), new FakeOptionDefinitionRepository(), new FakeProductImageLookup());
+
+        var found = await lookup.FindManyAsync(TenantId, [service.Id.Value, physical.Id.Value], Ct);
+
+        Assert.Equal((ProductKind.Service, SalesUnit.Hour), (found[service.Id.Value].Kind, found[service.Id.Value].SalesUnit));
+        Assert.Equal((ProductKind.Physical, SalesUnit.Unit), (found[physical.Id.Value].Kind, found[physical.Id.Value].SalesUnit));
+    }
+
     private static ProductImageRef Available(Guid fileId, string url) => new(fileId, TenantId, "image/png", true, url);
 
-    private static Product SimpleProduct(string code) =>
+    private static Product SimpleProduct(string code, ProductDetails? details = null) =>
         Product.Create(
             ProductId.New(), TenantId, "Shampoo 400 ml",
-            ProductDetails.Empty,
+            details ?? ProductDetails.Empty,
             new ProductVariantInput { Code = code, Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 11_900m } } },
             [],
             Now);

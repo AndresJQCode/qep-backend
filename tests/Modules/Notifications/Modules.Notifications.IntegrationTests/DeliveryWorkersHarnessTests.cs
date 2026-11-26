@@ -1,11 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Modules.Notifications.Infrastructure.Messaging;
 using static Modules.Notifications.IntegrationTests.NotificationsDeliveryHarness;
 
 namespace Modules.Notifications.IntegrationTests;
 
-/// <summary>El interruptor del harness: sin él, cada prueba que llama a DrainAsync competiría con los
-/// nueve workers del host.</summary>
+/// <summary>El interruptor del harness: sin él, cada prueba que llama a DrainAsync competiría con el
+/// bucle de correo del host, que drena los trece consumidores (spec 2026-11-13, D-7).</summary>
 public sealed class DeliveryWorkersHarnessTests
 {
     [Fact]
@@ -20,12 +21,14 @@ public sealed class DeliveryWorkersHarnessTests
     }
 
     [Fact]
-    public async Task TheSwitchPutsTheNineWorkersBack()
+    public async Task TheSwitchPutsTheDeliveryLoopBackWithAllItsConsumers()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new NotificationsApiFactory(database.GetConnectionString(), runDeliveryWorkers: true);
 
-        Assert.Equal(9, factory.Services.GetServices<IHostedService>()
-            .Count(service => IsDeliveryWorker(service.GetType())));
+        var loop = Assert.Single(factory.Services.GetServices<IHostedService>(), service => IsDeliveryWorker(service.GetType()));
+        Assert.IsType<NotificationsDeliveryWorker>(loop);
+        // Los mismos que registra AddNotificationsInfrastructure (NotificationsDeliveryWorkerTests): 17 desde spec 2026-11-19.
+        Assert.Equal(17, factory.Services.GetServices<OutboxDeliveryWorker>().Count());
     }
 }

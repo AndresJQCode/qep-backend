@@ -89,6 +89,19 @@ internal static class ReportingApiHarness
         ReportingPermissions.AllAdvisorsRead
     ];
 
+    /// <summary>
+    /// Lo que siembra y lee el reporte de margen (spec 2026-11-10): escribir el costo de las variantes,
+    /// marcar pagado, desmarcar y anular un pedido, y leer el reporte.
+    /// </summary>
+    public static readonly string[] MarginPermissions =
+    [
+        .. ManagerPermissions,
+        CatalogPermissions.ProductCostManage,
+        ReportingPermissions.MarginRead,
+        OrdersPermissions.OrderApprove,
+        OrdersPermissions.OrderCancel,
+    ];
+
     /// <summary>Los de <see cref="ManagerPermissions"/> menos
     /// <see cref="ReportingPermissions.AllAdvisorsRead"/>: una asesora que siembra y lee sus
     /// reportes, pero sólo ve lo suyo.</summary>
@@ -363,7 +376,8 @@ internal static class ReportingApiHarness
 
     public static async Task<Guid> CreateProductAsync(
         HttpClient client, Guid tenantId, decimal baseCop = 100_000m,
-        IReadOnlyDictionary<string, decimal>? prices = null)
+        IReadOnlyDictionary<string, decimal>? prices = null,
+        IReadOnlyDictionary<string, decimal>? costs = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -377,6 +391,9 @@ internal static class ReportingApiHarness
                     new
                     {
                         code = $"VS-{Guid.NewGuid():N}"[..12],
+                        // Spec 2026-11-10: null keeps the variant without cost, and sending a map
+                        // needs catalog.product_cost.manage (only MarginPermissions carries it).
+                        costs,
                         pricing = new
                         {
                             // A given map wins over the COP shorthand, so tests can price in any currency.
@@ -584,7 +601,8 @@ internal static class ReportingApiHarness
         Guid productId,
         DateOnly? validUntil = null,
         string currency = "COP",
-        ShippingRequest? shipping = null)
+        ShippingRequest? shipping = null,
+        decimal quantity = 1m)
     {
         // Sin cuenta de cobro la cotización se envía igual, pero convertirla en pedido devuelve 422
         // `quotation.billing.account_required`: toda prueba del reporte de pedidos se caería en
@@ -610,7 +628,7 @@ internal static class ReportingApiHarness
 
         var added = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 1m),
+            new AddQuotationItemRequest(productId, quantity),
             TestContext.Current.CancellationToken);
         added.EnsureSuccessStatusCode();
 
@@ -648,6 +666,8 @@ internal static class ReportingApiHarness
                     new { bankName, accountNumber, currency },
                 },
                 taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "6015550000",
                 email = "facturacion@qep.example.co",
@@ -694,14 +714,13 @@ internal static class ReportingApiHarness
         HttpClient client,
         QepApiFactory factory,
         Guid tenantId,
-        QuotationResponse quotation,
-        string paymentStatus = "FullPaymentReceived")
+        QuotationResponse quotation)
     {
+        // Spec 2026-11-10 §3.2: el pago sale calculado de los comprobantes; con uno por el total queda «Por verificar».
         var proofFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest(
-                paymentStatus,
                 "Pago verificado",
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
@@ -711,6 +730,30 @@ internal static class ReportingApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         return detail.Order;
+    }
+
+    /// <summary>Spec 2026-11-16: mueve la fecha de un pedido abierto con el guardado de «Editar pedido», con las mismas
+    /// líneas y la versión que tiene ahora.</summary>
+    public static async Task MoveOrderDateAsync(HttpClient client, Guid tenantId, Guid orderId, DateOnly orderDate)
+    {
+        var url = $"/api/v1/tenants/{tenantId}/orders/{orderId}";
+        var current = await client.GetFromJsonAsync<OrderDetailResponse>(url, TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new SaveOrderEditsRequest(
+                [.. current.Items.Select(item => new OrderEditItemRequest(item.VariantId, item.Quantity))],
+                null,
+                current.Order.Notes,
+                current.Order.GlobalScaleFloor,
+                current.Order.IsRetail,
+                OrderDate: orderDate)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{current.Order.Version}\"");
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"PUT order date: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
     }
 
     /// <summary>Spec 2026-10-15: un pedido manual, sin cotización, por <c>POST /orders</c>. Las
@@ -725,7 +768,7 @@ internal static class ReportingApiHarness
             new CreateOrderRequest(
                 customer.Id, null, null, false, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new OrderEditItemRequest(productId, 1m)], "PaymentPending", []),
+                [new OrderEditItemRequest(productId, 1m)], []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
@@ -930,6 +973,8 @@ internal static class ReportingApiHarness
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -995,6 +1040,8 @@ internal static class ReportingApiHarness
 
     private sealed class StubPdfStorage : IQuotationPdfStorage
     {
+        public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<string> SaveAsync(
             Guid tenantId,
             QuotationId quotationId,
@@ -1090,7 +1137,7 @@ internal sealed class SingleWhatsAppChannel : IWhatsAppChannelDirectory
     private static readonly WhatsAppChannel Channel = new ZenviaWhatsAppChannel(
         Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000", "d0e79149-ed61-4784-9883-d86807f46ce5", null);
 
-    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, WhatsAppDocument document, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<WhatsAppChannel>>([Channel]);
 }
 
@@ -1102,4 +1149,7 @@ internal sealed class NoOpWhatsAppSender : IWhatsAppSender
 
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
 }

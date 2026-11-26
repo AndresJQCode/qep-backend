@@ -5,6 +5,7 @@ using Modules.Shopify.Application;
 using Modules.Shopify.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
+using static Modules.Shopify.UnitTests.StoreHandlersWorld;
 
 namespace Modules.Shopify.UnitTests;
 
@@ -50,6 +51,48 @@ public sealed class ShopifyStoreHandlersTests
         var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.PutAsync(world.Command() with { BillingCurrency = "USD" }));
 
         Assert.Equal("shopify.store.billing_account_not_found", error.Code);
+    }
+
+    // Spec 2026-11-17 §4.4: la tienda se configura con la empresa sola, sin banco ni número; la moneda sigue obligatoria.
+    [Fact]
+    public async Task AStoreIsConfiguredWithACompanyAndNoAccount()
+    {
+        var world = new StoreHandlersWorld();
+        world.Billing.Account = null;
+        world.Billing.Company = new ShopifyBillingCompanyRef(StoreHandlersWorld.CompanyId, true);
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with { BillingBankName = " ", BillingAccountNumber = null, BillingCurrency = "usd" });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.True(store.IsConfigured);
+        Assert.Equal(
+            new ShopifyBillingAccount(StoreHandlersWorld.CompanyId, null, null, "USD"),
+            store.Billing);
+        Assert.Equal((null, null, "USD"), (dto.BillingBankName, dto.BillingAccountNumber, dto.BillingCurrency));
+    }
+
+    [Fact]
+    public void OnlyTheAccountNumberIsAValidationError()
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { BillingBankName = null });
+
+        Assert.Equal(["billingBankName"], result.Errors.Select(error => error.PropertyName).Distinct());
+    }
+
+    [Fact]
+    public async Task AnUnknownCompanyIsBillingAccountNotFound()
+    {
+        var world = new StoreHandlersWorld();
+        world.Billing.Company = null;
+
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(
+            () => world.PutAsync(world.Command() with { BillingBankName = null, BillingAccountNumber = null }));
+
+        Assert.Equal("shopify.store.billing_account_not_found", error.Code);
+        Assert.Equal(0, world.UnitOfWork.Saves);
     }
 
     [Fact]
@@ -105,6 +148,7 @@ public sealed class ShopifyStoreHandlersTests
             DocumentAttributeKey = new string('d', ShopifyStore.AttributeKeyMaxLength + 1),
             DocumentTypeAttributeKey = null,
             DefaultIdentificationType = "RUT",
+            HistoryDays = ShopifyStore.HistoryDaysMax + 1,
             ExpectedVersion = 0,
         };
 
@@ -114,9 +158,167 @@ public sealed class ShopifyStoreHandlersTests
             [
                 "advisorMembershipId", "billingAccountNumber", "billingBankName", "billingCompanyId", "billingCurrency",
                 "defaultClassificationId", "defaultIdentificationType", "documentAttributeKey", "documentTypeAttributeKey",
-                "expectedVersion",
+                "expectedVersion", "historyDays",
             ],
             result.Errors.Select(error => error.PropertyName).Distinct().Order(StringComparer.Ordinal));
+    }
+
+    // Spec 2026-10-21: los días de historial son entrada del usuario; fuera de 1..30 el validador da el campo (422 con errors).
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    [InlineData(-1)]
+    public void PutHistoryDaysOutOfRangeValidationErrors(int historyDays)
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { HistoryDays = historyDays });
+
+        Assert.Equal(["historyDays"], result.Errors.Select(error => error.PropertyName));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(30)]
+    public void PutHistoryDaysInRangeOrNoneIsValid(int? historyDays)
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { HistoryDays = historyDays });
+
+        Assert.True(result.IsValid);
+    }
+
+    // Spec 2026-11-14 (D15): un frontend viejo no manda editSync ni editPaymentStatuses; null conserva lo guardado.
+    [Fact]
+    public async Task UpdateWithoutEditFieldsKeepsTheSavedOnes()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command() with { EditSync = "Automatic", EditPaymentStatuses = ["PaymentPending"] });
+
+        var dto = await world.PutAsync(world.Command() with { ExpectedVersion = 2 });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.Equal((ShopifyEditSync.Automatic, 3L), (store.EditSync, store.Version));
+        Assert.Equal(["PaymentPending"], store.EditPaymentStatuses);
+        Assert.Equal("Automatic", dto.EditSync);
+        Assert.Equal(["PaymentPending"], dto.EditPaymentStatuses);
+    }
+
+    [Fact]
+    public async Task PutSavesAndReturnsTheEditSyncAndPaymentStatuses()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with
+        {
+            EditSync = "Automatic",
+            EditPaymentStatuses = ["PendingVerification", "PaymentPending"],
+        });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.Equal(ShopifyEditSync.Automatic, store.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], store.EditPaymentStatuses);
+        Assert.Equal("Automatic", dto.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], dto.EditPaymentStatuses);
+    }
+
+    // Una tienda sin configurar sale con lo que nace: Manual y los cuatro estados.
+    [Fact]
+    public async Task GetOfANewStoreReturnsManualAndEveryPaymentStatus()
+    {
+        var world = new StoreHandlersWorld();
+
+        var dto = await world.GetAsync();
+
+        Assert.Equal("Manual", dto.EditSync);
+        Assert.Equal(ShopifyPaymentStatuses.All, dto.EditPaymentStatuses);
+    }
+
+    // Los enums viajan por nombre y se comparan ordinal: ni «automatic» ni un número ni un nombre a medias.
+    [Theory]
+    [InlineData("automatic")]
+    [InlineData("Auto")]
+    [InlineData("1")]
+    public async Task AnUnknownEditSyncIsAValidationError(string value)
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => world.PutAsync(world.Command() with { EditSync = value }));
+
+        Assert.Equal(["editSync"], error.Errors.Select(failure => failure.PropertyName));
+        Assert.Equal(0, world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ARepeatedPaymentStatusIsAValidationError()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(
+            () => world.PutAsync(world.Command() with { EditPaymentStatuses = ["PaymentPending", "PaymentPending"] }));
+
+        Assert.Equal(["editPaymentStatuses"], error.Errors.Select(failure => failure.PropertyName));
+    }
+
+    // Contrato con el frontend: las claves de errors son exactamente éstas (camelCase; el índice lo agrega FluentValidation).
+    [Fact]
+    public void StoreValidationErrorKeysAreTheContractOnes()
+    {
+        var world = new StoreHandlersWorld();
+        var validator = new UpdateShopifyStoreValidator();
+
+        string[] Keys(UpdateShopifyStoreCommand command) =>
+            [.. validator.Validate(command).Errors.Select(failure => failure.PropertyName).Distinct().Order(StringComparer.Ordinal)];
+
+        Assert.Equal(
+            ["editPaymentStatuses[1]", "editSync"],
+            Keys(world.Command() with { EditSync = "x", EditPaymentStatuses = ["PaymentPending", "Paid"] }));
+        Assert.Equal(["editPaymentStatuses"], Keys(world.Command() with { EditPaymentStatuses = [] }));
+        Assert.Equal(["editPaymentStatuses"], Keys(world.Command() with { EditPaymentStatuses = ["PaymentPending", "PaymentPending"] }));
+        Assert.Empty(Keys(world.Command() with { EditSync = "Manual", EditPaymentStatuses = ShopifyPaymentStatuses.All }));
+    }
+
+    [Fact]
+    public async Task PutSavesAndReturnsTheHistoryDays()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with { HistoryDays = 7 });
+
+        Assert.Equal(((int?)7, (int?)7), (world.Database.Stores[StoreHandlersWorld.ConnectionId].HistoryDays, dto.HistoryDays));
+    }
+
+    // El PUT reemplaza la configuración entera: sin historyDays, el historial se apaga.
+    [Fact]
+    public async Task PutWithoutHistoryDaysTurnsTheHistoryOff()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command() with { HistoryDays = 7 });
+
+        var dto = await world.PutAsync(world.Command() with { HistoryDays = null, ExpectedVersion = 2 });
+
+        Assert.Equal(((int?)null, (int?)null), (world.Database.Stores[StoreHandlersWorld.ConnectionId].HistoryDays, dto.HistoryDays));
+    }
+
+    // Cambiar los días de historial queda en la auditoría del PUT, sólo por nombre.
+    [Fact]
+    public async Task PutChangingHistoryDaysIsAudited()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command());
+
+        await world.PutAsync(world.Command() with { HistoryDays = 10, ExpectedVersion = 2 });
+
+        Assert.Equal("""["historyDays"]""", world.Database.Audit[^1].Fields);
     }
 
     [Fact]
@@ -370,6 +572,125 @@ public sealed class ShopifyStoreHandlersTests
         Assert.Equal("Waiting", dto.ImportState);
         Assert.Equal(1, world.UnitOfWork.Saves);
     }
+
+    // Spec 2026-11-17 (onboarding) §4.2 y plan D12: «Sincronizar» desde el asistente guarda el resumen de esa corrida, con los días
+    // de historial de la tienda y sólo los pedidos que la corrida dejó en espera.
+    [Fact]
+    public async Task ASyncFromSetupStoresTheSummary()
+    {
+        var bed = new SyncBed();
+        bed.Source.Pages.Enqueue(new ShopifyOrdersPage([ImporterWorld.Order(orderId: 1), ImporterWorld.Order(orderId: 2)], null));
+
+        var result = await bed.SyncAsync(SyncShopifyStoreCommand.SetupSource);
+
+        var summary = bed.World.Database.Stores[ConnectionId].SetupHistorySummary;
+        Assert.NotNull(summary);
+        Assert.Equal((Now, 7, 2, 1), (summary.RanAt, summary.Days, summary.Fetched, summary.Imported));
+        Assert.Equal([new ShopifyWaitingCount(ShopifyWaitReasons.ProductUnmatched, 1)], summary.Waiting);
+        Assert.Equal((2, 1, 1), (result.Fetched, result.Imported, result.Waiting));
+    }
+
+    [Fact]
+    public async Task ASyncWithoutSourceDoesNotTouchTheSetup()
+    {
+        var bed = new SyncBed();
+        bed.Source.Pages.Enqueue(new ShopifyOrdersPage([ImporterWorld.Order(orderId: 1)], null));
+
+        await bed.SyncAsync(null);
+
+        Assert.Null(bed.World.Database.Stores[ConnectionId].SetupHistoryRanAt);
+    }
+
+    [Fact]
+    public async Task AnUnknownSourceIs422()
+    {
+        var bed = new SyncBed();
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() => bed.SyncAsync("wizard"));
+
+        Assert.Contains(exception.Errors, error => error.PropertyName == "source");
+        Assert.Empty(bed.Source.Calls);
+    }
+
+    /// <summary>«Sincronizar ahora» con la conciliación real sobre dobles: la tienda configurada con 7 días de historial, y el pedido
+    /// 2 queda en espera por un producto sin par; el resto se importa.</summary>
+    private sealed class SyncBed
+    {
+        public SyncBed()
+        {
+            var store = World.SeedStore();
+            store.Configure(
+                AdvisorId,
+                new ShopifyBillingAccount(CompanyId, "Bancolombia", "123-456", "COP"),
+                null,
+                ShopifyStore.DefaultDocumentAttributeKey,
+                ShopifyStore.DefaultDocumentTypeAttributeKey,
+                ShopifyStore.DefaultIdentificationTypeCode,
+                7,
+                ShopifyEditSync.Manual,
+                ShopifyPaymentStatuses.All,
+                AdvisorId,
+                Now);
+            Importer.Outcome = row => row.ShopifyOrderId == 2 ? ShopifyImportState.Waiting : ShopifyImportState.Imported;
+            var ingestion = new ShopifyOrderIngestion(
+                World.Stores, World.Mirrors, Importer, new NoShopifyOrderChangeReaction(), new NoShopifyOrderEditDetector(), World.UnitOfWork, World.Clock);
+            Reconcile = new ReconcileStore(
+                Source,
+                ingestion,
+                World.Stores,
+                World.Mirrors,
+                new FakeReconcileLeases(World.Database),
+                new FakeConnectionHealth(),
+                World.Connections,
+                World.UnitOfWork,
+                World.Clock,
+                new FakeTimeProvider(),
+                new RecordingLogger<ReconcileStore>());
+        }
+
+        public StoreHandlersWorld World { get; } = new();
+
+        public FakeOrdersSource Source { get; } = new();
+
+        public WaitingProductImporter Importer { get; } = new();
+
+        public ReconcileStore Reconcile { get; }
+
+        public Task<ShopifySyncResult> SyncAsync(string? source) =>
+            new SyncShopifyStoreHandler(
+                    World.Context,
+                    new ShopifyEnabledModules(),
+                    World.Connections,
+                    Reconcile,
+                    World.Stores,
+                    World.Mirrors,
+                    World.UnitOfWork,
+                    World.Clock,
+                    new SyncShopifyStoreValidator())
+                .HandleAsync(
+                    new SyncShopifyStoreCommand(StoreHandlersWorld.TenantId, ConnectionId, source), TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Como <see cref="StatefulOrderImporter"/>, pero la espera es por un producto sin par (<c>product_unmatched</c>).</summary>
+    private sealed class WaitingProductImporter : IShopifyOrderImporter
+    {
+        public Func<ShopifyOrderMirror, ShopifyImportState> Outcome { get; set; } = _ => ShopifyImportState.Waiting;
+
+        public Task<ShopifyImportOutcome> ImportAsync(
+            ShopifyConnectionRef connection, ShopifyStore store, ShopifyOrderMirror row, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
+        {
+            if (Outcome(row) == ShopifyImportState.Imported)
+            {
+                row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, Now);
+            }
+            else
+            {
+                row.MarkWaiting(ShopifyWaitReasons.ProductUnmatched, """{"skus":["SKU-X"],"customTitles":[]}""", Now);
+            }
+
+            return Task.FromResult(new ShopifyImportOutcome(row.ImportState));
+        }
+    }
 }
 
 /// <summary>Una tienda enlazada a un tenant con <c>shopify</c> prendido, el asesor activo, la cuenta de cobro y la clasificación
@@ -452,6 +773,9 @@ internal sealed class StoreHandlersWorld
         "Documento",
         "Tipo de documento",
         "CC",
+        null,
+        null,
+        null,
         1);
 
     public Task<ShopifyStoreDto> PutAsync(UpdateShopifyStoreCommand command) =>
@@ -467,7 +791,7 @@ internal sealed class StoreHandlersWorld
     public Task<ShopifyOrderRowDto> RetryAsync(Guid rowId)
     {
         var ingestion = new ShopifyOrderIngestion(
-            Stores, Mirrors, Importer, new NoShopifyOrderChangeReaction(), UnitOfWork, Clock);
+            Stores, Mirrors, Importer, new NoShopifyOrderChangeReaction(), new NoShopifyOrderEditDetector(), UnitOfWork, Clock);
         return new RetryShopifyOrderHandler(Context, new ShopifyEnabledModules(), Mirrors, Stores, Connections, ingestion, UnitOfWork, Mapper)
             .HandleAsync(new RetryShopifyOrderCommand(TenantId, rowId), TestContext.Current.CancellationToken);
     }
@@ -479,7 +803,8 @@ internal sealed class StoreHandlersWorld
         ReviewHandler.HandleAsync(new ReviewShopifyOrderWarningsCommand(TenantId, rowId), TestContext.Current.CancellationToken);
 
     public Task<ShopifyOrdersSummaryDto> SummaryAsync(string timeZone, DateTimeOffset now) =>
-        new GetShopifyOrdersSummaryHandler(Context, new ShopifyEnabledModules(), Mirrors, new FixedTenantClock(timeZone, now))
+        new GetShopifyOrdersSummaryHandler(
+                Context, new ShopifyEnabledModules(), Mirrors, new FakeOrderEditRepository(Database), new FixedTenantClock(timeZone, now))
             .HandleAsync(new GetShopifyOrdersSummaryQuery(TenantId), TestContext.Current.CancellationToken);
 
     public ShopifyStore SeedStore()
@@ -538,6 +863,14 @@ internal sealed class NamedMemberDirectory : IShopifyMemberDirectory
 
     public Task<string?> NameAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
         Task.FromResult(tenantId == StoreHandlersWorld.TenantId ? Names.GetValueOrDefault(membershipId) : null);
+
+    public Task<IReadOnlyList<ShopifyMemberOption>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyMemberOption>>(tenantId != StoreHandlersWorld.TenantId
+            ? []
+            : Active
+                .Select(id => new ShopifyMemberOption(id, Names.GetValueOrDefault(id) ?? id.ToString()))
+                .OrderBy(option => option.Name, StringComparer.Ordinal)
+                .ToArray());
 }
 
 internal sealed class FakeStoreReferences : IShopifyStoreReferences
@@ -551,6 +884,13 @@ internal sealed class FakeStoreReferences : IShopifyStoreReferences
 
     public Task<string?> ClassificationNameAsync(Guid tenantId, Guid classificationId, CancellationToken cancellationToken) =>
         Task.FromResult(Classifications.GetValueOrDefault((tenantId, classificationId)));
+
+    public Task<IReadOnlyList<ShopifyNamedRef>> ListClassificationsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyNamedRef>>(Classifications
+            .Where(entry => entry.Key.TenantId == tenantId)
+            .Select(entry => new ShopifyNamedRef(entry.Key.ClassificationId, entry.Value))
+            .OrderBy(reference => reference.Name, StringComparer.Ordinal)
+            .ToArray());
 }
 
 internal sealed class FakeMembershipDirectory : IMembershipDirectory

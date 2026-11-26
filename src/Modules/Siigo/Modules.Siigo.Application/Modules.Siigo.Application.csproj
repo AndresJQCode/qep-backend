@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Modules.Siigo.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Siigo.Domain\Modules.Siigo.Domain.csproj" />
+    <!-- Tenancy (módulos, contexto de ejecución) y Audit (AuditActorType del puerto de auditoría propio): las únicas referencias a
+         otro módulo que Application tiene permitidas (SiigoLayerTests). Conexiones, pedidos, clientes, productos, ciudades y
+         empresas entran por puertos con adaptador en Bootstrapper. -->
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+</Project>

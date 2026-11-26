@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Quotations.Application;
@@ -51,6 +52,10 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // pedido que ganó. La prueba es ExternalOrderServiceTests.CreateAsyncConcurrentSameExternalKeyCreatesOneOrder.
     private const string OrderExternalKeyIndex = "IX_orders_tenant_external_key";
 
+    // Lo mismo para el borrador de cotización de un agente IA (spec 2026-10-29 §8.3, D-A16): ExternalQuotationService busca
+    // antes de crear, y este índice cierra la carrera de un trabajo retomado; el servicio devuelve la cotización que ganó.
+    private const string QuotationExternalKeyIndex = "IX_quotations_tenant_external_key";
+
     // El nombre de una transportadora, o cualquiera de sus alias, ya es de otra del mismo tenant
     // (spec 2026-10-17). Es la regla de negocio, no una red: la comprobación previa en el handler
     // no cierra la carrera entre dos altas simultáneas, este índice sí.
@@ -79,11 +84,33 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
 
     public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
 
+    // Borrar clientes (spec 2026-11-10, P1/P2): guardar una cotización o un pedido con cliente es escribir una
+    // referencia a customers.customers, que no tiene FK. CustomerReferenceWrites toma el candado compartido de cada
+    // cliente y, ya con él, comprueba que la fila exista, todo dentro de la transacción que guarda (con transacción
+    // abierta, la del handler que trajo el contador de numeración). Si el borrado ganó la carrera, el candado espera a
+    // su commit y la comprobación ve el cliente ya borrado. Pasan por aquí todos los caminos de escritura, incluido el
+    // IExternalOrderWriter (Shopify y tienda pública), porque comparten esta unidad de trabajo. Un pedido manual sin
+    // cliente (Guid.Empty) no referencia a nadie. Si el mismo cliente aparece en una cotización y en un pedido, gana el
+    // código de la cotización (prioridad más alta).
+    private static readonly CustomerReferenceSource[] CustomerReferenceSources =
+    [
+        new(typeof(Quotation), nameof(Quotation.ClientId), "quotation.quotation.client_not_found", Priority: 1),
+        new(typeof(Order), nameof(Order.ClientId), "order.order.client_not_found"),
+    ];
+
+    private Task<int> SaveHoldingCustomerReferencesAsync(CancellationToken cancellationToken) =>
+        CustomerReferenceWrites.SaveHoldingAsync(
+            dbContext,
+            CustomerReferenceWrites.Collect(dbContext.ChangeTracker, CustomerReferenceSources),
+            reference => new QuotationsDomainException(
+                reference.NotFoundCode, $"Client '{reference.CustomerId}' was not found in this tenant."),
+            cancellationToken);
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
         {
-            return await dbContext.SaveChangesAsync(cancellationToken);
+            return await SaveHoldingCustomerReferencesAsync(cancellationToken);
         }
         // Antes que DbUpdateException porque DbUpdateConcurrencyException hereda de ella: al
         // reves, el filtro de indice unico la dejaria pasar sin traducir y saldria como 500.
@@ -145,6 +172,18 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new QuotationsDomainException(
                 ExternalOrderErrors.ExternalKeyTaken,
                 "Another order from this source already uses that external key.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      QuotationExternalKeyIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new QuotationsDomainException(
+                ExternalQuotationErrors.ExternalKeyTaken,
+                "Another quotation already uses that external key.");
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

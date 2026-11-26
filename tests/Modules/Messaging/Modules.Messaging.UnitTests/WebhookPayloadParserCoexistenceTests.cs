@@ -151,6 +151,55 @@ public sealed class WebhookPayloadParserCoexistenceTests
         Assert.Single(Assert.Single(chunk.Threads).Messages);
     }
 
+    // La forma salió de messaging.webhook_deliveries en producción el 2026-11-18 (delivery 75687): el eco a un contacto que sólo usa
+    // username no trae `to`, trae `to_user_id`. Sus claves: id, from, type, audio, timestamp, to_user_id.
+    [Fact]
+    public void AnEchoToAContactWithoutPhoneCarriesItsBsuid()
+    {
+        var json = Payload("smb_message_echoes", """
+            {"messaging_product":"whatsapp","metadata":{"display_phone_number":"573052365488","phone_number_id":"PNID"},
+             "message_echoes":[{"from":"573052365488","to_user_id":"CO.13491208655302741918","id":"wamid.U","timestamp":"1761700100","type":"audio","audio":{"id":"MID","mime_type":"audio/ogg; codecs=opus","voice":true,"sha256":"abc","url":"https://example.invalid/a"}}]}
+            """);
+
+        var change = Assert.IsType<SmbEchoesChange>(Assert.Single(WebhookPayloadParser.Parse(json)));
+
+        Assert.Empty(change.Echoes);
+        var (userId, message) = Assert.Single(change.UserEchoes);
+        Assert.Equal("CO.13491208655302741918", userId);
+        Assert.Equal((MessageDirection.Outbound, MessageKind.Audio, "wamid.U"), (message.Direction, message.Kind, message.Wamid));
+        Assert.Equal("MID", message.Media?.MetaMediaId);
+    }
+
+    [Fact]
+    public void AnEchoWithAPhoneIgnoresTheBsuidAndStaysOnThePhonePath()
+    {
+        var json = Payload("smb_message_echoes", """
+            {"messaging_product":"whatsapp","metadata":{"display_phone_number":"15550001111","phone_number_id":"PNID"},
+             "message_echoes":[{"from":"15550001111","to":"573001112233","to_user_id":"CO.1","id":"wamid.P","timestamp":"1761700100","type":"text","text":{"body":"hola"}}]}
+            """);
+
+        var change = Assert.IsType<SmbEchoesChange>(Assert.Single(WebhookPayloadParser.Parse(json)));
+
+        Assert.Equal("573001112233", Assert.Single(change.Echoes).WaId);
+        Assert.Empty(change.UserEchoes);
+    }
+
+    [Fact]
+    public void AnEchoWithNeitherPhoneNorValidBsuidIsCountedAsUnattributable()
+    {
+        var json = Payload("smb_message_echoes", """
+            {"messaging_product":"whatsapp","metadata":{"display_phone_number":"15550001111","phone_number_id":"PNID"},
+             "message_echoes":[{"from":"15550001111","to_user_id":"not a bsuid","id":"wamid.N","timestamp":"1761700100","type":"text","text":{"body":"x"}},
+                               {"from":"15550001111","id":"wamid.M","timestamp":"1761700100","type":"text","text":{"body":"y"}}]}
+            """);
+
+        var change = Assert.IsType<SmbEchoesChange>(Assert.Single(WebhookPayloadParser.Parse(json)));
+
+        Assert.Empty(change.Echoes);
+        Assert.Empty(change.UserEchoes);
+        Assert.Equal(2, change.Unattributable);
+    }
+
     [Fact]
     public void AnEchoIsOutboundToTheUserPhone()
     {

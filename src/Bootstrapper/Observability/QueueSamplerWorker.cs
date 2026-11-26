@@ -1,3 +1,4 @@
+using Bootstrapper.Valkey;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -5,17 +6,26 @@ using Microsoft.Extensions.Logging;
 namespace Bootstrapper.Observability;
 
 /// <summary>
-/// Observabilidad fase 2: cada 15 s lee las seis colas (<see cref="QueueNames.All"/>) y se las pasa a <see cref="QueueGauges"/>.
+/// Observabilidad fase 2: cada 15 s lee las colas (<see cref="QueueNames.All"/>) y se las pasa a <see cref="QueueGauges"/>.
 /// Lee una por una, nunca en paralelo, y cada una en su propio scope: <see cref="QueueMetricsSource"/> usa la conexión del
 /// <c>MessagingDbContext</c> del scope, y una lectura que falla a medias (tope de 5 s, conexión caída) no puede dejar rota la conexión
 /// de la siguiente. Una cola que falla se loguea y se salta: su lectura vieja caduca sola a los 60 s y las demás siguen.
+///
+/// Con varios pods sólo muestrea el líder (<see cref="QueueSamplerLeadership"/>, spec 2026-11-13 D-7): la vuelta que no
+/// lidera se salta entera. Con el área de timbres apagada o Valkey caído, todos lideran, como antes. <c>internal</c> porque
+/// el líder es un tipo interno de Bootstrapper; sólo lo registra <c>AddQepPlatform</c>.
 /// </summary>
-public sealed partial class QueueSamplerWorker(
+internal sealed partial class QueueSamplerWorker(
     IServiceScopeFactory scopeFactory,
     QueueGauges gauges,
+    WebhookArrivalGauge arrivalGauge,
+    QueueSamplerLeadership leadership,
     ILogger<QueueSamplerWorker> logger) : BackgroundService
 {
     internal static readonly TimeSpan Interval = TimeSpan.FromSeconds(15);
+
+    /// <summary>El nombre con que se loguea una falla al leer la hora del último webhook (no es una cola).</summary>
+    internal const string WebhookArrivalReading = "webhook_arrival";
 
     // Sólo el nombre de la cola y el tipo de la excepción: el mensaje de Npgsql puede traer SQL o el host.
     [LoggerMessage(Level = LogLevel.Warning, Message = "Queue sampling failed for {Queue}: {ExceptionType}.")]
@@ -28,7 +38,7 @@ public sealed partial class QueueSamplerWorker(
         {
             try
             {
-                await SampleAsync(stoppingToken);
+                await RunOnceAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -36,6 +46,15 @@ public sealed partial class QueueSamplerWorker(
             }
         }
         while (await WaitForNextTickAsync(timer, stoppingToken));
+    }
+
+    /// <summary>Una vuelta del bucle: muestrea sólo si este pod lidera. Internal para las pruebas.</summary>
+    internal async Task RunOnceAsync(CancellationToken cancellationToken)
+    {
+        if (await leadership.TryLeadAsync(cancellationToken))
+        {
+            await SampleAsync(cancellationToken);
+        }
     }
 
     /// <summary>Una vuelta: internal para las pruebas, sin el <see cref="PeriodicTimer"/> de por medio. No lanza por una cola que falla.</summary>
@@ -57,6 +76,22 @@ public sealed partial class QueueSamplerWorker(
             {
                 LogReadFailed(logger, queue, exception.GetType().Name);
             }
+        }
+
+        // Spec 2026-11-16: la hora del último webhook de Meta va en la misma vuelta (y con el mismo líder); su falla no tumba las colas.
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var arrivals = scope.ServiceProvider.GetRequiredService<IWebhookArrivalSource>();
+            arrivalGauge.Record(await arrivals.ReadLastReceivedAsync(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogReadFailed(logger, WebhookArrivalReading, exception.GetType().Name);
         }
     }
 

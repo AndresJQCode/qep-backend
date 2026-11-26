@@ -10,6 +10,12 @@
     <Project Path="src/BuildingBlocks/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj" />
   </Folder>
   <Folder Name="/src/Modules/" />
+  <Folder Name="/src/Modules/Ai/">
+    <Project Path="src/Modules/Ai/Modules.Ai.Api/Modules.Ai.Api.csproj" />
+    <Project Path="src/Modules/Ai/Modules.Ai.Application/Modules.Ai.Application.csproj" />
+    <Project Path="src/Modules/Ai/Modules.Ai.Domain/Modules.Ai.Domain.csproj" />
+    <Project Path="src/Modules/Ai/Modules.Ai.Infrastructure/Modules.Ai.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Audit/">
     <Project Path="src/Modules/Audit/Modules.Audit.Application/Modules.Audit.Application.csproj" />
     <Project Path="src/Modules/Audit/Modules.Audit.Domain/Modules.Audit.Domain.csproj" />
@@ -68,6 +74,7 @@
     <Project Path="src/Modules/Messaging/Modules.Messaging.Infrastructure/Modules.Messaging.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Notifications/">
+    <Project Path="src/Modules/Notifications/Modules.Notifications.Api/Modules.Notifications.Api.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Application/Modules.Notifications.Application.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Infrastructure/Modules.Notifications.Infrastructure.csproj" />
@@ -128,6 +135,11 @@
     <Project Path="tests/Bootstrapper/Bootstrapper.UnitTests/Bootstrapper.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/" />
+  <Folder Name="/tests/Modules/Ai/">
+    <Project Path="tests/Modules/Ai/Modules.Ai.Eval/Modules.Ai.Eval.csproj" />
+    <Project Path="tests/Modules/Ai/Modules.Ai.IntegrationTests/Modules.Ai.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Ai/Modules.Ai.UnitTests/Modules.Ai.UnitTests.csproj" />
+  </Folder>
   <Folder Name="/tests/Modules/Audit/">
     <Project Path="tests/Modules/Audit/Modules.Audit.UnitTests/Modules.Audit.UnitTests.csproj" />
     <Project Path="tests/Modules/Audit/Modules.Audit.IntegrationTests/Modules.Audit.IntegrationTests.csproj" />
@@ -162,6 +174,96 @@
   <Folder Name="/tests/Modules/Loans/">
     <Project Path="tests/Modules/Loans/Modules.Loans.UnitTests/Modules.Loans.UnitTests.csproj" />
     <Project Path="tests/Modules/Loans/Modules.Loans.IntegrationTests/Modules.Loans.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Hr/">
+    <Project Path="src/Modules/Hr/Modules.Hr.Api/Modules.Hr.Api.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Application/Modules.Hr.Application.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Domain/Modules.Hr.Domain.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Infrastructure/Modules.Hr.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Hr/">
+    <Project Path="tests/Modules/Hr/Modules.Hr.UnitTests/Modules.Hr.UnitTests.csproj" />
+    <Project Path="tests/Modules/Hr/Modules.Hr.IntegrationTests/Modules.Hr.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Payroll/">
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Api/Modules.Payroll.Api.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Application/Modules.Payroll.Application.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Domain/Modules.Payroll.Domain.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Infrastructure/Modules.Payroll.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Payroll/">
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.UnitTests/Modules.Payroll.UnitTests.csproj" />
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.IntegrationTests/Modules.Payroll.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Scheduling/">
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Api/Modules.Scheduling.Api.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Application/Modules.Scheduling.Application.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Domain/Modules.Scheduling.Domain.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Infrastructure/Modules.Scheduling.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Scheduling/">
+    <Project Path="tests/Modules/Scheduling/Modules.Scheduling.UnitTests/Modules.Scheduling.UnitTests.csproj" />
+    <Project Path="tests/Modules/Scheduling/Modules.Scheduling.IntegrationTests/Modules.Scheduling.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Purchases/">
+    <Project Path="src/Modules/Purchases/Modules.Purchases.Api/Modules.Purchases.Api.csproj" />
+    <Project Path="src/Modules/Purchases/Modules.Purchases.Application/Modules.Purchases.Application.csproj" />
+    <Project Path="src/Modules/Purchases/Modules.Purchases.Domain/Modules.Purchases.Domain.csproj" />
+    <Project Path="src/Modules/Purchases/Modules.Purchases.Infrastructure/Modules.Purchases.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Purchases/">
+    <Project Path="tests/Modules/Purchases/Modules.Purchases.UnitTests/Modules.Purchases.UnitTests.csproj" />
+    <Project Path="tests/Modules/Purchases/Modules.Purchases.IntegrationTests/Modules.Purchases.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Wholesale/">
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Api/Modules.Wholesale.Api.csproj" />
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Application/Modules.Wholesale.Application.csproj" />
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Domain/Modules.Wholesale.Domain.csproj" />
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Infrastructure/Modules.Wholesale.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Wholesale/">
+    <Project Path="tests/Modules/Wholesale/Modules.Wholesale.UnitTests/Modules.Wholesale.UnitTests.csproj" />
+    <Project Path="tests/Modules/Wholesale/Modules.Wholesale.IntegrationTests/Modules.Wholesale.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Siigo/">
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Api/Modules.Siigo.Api.csproj" />
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Application/Modules.Siigo.Application.csproj" />
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Domain/Modules.Siigo.Domain.csproj" />
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Infrastructure/Modules.Siigo.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Siigo/">
+    <Project Path="tests/Modules/Siigo/Modules.Siigo.UnitTests/Modules.Siigo.UnitTests.csproj" />
+    <Project Path="tests/Modules/Siigo/Modules.Siigo.IntegrationTests/Modules.Siigo.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Support/">
+    <Project Path="src/Modules/Support/Modules.Support.Api/Modules.Support.Api.csproj" />
+    <Project Path="src/Modules/Support/Modules.Support.Application/Modules.Support.Application.csproj" />
+    <Project Path="src/Modules/Support/Modules.Support.Domain/Modules.Support.Domain.csproj" />
+    <Project Path="src/Modules/Support/Modules.Support.Infrastructure/Modules.Support.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Support/">
+    <Project Path="tests/Modules/Support/Modules.Support.UnitTests/Modules.Support.UnitTests.csproj" />
+    <Project Path="tests/Modules/Support/Modules.Support.IntegrationTests/Modules.Support.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Store/">
+    <Project Path="src/Modules/Store/Modules.Store.Api/Modules.Store.Api.csproj" />
+    <Project Path="src/Modules/Store/Modules.Store.Application/Modules.Store.Application.csproj" />
+    <Project Path="src/Modules/Store/Modules.Store.Domain/Modules.Store.Domain.csproj" />
+    <Project Path="src/Modules/Store/Modules.Store.Infrastructure/Modules.Store.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Store/">
+    <Project Path="tests/Modules/Store/Modules.Store.UnitTests/Modules.Store.UnitTests.csproj" />
+    <Project Path="tests/Modules/Store/Modules.Store.IntegrationTests/Modules.Store.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Buyers/">
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Api/Modules.Buyers.Api.csproj" />
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Application/Modules.Buyers.Application.csproj" />
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Domain/Modules.Buyers.Domain.csproj" />
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Infrastructure/Modules.Buyers.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Buyers/">
+    <Project Path="tests/Modules/Buyers/Modules.Buyers.UnitTests/Modules.Buyers.UnitTests.csproj" />
+    <Project Path="tests/Modules/Buyers/Modules.Buyers.IntegrationTests/Modules.Buyers.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Wms/">
     <Project Path="src/Modules/Wms/Modules.Wms.Api/Modules.Wms.Api.csproj" />

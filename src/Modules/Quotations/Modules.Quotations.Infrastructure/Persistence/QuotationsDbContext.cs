@@ -1,5 +1,8 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Infrastructure.Persistence;
@@ -47,6 +50,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<Carrier> Carriers => Set<Carrier>();
 
+    internal DbSet<PdfSectionRow> PdfSections => Set<PdfSectionRow>();
+
+    internal DbSet<PdfPaymentAccountRow> PdfPaymentAccounts => Set<PdfPaymentAccountRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -67,6 +74,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureQuotationSettings(modelBuilder);
         ConfigureTenantWhatsAppChannel(modelBuilder);
         ConfigureCarrier(modelBuilder);
+        ConfigurePdfSections(modelBuilder);
+        ConfigurePdfPaymentAccount(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -133,11 +142,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(16);
         quotation.Property(value => value.BillsToFinalConsumer)
             .HasColumnName("bills_to_final_consumer");
-        quotation.Property(value => value.CustomerWithRetention)
-            .HasColumnName("customer_with_retention");
+        // Plan impuestos por tipo P5: las dos columnas de la retención de antes quedan como propiedades sombra, sin
+        // propiedad de dominio (la retención sale de quotation_withholdings). El modelo las conserva para que EF no
+        // genere un DropColumn ahora y para que el binario viejo las siga leyendo durante el despliegue; el DEFAULT
+        // hace que el INSERT nuevo, que no las nombra, no falle por NOT NULL. Las quita la migración de contrato.
+        quotation.Property<bool>("customer_with_retention")
+            .HasColumnName("customer_with_retention")
+            .HasDefaultValue(false);
         quotation.Property(value => value.CustomerVatSurplus)
             .HasColumnName("customer_vat_surplus");
-        quotation.Property(value => value.PartyWithRetention)
+        quotation.Property<bool?>("party_with_retention")
             .HasColumnName("party_with_retention");
         quotation.Property(value => value.PartyVatSurplus)
             .HasColumnName("party_vat_surplus");
@@ -178,12 +192,46 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             billing.Property(value => value.Currency)
                 .HasColumnName("billing_account_currency")
                 .HasMaxLength(QuotationBillingAccount.CurrencyLength);
+            // Plan impuestos por tipo P1: el país de la empresa, congelado con la cuenta.
+            billing.Property(value => value.Country)
+                .HasColumnName("billing_company_country")
+                .HasColumnType("char(2)")
+                .HasMaxLength(QuotationBillingAccount.CountryLength);
+            // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
+            billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
+            // Spec 2026-11-17 §5.2: el IVA de la empresa, congelado con la cuenta. Sale nullable porque el owned es
+            // opcional; la migración lo rellena en true donde hay empresa, y EF siempre lo escribe (sin default). Se mapea
+            // por StoredChargesVat (bool?), que lee NULL como true: un pod sin la columna (rollout o rollback) deja NULL en
+            // una cotización con empresa, y el bool no se podía materializar desde ahí.
+            billing.Ignore(value => value.ChargesVat);
+            billing.Property<bool?>("StoredChargesVat").HasColumnName("billing_company_charges_vat");
+            // Banco y número nulos es «empresa sin cuenta» (R3); se deriva, no se guarda.
+            billing.Ignore(value => value.HasBankAccount);
         });
         quotation.Navigation(value => value.BillingAccount).IsRequired(false);
+        // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
+        // relleno (A8).
+        quotation.Property(value => value.OperationCityId).HasColumnName("operation_city_id");
 
         quotation.Navigation(value => value.Items)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
         quotation.Navigation(value => value.Parties)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // La foto de las tasas de retención (spec impuestos por tipo §7.5): tabla hija de la cotización, una fila por
+        // tasa y fuente. Se derivan del agregado y no se persisten aparte.
+        quotation.Ignore(value => value.CustomerWithholdings);
+        quotation.Ignore(value => value.BillingWithholdings);
+        quotation.Ignore(value => value.ActiveWithholdings);
+        quotation.Ignore(value => value.AppliedWithholdings);
+        quotation.Ignore(value => value.WithholdingVerdicts);
+        quotation.OwnsMany(value => value.Withholdings, withholding =>
+        {
+            withholding.ToTable("quotation_withholdings", "quotations", table =>
+                table.HasCheckConstraint("CK_quotation_withholdings_source", "source IN ('Customer','Billing')"));
+            ConfigureWithholding<Quotation, QuotationId>(withholding, "PK_quotation_withholdings");
+        });
+        quotation.Navigation(value => value.Withholdings)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         quotation.HasIndex(value => value.TenantId).HasDatabaseName("IX_quotations_tenant");
@@ -202,6 +250,65 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.HasIndex(value => new { value.TenantId, value.QuotationNumber })
             .IsUnique()
             .HasDatabaseName("IX_quotations_tenant_number");
+        // Spec 2026-10-29 §8.3 (agentes IA): la idempotencia del borrador que crea una integración. Parcial, para que las
+        // cotizaciones de las personas (sin clave) no compitan entre sí; QuotationsUnitOfWork lo traduce por nombre.
+        quotation.Property(value => value.ExternalKey)
+            .HasColumnName("external_key")
+            .HasMaxLength(Quotation.ExternalKeyMaxLength);
+        quotation.HasIndex(value => new { value.TenantId, value.ExternalKey })
+            .IsUnique()
+            .HasFilter("external_key IS NOT NULL")
+            .HasDatabaseName("IX_quotations_tenant_external_key");
+    }
+
+    /// <summary>
+    /// Una fila de la foto de retenciones (spec impuestos por tipo §7.5), la misma forma para cotización y pedido.
+    /// Sin FK a <c>catalog.tax_rates</c>: la tasa puede editarse o borrarse y la foto no se mueve. La clave
+    /// (documento, fuente, posición) la pone el código: sin <c>ValueGeneratedNever</c>, EF toma una fila nueva con la
+    /// clave ya puesta en un documento rastreado como Modified (UPDATE de 0 filas → 412) en vez de Added (lección de
+    /// <c>customer_tax_rates</c>).
+    /// </summary>
+    private static void ConfigureWithholding<TOwner, TDocumentId>(
+        Microsoft.EntityFrameworkCore.Metadata.Builders.OwnedNavigationBuilder<TOwner, DocumentWithholding> withholding,
+        string primaryKeyName)
+        where TOwner : class
+    {
+        withholding.WithOwner().HasForeignKey("DocumentId");
+        withholding.Property<TDocumentId>("DocumentId").HasColumnName("document_id").ValueGeneratedNever();
+        withholding.Property(value => value.Source)
+            .HasColumnName("source")
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .ValueGeneratedNever();
+        withholding.Property(value => value.Position).HasColumnName("position").ValueGeneratedNever();
+        withholding.HasKey("DocumentId", nameof(DocumentWithholding.Source), nameof(DocumentWithholding.Position))
+            .HasName(primaryKeyName);
+        withholding.Property(value => value.TaxRateId).HasColumnName("tax_rate_id");
+        withholding.Property(value => value.Name).HasColumnName("name").HasMaxLength(120);
+        withholding.Property(value => value.Type).HasColumnName("type").HasMaxLength(32);
+        withholding.Property(value => value.Country).HasColumnName("country").HasColumnType("char(2)").HasMaxLength(2);
+        withholding.Property(value => value.Percentage).HasColumnName("percentage").HasPrecision(6, 3);
+        withholding.Property(value => value.MinimumBase).HasColumnName("minimum_base").HasPrecision(14, 2);
+        withholding.Property(value => value.MinimumBaseUnit).HasColumnName("minimum_base_unit").HasMaxLength(8);
+        withholding.Property(value => value.TaxUnitValue).HasColumnName("tax_unit_value").HasPrecision(14, 2);
+        // Spec retenciones por UVT §5.2: el año de la UVT congelada, para mostrarlo y avisar si quedó vieja.
+        withholding.Property(value => value.TaxUnitYear).HasColumnName("tax_unit_year").HasColumnType("smallint");
+        withholding.Property(value => value.BaseAmount).HasColumnName("base_amount").HasPrecision(14, 2);
+        withholding.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
+        // Plan P3: distingue «no aplica» de una tasa al 0 % que sí aplicó.
+        withholding.Property(value => value.Applied).HasColumnName("applied");
+        // Spec ReteICA por empresa §7.5: el municipio de una tasa municipal (null en las nacionales) y el porcentaje del
+        // catálogo al congelar; `percentage` es el efectivo. Las filas anteriores se rellenan con su `percentage`.
+        withholding.Property(value => value.CityId).HasColumnName("city_id");
+        withholding.Property(value => value.CatalogPercentage).HasColumnName("catalog_percentage").HasPrecision(6, 3);
+        // Spec 2026-11-18 §4.2: el alcance congelado, por nombre. Las filas de antes quedan All y su total no cambia; el
+        // default coincide con el CLR, así que no hace falta sentinel.
+        withholding.Property(value => value.AppliesTo)
+            .HasColumnName("applies_to")
+            .HasConversion<string>()
+            .HasDefaultValue(WithholdingScope.All);
+        withholding.Ignore(value => value.Overridden);
+        withholding.Ignore(value => value.Rate);
     }
 
     private const string FreightChargeModeCheck =
@@ -246,6 +353,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         document.Ignore("ShippingDetails");
     }
 
+    // Spec 2026-11-18 §3.4: tipo y unidad de la línea, por nombre, text not null. El default de la base es el valor de
+    // toda línea de antes y de lo que escriba un pod viejo durante el rollout (expand/contract), y coincide con el
+    // default CLR: no hace falta sentinel. Igual en quotation_items y order_items.
+    private static void ConfigureLineKind(
+        PropertyBuilder<ProductKind> kind, PropertyBuilder<SalesUnit> salesUnit)
+    {
+        kind.HasColumnName("kind").HasConversion<string>().HasDefaultValue(ProductKind.Physical);
+        salesUnit.HasColumnName("sales_unit").HasConversion<string>().HasDefaultValue(SalesUnit.Unit);
+    }
+
     private static void ConfigureQuotationItem(ModelBuilder modelBuilder)
     {
         var item = modelBuilder.Entity<QuotationItem>();
@@ -270,6 +387,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.ProductName)
             .HasColumnName("product_name")
             .HasMaxLength(QuotationProductSnapshot.NameMaxLength);
+        ConfigureLineKind(item.Property(value => value.Kind), item.Property(value => value.SalesUnit));
         item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
         item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
         // Texto y no entero, igual que QuotationHistoryEventType: sumar un valor al enum no va a
@@ -287,6 +405,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasPrecision(14, 2);
         item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        // Spec 2026-11-17 (R1): la tasa del producto; tax_percentage es la efectiva. Null en filas anteriores, sin relleno.
+        item.Property(value => value.ProductTaxPercentage).HasColumnName("product_tax_percentage");
         item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
@@ -350,6 +470,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(QuotationPartyDetails.AddressMaxLength);
         party.Property(value => value.DepartmentId).HasColumnName("department_id");
         party.Property(value => value.CityId).HasColumnName("city_id");
+
+        // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
+        party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
+        party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
+        party.Property(value => value.RegionId).HasColumnName("region_id");
+        party.Property(value => value.PostalCode)
+            .HasColumnName("postal_code")
+            .HasMaxLength(QuotationPartyDetails.PostalCodeMaxLength);
 
         // Una parte por rol y por cotizacion: es lo que hace que "sin fila = usa los datos del
         // cliente" sea una regla y no una convencion. Nombrado, como el numero de cotizacion:
@@ -424,6 +552,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         pdf.Property(value => value.QuotationVersion).HasColumnName("quotation_version");
         pdf.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
         pdf.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(16);
+        // Sin largo máximo: es un SHA-256 en hex (64), y una fila vieja la deja en NULL, que es lo que la vence (spec 2026-11-16 §5.4).
+        pdf.Property(value => value.ContentFingerprint).HasColumnName("content_fingerprint");
         pdf.Property(value => value.GeneratedAt).HasColumnName("generated_at");
 
         // El tenant no es parte de la clave --la cotizacion ya es unica-- pero toda consulta de
@@ -490,7 +620,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         var order = modelBuilder.Entity<Order>();
         order.ToTable("orders", "quotations", table =>
         {
-            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+            // Mayorista fase 3: 'Wholesale' es el pedido que crea la orden de compra de un distribuidor vinculado.
+            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store','Wholesale')");
             table.HasCheckConstraint("CK_orders_freight_charge_mode", FreightChargeModeCheck);
         });
         order.HasKey(value => value.Id);
@@ -508,6 +639,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new QuotationId(value.Value) : null);
+        order.Property(value => value.BuyerAccountId).HasColumnName("buyer_account_id");
+        // Spec 2026-11-15 §3.3: el enlace por correo al iniciar sesión la lee por nombre en SQL crudo.
+        order.Property(value => value.BuyerAccountSetByMember).HasColumnName("buyer_account_set_by_member");
         order.Property(value => value.Source)
             .HasColumnName("source")
             .HasConversion<string>()
@@ -544,9 +678,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.BillingUsesBusinessName).HasColumnName("billing_uses_business_name");
         order.Property(value => value.IsStorePickup).HasColumnName("is_store_pickup");
         order.Property(value => value.BillsToFinalConsumer).HasColumnName("bills_to_final_consumer");
-        order.Property(value => value.PartyWithRetention).HasColumnName("party_with_retention");
+        // Plan impuestos por tipo P5, igual que en la cotización: las dos columnas de la retención de antes quedan como
+        // propiedades sombra (la retención sale de order_withholdings), con DEFAULT para que el INSERT nuevo no falle
+        // por NOT NULL. Las quita la migración de contrato.
+        order.Property<bool?>("party_with_retention").HasColumnName("party_with_retention");
         order.Property(value => value.PartyVatSurplus).HasColumnName("party_vat_surplus");
-        order.Property(value => value.CustomerWithRetention).HasColumnName("customer_with_retention");
+        order.Property<bool>("customer_with_retention")
+            .HasColumnName("customer_with_retention")
+            .HasDefaultValue(false);
         order.Property(value => value.CustomerVatSurplus).HasColumnName("customer_vat_surplus");
         order.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         order.Property(value => value.TaxPercentage).HasColumnName("tax_percentage").HasPrecision(5, 2);
@@ -567,10 +706,42 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             billing.Property(value => value.Currency)
                 .HasColumnName("billing_account_currency")
                 .HasMaxLength(QuotationBillingAccount.CurrencyLength);
+            // Plan impuestos por tipo P1: el país de la empresa, congelado con la cuenta.
+            billing.Property(value => value.Country)
+                .HasColumnName("billing_company_country")
+                .HasColumnType("char(2)")
+                .HasMaxLength(QuotationBillingAccount.CountryLength);
+            // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
+            billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
+            // Spec 2026-11-17 §5.2: el IVA de la empresa, congelado con la cuenta. Default true para los pedidos que ya
+            // existen; el sentinel hace que EF escriba el false en vez de omitirlo (precedente: stores.show_prices).
+            billing.Property(value => value.ChargesVat)
+                .HasColumnName("billing_company_charges_vat")
+                .HasDefaultValue(true)
+                .HasSentinel(true);
+            // Banco y número nulos es «empresa sin cuenta» (R3); se deriva, no se guarda.
+            billing.Ignore(value => value.HasBankAccount);
         });
         order.Navigation(value => value.BillingAccount).IsRequired();
+        // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
+        // relleno (A8).
+        order.Property(value => value.OperationCityId).HasColumnName("operation_city_id");
         order.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
         order.Navigation(value => value.Parties).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // La foto de las tasas de retención del pedido (spec impuestos por tipo §7.5): misma forma que la de la
+        // cotización, con una sola fuente ('Document').
+        order.Ignore(value => value.AppliedWithholdings);
+        order.Ignore(value => value.WithholdingVerdicts);
+        order.OwnsMany(value => value.Withholdings, withholding =>
+        {
+            withholding.ToTable("order_withholdings", "quotations", table =>
+                table.HasCheckConstraint("CK_order_withholdings_source", "source IN ('Document')"));
+            ConfigureWithholding<Order, OrderId>(withholding, "PK_order_withholdings");
+        });
+        order.Navigation(value => value.Withholdings)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
         order.Property(value => value.Status)
             .HasColumnName("status")
             .HasConversion<string>()
@@ -579,20 +750,47 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("payment_status")
             .HasConversion<string>()
             .HasMaxLength(30);
-        // Plan 2026-10-15 P2: hereda las notas de la cotización, que no tienen tope.
-        order.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
-        order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
-        order.Property(value => value.ConvertedBy)
-            .HasColumnName("converted_by")
-            .HasConversion(id => id.Value, value => new MemberId(value));
-        order.Property(value => value.ApprovedAt).HasColumnName("approved_at");
-        order.Property(value => value.ApprovedBy)
-            .HasColumnName("approved_by")
+        // Spec 2026-11-10 §3.3: el eje del envío, por nombre como los otros dos.
+        order.Property(value => value.FulfillmentStatus)
+            .HasColumnName("fulfillment_status")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .HasDefaultValue(OrderFulfillmentStatus.NotPrepared)
+            .HasSentinel((OrderFulfillmentStatus)(-1));
+        // Spec 2026-11-10: quién y cuándo marcó pagado, preparado y archivado. Nullables, porque un pedido sin esa
+        // marca no tiene nada que guardar acá; misma conversión nullable que invoiced_by.
+        order.Property(value => value.PaidMarkedAt).HasColumnName("paid_marked_at");
+        // Spec costo de producto §4.4: cuándo quedó pagado por cualquier vía, la fecha del reporte de margen.
+        order.Property(value => value.PaidAt).HasColumnName("paid_at");
+        order.Property(value => value.PaidMarkedBy)
+            .HasColumnName("paid_marked_by")
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new MemberId(value.Value) : null);
+        order.Property(value => value.PreparedAt).HasColumnName("prepared_at");
+        order.Property(value => value.PreparedBy)
+            .HasColumnName("prepared_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        order.Property(value => value.ArchivedAt).HasColumnName("archived_at");
+        order.Property(value => value.ArchivedBy)
+            .HasColumnName("archived_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        // Plan 2026-10-15 P2: hereda las notas de la cotización, que no tienen tope.
+        order.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
+        // D9 (spec 2026-11-10): la nota que escribió el comprador en el checkout; Notes es la del asesor.
+        order.Property(value => value.BuyerNotes).HasColumnName("buyer_notes").HasColumnType("text");
+        order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
+        // Spec 2026-11-16 §6: «Fecha del pedido», un día sin hora (date) del calendario del tenant.
+        order.Property(value => value.OrderDate).HasColumnName("order_date");
+        order.Property(value => value.ConvertedBy)
+            .HasColumnName("converted_by")
+            .HasConversion(id => id.Value, value => new MemberId(value));
         // Spec 2026-09-16: quién, cuándo y por qué se anuló. Nullables, porque un pedido vivo no
-        // tiene nada que guardar acá; misma conversión nullable que approved_by.
+        // tiene nada que guardar acá; misma conversión nullable que invoiced_by.
         order.Property(value => value.CancelledAt).HasColumnName("cancelled_at");
         order.Property(value => value.CancelledBy)
             .HasColumnName("cancelled_by")
@@ -602,15 +800,29 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.CancellationReason)
             .HasColumnName("cancellation_reason")
             .HasMaxLength(Order.CancellationReasonMaxLength);
+        // Mayorista fase 3: el enlace con la orden de compra del distribuidor (referencias blandas a otro tenant, sin FK) y la
+        // marca «Por aprobar» (D-1: aprobado = wholesale_approved_at con valor). «Lo anuló el comprador» no se guarda: se deriva
+        // de cancelled_by nulo (pre-flight X4).
+        order.Property(value => value.BuyerTenantId).HasColumnName("buyer_tenant_id");
+        order.Property(value => value.PurchaseOrderId).HasColumnName("purchase_order_id");
+        order.Property(value => value.WholesaleApprovedAt).HasColumnName("wholesale_approved_at");
+        order.Property(value => value.WholesaleApprovedBy)
+            .HasColumnName("wholesale_approved_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
         // Spec 2026-10-05: quién y cuándo se marcó como facturado. Nullables, porque un pedido sin
-        // facturar no tiene nada que guardar acá y revertir las vuelve a null; misma conversión
-        // nullable que approved_by.
+        // facturar no tiene nada que guardar acá y revertir las vuelve a null.
         order.Property(value => value.InvoicedAt).HasColumnName("invoiced_at");
         order.Property(value => value.InvoicedBy)
             .HasColumnName("invoiced_by")
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new MemberId(value.Value) : null);
+        // Spec 2026-11-18 §5.5: quién emitió la factura (`siigo`), su número y su id en el proveedor. Los tres nulos son una marca manual.
+        order.Property(value => value.InvoiceProvider).HasColumnName("invoice_provider").HasMaxLength(Order.InvoiceProviderMaxLength);
+        order.Property(value => value.InvoiceNumber).HasColumnName("invoice_number").HasMaxLength(Order.InvoiceNumberMaxLength);
+        order.Property(value => value.InvoiceExternalId).HasColumnName("invoice_external_id").HasMaxLength(Order.InvoiceExternalIdMaxLength);
         order.Property(value => value.RitualCollectionSyncId)
             .HasColumnName("ritual_collection_sync_id")
             .HasMaxLength(100);
@@ -636,6 +848,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.HasIndex(value => new { value.TenantId, value.ClientId }).HasDatabaseName("IX_orders_tenant_client");
         order.HasIndex(value => new { value.TenantId, value.AdvisorId }).HasDatabaseName("IX_orders_tenant_advisor");
         order.HasIndex(value => new { value.TenantId, value.Source }).HasDatabaseName("IX_orders_tenant_source");
+        // Los pedidos de un comprador de la tienda (spec 2026-11-09): sólo los que tienen cuenta.
+        order.HasIndex(value => new { value.TenantId, value.BuyerAccountId, value.CreatedAt })
+            .HasFilter("buyer_account_id IS NOT NULL")
+            .HasDatabaseName("IX_orders_tenant_buyer_created");
         // Spec de Shopify D-S23: la idempotencia del camino externo. Parcial, para que los pedidos sin clave
         // (cotización y manuales) no compitan entre sí; QuotationsUnitOfWork lo traduce por nombre.
         order.HasIndex(value => new { value.TenantId, value.Source, value.ExternalKey })
@@ -652,6 +868,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // tenant.
         order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
             .HasDatabaseName("IX_orders_tenant_converted_at_number");
+        // Spec 2026-11-16 §5 y §6: el orden nuevo de la lista y del cursor de la exportación (fecha del pedido, después
+        // la conversión y el número como desempate). El índice de arriba se queda: lo usa la ventana de sincronización.
+        order.HasIndex(value => new { value.TenantId, value.OrderDate, value.ConvertedAt, value.OrderNumber })
+            .HasDatabaseName("IX_orders_tenant_order_date_converted_at_number");
+        // El período del reporte de margen (spec costo de producto §6.3) filtra por paid_at detrás del tenant.
+        order.HasIndex(value => new { value.TenantId, value.PaidAt }).HasDatabaseName("IX_orders_tenant_paid_at");
 
         // RESTRICT, no CASCADE: el pedido es el registro que sobrevive -- borrar la cotizacion de
         // origen (si algun dia existiera un borrado duro) no deberia poder llevarse el pedido
@@ -667,6 +889,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     {
         var item = modelBuilder.Entity<OrderItem>();
         item.ToTable("order_items", "quotations");
+        // Mayorista fase 3: la línea de la orden de compra de la que salió; nula fuera de un pedido mayorista y en una línea que
+        // agregó el mayorista. Sin FK: vive en el tenant del distribuidor.
+        item.Property(value => value.SourcePurchaseOrderLineId).HasColumnName("source_purchase_order_line_id");
         item.HasKey(value => value.Id);
         item.Property(value => value.Id)
             .HasColumnName("id")
@@ -684,6 +909,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.ProductName)
             .HasColumnName("product_name")
             .HasMaxLength(QuotationProductSnapshot.NameMaxLength);
+        ConfigureLineKind(item.Property(value => value.Kind), item.Property(value => value.SalesUnit));
         item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
         item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
         item.Property(value => value.DiscountOrigin)
@@ -699,10 +925,23 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasPrecision(14, 2);
         item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        // Spec 2026-11-17 (R1): la tasa del producto; tax_percentage es la efectiva. Null en filas anteriores, sin relleno.
+        item.Property(value => value.ProductTaxPercentage).HasColumnName("product_tax_percentage");
         item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
         item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Costo congelado cuando la línea cuenta como vendida (spec costo de producto §4.2): los tres nulos en las
+        // líneas anteriores y en las que todavía no se vendieron. (18,2) como el costo del catálogo, para que un
+        // costo válido allá no desborde la línea al congelarse.
+        item.Property(value => value.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
+        item.Property(value => value.CostSource)
+            .HasColumnName("cost_source")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        item.Property(value => value.CostCapturedAt).HasColumnName("cost_captured_at");
+        // Spec 2026-11-21: la línea de regalo. Sin índice: la clave (variante, regalo) la hace cumplir el dominio.
+        item.Property(value => value.IsGift).HasColumnName("is_gift").HasDefaultValue(false).IsRequired();
         item.Ignore(value => value.Amounts);
         item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
         // Mismo motivo que IX_quotation_items_variant: la consulta de uso de Catalog.
@@ -757,6 +996,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(QuotationPartyDetails.AddressMaxLength);
         party.Property(value => value.DepartmentId).HasColumnName("department_id");
         party.Property(value => value.CityId).HasColumnName("city_id");
+
+        // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
+        party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
+        party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
+        party.Property(value => value.RegionId).HasColumnName("region_id");
+        party.Property(value => value.PostalCode)
+            .HasColumnName("postal_code")
+            .HasMaxLength(QuotationPartyDetails.PostalCodeMaxLength);
 
         party.HasIndex(value => new { value.OrderId, value.Role })
             .IsUnique()
@@ -955,6 +1202,42 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         carrier.Navigation(value => value.Names).UsePropertyAccessMode(PropertyAccessMode.Field);
     }
 
+    // El contenido configurable del PDF (spec 2026-11-16 §5.1): una fila por sección escrita; sin fila, la sección está apagada y
+    // vacía. La sección va por nombre, con un CHECK de los tres de PdfSectionKey. Sin FK al tenant, que es de Tenancy.
+    private static void ConfigurePdfSections(ModelBuilder modelBuilder)
+    {
+        var section = modelBuilder.Entity<PdfSectionRow>();
+        section.ToTable("pdf_sections", "quotations", table =>
+            table.HasCheckConstraint(
+                "CK_pdf_sections_section", "section IN ('PaymentNotice', 'Terms', 'DeliveryProcess')"));
+        section.HasKey(value => new { value.TenantId, value.Section });
+        section.Property(value => value.TenantId).HasColumnName("tenant_id");
+        section.Property(value => value.Section).HasColumnName("section").HasColumnType("text");
+        section.Property(value => value.Enabled).HasColumnName("enabled");
+        section.Property(value => value.InQuotation).HasColumnName("in_quotation");
+        section.Property(value => value.InOrder).HasColumnName("in_order");
+        // El mismo límite que valida el PUT: cambiarlo ahí cambia el varchar, y eso es una migración.
+        section.Property(value => value.Title).HasColumnName("title")
+            .HasMaxLength(Modules.Quotations.Application.PdfContentRules.MaxTitleLength).IsRequired();
+        section.Property(value => value.ContentHtml).HasColumnName("content_html").HasColumnType("text").IsRequired();
+        section.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+    }
+
+    // Si el PDF imprime la cuenta para el pago (spec 2026-11-16 pdf-payment-account, decisión 3): una fila por tenant que la guardó;
+    // sin fila está apagada. Tabla propia y no una cuarta clave de pdf_sections, que exige texto a una sección prendida. Sin FK al
+    // tenant, que es de Tenancy.
+    private static void ConfigurePdfPaymentAccount(ModelBuilder modelBuilder)
+    {
+        var account = modelBuilder.Entity<PdfPaymentAccountRow>();
+        account.ToTable("pdf_payment_account", "quotations");
+        account.HasKey(value => value.TenantId);
+        account.Property(value => value.TenantId).HasColumnName("tenant_id");
+        account.Property(value => value.Enabled).HasColumnName("enabled");
+        account.Property(value => value.InQuotation).HasColumnName("in_quotation");
+        account.Property(value => value.InOrder).HasColumnName("in_order");
+        account.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+    }
+
     private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)
     {
         var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
@@ -983,6 +1266,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         settings.Property(value => value.DefaultFreightChargeMode)
             .HasColumnName("default_freight_charge_mode")
             .HasMaxLength(16);
+        // Spec 2026-11-10 §6. Los defaults del owner (false, true, false) los pone sólo la migración OrderStatusAxes
+        // en la columna, para las filas viejas y la que crea LockRowAsync con SQL crudo. No van en el modelo: un
+        // bool con HasDefaultValue(true) se omite del INSERT cuando vale false (el sentinel), y la base lo dejaría
+        // en true. EF siempre manda el valor del row.
+        settings.Property(value => value.RequirePaymentProofToMarkPaid).HasColumnName("require_payment_proof_to_mark_paid");
+        settings.Property(value => value.RequireFullPaymentToInvoice).HasColumnName("require_full_payment_to_invoice");
+        settings.Property(value => value.AutoArchiveOrders).HasColumnName("auto_archive_orders");
 
         var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
         totals.ToTable("tenant_minimum_totals", "quotations", table =>
@@ -1042,6 +1332,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(OrdersExportLayout.SheetNameMaxLength)
             .IsRequired()
             .HasDefaultValue(OrdersExportLayout.DefaultSheetName);
+        // Spec 2026-11-25 indicativo: el default de la base deja toda fila que ya existía —y la que inserte
+        // un pod viejo durante el rollout— exportando el indicativo. ValueGeneratedNever es obligatorio: sin
+        // él, EF omite un `false` al insertar (es el valor CLR por defecto) y la base escribiría `true`.
+        layout.Property(value => value.IncludePhoneDialCode)
+            .HasColumnName("include_phone_dial_code")
+            .HasDefaultValue(OrdersExportLayout.DefaultIncludePhoneDialCode)
+            .ValueGeneratedNever();
 
         layout.OwnsMany(value => value.Columns, columns =>
         {

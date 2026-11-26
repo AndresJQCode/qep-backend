@@ -28,15 +28,22 @@ public static class CatalogInfrastructureExtensions
         services.AddScoped<IProductRepository, ProductRepository>();
         services.AddScoped<ICurrenciesInUse, CurrenciesInUse>();
         services.AddScoped<ITaxRateRepository, TaxRateRepository>();
+        services.AddScoped<ITaxUnitValueRepository, TaxUnitValueRepository>();
         services.AddScoped<IProductCategoryRepository, ProductCategoryRepository>();
         services.AddScoped<IOptionDefinitionRepository, OptionDefinitionRepository>();
+        services.AddScoped<IPriceListRepository, PriceListRepository>();
         services.AddScoped<IOptionLibraryProvisioner, OptionLibraryProvisioner>();
         services.AddScoped<IProductExportWorkbookBuilder, ClosedXmlProductExportBuilder>();
         services.AddScoped<IProductExportEventPublisher, ProductExportEventPublisher>();
+        services.AddScoped<IProductImageReleasePublisher, ProductImageReleasePublisher>();
         services.AddScoped<ICatalogUnitOfWork, CatalogUnitOfWork>();
         services.AddScoped<ICatalogAuditPublisher, CatalogAuditPublisher>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, ProductPriceChangeUserReferenceProbe>();
+        // Storage la consulta antes de purgar una foto liberada. También la ven
+        // StagingCleanupProcessor, PaymentProofDetachProcessor y PaymentProofGuard, y para ellos
+        // sólo puede retener, nunca borrar (spec, «Restricciones»).
+        services.AddScoped<IFileReferenceProbe, ProductGalleryFileReferenceProbe>();
 
         return services;
     }

@@ -5,18 +5,26 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Infrastructure.Persistence;
 
-/// <summary>§7.6: la lista por <c>IX_conversations_tenant_status_activity</c>; los counts por los dos
-/// índices parciales; la búsqueda por los GIN de trigramas (ILIKE / LIKE) y por <c>wa_id = ANY</c>.</summary>
+/// <summary>§7.6: la lista por <c>IX_conversations_tenant_status_activity</c>; los counts en una sola
+/// sentencia por <c>tenant_id</c>; la búsqueda por los GIN de trigramas (ILIKE / LIKE) y por <c>wa_id = ANY</c>.</summary>
 internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConversationQueries
 {
-    private static readonly Expression<Func<Conversation, ConversationRow>> Projection = conversation => new ConversationRow(
+    // De instancia y no estática: la subconsulta de la delegación (spec 2026-11-17 §7, chip «Agente IA · desde el chatbot X») usa el
+    // DbSet de este contexto. Sólo la resuelve una conversación delegada, por la llave primaria.
+    private Expression<Func<Conversation, ConversationRow>> Projection => conversation => new ConversationRow(
         conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.UserId, conversation.WaId, conversation.Username,
         conversation.ProfileName, conversation.CustomerId, conversation.AssignedMemberId, conversation.Status,
         conversation.UnreadCount, conversation.LastInboundAt, conversation.LastMessageId, conversation.LastMessageDirection, conversation.LastMessageKind,
         conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId, conversation.LastActivityAt,
         conversation.AutomationStatus, conversation.AutomationStartedAt, conversation.AutomationPausedAt, conversation.AutomationPausedByMemberId, conversation.AutomationPauseReason,
         conversation.AutomationChatbotId, conversation.AutomationStep, conversation.AutomationResumedAt,
-        conversation.BlockedAt, conversation.BlockedByMemberId, conversation.Imported, conversation.LastInboundWamid);
+        conversation.BlockedAt, conversation.BlockedByMemberId, conversation.Imported, conversation.LastInboundWamid,
+        conversation.AutomationBotKind, conversation.AutomationAgentId,
+        dbContext.BotDelegations
+            .Where(delegation => delegation.Id == conversation.AutomationDelegationId)
+            .Select(delegation => (Guid?)delegation.ChatbotId)
+            .FirstOrDefault(),
+        conversation.AutomationDelegationId);
 
     public async Task<IReadOnlyList<ConversationRow>> ListAsync(
         Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)
@@ -27,6 +35,12 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         if (filter.Channel is { } channel)
         {
             query = query.Where(conversation => conversation.Channel == channel);
+        }
+
+        // Spec qep-frontend 2026-11-17 (chip y filtro por conexión): ausente = todos los números.
+        if (filter.ConnectionId is { } connectionId)
+        {
+            query = query.Where(conversation => conversation.ConnectionId == connectionId);
         }
 
         // Spec qep-frontend 2026-10-15: una conversación sin cliente no tiene etiquetas y no pasa el filtro.
@@ -97,28 +111,32 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
 
     public async Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)
     {
-        // Las dos condiciones son literalmente las de los parciales IX_conversations_tenant_open e
-        // IX_conversations_tenant_unread: así el planner puede usarlos (index-only scan).
-        var open = await dbContext.Conversations.AsNoTracking()
-            .CountAsync(conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open, cancellationToken);
-        var unread = await dbContext.Conversations.AsNoTracking()
-            .Where(conversation => conversation.TenantId == tenantId && conversation.UnreadCount > 0)
-            .SumAsync(conversation => conversation.UnreadCount, cancellationToken);
-        // D-A10: sólo abiertas, por los parciales de asignado (IX_conversations_tenant_assignee/unassigned_status_activity).
-        var mine = memberId is { } me
-            ? await dbContext.Conversations.AsNoTracking().CountAsync(
-                conversation => conversation.TenantId == tenantId && conversation.AssignedMemberId == me && conversation.Status == ConversationStatus.Open, cancellationToken)
-            : 0;
-        var unassigned = await dbContext.Conversations.AsNoTracking().CountAsync(
-            conversation => conversation.TenantId == tenantId && conversation.AssignedMemberId == null && conversation.Status == ConversationStatus.Open, cancellationToken);
-        // Misma condición que IX_conversations_tenant_automation_activity (parcial) más el estado abierto.
-        var automated = await dbContext.Conversations.AsNoTracking().CountAsync(
-            conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open
-                && conversation.AutomationStatus != ConversationAutomationStatus.None, cancellationToken);
-        var automationActive = await dbContext.Conversations.AsNoTracking().CountAsync(
-            conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open
-                && conversation.AutomationStatus == ConversationAutomationStatus.Active, cancellationToken);
-        return new ConversationCountsDto(open, unread, mine, unassigned, automated, automationActive);
+        // Una sola sentencia con count(*) FILTER (WHERE …) en vez de seis consultas: con la base en otro nodo, un viaje gana a
+        // seis aunque cada uno fuera más barato. D-A10: mine y unassigned cuentan sólo abiertas. Todo agregado exige abierta o
+        // con no leídos, así que el WHERE externo pide lo mismo: el resultado no cambia y el planificador puede unir con un
+        // BitmapOr los parciales IX_conversations_tenant_open e IX_conversations_tenant_unread, en vez de recorrer todas las
+        // conversaciones del tenant (resueltas e historial importado incluidos).
+        var counts = await dbContext.Conversations.AsNoTracking()
+            .Where(conversation => conversation.TenantId == tenantId
+                && (conversation.Status == ConversationStatus.Open || conversation.UnreadCount > 0))
+            .GroupBy(_ => 1)
+            .Select(group => new
+            {
+                Open = group.Count(conversation => conversation.Status == ConversationStatus.Open),
+                Unread = group.Sum(conversation => conversation.UnreadCount > 0 ? conversation.UnreadCount : 0),
+                Mine = group.Count(conversation => memberId != null && conversation.AssignedMemberId == memberId && conversation.Status == ConversationStatus.Open),
+                Unassigned = group.Count(conversation => conversation.AssignedMemberId == null && conversation.Status == ConversationStatus.Open),
+                Automated = group.Count(conversation => conversation.Status == ConversationStatus.Open
+                    && conversation.AutomationStatus != ConversationAutomationStatus.None),
+                AutomationActive = group.Count(conversation => conversation.Status == ConversationStatus.Open
+                    && conversation.AutomationStatus == ConversationAutomationStatus.Active),
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        // Un tenant sin conversaciones no tiene grupo: el agregado no devuelve fila.
+        return counts is null
+            ? new ConversationCountsDto(0, 0, 0, 0, 0, 0)
+            : new ConversationCountsDto(counts.Open, counts.Unread, counts.Mine, counts.Unassigned, counts.Automated, counts.AutomationActive);
     }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>

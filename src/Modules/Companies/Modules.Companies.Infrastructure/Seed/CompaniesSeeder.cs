@@ -135,7 +135,10 @@ public static class CompaniesSeeder
             row.Name,
             row.BankAccounts,
             row.TaxId,
-            cityId,
+            country: Company.ColombiaCountryCode,
+            documentType: CompanyDocumentType.Nit,
+            cityId: cityId,
+            cityName: null,
             new CompanyContactInfo
             {
                 Phone = SharedPhone,

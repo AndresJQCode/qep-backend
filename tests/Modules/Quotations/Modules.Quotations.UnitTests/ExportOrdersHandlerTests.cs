@@ -19,10 +19,6 @@ public sealed class ExportOrdersHandlerTests
     private static readonly DateOnly From = new(2026, 9, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
-    // El mismo rango cortado en el día de Bogotá (spec 2026-09-17, punto 3).
-    private static readonly DateTimeOffset FromUtc = new(2026, 9, 1, 5, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
-
     [Fact]
     public async Task ExportForAnotherTenantIsForbiddenAndReadsNothing()
     {
@@ -97,6 +93,38 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(expectedCode, error.Code);
     }
 
+    [Theory]
+    [InlineData("Shipped", null, "order.order.fulfillment_status_invalid")]
+    [InlineData(null, "yes", "order.order.invoiced_invalid")]
+    public async Task ExportWithAnInvalidFulfillmentOrInvoicedFailsLikeTheList(
+        string? fulfillmentStatus, string? invoiced, string expectedCode)
+    {
+        var queue = new InMemoryExportJobQueue();
+        var handler = NewHandler(new StubOrderListRepository(NewRow()), queue);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(
+                NewCommand() with { FulfillmentStatus = fulfillmentStatus, Invoiced = invoiced },
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(expectedCode, error.Code);
+        Assert.Empty(queue.Jobs);
+    }
+
+    // Un trabajo encolado antes de los filtros nuevos se sigue leyendo: los dos quedan en null.
+    [Fact]
+    public void AJobSerializedBeforeTheNewFiltersStillReads()
+    {
+        const string legacy =
+            """{"ClientId":null,"AdvisorId":null,"Status":"Open","PaymentStatus":null,"ConvertedFrom":"2026-09-01","ConvertedTo":"2026-09-12","ClientCuc":null,"OrderNumber":null,"Source":null,"TimeZone":null}""";
+
+        var filters = JsonSerializer.Deserialize<OrdersExportFilters>(legacy);
+
+        Assert.NotNull(filters);
+        Assert.Equal("Open", filters.Status);
+        Assert.Equal(((string?)null, (string?)null), (filters.FulfillmentStatus, filters.Invoiced));
+    }
+
     [Fact]
     public async Task ExportWithNoMatchingOrdersIsRejectedAndEnqueuesNothing()
     {
@@ -153,7 +181,8 @@ public sealed class ExportOrdersHandlerTests
 
         var accepted = await handler.HandleAsync(
             new ExportOrdersCommand(
-                TenantId, ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
+                TenantId, ClientId, AdvisorId.Value, "open", "paymentpending", From, To, null, "PED-2026",
+                FulfillmentStatus: "prepared", Invoiced: "false"),
             TestContext.Current.CancellationToken);
 
         var job = Assert.Single(queue.Jobs);
@@ -161,19 +190,39 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(ExportJobKind.Orders, job.Kind);
         Assert.Equal(SubjectId, job.RequestedBy);
         Assert.Equal(
-            new OrdersExportFilters(ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
+            new OrdersExportFilters(
+                ClientId, AdvisorId.Value, "open", "paymentpending", From, To, null, "PED-2026",
+                FulfillmentStatus: "prepared", Invoiced: "false"),
             JsonSerializer.Deserialize<OrdersExportFilters>(job.Filters));
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Pending, OrderPaymentStatus.PaymentPending, FromUtc, BeforeUtc, "PED-2026"),
+                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.PaymentPending, From, To, "PED-2026",
+                FulfillmentStatus: OrderFulfillmentStatus.Prepared, Invoiced: false),
             repository.LastExportSearch);
         Assert.Equal(1, unitOfWork.Saves);
     }
 
-    // El export cubre el mismo rango que se ve en pantalla: el de la zona de quien lo pide, guardada
-    // con los filtros para que el procesador corte igual.
+    // Por número de pedido no hacen falta fechas: el trabajo viaja sin rango y el repositorio no corta por fecha.
     [Fact]
-    public async Task ExportCutsAndStoresTheTimeZoneOfWhoeverAsks()
+    public async Task ExportByOrderNumberWithoutDatesEnqueuesAJobWithoutRange()
+    {
+        var queue = new InMemoryExportJobQueue();
+        var repository = new StubOrderListRepository(NewRow());
+        var handler = NewHandler(repository, queue);
+
+        await handler.HandleAsync(
+            NewCommand(null, null) with { OrderNumber = "PED-2026" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(((DateOnly?)null, (DateOnly?)null), (repository.LastExportSearch!.OrderDateFrom, repository.LastExportSearch.OrderDateTo));
+        Assert.Equal(
+            new OrdersExportFilters(null, null, null, null, null, null, null, "PED-2026"),
+            JsonSerializer.Deserialize<OrdersExportFilters>(Assert.Single(queue.Jobs).Filters));
+    }
+
+    // Spec 2026-11-16 §4: el rango corta por la fecha del pedido, así que los días llegan tal cual aunque venga la zona de
+    // quien pide. La zona se sigue guardando con los filtros: es parte del contrato del trabajo.
+    [Fact]
+    public async Task ExportFiltersByTheOrderDateAndStillStoresTheTimeZone()
     {
         var queue = new InMemoryExportJobQueue();
         var repository = new StubOrderListRepository(NewRow());
@@ -181,8 +230,7 @@ public sealed class ExportOrdersHandlerTests
 
         await handler.HandleAsync(NewCommand() with { TimeZone = "Europe/Madrid" }, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch!.ConvertedFrom);
-        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch.ConvertedBefore);
+        Assert.Equal(((DateOnly?)From, (DateOnly?)To), (repository.LastExportSearch!.OrderDateFrom, repository.LastExportSearch.OrderDateTo));
         Assert.Equal("Europe/Madrid", JsonSerializer.Deserialize<OrdersExportFilters>(Assert.Single(queue.Jobs).Filters)!.TimeZone);
     }
 

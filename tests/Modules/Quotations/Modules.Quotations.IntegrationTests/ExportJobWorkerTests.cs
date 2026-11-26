@@ -79,6 +79,7 @@ public sealed class ExportJobWorkerTests
         // La misma clase que registra el DI, construida a mano: mismo constructor, sin pasar por
         // el hosting ni por el PeriodicTimer real de 5 s.
         var worker = new ExportJobWorker(
+            factory.Services.GetRequiredService<BuildingBlocks.Application.IQueueDoorbell>(),
             factory.Services.GetRequiredService<IServiceScopeFactory>(),
             factory.Services.GetRequiredService<ILogger<ExportJobWorker>>());
 
@@ -113,7 +114,10 @@ public sealed class ExportJobWorkerTests
         await EnqueueExportJobAsync(factory, Guid.CreateVersion7(), Guid.CreateVersion7());
         var logger = new RecordingLogger<ExportJobWorker>();
 
-        await new ExportJobWorker(factory.Services.GetRequiredService<IServiceScopeFactory>(), logger)
+        await new ExportJobWorker(
+                factory.Services.GetRequiredService<BuildingBlocks.Application.IQueueDoorbell>(),
+                factory.Services.GetRequiredService<IServiceScopeFactory>(),
+                logger)
             .DrainAsync(TestContext.Current.CancellationToken);
 
         var entry = Assert.Single(logger.Entries, candidate => candidate.Level == LogLevel.Information);

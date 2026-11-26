@@ -74,4 +74,24 @@ public sealed class FilePublication(IPublicObjectStorage publicStorage, IClock c
 
         resource.Unpublish(clock.UtcNow);
     }
+
+    /// <summary>
+    /// Retira las copias públicas aunque la fila no tenga <see cref="FileResource.PublicStorageKey"/> (spec 2026-11-17, «Closing the
+    /// residual gaps»): <see cref="PublishAsync"/> copia antes de que quien llama guarde, así que un guardado fallido deja objetos públicos
+    /// con la fila sin clave. La clave pública es determinista (<see cref="StorageKey.PublicFor"/>), y borrar una que no existe no falla,
+    /// así que repetirlo es seguro. Sólo para quien libera el archivo para siempre (imagen de plantilla): <see cref="UnpublishAsync"/>
+    /// sigue siendo un no-op sin clave para los demás llamadores.
+    /// </summary>
+    public async Task RemovePublicCopiesAsync(FileResource resource, CancellationToken cancellationToken)
+    {
+        var publicKey = resource.PublicStorageKey ?? StorageKey.PublicFor(resource.TenantId, resource.Id, resource.Name);
+
+        await publicStorage.DeleteAsync(publicKey, cancellationToken);
+        foreach (var variant in resource.Variants)
+        {
+            await publicStorage.DeleteAsync(StorageKey.PublicVariantFor(publicKey, variant), cancellationToken);
+        }
+
+        resource.Unpublish(clock.UtcNow);
+    }
 }

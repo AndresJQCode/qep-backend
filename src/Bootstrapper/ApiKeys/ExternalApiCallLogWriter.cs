@@ -30,10 +30,21 @@ public sealed partial class ExternalApiCallLogWriter(
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // Apagando: se cae al drenaje de abajo.
+            // Apagando: drena StopAsync.
         }
+    }
 
-        await DrainAsync();
+    // El drenaje vive acá y no al final de ExecuteAsync: desde .NET 10 BackgroundService arranca ExecuteAsync en una tarea aparte
+    // atada al token de parada, y un StopAsync que llega antes de que esa tarea corra la cancela sin ejecutarla, con lo encolado
+    // adentro. La cola es SingleReader: sólo se drena cuando el bucle de lectura ya terminó (o nunca empezó); si el host cortó la
+    // espera de base.StopAsync con el bucle todavía escribiendo, se deja como está.
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+        if (ExecuteTask is null || ExecuteTask.IsCompleted)
+        {
+            await DrainAsync();
+        }
     }
 
     private async Task DrainAsync()

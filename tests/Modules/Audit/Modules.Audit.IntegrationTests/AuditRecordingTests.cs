@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
@@ -177,6 +178,11 @@ public sealed class AuditRecordingTests
             MembershipId.New(),
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // El tenant se inserta directo y después del arranque, así que nace sin los roles que el alta le sembraría.
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(Guid.Parse(SeededTenantId), TestContext.Current.CancellationToken);
     }
 
     private static string NewEmail() => $"invitee-{Guid.NewGuid():N}@example.com";
@@ -220,6 +226,8 @@ public sealed class AuditRecordingTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

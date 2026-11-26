@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Companies.Domain;
 using Modules.Tenancy.Application;
 
@@ -10,10 +11,17 @@ public sealed record CreateCompanyCommand(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
-    string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    string? Address,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null,
+    // Spec 2026-11-23: la región (provincia) del domicilio de un país con catálogo distinto de Colombia; null es «sin región».
+    Guid? RegionId = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Las reglas viven en CompanyWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCompanyValidator : AbstractValidator<CreateCompanyCommand>
@@ -28,9 +36,15 @@ public sealed class CreateCompanyHandler(
     ICompanyGeographyLookup geographyLookup,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<CreateCompanyCommand> validator)
+    IValidator<CreateCompanyCommand> validator,
+    ICompanyTaxRateLookup taxRateLookup,
+    ICompanyDefaultTaxRates defaultTaxRates,
+    ILogger<CreateCompanyHandler> logger)
     : ICommandHandler<CreateCompanyCommand, CompanyDto>
 {
+    private readonly CompanyCreation creation = new(
+        repository, unitOfWork, auditPublisher, geographyLookup, clock, validator, taxRateLookup, defaultTaxRates, logger);
+
     public async Task<CompanyDto> HandleAsync(
         CreateCompanyCommand command,
         CancellationToken cancellationToken)
@@ -42,47 +56,19 @@ public sealed class CreateCompanyHandler(
         // revision de riesgo de CAT-02.
         CompaniesAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        // Se resuelve antes de crear el agregado, no despues: un CityId sintacticamente valido
-        // pero de una ciudad inexistente tiene que fallar como 422 companies.company.city_not_found
-        // en vez de reventar la FK de base como 500 al hacer SaveChanges.
-        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
-            ?? throw new CompaniesDomainException(
-                "companies.company.city_not_found",
-                "The city was not found.");
+        // Validar, resolver ciudad y retenciones, crear, auditar y guardar viven en CompanyCreation:
+        // las comparte con el alta del sistema (ICompanyProvisioning). Aquí se queda lo que es de este
+        // endpoint: autorizar, el actor de la sesión y la forma de la respuesta.
+        var created = await creation.CreateAsync(command, executionContext.SubjectId, cancellationToken);
 
-        var now = clock.UtcNow;
-        var company = Company.Create(
-            CompanyId.New(),
-            command.TenantId,
-            command.Name,
-            command.BankAccounts.ToDomain(),
-            command.TaxId,
-            command.CityId,
-            new CompanyContactInfo
-            {
-                Phone = command.Phone,
-                Email = command.Email,
-                Address = command.Address
-            },
-            now);
+        // Spec 2026-11-17 §5.3: después del commit, nunca dentro. Un fallo no deshace la empresa.
+        await creation.SeedDefaultsAsync(created.Company, executionContext.SubjectId, cancellationToken);
 
-        repository.Add(company);
-        auditPublisher.Publish(
-            command.TenantId,
-            executionContext.SubjectId,
-            "companies.company.created",
-            company.Id.ToString(),
-            "success",
-            now);
-
-        // Desde EMP-08 no queda ninguna unicidad que arbitre la base para este agregado: la
-        // regla que sobrevive —que una empresa no repita la misma cuenta— es invariante del
-        // agregado y ya la hizo cumplir Company.Create en memoria. Por eso este SaveChanges no
-        // tiene detras ninguna rama de traduccion de 23505.
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return company.ToDto(city);
+        return created.Company.ToDto(
+            created.City,
+            await CompanyMapping.ResolveWithholdingTaxRatesAsync(
+                created.Company.WithholdingTaxRateIds, created.WithholdingRates, geographyLookup, cancellationToken),
+            created.Region);
     }
 }

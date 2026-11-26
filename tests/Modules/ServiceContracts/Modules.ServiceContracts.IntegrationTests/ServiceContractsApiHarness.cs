@@ -4,10 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Modules.ServiceContracts.Application;
-using Modules.ServiceContracts.Infrastructure.Reminders;
+using Modules.Authorization.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
+using Modules.ServiceContracts.Application;
+using Modules.ServiceContracts.Infrastructure.Reminders;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
@@ -42,7 +43,7 @@ internal static class ServiceContractsApiHarness
     }
 
     /// <summary>
-    /// Siembra la fila del tenant y sus módulos. Inserta únicamente las claves que faltan, por lo
+    /// Siembra la fila del tenant, sus roles de fábrica y sus módulos. Inserta únicamente las claves que faltan, por lo
     /// que se puede llamar dos veces sobre el mismo tenant.
     /// </summary>
     public static async Task SeedTenantAsync(
@@ -71,6 +72,11 @@ internal static class ServiceContractsApiHarness
             await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
+        // El tenant se inserta directo y después del arranque, así que nace sin los roles que el alta le sembraría.
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(id.Value, TestContext.Current.CancellationToken);
+
         foreach (var key in modules ?? TenantModuleKeys.All)
         {
             await tenancy.Database.ExecuteSqlInterpolatedAsync(
@@ -92,7 +98,8 @@ internal static class ServiceContractsApiHarness
         Guid tenantId,
         string name,
         string? phoneE164 = null,
-        string? email = null)
+        string? email = null,
+        string? businessName = null)
     {
         var id = Guid.CreateVersion7();
         var connectionString = factory.Services
@@ -102,8 +109,8 @@ internal static class ServiceContractsApiHarness
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var insert = new NpgsqlCommand(
             """
-            INSERT INTO customers.customers (id, tenant_id, name, is_active, phone_e164, email, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
-            VALUES (@id, @tenantId, @name, true, @phone, @email, 'Incomplete', @whatsAppUserId, false, false, 1, now(), now())
+            INSERT INTO customers.customers (id, tenant_id, name, business_name, is_active, phone_e164, email, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenantId, @name, @businessName, true, @phone, @email, 'Incomplete', @whatsAppUserId, false, false, 1, now(), now())
             """,
             connection);
         insert.Parameters.AddWithValue("id", id);
@@ -115,6 +122,7 @@ internal static class ServiceContractsApiHarness
         insert.Parameters.AddWithValue("whatsAppUserId", $"CO.{id:N}");
         insert.Parameters.AddWithValue("phone", (object?)phoneE164 ?? DBNull.Value);
         insert.Parameters.AddWithValue("email", (object?)email ?? DBNull.Value);
+        insert.Parameters.AddWithValue("businessName", (object?)businessName ?? DBNull.Value);
         await insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         return id;
     }
@@ -134,7 +142,7 @@ internal static class ServiceContractsApiHarness
     }
 
     /// <summary>
-    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> y <c>billing</c> conceden
+    /// Siembra una membresía del tenant (con su usuario) con un rol de fábrica: <c>admin</c> y <c>billing</c> conceden
     /// <c>billing.service.manage</c>, <c>advisor</c> no. <paramref name="removed"/> la deja quitada.
     /// </summary>
     public static async Task<Guid> SeedMemberAsync(
@@ -143,7 +151,8 @@ internal static class ServiceContractsApiHarness
         string? displayName,
         string role,
         bool removed = false,
-        string tenantId = TenantId)
+        string tenantId = TenantId,
+        bool withUser = true)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
@@ -152,10 +161,15 @@ internal static class ServiceContractsApiHarness
         var tenant = await tenancy.Tenants.FindAsync([new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId))], ct);
         var now = DateTimeOffset.UtcNow;
 
-        var user = User.CreateInvited(UserId.New(), email, now);
-        identity.Users.Add(user);
+        // withUser: false is a membership whose user row does not exist, so IUserDirectory.GetEmailAsync answers null (no email).
+        var userId = UserId.New();
+        if (withUser)
+        {
+            identity.Users.Add(User.CreateInvited(userId, email, now));
+        }
+
         var membership = Membership.CreateActive(
-            MembershipId.New(), user.Id.Value, tenant!.Id, [role], "test", now);
+            MembershipId.New(), userId.Value, tenant!.Id, [role], "test", now);
         if (displayName is not null)
         {
             membership.UpdateProfile(displayName, null, now);

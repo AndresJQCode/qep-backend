@@ -105,7 +105,7 @@ public sealed class ShopifyPreconditionsTests
         var outcome = await world.ImportAsync(row, snapshot);
 
         // C-3 existe pero está inactivo: también es product_unmatched (§6.2.2), y se evaluaron todas las líneas.
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["A-1","B-2","C-3"]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["A-1","B-2","C-3"],"customTitles":[]}""");
         Assert.Equal(["A-1", "CAM-001", "B-2", "C-3"], Assert.Single(world.Products.Requests));
         Assert.Empty(world.Writer.Creates);
         // El cliente se crea sólo cuando ninguna precondición frena: un pedido que espera un producto no deja una ficha suelta.
@@ -148,7 +148,7 @@ public sealed class ShopifyPreconditionsTests
 
         var outcome = await world.ImportAsync(row, snapshot);
 
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["cam-m","CAM-XL"]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["cam-m","CAM-XL"],"customTitles":[]}""");
         Assert.Empty(world.Writer.Creates);
     }
 
@@ -161,7 +161,7 @@ public sealed class ShopifyPreconditionsTests
 
         var outcome = await world.ImportAsync(row, snapshot);
 
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":[null]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":[null],"customTitles":[]}""");
     }
 
     [Fact]
@@ -365,6 +365,73 @@ public sealed class ShopifyPreconditionsTests
         Assert.Equal(25.50m, Assert.Single(Assert.Single(world.Writer.Creates).Draft.Lines).UnitPrice);
     }
 
+    // ---- Empresa sin cuenta y sin IVA (spec 2026-11-17 §4.4 y §5, R7) ----
+
+    // Sin cuenta no hay moneda de cuenta contra la cual comparar: el pedido entra en la suya, sin currency_mismatch.
+    [Fact]
+    public async Task AnOrderOfAStoreWithoutAccountImportsInTheOrderCurrency()
+    {
+        var world = new ImporterWorld().WithoutAccount();
+        var snapshot = Order(currency: "usd", lines: [new ShopifyLine("CAM-001", 1m, 25.50m, 0m)]);
+        var row = world.RowFor(snapshot);
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        Assert.Equal(ShopifyImportState.Imported, outcome.State);
+        var account = Assert.Single(world.Writer.Creates).Draft.BillingAccount;
+        Assert.Equal(new ShopifyBillingAccountRef(CompanyId, null, null, "USD"), account);
+        Assert.Equal(0, world.Billing.Calls);
+    }
+
+    [Fact]
+    public async Task AStoreWithoutAccountWhoseCompanyIsGoneWaits()
+    {
+        var world = new ImporterWorld().WithoutAccount();
+        world.Billing.Company = null;
+        var snapshot = Order();
+        var row = world.RowFor(snapshot);
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        AssertWaiting(row, outcome, ShopifyWaitReasons.BillingAccountMissing, null);
+        Assert.Empty(world.Customers.Log);
+    }
+
+    // Sin IVA: el precio de Shopify va tal cual aunque no traiga impuestos, la línea lleva la tasa del producto (el pedido la
+    // guarda como tasa del producto y aplica 0) y el envío cobrado va al 0 % sin pedir la tasa del envío del tenant.
+    [Fact]
+    public async Task AnOrderOfACompanyWithoutVatHasNoTaxAndNoFreightRateWait()
+    {
+        var world = new ImporterWorld();
+        world.Billing.Account = new ShopifyBillingAccountRef(CompanyId, "Bancolombia", "123-456", "COP", ChargesVat: false);
+        world.Shipping.FreightTaxPercentage = null;
+        var snapshot = Order(
+            taxesIncluded: false,
+            lines: [new ShopifyLine("CAM-001", 2m, 100_000m, 0m)],
+            shippingLines: [new ShopifyShippingLine("standard", "Servientrega", 10_000m, 0m, false)]);
+
+        var outcome = await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(ShopifyImportState.Imported, outcome.State);
+        var draft = Assert.Single(world.Writer.Creates).Draft;
+        var line = Assert.Single(draft.Lines);
+        Assert.Equal((100_000m, 19, 2m), (line.UnitPrice, line.TaxPercentage, line.Quantity));
+        Assert.Equal((ShopifyShippingMapper.Charged, 10_000m, 0), (draft.Shipping!.ChargeMode, draft.Shipping.FreightAmount, draft.Shipping.FreightTaxPercentage));
+        Assert.Equal(0, world.Shipping.RateRequests);
+    }
+
+    [Fact]
+    public async Task AStoreWithoutAccountOfACompanyWithoutVatKeepsTheShopifyPrice()
+    {
+        var world = new ImporterWorld().WithoutAccount(chargesVat: false);
+        var snapshot = Order(taxesIncluded: false, lines: [new ShopifyLine("CAM-001", 3m, 100_000m, 0m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        var line = Assert.Single(Assert.Single(world.Writer.Creates).Draft.Lines);
+        Assert.Equal(100_000m, line.UnitPrice);
+    }
+
     // §6.2.2: el descuento es Σ discountAllocations sobre originalUnitPrice × quantity, en porcentaje con 4 decimales.
     [Fact]
     public async Task DiscountIsAPercentageWithFourDecimals()
@@ -402,19 +469,21 @@ public sealed class ShopifyPreconditionsTests
         Assert.Null(Assert.Single(world.Writer.Creates).Draft.PaymentMethod);
     }
 
-    // §6.2.3 paso 2: «Shopify #1001» y, en otra línea, la nota del comprador.
+    // §6.2.3 paso 2 (spec 2026-11-14): las notas llevan «Shopify #1001»; la nota del comprador va aparte, recortada, en
+    // BuyerNotes.
     [Theory]
-    [InlineData("  Dejar en portería  ", "Shopify #1001\nDejar en portería")]
-    [InlineData(null, "Shopify #1001")]
-    [InlineData("   ", "Shopify #1001")]
-    public async Task NotesCarryTheOrderNameAndTheBuyerNote(string? note, string expected)
+    [InlineData("  Dejar en portería  ", "Dejar en portería")]
+    [InlineData(null, null)]
+    [InlineData("   ", null)]
+    public async Task NotesCarryTheOrderNameAndBuyerNotesTheBuyerNote(string? note, string? expected)
     {
         var world = new ImporterWorld();
         var snapshot = Order(note: note);
 
         await world.ImportAsync(world.RowFor(snapshot), snapshot);
 
-        Assert.Equal(expected, Assert.Single(world.Writer.Creates).Draft.Notes);
+        var draft = Assert.Single(world.Writer.Creates).Draft;
+        Assert.Equal(("Shopify #1001", expected), (draft.Notes, draft.BuyerNotes));
     }
 
     [Fact]

@@ -32,6 +32,20 @@ public static class QuotationSettingsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // El contenido configurable del PDF (spec 2026-11-16 §4.2): endpoint aparte, porque el cuerpo de PUT /settings lo manda
+        // entero otra pantalla y sumarle campos obligatorios la rompería. Mismos permisos de settings.
+        group.MapGet("/pdf-content", GetPdfContentAsync)
+            .RequireAuthorization(TenancyPermissions.SettingsRead)
+            .Produces<PdfContentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/pdf-content", UpdatePdfContentAsync)
+            .RequireAuthorization(TenancyPermissions.SettingsUpdate)
+            .Accepts<UpdatePdfContentRequest>("application/json")
+            .Produces<PdfContentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -48,6 +62,20 @@ public static class QuotationSettingsEndpoints
             new UpdateQuotationSettingsCommand(tenantId, request.MinimumUnits, request.MinimumTotals),
             cancellationToken)));
 
+    private static async Task<IResult> GetPdfContentAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetPdfContentQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> UpdatePdfContentAsync(
+        Guid tenantId,
+        UpdatePdfContentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdatePdfContentCommand(
+                tenantId, request.PaymentNotice, request.Terms, request.DeliveryProcess, request.PaymentAccount),
+            cancellationToken));
+
     private static QuotationSettingsResponse ToResponse(QuotationSettingsDto settings) =>
         new(settings.MinimumUnits, settings.MinimumTotals);
 }
@@ -61,3 +89,11 @@ public sealed record UpdateQuotationSettingsRequest(
 public sealed record QuotationSettingsResponse(
     int MinimumUnits,
     IReadOnlyDictionary<string, decimal> MinimumTotals);
+
+/// <summary>Las tres secciones completas y la cuenta para el pago, sin <c>variables</c>. Nullable a propósito: una sección que falta llega al validador como
+/// null y es un 422, no un borrado en silencio.</summary>
+public sealed record UpdatePdfContentRequest(
+    PdfSectionDto? PaymentNotice,
+    PdfSectionDto? Terms,
+    PdfSectionDto? DeliveryProcess,
+    PdfPaymentAccountDto? PaymentAccount);

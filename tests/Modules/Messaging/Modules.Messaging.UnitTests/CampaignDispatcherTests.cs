@@ -350,7 +350,7 @@ public sealed class CampaignDispatcherTests
         await bed.Dispatcher.SendAsync(recipient, Ct);
 
         Assert.Equal("131050", Assert.Single(bed.Store.Failed).Code);
-        Assert.Equal([recipient.CustomerId], bed.Bed.Customers.OptedOut);
+        Assert.Equal([recipient.CustomerId!.Value], bed.Bed.Customers.OptedOut);
         Assert.Empty(bed.Store.Stops);
     }
 
@@ -358,7 +358,11 @@ public sealed class CampaignDispatcherTests
     [InlineData(132001)]
     [InlineData(132015)]
     [InlineData(132016)]
-    public async Task ATemplateProblemFailsTheRecipientAndStopsTheCampaign(int code)
+    [InlineData(131042)]
+    [InlineData(131031)]
+    [InlineData(368)]
+    [InlineData(131005)]
+    public async Task ATemplateProblemOrAnAccountBlockFailsTheRecipientAndStopsTheCampaign(int code)
     {
         var bed = new DispatchBed();
         var recipient = bed.Recipient();
@@ -702,5 +706,21 @@ public sealed class CampaignDispatcherTests
         await bed.Dispatcher.PrepareTickAsync(Ct);
 
         Assert.Equal(256, Assert.Single(Assert.Single(bed.Store.Added).Batch).CustomerName.Length);
+    }
+    // Spec 2026-11-17: el worker manda la imagen fija guardada de la plantilla.
+    [Fact]
+    public async Task ACampaignOfAStoredImageTemplateSendsTheLink()
+    {
+        const string url = "https://public.test/imagen.png";
+        var bed = new DispatchBed();
+        var template = Assert.Single(bed.Bed.Templates.Catalog);
+        bed.Bed.Templates.Catalog[0] = template with { HeaderMedia = TemplateHeaderMedia.Image, HeaderImageUrl = url };
+        bed.Bed.Meta.NextSend = Sent("wamid.img");
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(), Ct);
+
+        Assert.Equal(TemplateHeader.ByLink("image", url, null), Assert.Single(bed.Bed.Meta.TemplateSends).Template.Header);
+        using var details = JsonDocument.Parse(Assert.Single(bed.Store.Prepared).DetailsJson);
+        Assert.Equal(url, details.RootElement.GetProperty("template").GetProperty("header").GetProperty("link").GetString());
     }
 }

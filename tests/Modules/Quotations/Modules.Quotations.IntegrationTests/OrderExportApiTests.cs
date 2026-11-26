@@ -16,15 +16,14 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>La exportación de pedidos por correo: mismo contrato que cotizaciones, sobre el listado
 /// de pedidos (SALE-01) y con `OrderRead`.</summary>
-public sealed class OrderExportApiTests
+public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
     [Fact]
     public async Task ExportIsAcceptedAndLeavesAPendingOrdersJob()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await CreateOrderAsync(client, factory, tenantId);
@@ -40,11 +39,56 @@ public sealed class OrderExportApiTests
         Assert.Equal(ownerUserId, job.RequestedBy);
     }
 
+    // Spec 2026-11-10 §5: el archivo es «lo que estoy viendo». Sin estado no trae archivados, y el envío y la marca de
+    // facturado filtran como en la tabla.
     [Fact]
-    public async Task ExportWithoutDatesIsUnprocessableWithTheFieldErrors()
+    public async Task TheExportHonoursTheNewFiltersAndHidesArchived()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var archived = await CreateOrderAsync(client, factory, tenantId);
+        var prepared = await CreateOrderAsync(client, factory, tenantId);
+        await CreateOrderAsync(client, factory, tenantId);
+        (await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{archived.Id}/archive", content: null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        (await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{prepared.Id}/prepare", content: null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+
+        Assert.Equal(2, await ExportedRowsAsync(client, factory, tenantId, string.Empty));
+        Assert.Equal(1, await ExportedRowsAsync(client, factory, tenantId, "&status=Archived"));
+        Assert.Equal(1, await ExportedRowsAsync(client, factory, tenantId, "&fulfillmentStatus=Prepared"));
+        Assert.Equal(2, await ExportedRowsAsync(client, factory, tenantId, "&invoiced=false"));
+
+        var noneInvoiced = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}&invoiced=true", content: null, TestContext.Current.CancellationToken);
+        var problem = await noneInvoiced.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.export.empty", problem?.Code);
+
+        var invalid = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}&fulfillmentStatus=Shipped", content: null, TestContext.Current.CancellationToken);
+        problem = await invalid.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.order.fulfillment_status_invalid", problem?.Code);
+    }
+
+    private static async Task<int?> ExportedRowsAsync(HttpClient client, QepApiFactory factory, Guid tenantId, string filters)
+    {
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}{filters}", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+        return (await FindExportJobAsync(factory, accepted.JobId)).RowCount;
+    }
+
+    [Fact]
+    public async Task ExportWithoutDatesIsUnprocessableWithTheFieldErrors()
+    {
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -58,11 +102,33 @@ public sealed class OrderExportApiTests
         Assert.Contains("ConvertedTo", problem.Errors.Keys);
     }
 
+    // Por número de pedido no se piden fechas: el trabajo se encola sin rango y el procesador trae sólo ese pedido.
+    // Corre el procesador, que reclama trabajos de toda la base: va en su propio host.
     [Fact]
-    public async Task ExportWithNoMatchingOrdersIsUnprocessable()
+    public async Task ExportByOrderNumberNeedsNoDates()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var wanted = await CreateOrderAsync(client, factory, tenantId);
+        await CreateOrderAsync(client, factory, tenantId);
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?orderNumber={Uri.EscapeDataString(wanted.OrderNumber)}",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+        Assert.Equal(1, (await FindExportJobAsync(factory, accepted!.JobId)).RowCount);
+    }
+
+    [Fact]
+    public async Task ExportWithNoMatchingOrdersIsUnprocessable()
+    {
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -78,8 +144,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task PendingQuotationExportsFillTheOrdersQuota()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await CreateOrderAsync(client, factory, tenantId);
@@ -103,8 +168,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task ExportWithoutTheOrderReadPermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, QuotationsPermissions.QuotationRead);
         using var _ = client;
 
@@ -117,8 +181,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task ExportForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.OrderRead);
@@ -233,14 +296,41 @@ public sealed class OrderExportApiTests
         // que la línea se tomó con 0 %. Número, no texto.
         Assert.Equal("0", first[36]);
         Assert.True(sheet.NumericCells[1][36]);
-        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Desde
-        // el 2026-09-28 sale como lo lee el ERP —sin puntos ni dígito de verificación—, así que
-        // sólo dígitos y número, no texto.
-        Assert.Matches(@"^901\d{6}$", first[37]);
-        Assert.True(sheet.NumericCells[1][37]);
+        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Sale
+        // sin puntos ni espacios, pero conserva el guion y el dígito de verificación (D11), así
+        // que es texto, no número.
+        Assert.Matches(@"^901\d{6}-\d$", first[37]);
+        Assert.False(sheet.NumericCells[1][37]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
+    }
+
+    // Spec 2026-11-16 §5: «Fecha Pedido» es la fecha del pedido y el rango del archivo corta por ella. Un pedido de hoy
+    // movido al 31 de octubre sale al exportar octubre, con esa fecha.
+    [Fact]
+    public async Task TheExportDateColumnIsTheOrderDate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var moved = await CreateOrderAsync(client, factory, tenantId);
+        await CreateOrderAsync(client, factory, tenantId);
+        await MoveOrderDateAsync(client, tenantId, moved.Id, new DateOnly(2026, 10, 31));
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?convertedFrom=2026-10-01&convertedTo=2026-10-31", content: null,
+            TestContext.Current.CancellationToken);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+
+        var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        var row = Assert.Single(sheet.Rows.Skip(1));
+        Assert.Equal("Fecha Pedido", sheet.Rows[0][33]);
+        Assert.Equal((moved.OrderNumber, "2026-10-31"), (row[14], row[33]));
     }
 
     // Keyset y no offset (D8, hallazgo 11), sobre el orden del listado de pedidos. Mismo diseño que
@@ -250,8 +340,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task OrdersCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         for (var converted = 0; converted < 3; converted++)
@@ -267,7 +356,7 @@ public sealed class OrderExportApiTests
         var first = await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 1);
         await CreateOrderAsync(client, factory, tenantId);
         var second = await ReadPendingBatchAsync(factory, tenantId, CursorOf(first), limit: 1);
-        await SetOrderStatusAsync(factory, second.Single().Id, OrderStatus.Approved);
+        await SetOrderStatusAsync(factory, second.Single().Id, OrderStatus.Archived);
         var third = await ReadPendingBatchAsync(factory, tenantId, CursorOf(second), limit: 1);
         var fourth = await ReadPendingBatchAsync(factory, tenantId, CursorOf(third), limit: 1);
 
@@ -275,23 +364,25 @@ public sealed class OrderExportApiTests
         Assert.Empty(fourth);
     }
 
-    // El repositorio real, contra Postgres. `Pending` es el filtro que el pedido aprobado abandona.
+    // El repositorio real, contra Postgres. `Open` es el filtro que el pedido archivado abandona.
     private static async Task<IReadOnlyList<Order>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
-        // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
-        // propósito, lo que se prueba es el keyset.
-        var now = DateTimeOffset.UtcNow;
+        // El repositorio recibe días de la fecha del pedido (spec 2026-11-16 §4): la ventana es amplia a propósito, lo que
+        // se prueba es el keyset.
+        var today = TodayInBogota();
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IOrderRepository>().ListForExportAsync(
             tenantId,
             clientId: null,
             clientIds: null,
             advisorId: null,
-            OrderStatus.Pending,
+            OrderStatus.Open,
             paymentStatus: null,
-            now.AddDays(-7),
-            now.AddDays(2),
+            fulfillmentStatus: null,
+            invoiced: null,
+            today.AddDays(-7),
+            today.AddDays(2),
             orderNumber: null,
             source: null,
             after,
@@ -300,7 +391,7 @@ public sealed class OrderExportApiTests
     }
 
     private static OrderExportCursor CursorOf(IReadOnlyList<Order> batch) =>
-        new(batch[^1].ConvertedAt, batch[^1].OrderNumber);
+        new(batch[^1].OrderDate, batch[^1].ConvertedAt, batch[^1].OrderNumber);
 
     // Directo en la base: lo que se prueba es la lectura, no la aprobación.
     private static async Task SetOrderStatusAsync(QepApiFactory factory, OrderId orderId, OrderStatus status)
@@ -322,8 +413,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task OrdersThatShareTheConversionInstantComeOutOnceEachByNumber()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         for (var converted = 0; converted < 3; converted++)
@@ -706,11 +796,11 @@ public sealed class OrderExportApiTests
         Assert.NotEqual(line.UnitPrice, decimal.Parse(row[20], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][20]);
         Assert.Equal("Nit", sheet.Rows[0][46]);
-        // El NIT guardado ("901.463.203-2") sale como lo lee el ERP: sin puntos ni dígito de
-        // verificación, y número (2026-09-28).
-        var erpTaxId = detail.BillingAccount!.CompanyTaxId!.Split('-')[0].Replace(".", string.Empty);
+        // El NIT guardado ("901.463.203-2") sale sin puntos ni espacios, con el guion y el dígito
+        // de verificación (D11), y por eso como texto.
+        var erpTaxId = detail.BillingAccount!.CompanyTaxId!.Replace(".", string.Empty).Replace(" ", string.Empty);
         Assert.Equal(erpTaxId, row[46]);
-        Assert.True(sheet.NumericCells[1][46]);
+        Assert.False(sheet.NumericCells[1][46]);
         // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en
         // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; "FV" es fija de
         // texto, y Transportadora (carrier) sale de texto también.
@@ -777,6 +867,30 @@ public sealed class OrderExportApiTests
         Assert.Equal(string.Empty, row[headers.IndexOf("V. Consignacion 2")]);
     }
 
+    // Spec 2026-11-17 §4.2: un pedido de una empresa sin cuenta deja vacías las formas de pago aunque tenga comprobante; el
+    // ERP no recibe una cuenta que no existe.
+    [Fact]
+    public async Task AnOrderWithoutBankAccountLeavesThePaymentMethodCellsEmpty()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        await AddProofAsync(client, factory, tenantId, order.Id);
+        await ExecuteSqlAsync(
+            factory,
+            $"UPDATE quotations.orders SET billing_bank_name = NULL, billing_account_number = NULL WHERE id = '{order.Id}'");
+        await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var row = sheet.Rows[1];
+        Assert.Equal(string.Empty, row[headers.IndexOf("Forma de pago 1")]);
+        Assert.Equal(5_000m, decimal.Parse(row[headers.IndexOf("V. Consignacion 1")], CultureInfo.InvariantCulture));
+    }
+
     // Spec 2026-10-05 (recoger en tienda), de punta a punta: con el layout de la semilla,
     // "Transportadora (P2)" sale "Recoger en tienda" en el pedido cuya cotización es de recogida y
     // "Coordinadora" en el otro, en el mismo archivo (Review Focus 2). Aparte de
@@ -840,19 +954,24 @@ public sealed class OrderExportApiTests
 
     /// <summary>Un pedido convertido hoy, sin comprobantes (pago pendiente), mismo camino que
     /// OrderListApiTests.ConvertToOrderAsync. Con <paramref name="isStorePickup"/> la cotización
-    /// nace de recogida en tienda (spec 2026-10-05).</summary>
+    /// nace de recogida en tienda (spec 2026-10-05). Con <paramref name="withRetention"/> el cliente tiene una
+    /// Retefuente del 2,5 % asignada (spec impuestos por tipo §7.4), que la cotización congela y el pedido hereda.</summary>
     private static async Task<OrderResponse> CreateOrderAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId, string? identificationNumber = null,
         Guid? taxRateId = null, bool isStorePickup = false, bool withRetention = false)
     {
-        var customerId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber, withRetention);
+        IReadOnlyList<Guid>? rates = withRetention
+            ? [await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m)]
+            : null;
+        var customerId = await CreateActiveCustomerAsync(
+            client, tenantId, identificationNumber, withholdingTaxRateIds: rates);
         var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
         var quotation = await CreateSentQuotationAsync(
             client, factory, tenantId, customerId, productId,
             parties: isStorePickup ? new QuotationPartiesRequest(null, null, IsStorePickup: true) : null);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -914,8 +1033,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task PaymentProofsForTheExportComeInUploadOrderAndOnlyFromTheTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         var (otherTenantId, _, otherClient) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
@@ -961,7 +1079,7 @@ public sealed class OrderExportApiTests
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PartialPaymentReceived", null, proofs),
+            new ConvertQuotationToOrderRequest(null, proofs),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -978,7 +1096,7 @@ public sealed class OrderExportApiTests
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/orders/{orderId}/proofs",
             new AddOrderPaymentProofsRequest(
-                "PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 5_000m)]),
+                [new OrderPaymentProofRequest(fileId, 5_000m)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);

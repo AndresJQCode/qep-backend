@@ -1,4 +1,4 @@
-﻿namespace Bootstrapper.UnitTests;
+namespace Bootstrapper.UnitTests;
 
 /// <summary>
 /// Cobros recurrentes, fase 1 (owner, 2026-10-29): el aviso de cobro sale sin importar el consentimiento de Ley 1581.

@@ -220,6 +220,37 @@ public sealed class SendAudioMessageHandlerTests
         Assert.Equal($"qep:{failed}", Assert.Single(bed.Meta.AudioSends).CallbackData);
     }
 
+    [Fact]
+    public async Task ADiscardedFailedClientIdIsNotRetriableAndNothingIsUploaded()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Outbound.Committed = new ExistingOutbound(
+            Guid.CreateVersion7(), MessageStatus.Failed, bed.Now.AddMinutes(-5), bed.MemberId, "", null, MessageKind.Audio, "audio/ogg", RetryDisabled: true);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageNotRetriable, error.Code);
+        Assert.Empty(bed.Outbound.Claims);
+        Assert.Empty(bed.Meta.Uploads);
+        Assert.Empty(bed.Store.Objects);
+    }
+
+    [Fact]
+    public async Task ADiscardedClientIdSeenOnlyInsideTheClaimIsNotRetriable()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Outbound.Existing = new ExistingOutbound(
+            Guid.CreateVersion7(), MessageStatus.Failed, bed.Now.AddMinutes(-5), bed.MemberId, "", null, MessageKind.Audio, "audio/ogg", RetryDisabled: true);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => bed.SendAudioHandler().HandleAsync(Command(bed, conversation.Id), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageNotRetriable, error.Code);
+        Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
+        Assert.Empty(bed.Meta.Uploads);
+    }
+
     // Review Focus 1: el objeto de R2 es el que la fila Failed ya sirve; borrarlo dejaría la burbuja muda.
     [Fact]
     public async Task ARejectedCredentialOnARetryKeepsTheAudioTheFailedRowServes()

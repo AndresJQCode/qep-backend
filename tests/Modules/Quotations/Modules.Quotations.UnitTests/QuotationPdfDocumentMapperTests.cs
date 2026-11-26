@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -93,6 +94,115 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(1503848.57m, document.NetTotal);
     }
 
+    // Spec 2026-11-18 §4.4: con dos tasas del mismo nombre y porcentaje (una por alcance), el rótulo dice a qué líneas
+    // aplica; una sin alcance (All) sale como siempre.
+    [Fact]
+    public void AScopedWithholdingSaysWhichLinesItCovers()
+    {
+        var response = Response() with
+        {
+            Withholdings =
+            [
+                WithholdingRow("Retefuente 2,5 %", "Retefuente", 7_500m) with { AppliesTo = "Goods" },
+                WithholdingRow("Retefuente 2,5 %", "Retefuente", 2_500m) with { AppliesTo = "Services" },
+                WithholdingRow("ReteICA Bogotá", "ReteICA", 2_898m, 0.966m),
+            ],
+        };
+
+        var document = Map(response);
+
+        Assert.Equal(
+            ["Retefuente 2,5 % (bienes)", "Retefuente 2,5 % (servicios)", "ReteICA Bogotá"],
+            document.Withholdings.Select(withholding => withholding.Name));
+    }
+
+    // Spec impuestos por tipo §9.3 (F-1): una fila por retención que aplicó, rotulada con el nombre de la tasa; el
+    // JSON que recibe Typst trae `withholdings: [{ name, amount, percentageLabel }]` (spec ReteICA por empresa §7.9).
+    [Fact]
+    public void PdfHasOneRowPerAppliedWithholdingWithTheRateName()
+    {
+        var response = Response() with
+        {
+            RetentionAmount = 10_398m,
+            Withholdings =
+            [
+                WithholdingRow("Retefuente 2,5 %", "Retefuente", 7_500m),
+                WithholdingRow("ReteICA Bogotá", "ReteICA", 2_898m, 0.966m),
+            ],
+        };
+
+        var document = Map(response);
+
+        Assert.Equal(
+            new[]
+            {
+                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m, "2,5 %"),
+                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m, "0,966 %"),
+            },
+            document.Withholdings);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(document, PayloadFormat).GetProperty("withholdings");
+        Assert.Equal("Retefuente 2,5 %", json[0].GetProperty("name").GetString());
+        Assert.Equal(7_500m, json[0].GetProperty("amount").GetDecimal());
+        Assert.Equal("2,5 %", json[0].GetProperty("percentageLabel").GetString());
+        Assert.Equal("ReteICA Bogotá", json[1].GetProperty("name").GetString());
+        Assert.Equal(3, json[0].EnumerateObject().Count());
+    }
+
+    // Spec ReteICA por empresa §7.9 (R13): el porcentaje efectivo de cada retención, con el separador del tenant, hasta tres
+    // decimales y sin ceros de sobra.
+    [Theory]
+    [InlineData(null, "0,966 %")]
+    [InlineData(Modules.Tenancy.Domain.TenantNumberFormats.CommaDecimal, "0,966 %")]
+    [InlineData(Modules.Tenancy.Domain.TenantNumberFormats.DotDecimal, "0.966 %")]
+    public void PercentageLabelUsesTheTenantSeparator(string? numberFormat, string expected)
+    {
+        var response = Response() with { Withholdings = [WithholdingRow("ReteICA Bogotá", "ReteICA", 966m, 0.966m)] };
+
+        var document = QuotationPdfDocumentMapper.From(response, Calendar, logo: null, numberFormat);
+
+        Assert.Equal(expected, Assert.Single(document.Withholdings).PercentageLabel);
+    }
+
+    [Fact]
+    public void PercentageLabelHasNoTrailingZeros()
+    {
+        var response = Response() with
+        {
+            Withholdings = [WithholdingRow("Retefuente 2,5 %", "Retefuente", 2_500m, 2.5m), WithholdingRow("Retefuente 4 %", "Retefuente", 4_000m, 4m)],
+        };
+
+        Assert.Equal<string>(["2,5 %", "4 %"], Map(response).Withholdings.Select(row => row.PercentageLabel).ToArray());
+    }
+
+    // El cliente comprueba el monto con el porcentaje efectivo: el del catálogo de una tasa editada no se imprime.
+    [Fact]
+    public void EditedPercentageWinsOverCatalog()
+    {
+        var response = Response() with
+        {
+            Withholdings = [WithholdingRow("ReteICA Bogotá", "ReteICA", 800m, 0.8m, catalog: 0.966m)],
+        };
+
+        Assert.Equal("0,8 %", Assert.Single(Map(response).Withholdings).PercentageLabel);
+    }
+
+    [Fact]
+    public void PdfWithoutWithholdingsHasNoRetentionRow()
+    {
+        var document = Map(Response());
+
+        Assert.Empty(document.Withholdings);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(document, PayloadFormat).GetProperty("withholdings");
+        Assert.Equal(System.Text.Json.JsonValueKind.Array, json.ValueKind);
+        Assert.Equal(0, json.GetArrayLength());
+    }
+
+    internal static WithholdingResponse WithholdingRow(
+        string name, string type, decimal amount, decimal percentage = 2.5m, decimal? catalog = null) =>
+        new(
+            Guid.CreateVersion7(), name, type, "CO", percentage, null, null, null, 300_000m, amount,
+            catalog ?? percentage, catalog is not null && catalog != percentage, null);
+
     // Sin esta bandera el documento tiene un IVA en cero que no explica por que: el lector no
     // puede distinguir "productos exentos" de "error de calculo".
     [Fact]
@@ -155,7 +265,7 @@ public sealed class QuotationPdfDocumentMapperTests
     }
 
     [Fact]
-    public void TheLineTotalIsTheGrossMinusItsDiscountWithTheTaxStillInside()
+    public void TheLineTotalIsTheSubtotalPlusTheTaxWithTheTaxStillInside()
     {
         var document = Map(Response());
 
@@ -166,6 +276,20 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(1169940m, document.Items[1].LineTotal);
     }
 
+    // Spec 2026-11-23: el descuento de línea es sin IVA, así que ya no se resta del bruto con IVA. El total
+    // de línea es lo que la línea cobra, Subtotal + TaxAmount, cualquiera sea el descuento.
+    [Fact]
+    public void TheLineTotalDoesNotDependOnTheDiscount()
+    {
+        var response = Response();
+        var first = response.Items.First() with { DiscountAmount = 1m };
+
+        var document = Map(response with { Items = [first, .. response.Items.Skip(1)] });
+
+        Assert.Equal(366180m, document.Items[0].LineTotal);
+        Assert.Equal(first.Subtotal + first.TaxAmount, document.Items[0].LineTotal);
+    }
+
     // Lo que el mayorista gana si revende a valor publico: la suma de los descuentos de linea.
     // Es el mismo numero que el encabezado ya trae como DiscountAmount, no uno nuevo.
     [Fact]
@@ -173,7 +297,7 @@ public sealed class QuotationPdfDocumentMapperTests
     {
         var document = Map(Response());
 
-        Assert.Equal(271080m, document.DiscountAmount);
+        Assert.Equal(227798.32m, document.DiscountAmount);
     }
 
     [Fact]
@@ -314,6 +438,50 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(string.Empty, document.Billing.TaxId);
     }
 
+    // Task 1B de la tienda publica: fuera de Colombia la parte no tiene ciudad de DIVIPOLA, asi que la ciudad
+    // escrita y el pais se imprimen tras la direccion. Una parte colombiana sigue imprimiendo solo la direccion.
+    [Fact]
+    public void ThePdfPrintsTheForeignCity()
+    {
+        var foreign = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega Madrid", null, null, null,
+            "Calle Mayor 1", null, null, Country: "ES", CityName: "Madrid");
+        var colombian = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Billing", "Sede", null, null, null,
+            "Carrera 7", Guid.CreateVersion7(), Guid.CreateVersion7(), Country: "CO");
+
+        var document = Map(Response() with { Parties = [foreign, colombian] });
+
+        Assert.Equal("Calle Mayor 1, Madrid, ES", document.Shipping.Location);
+        Assert.Equal("Carrera 7", document.Billing.Location);
+    }
+
+    // Spec 2026-11-24: el código postal va después de la dirección, en Colombia y fuera.
+    [Theory]
+    [InlineData("CO", null, "Zona Franca, 050021", "Zona Franca")]
+    [InlineData("ES", "Madrid", "Zona Franca, 050021, Madrid, ES", "Zona Franca, Madrid, ES")]
+    public void TheShippingLocationPrintsThePostalCodeAfterTheAddress(
+        string country, string? cityName, string expected, string withoutIt)
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega", null, null, null,
+            "Zona Franca", null, null, Country: country, CityName: cityName, PostalCode: "050021");
+
+        Assert.Equal(expected, Map(Response() with { Parties = [party] }).Shipping.Location);
+        Assert.Equal(withoutIt, Map(Response() with { Parties = [party with { PostalCode = null }] }).Shipping.Location);
+    }
+
+    // Sin dirección no queda un separador colgando.
+    [Fact]
+    public void APostalCodeWithoutAnAddressPrintsAlone()
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega", null, null, null,
+            null, null, null, Country: "CO", PostalCode: "050021");
+
+        Assert.Equal("050021", Map(Response() with { Parties = [party] }).Shipping.Location);
+    }
+
     [Fact]
     public void MapsTheShippingFields()
     {
@@ -401,6 +569,113 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.DoesNotContain("transporte", json);
     }
 
+    // La etiqueta del documento de la empresa emisora sigue su tipo, no un «NIT» fijo.
+    [Theory]
+    [InlineData("NIF", "NIF")]
+    [InlineData(null, "NIT")]
+    public void TheIssuerDocumentIsLabelledByItsType(string? documentType, string expectedLabel)
+    {
+        var billing = new QuotationBillingResponse(
+            Guid.CreateVersion7(), "Empresa", "B12345678", documentType, null, null,
+            "Bancolombia", "123", "COP");
+
+        var document = Map(Response() with { BillingAccount = billing });
+
+        Assert.Equal(expectedLabel, document.BillingAccount!.CompanyDocumentLabel);
+    }
+
+    // Spec 2026-11-17 §4.2: una empresa sin cuenta llega al PDF con su membrete y banco y número nulos.
+    [Fact]
+    public void AnAccountWithoutBankMapsNullBankFields()
+    {
+        var billing = new QuotationBillingResponse(
+            Guid.CreateVersion7(), "Empresa Sin Cuenta S.A.S.", "900123456", "NIT", null, null, null, null, "COP");
+
+        var document = Map(Response() with { BillingAccount = billing });
+
+        Assert.NotNull(document.BillingAccount);
+        Assert.Equal("Empresa Sin Cuenta S.A.S.", document.BillingAccount.CompanyName);
+        Assert.Null(document.BillingAccount.BankName);
+        Assert.Null(document.BillingAccount.AccountNumber);
+    }
+
+    [Fact]
+    public void TheBillingResponseCarriesChargesVat()
+    {
+        var account = new QuotationBillingAccountDto(Guid.CreateVersion7(), null, null, "COP", ChargesVat: false);
+
+        var response = QuotationResponseComposer.ToBillingResponse(account, null)!;
+
+        Assert.False(response.ChargesVat);
+        Assert.Null(response.BankName);
+    }
+
+    [Fact]
+    public void TheBillingResponseCarriesTheCompanyDocumentType()
+    {
+        var account = new QuotationBillingAccountDto(Guid.CreateVersion7(), "Bancolombia", "123", "COP");
+        var company = new QuotationCompanyRef(
+            account.CompanyId, "Empresa", "B12345678", "NIF", "ES", true, null, null, []);
+
+        Assert.Equal("NIF", QuotationResponseComposer.ToBillingResponse(account, company)!.CompanyDocumentType);
+        Assert.Null(QuotationResponseComposer.ToBillingResponse(account, null)!.CompanyDocumentType);
+    }
+
+    // ---- Unidad de venta (spec 2026-11-18 §6) ----
+
+    // Un tenant que no usa unidades imprime el PDF de hoy: con todas las líneas en Unit, ninguna lleva unidad.
+    [Fact]
+    public void AllUnitLinesOmitTheUnit()
+    {
+        var document = Map(Response());
+
+        Assert.All(document.Items, line => Assert.Null(line.Unit));
+    }
+
+    // Con una sola línea que no es Unit, todas llevan la suya, incluida «unidad»: la columna se lee pareja.
+    [Fact]
+    public void AMixedDocumentLabelsEveryLine()
+    {
+        var response = Response();
+        var items = response.Items.ToArray();
+        var document = Map(response with
+        {
+            Items =
+            [
+                items[0] with { Quantity = 2m, Kind = "Service", SalesUnit = "Hour" },
+                items[1] with { Quantity = 1m },
+            ],
+        });
+
+        Assert.Equal(["horas", "unidad"], document.Items.Select(line => line.Unit));
+    }
+
+    // Plural y singular salen del backend con un diccionario cerrado; la plantilla sólo imprime el texto.
+    [Theory]
+    [InlineData(SalesUnit.Unit, 1, "unidad")]
+    [InlineData(SalesUnit.Unit, 3, "unidades")]
+    [InlineData(SalesUnit.Service, 1, "servicio")]
+    [InlineData(SalesUnit.Service, 2, "servicios")]
+    [InlineData(SalesUnit.Hour, 1, "hora")]
+    [InlineData(SalesUnit.Hour, 2.5, "horas")]
+    [InlineData(SalesUnit.Day, 1, "día")]
+    [InlineData(SalesUnit.Day, 2, "días")]
+    [InlineData(SalesUnit.Week, 2, "semanas")]
+    [InlineData(SalesUnit.Month, 1, "mes")]
+    [InlineData(SalesUnit.Month, 6, "meses")]
+    [InlineData(SalesUnit.Year, 1, "año")]
+    [InlineData(SalesUnit.Year, 2, "años")]
+    [InlineData(SalesUnit.Kilogram, 3, "kg")]
+    [InlineData(SalesUnit.Meter, 1, "m")]
+    [InlineData(SalesUnit.SquareMeter, 12, "m²")]
+    [InlineData(SalesUnit.Liter, 4, "l")]
+    public void PluralFollowsQuantity(SalesUnit unit, double quantity, string expected) =>
+        Assert.Equal(expected, SalesUnitLabels.Spanish(unit, (decimal)quantity));
+
+    [Fact]
+    public void EverySalesUnitHasASpanishLabel() =>
+        Assert.All(Enum.GetValues<SalesUnit>(), unit => Assert.False(string.IsNullOrEmpty(SalesUnitLabels.Spanish(unit, 2m))));
+
     private static QuotationResponse Response() => new(
         Guid.CreateVersion7(),
         "QUO-2026-0042",
@@ -417,7 +692,7 @@ public sealed class QuotationPdfDocumentMapperTests
         1290857.15m,
         19m,
         245262.85m,
-        271080m,
+        227798.32m,
         1536120m,
         false,
         0m,
@@ -443,7 +718,7 @@ public sealed class QuotationPdfDocumentMapperTests
         // podria decir que no lo alcanzo.
         new QuotationMinimumPurchaseResponse(true, 24m, 6m, "COP", 500_000m, 0m, 0m),
         [
-            // 12 x 35.900 = 430.800; 15% = 64.620; linea = 366.180 con IVA adentro.
+            // 12 x 35.900 = 430.800; 15% = 64.620 con IVA = 54.302,52 sin IVA; linea = 366.180 con IVA adentro.
             // IVA contenido = 366.180 x 19 / 119 = 58.465,71; base = 307.714,29.
             new QuotationItemResponse(
                 Guid.CreateVersion7(),
@@ -456,7 +731,7 @@ public sealed class QuotationPdfDocumentMapperTests
                 12m,
                 35900m,
                 15m,
-                64620m,
+                54302.52m,
                 30515m,
                 307714.29m,
                 19,
@@ -476,7 +751,7 @@ public sealed class QuotationPdfDocumentMapperTests
                 12m,
                 114700m,
                 15m,
-                206460m,
+                173495.80m,
                 97495m,
                 983142.86m,
                 19,
@@ -495,5 +770,16 @@ public sealed class QuotationPdfDocumentMapperTests
         // Sin envío registrado: el PDF del envío lo cubre su propia tarea.
         new ShippingResponse(false, null, null, 0m, 0, 0m, 0m, false),
         0m,
-        0m);
+        0m,
+        // Sin retenciones: la fila por retención del PDF es la Tarea 16.
+        [],
+        [],
+        [],
+        // El PDF no imprime los contactos: son del diálogo de envío.
+        [],
+        // Ni la explicación municipal ni el desglose de retenciones: son de la pantalla (spec retenciones por UVT §3).
+        null,
+        null,
+        [],
+        []);
 }

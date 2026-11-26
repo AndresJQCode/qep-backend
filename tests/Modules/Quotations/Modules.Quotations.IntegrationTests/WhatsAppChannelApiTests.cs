@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -13,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// Sin canal, o con varios y sin elección guardada, el envío responde 422 sin tocar la cotización ni anotar una falla.
 /// La elección se guarda con el primer envío o con el PUT de Configuración, y el GET lista los canales disponibles.
 /// </summary>
-public sealed class WhatsAppChannelApiTests
+public sealed class WhatsAppChannelApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task SendUsesTheTenantChannel()
@@ -99,8 +98,8 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, ownerUserId, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
-        var first = await CreateQuotationAsync(owner, tenantId, clientId);
-        var second = await CreateQuotationAsync(owner, tenantId, clientId);
+        var first = await CreateSendableQuotationAsync(owner, tenantId, clientId);
+        var second = await CreateSendableQuotationAsync(owner, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
 
         using var asking = await SendAsync(owner, tenantId, first.Id);
@@ -129,8 +128,8 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
-        var first = await CreateQuotationAsync(owner, tenantId, clientId);
-        var second = await CreateQuotationAsync(owner, tenantId, clientId);
+        var first = await CreateSendableQuotationAsync(owner, tenantId, clientId);
+        var second = await CreateSendableQuotationAsync(owner, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
         using (var chosen = await SendAsync(owner, tenantId, first.Id, RecordingWhatsAppChannelDirectory.Meta.ConnectionId))
         {
@@ -173,7 +172,7 @@ public sealed class WhatsAppChannelApiTests
         var quotations = new List<QuotationResponse>();
         for (var index = 0; index < 3; index++)
         {
-            quotations.Add(await CreateQuotationAsync(owner, tenantId, clientId));
+            quotations.Add(await CreateSendableQuotationAsync(owner, tenantId, clientId));
         }
 
         var a = RecordingWhatsAppChannelDirectory.Default;
@@ -211,7 +210,7 @@ public sealed class WhatsAppChannelApiTests
         var quotations = new List<QuotationResponse>();
         for (var index = 0; index < 3; index++)
         {
-            quotations.Add(await CreateQuotationAsync(owner, tenantId, clientId));
+            quotations.Add(await CreateSendableQuotationAsync(owner, tenantId, clientId));
         }
 
         var a = RecordingWhatsAppChannelDirectory.Default;
@@ -308,8 +307,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task OneChannelNeverNeedsChoice()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -364,8 +362,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task ChannelsRequireManageOrSettingsUpdate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, QuotationsPermissions.QuotationRead);
         using var _ = client;
 
@@ -374,11 +371,42 @@ public sealed class WhatsAppChannelApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // Spec 2026-11-09 D8: ?document=order responde los canales disponibles para pedidos (D6), con la elección guardada sólo si está
+    // en esa lista y NeedsChoice calculado sobre ella; quien manda pedidos puede leerlos; otro valor es 422.
     [Fact]
-    public async Task ChannelsAreReadableWithOnlySettingsUpdate()
+    public async Task ChannelsForOrdersAreFilteredByDocumentAndReadableWithOrderManage()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, owner) = await RegisterTenantAsync(factory, OwnerPermissions);
+        using var _ = owner;
+        var zenviaWithoutOrderTemplate = (ZenviaWhatsAppChannel)RecordingWhatsAppChannelDirectory.Default with { OrderTemplateId = null };
+        factory.WhatsAppChannels.Channels.Clear();
+        factory.WhatsAppChannels.Channels.AddRange([zenviaWithoutOrderTemplate, RecordingWhatsAppChannelDirectory.Meta]);
+        using (var saved = await PutChannelAsync(owner, tenantId, zenviaWithoutOrderTemplate.ConnectionId))
+        {
+            Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        }
+
+        using var orderSender = CreateClient(factory, ownerUserId.ToString(), tenantId.ToString(), OrdersPermissions.OrderManage);
+        var forOrders = (await orderSender.GetFromJsonAsync<ChannelsPayload>($"{ChannelsUrl(tenantId)}?document=order", TestContext.Current.CancellationToken))!;
+        var forQuotations = await ReadChannelsAsync(owner, tenantId);
+
+        Assert.Equal([RecordingWhatsAppChannelDirectory.Meta.ConnectionId], forOrders.Channels.Select(channel => channel.ConnectionId));
+        Assert.Null(forOrders.SelectedConnectionId);
+        Assert.False(forOrders.NeedsChoice);
+        Assert.Equal(2, forQuotations.Channels.Count);
+        Assert.Equal(zenviaWithoutOrderTemplate.ConnectionId, forQuotations.SelectedConnectionId);
+
+        using var invalid = await owner.GetAsync($"{ChannelsUrl(tenantId)}?document=invoice", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+        Assert.Equal("quotation.whatsapp.document_invalid", await CodeAsync(invalid));
+    }
+
+    [Fact]
+    public async Task ChannelsAreReadableWithOnlySettingsUpdate()
+    {
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsUpdate);
         using var _ = client;
 
@@ -395,7 +423,7 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
 
         using var response = await PutChannelAsync(client, tenantId, RecordingWhatsAppChannelDirectory.Meta.ConnectionId);
@@ -413,8 +441,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task PutWithAnUnavailableConnectionIs422ChannelUnavailable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var _ = client;
 
@@ -427,8 +454,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task PutWithoutConnectionIdIs422WithTheFieldError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var owned = client;
 
@@ -445,8 +471,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task PutWithoutABodyIs422WithTheFieldError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var owned = client;
 
@@ -484,7 +509,7 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, _, advisor) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = advisor;
         var clientId = await CreateActiveCustomerAsync(advisor, tenantId);
-        var quotation = await CreateQuotationAsync(advisor, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(advisor, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
 
         using var put = await PutChannelAsync(advisor, tenantId, RecordingWhatsAppChannelDirectory.Meta.ConnectionId);
@@ -509,13 +534,13 @@ public sealed class WhatsAppChannelApiTests
     {
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        return (tenantId, await CreateQuotationAsync(client, tenantId, clientId), client);
+        return (tenantId, await CreateSendableQuotationAsync(client, tenantId, clientId), client);
     }
 
     // Otro miembro activo del mismo tenant: se invita con el set por defecto del stub (que trae los permisos de Tenancy)
     // y se activa por SQL, que se salta el login de Google que pide aceptar la invitación.
     private static async Task<HttpClient> AddMemberClientAsync(
-        QepApiFactory factory, PostgreSqlContainer database, Guid tenantId, Guid ownerUserId)
+        QepApiFactory factory, TestDatabase database, Guid tenantId, Guid ownerUserId)
     {
         using var admin = CreateClient(factory, ownerUserId.ToString(), tenantId.ToString());
         using var invited = await admin.PostAsJsonAsync(
@@ -569,4 +594,84 @@ public sealed class WhatsAppChannelApiTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         return json.RootElement.GetProperty("code").GetString();
     }
+
+    // Spec 2026-11-10 A12: la conexión del hilo no es la elección del tenant. Con A guardada, mandar por B (la del hilo) sale por B y
+    // la elección y la lista de canales siguen diciendo A.
+    [Fact]
+    public async Task SendingThroughTheThreadNumberKeepsTheTenantsChoice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
+        using var _ = client;
+        factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
+        var (companyId, contactId) = await CompanyWithContactAsync(client, tenantId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
+        using (var saved = await PutChannelAsync(client, tenantId, RecordingWhatsAppChannelDirectory.Default.ConnectionId))
+        {
+            Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        }
+
+        using var response = await SendToContactAsync(
+            client, tenantId, quotation.Id, contactId, RecordingWhatsAppChannelDirectory.Meta.ConnectionId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            RecordingWhatsAppChannelDirectory.Meta.ConnectionId, Assert.Single(factory.WhatsAppSender.Sent).Channel.ConnectionId);
+        var channels = await client.GetFromJsonAsync<JsonElement>(ChannelsUrl(tenantId), TestContext.Current.CancellationToken);
+        Assert.Equal(
+            RecordingWhatsAppChannelDirectory.Default.ConnectionId, channels.GetProperty("selectedConnectionId").GetGuid());
+    }
+
+    // El número del hilo que no puede mandar (no está entre los disponibles) no se obedece: rige la resolución de siempre.
+    [Fact]
+    public async Task AThreadNumberThatCannotSendFallsBackToChannelRequired()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
+        var (companyId, contactId) = await CompanyWithContactAsync(client, tenantId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
+
+        using var response = await SendToContactAsync(client, tenantId, quotation.Id, contactId, Guid.CreateVersion7());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("quotation.whatsapp.channel_required", await CodeAsync(response));
+        Assert.Empty(factory.WhatsAppSender.Sent);
+    }
+
+    [Fact]
+    public async Task AThreadNumberThatCannotSendFallsBackToNoChannel()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (companyId, contactId) = await CompanyWithContactAsync(client, tenantId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
+        factory.WhatsAppChannels.Channels.Clear();
+
+        using var response = await SendToContactAsync(
+            client, tenantId, quotation.Id, contactId, RecordingWhatsAppChannelDirectory.Meta.ConnectionId);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("quotation.whatsapp.no_channel", await CodeAsync(response));
+    }
+
+    private static async Task<(Guid CompanyId, Guid ContactId)> CompanyWithContactAsync(HttpClient client, Guid tenantId)
+    {
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        return (companyId, contactId);
+    }
+
+    private static Task<HttpResponseMessage> SendToContactAsync(
+        HttpClient client, Guid tenantId, Guid quotationId, Guid contactId, Guid threadConnectionId) =>
+        client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotationId}/send",
+            new SendQuotationRequest(Recipient: "Contact", ContactId: contactId, ThreadConnectionId: threadConnectionId),
+            TestContext.Current.CancellationToken);
 }

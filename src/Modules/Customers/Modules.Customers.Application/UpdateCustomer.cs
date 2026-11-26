@@ -10,8 +10,8 @@ public sealed record UpdateCustomerCommand(
     Guid CustomerId,
     string Name,
     string? BusinessName,
-    string IdentificationType,
-    string IdentificationNumber,
+    string? IdentificationType,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     string? Address,
@@ -19,9 +19,14 @@ public sealed record UpdateCustomerCommand(
     Guid? CityId,
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
-    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    string? PersonType = null,
+    // Spec impuestos por tipo §9.2: null no toca las tasas guardadas; una lista vacía las quita.
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    // Spec ReteICA por empresa §9.3: null no toca los municipios guardados; una lista vacía los quita.
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    // Spec 2026-11-23: el PUT reemplaza, así que null borra la región guardada (igual que CityName).
+    Guid? RegionId = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
 public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCommand>
@@ -33,7 +38,9 @@ public sealed class UpdateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     ICucGenerator cucGenerator,
@@ -52,8 +59,20 @@ public sealed class UpdateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        if (command.WithholdingTaxRateIds is { } taxRateIds)
+        {
+            await CustomerWithholdingRules.ValidateAsync(
+                taxRateLookup, command.TenantId, taxRateIds, cancellationToken);
+        }
+
+        var agentCities = command.WithholdingAgentCities is { } requested
+            ? await CustomerWithholdingAgentRules.ValidateAsync(geographyLookup, requested, cancellationToken)
+            : null;
+
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
+        _ = await CustomerRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country, command.RegionId, CustomerRegionRules.CustomerRegionInvalid, cancellationToken);
 
         var customer = await repository.FindAsync(
             command.TenantId,
@@ -64,6 +83,10 @@ public sealed class UpdateCustomerHandler(
         // Antes de pedir el CUC: Customer.Complete también rechaza, pero para entonces el consecutivo ya se quemó.
         customer.EnsureNotMerged();
 
+        // Despues de leer al cliente: la opcion B compara contra lo guardado (G14). Tambien antes del CUC.
+        await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command, customer, cancellationToken);
+
         // Se resuelven aca, no solo por la FK de base: la respuesta del PUT lleva la ciudad, el
         // departamento y la clasificacion resueltos, igual que el detalle. Ademas, si la
         // clasificacion cambia, su prefijo es lo que Customer.Update usa para reescribir el CUC —
@@ -71,7 +94,8 @@ public sealed class UpdateCustomerHandler(
         var classification = await classificationRepository.ResolveForCustomerAsync(
             command.TenantId, command.ClassificationId, cancellationToken);
         // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver; uno de afuera escribe la
-        // suya. El validador ya exigio la que corresponde al pais. Sobre una ficha completa es puro
+        // suya. Puede no venir: si hacia falta, ya lo rechazo la politica del tenant
+        // (CustomerFieldPolicyRequirement). Sobre una ficha completa es puro
         // chequeo de existencia: el CUC no se reconstruye en un Update (el departamento de su
         // codigo es el del alta, no el vigente). Sobre una incompleta, la ciudad da el departamento
         // del CUC que se emite al completarla, como en el alta.
@@ -80,8 +104,8 @@ public sealed class UpdateCustomerHandler(
             command.Country.Trim(),
             Customer.ColombiaCountryCode,
             StringComparison.OrdinalIgnoreCase);
-        var city = isColombian
-            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+        var city = isColombian && command.CityId is { } cityId
+            ? await geographyLookup.FindCityAsync(cityId, cancellationToken)
                 ?? throw new CustomersDomainException(
                     "customers.customer.city_not_found",
                     "The city was not found.")
@@ -115,12 +139,14 @@ public sealed class UpdateCustomerHandler(
                     Address = command.Address,
                     Country = command.Country,
                     CityId = command.CityId,
-                    CityName = command.CityName
+                    CityName = command.CityName,
+                    RegionId = command.RegionId
                 },
                 CustomerMapping.ToCommercialInfo(
-                    command.ClassificationId, command.WithRetention, command.VatSurplus),
+                    command.ClassificationId, command.VatSurplus),
                 now,
                 phoneNormalizer);
+            ApplyWithholdingTaxRates(customer, command, agentCities, now);
             // D-A9: completar se audita aparte de una edicion.
             auditPublisher.Publish(
                 command.TenantId,
@@ -132,7 +158,7 @@ public sealed class UpdateCustomerHandler(
             await SaveAsync(customer, command.TenantId, cancellationToken);
 
             return await customer.ToDtoAsync(
-                geographyLookup, classificationRepository, tagRepository, cancellationToken);
+                geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
         }
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -159,13 +185,15 @@ public sealed class UpdateCustomerHandler(
                 Address = command.Address,
                 Country = command.Country,
                 CityId = command.CityId,
-                CityName = command.CityName
+                CityName = command.CityName,
+                RegionId = command.RegionId
             },
             CustomerMapping.ToCommercialInfo(
-                command.ClassificationId, command.WithRetention, command.VatSurplus),
+                command.ClassificationId, command.VatSurplus),
             classification?.Prefix,
             now,
             phoneNormalizer);
+        ApplyWithholdingTaxRates(customer, command, agentCities, now);
 
         auditPublisher.Publish(
             command.TenantId,
@@ -177,7 +205,27 @@ public sealed class UpdateCustomerHandler(
         await SaveAsync(customer, command.TenantId, cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
+    }
+
+    // Sin el campo (frontend viejo) las tasas se quedan como están: el PUT reemplaza el recurso entero, pero este campo no
+    // existía y borrarlo en silencio le quitaría la retención a un cliente que el formulario viejo ni muestra.
+    // Los municipios de agente siguen la misma regla (spec ReteICA por empresa §9.3).
+    private static void ApplyWithholdingTaxRates(
+        Customer customer,
+        UpdateCustomerCommand command,
+        IReadOnlyList<WithholdingAgentCityEntry>? agentCities,
+        DateTimeOffset now)
+    {
+        if (command.WithholdingTaxRateIds is { } taxRateIds)
+        {
+            customer.SetWithholdingTaxRates(taxRateIds, now);
+        }
+
+        if (agentCities is not null)
+        {
+            customer.SetWithholdingAgentCities(agentCities, now);
+        }
     }
 
     // Completar y editar guardan por separado y los dos pueden chocar con el indice de la identificacion: en ambos el

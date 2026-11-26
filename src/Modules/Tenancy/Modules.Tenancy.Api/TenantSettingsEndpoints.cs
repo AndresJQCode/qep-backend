@@ -151,7 +151,9 @@ public static class TenantSettingsEndpoints
                 request.Country,
                 expectedVersion,
                 httpContext.TraceIdentifier,
-                request.PersonTypeRequirement),
+                request.PersonTypeRequirement,
+                request.CustomerFieldPolicy,
+                request.Language),
             cancellationToken);
         return SettingsResult(settings, httpContext);
     }
@@ -202,7 +204,9 @@ public static class TenantSettingsEndpoints
             settings.Country,
             settings.Version,
             settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null,
-            settings.PersonTypeRequirement));
+            settings.PersonTypeRequirement,
+            CustomerFieldPolicyResponse.From(settings.CustomerFieldPolicy),
+            settings.Language));
     }
 }
 
@@ -214,7 +218,10 @@ public sealed record UpdateTenantSettingsRequest(
     string? DefaultCurrency,
     string? NumberFormat,
     string? Country,
-    string? PersonTypeRequirement = null);
+    string? PersonTypeRequirement = null,
+    CustomerFieldPolicyInput? CustomerFieldPolicy = null,
+    // Null keeps the stored language: a frontend older than the field does not send it (spec 2026-11-22).
+    string? Language = null);
 
 public sealed record SetTenantLogoRequest(Guid FileId);
 
@@ -257,5 +264,24 @@ public sealed record TenantSettingsResponse(
     long Version,
     TenantLogoResponse? Logo,
     /// <summary>`Never` | `OnCustomerSave` | `OnOrderApproval`: lo guardado, no lo efectivo
-    /// (`/auth/me` publica el efectivo). Spec 2026-10-26.</summary>
-    string PersonTypeRequirement);
+    /// (`/auth/me` publica el efectivo). Spec 2026-10-26. `OnOrderApproval` significa, desde spec
+    /// 2026-11-10, «al marcar pagado y al facturar»; el nombre no cambia.</summary>
+    string PersonTypeRequirement,
+    CustomerFieldPolicyResponse CustomerFieldPolicy,
+    /// <summary>`es-419` | `es-ES` (spec 2026-11-22, i18n): el idioma de quien no eligió uno propio.
+    /// El diccionario de cada uno es del frontend; el backend sólo guarda el código. No es el formato
+    /// regional: los separadores y la fecha siguen en `NumberFormat` y `DateFormat`.</summary>
+    string Language);
+
+/// <summary>Qué datos del cliente exige el tenant y cuándo (spec 2026-11-09).</summary>
+public sealed record CustomerFieldPolicyResponse(FieldRequirementResponse Document, FieldRequirementResponse City)
+{
+    public static CustomerFieldPolicyResponse From(CustomerFieldPolicy policy) =>
+        new(FieldRequirementResponse.From(policy.Document), FieldRequirementResponse.From(policy.City));
+}
+
+public sealed record FieldRequirementResponse(bool OnCustomerSave, bool OnBilling)
+{
+    public static FieldRequirementResponse From(FieldRequirement requirement) =>
+        new(requirement.OnCustomerSave, requirement.OnBilling);
+}

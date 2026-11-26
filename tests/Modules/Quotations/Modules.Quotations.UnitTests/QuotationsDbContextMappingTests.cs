@@ -151,6 +151,25 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal(
             ["TenantId", "ConvertedAt", "OrderNumber"],
             orders.Properties.Select(property => property.Name));
+
+        // Spec 2026-11-16 §5 y §6: la lista y el cursor de la exportación pasan a ordenar por la fecha del pedido; el índice
+        // de arriba se queda para la ventana de sincronización.
+        var byOrderDate = model.FindEntityType(typeof(Order))!.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_orders_tenant_order_date_converted_at_number");
+        Assert.Equal(
+            ["TenantId", "OrderDate", "ConvertedAt", "OrderNumber"],
+            byOrderDate.Properties.Select(property => property.Name));
+    }
+
+    // Spec 2026-11-16 §6: «Fecha del pedido» es un día sin hora y obligatorio.
+    [Fact]
+    public void TheOrderDateIsARequiredDateColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var column = model.FindEntityType(typeof(Order))!.FindProperty(nameof(Order.OrderDate))!;
+        Assert.Equal(("order_date", "date", false), (column.GetColumnName(), column.GetColumnType(), column.IsNullable));
     }
 
     /// <summary>
@@ -171,9 +190,10 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("order_number", order.FindProperty(nameof(Order.OrderNumber))!.GetColumnName());
         Assert.Equal("PK_orders", order.FindPrimaryKey()!.GetName());
         Assert.Equal(
-            ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_client",
+            ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_buyer_created",
+             "IX_orders_tenant_client",
              "IX_orders_tenant_converted_at_number", "IX_orders_tenant_external_key", "IX_orders_tenant_number",
-             "IX_orders_tenant_source"],
+             "IX_orders_tenant_order_date_converted_at_number", "IX_orders_tenant_paid_at", "IX_orders_tenant_source"],
             order.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
         Assert.Equal(
             "FK_orders_quotations_quotation_id",
@@ -222,6 +242,29 @@ public sealed class QuotationsDbContextMappingTests
         var billing = order.FindNavigation(nameof(Order.BillingAccount))!;
         Assert.True(billing.ForeignKey.IsOwnership);
         Assert.True(billing.ForeignKey.IsRequiredDependent);
+    }
+
+    /// <summary>Spec costo de producto §4.2 y §4.4: el costo congelado de la línea y el instante en que el pedido quedó
+    /// pagado, todos nulos para lo anterior. (18,2) como el costo del catálogo, no (14,2) como el precio.</summary>
+    [Fact]
+    public void OrderLineCostAndPaidAtMapToNullableColumns()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var order = model.FindEntityType(typeof(Order))!;
+        var item = model.FindEntityType(typeof(OrderItem))!;
+
+        var paidAt = order.FindProperty(nameof(Order.PaidAt))!;
+        Assert.Equal(("paid_at", true), (paidAt.GetColumnName(), paidAt.IsNullable));
+        var unitCost = item.FindProperty(nameof(OrderItem.UnitCost))!;
+        Assert.Equal(("unit_cost", true, 18, 2), (unitCost.GetColumnName(), unitCost.IsNullable, unitCost.GetPrecision(), unitCost.GetScale()));
+        var source = item.FindProperty(nameof(OrderItem.CostSource))!;
+        Assert.Equal(("cost_source", true, 20), (source.GetColumnName(), source.IsNullable, source.GetMaxLength()));
+        Assert.Equal(typeof(string), source.GetProviderClrType());
+        var capturedAt = item.FindProperty(nameof(OrderItem.CostCapturedAt))!;
+        Assert.Equal(("cost_captured_at", true), (capturedAt.GetColumnName(), capturedAt.IsNullable));
+        var index = order.GetIndexes().Single(index => index.GetDatabaseName() == "IX_orders_tenant_paid_at");
+        Assert.Equal(["TenantId", "PaidAt"], index.Properties.Select(property => property.Name));
     }
 
     /// <summary>
@@ -386,7 +429,7 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("PK_orders_export_layouts", layout.FindPrimaryKey()!.GetName());
         Assert.Equal(["TenantId"], layout.FindPrimaryKey()!.Properties.Select(property => property.Name));
         Assert.Equal(
-            ["sheet_name", "tenant_id", "updated_at", "version"],
+            ["include_phone_dial_code", "sheet_name", "tenant_id", "updated_at", "version"],
             layout.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
         Assert.True(layout.FindProperty(nameof(OrdersExportLayout.Version))!.IsConcurrencyToken);
 
@@ -396,6 +439,14 @@ public sealed class QuotationsDbContextMappingTests
         Assert.False(sheetName.IsNullable);
         Assert.Equal(OrdersExportLayout.SheetNameMaxLength, sheetName.GetMaxLength());
         Assert.Equal(OrdersExportLayout.DefaultSheetName, sheetName.GetDefaultValue());
+
+        // Spec 2026-11-25 indicativo: toda fila que ya existía sigue exportando el indicativo. EF tiene que
+        // escribir siempre el valor: con un default `true` en la base, omitir un `false` al insertar lo
+        // convertiría en `true`.
+        var includeDialCode = layout.FindProperty(nameof(OrdersExportLayout.IncludePhoneDialCode))!;
+        Assert.False(includeDialCode.IsNullable);
+        Assert.Equal(true, includeDialCode.GetDefaultValue());
+        Assert.Equal(ValueGenerated.Never, includeDialCode.ValueGenerated);
 
         var setting = model.FindEntityType(typeof(OrdersExportColumnSetting));
         Assert.NotNull(setting);
@@ -595,6 +646,27 @@ public sealed class QuotationsDbContextMappingTests
                 && check.Sql.Contains("'Charged'") && check.Sql.Contains("disabled_freight_charge_modes"));
     }
 
+    [Fact]
+    public void TheOrderBuyerNotesMapsToANullableTextColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var property = context.Model.FindEntityType(typeof(Order))!.FindProperty(nameof(Order.BuyerNotes))!;
+        Assert.Equal("buyer_notes", property.GetColumnName());
+        Assert.Equal("text", property.GetColumnType());
+        Assert.True(property.IsNullable);
+    }
+
+    [Fact]
+    public void TheOrderBuyerAccountMapsToItsColumnAndFilteredIndex()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var entity = context.Model.FindEntityType(typeof(Order))!;
+        Assert.Equal("buyer_account_id", entity.FindProperty(nameof(Order.BuyerAccountId))!.GetColumnName());
+        var index = Assert.Single(entity.GetIndexes(), i => i.GetDatabaseName() == "IX_orders_tenant_buyer_created");
+        Assert.Equal(["TenantId", "BuyerAccountId", "CreatedAt"], index.Properties.Select(p => p.Name).ToArray());
+        Assert.Equal("buyer_account_id IS NOT NULL", index.GetFilter());
+    }
+
     /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
@@ -607,5 +679,34 @@ public sealed class QuotationsDbContextMappingTests
         using var context = new QuotationsDbContextFactory().CreateDbContext([]);
 
         Assert.False(context.Database.HasPendingModelChanges());
+    }
+
+    /// <summary>
+    /// Revisión del spec 2026-11-17: <c>quotations.billing_company_charges_vat</c> es nullable y un pod sin la columna la deja en
+    /// <c>NULL</c> en una cotización con empresa. La propiedad mapeada es <c>bool?</c> y su setter —el que usa EF al
+    /// materializar— lee el <c>NULL</c> como «cobra IVA»; un <c>bool</c> mapeado directo lanzaba.
+    /// </summary>
+    [Fact]
+    public void TheQuotationChargesVatColumnReadsNullAsTrue()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var billing = context.Model.FindEntityType(typeof(Quotation))!
+            .FindNavigation(nameof(Quotation.BillingAccount))!.TargetEntityType;
+        var property = billing.GetProperties().Single(p => p.GetColumnName() == "billing_company_charges_vat");
+        var account = new QuotationBillingAccount
+        {
+            CompanyId = Guid.NewGuid(),
+            BankName = null,
+            AccountNumber = null,
+            Currency = "COP",
+            ChargesVat = false,
+        };
+
+        Assert.Equal(typeof(bool?), property.ClrType);
+        Assert.True(property.IsNullable);
+        Assert.Equal(false, property.GetGetter().GetClrValue(account));
+        property.PropertyInfo!.SetValue(account, null);
+
+        Assert.True(account.ChargesVat);
     }
 }

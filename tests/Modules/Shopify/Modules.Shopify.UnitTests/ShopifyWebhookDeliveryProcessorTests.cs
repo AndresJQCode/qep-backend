@@ -91,6 +91,22 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal("#1001", payload.RootElement.GetProperty("name").GetString());
     }
 
+    // Spec 2026-11-12 §6.4 (D7): un token vencido mientras el worker de Integrations va tarde no detiene la ingesta. El directorio
+    // entrega la conexión operativa y sin token, y el webhook importa igual: importar no llama a la Admin API.
+    [Fact]
+    public async Task OrdersTopicWithAnExpiredTokenStillImports()
+    {
+        var world = new World().WithExpiredTokenConnection();
+
+        var result = await world.Processor.ProcessAsync(Delivery("orders/paid", RestFixture("taxes-included")), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        var row = Assert.Single(world.Database.Orders.Values);
+        var call = Assert.Single(world.Importer.Calls);
+        Assert.Same(row, call.Row);
+        Assert.Null(Assert.Single(world.Importer.Connections).AccessToken);
+    }
+
     [Fact]
     public async Task OrdersTopicImportedRowIsNotImportedAgain()
     {
@@ -170,6 +186,24 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal([(Shop, DeliveryId)], world.Database.DeletedDeliveriesOf);
         // §5.5: la tienda y la conexión quedan como estén.
         Assert.True(world.Database.Stores.ContainsKey(ConnectionId));
+        Assert.Empty(world.Health.Uninstalled);
+    }
+
+    // Spec 2026-11-12 §6.4 (D7): con el token vencido la tienda sigue instalada. El redact no la da por desinstalada: no borra el
+    // espejo de la conexión vigente ni las entregas, que podrían ser suyas.
+    [Fact]
+    public async Task ShopRedactWithAnExpiredTokenDeletesNothingOfTheCurrentConnection()
+    {
+        var world = new World().WithExpiredTokenConnection();
+        await world.Processor.ProcessAsync(Delivery("orders/create", RestFixture("taxes-included")), Ct);
+        Assert.Single(world.Database.Orders);
+
+        var result = await world.Processor.ProcessAsync(Delivery("shop/redact", """{"shop_id":954889,"shop_domain":"mi-tienda.myshopify.com"}"""), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Empty(world.Database.DeletedOrdersOf);
+        Assert.Single(world.Database.Orders);
+        Assert.Empty(world.Database.DeletedDeliveriesOf);
         Assert.Empty(world.Health.Uninstalled);
     }
 
@@ -368,7 +402,8 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
     {
         var world = new World().WithConnection(operational: true);
 
-        var result = await world.Processor.ProcessAsync(Delivery("products/update", "{}"), Ct);
+        // products/update dejó de servir de ejemplo: desde el spec 2026-11-17 el worker sí lo atiende.
+        var result = await world.Processor.ProcessAsync(Delivery("inventory_levels/update", "{}"), Ct);
 
         Assert.Equal(ShopifyIgnoredReasons.UnsupportedTopic, result.IgnoredReason);
     }
@@ -393,6 +428,26 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal((null, null, 1), queue.Processed[2L]);
         Assert.Empty(queue.Pending);
         Assert.Single(world.Database.Orders);
+    }
+
+    // Review de bloque B (spec 2026-11-13, D-7): la pasada que se cortó en el tope de lotes llenos avisa que quedan más, y el bucle repite
+    // sin esperar la red de seguridad; la que vació la cola, no.
+    [Fact]
+    public async Task ADrainStoppedAtTheCapReportsMoreAndOneThatEmptiedTheQueueDoesNot()
+    {
+        var world = new World();
+        var queue = new FakeDeliveryQueue();
+        var total = (ShopifyWebhookDeliveryWorker.MaxFullBatchesPerTick * ShopifyWebhookDeliveryWorker.BatchSize) + 1;
+        for (var id = 1L; id <= total; id++)
+        {
+            queue.Enqueue(new ShopifyWebhookDelivery(id, "orders/create", Shop, RestFixture("taxes-included")));
+        }
+
+        var worker = world.Worker(queue);
+
+        Assert.True(await worker.DrainAsync(Ct));
+        Assert.False(await worker.DrainAsync(Ct));
+        Assert.Empty(queue.Pending);
     }
 
     [Fact]
@@ -431,6 +486,147 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Contains("database is down", closed.LastError, StringComparison.Ordinal);
     }
 
+    // Spec 2026-11-17 §6: hasta que el comercio importa por primera vez, los products/* no hacen nada.
+    [Fact]
+    public async Task ProductWebhooksAreIgnoredBeforeTheFirstImport()
+    {
+        var world = new World().WithConnection(operational: true).WithStore(productsSynced: false);
+
+        var result = await world.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct);
+
+        Assert.Equal(ShopifyIgnoredReasons.ProductsNotSynced, result.IgnoredReason);
+        Assert.Equal(0, world.Source.ShopRequests + world.Source.ProductRequests);
+        Assert.Empty(world.Sync.Applied);
+    }
+
+    [Fact]
+    public async Task ProductWebhooksOfANonOperationalConnectionAreIgnored()
+    {
+        var world = new World().WithConnection(operational: false).WithStore(productsSynced: true);
+
+        var result = await world.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct);
+
+        Assert.Equal(ShopifyIgnoredReasons.ConnectionNotOperational, result.IgnoredReason);
+        Assert.Empty(world.Sync.Applied);
+    }
+
+    // §6, orden: un update que no es más nuevo que lo aplicado no vuelve a leer Shopify.
+    [Fact]
+    public async Task AnOlderUpdateDoesNotReadShopify()
+    {
+        var world = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+        world.Links.Link(TenantId, ConnectionId, 7001L, 70011L, Guid.CreateVersion7(), Guid.CreateVersion7(), shopifyUpdatedAt: Now);
+
+        var result = await world.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now.AddMinutes(-1))), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Equal(0, world.Source.ShopRequests + world.Source.ProductRequests);
+        Assert.Empty(world.Sync.Applied);
+    }
+
+    [Fact]
+    public async Task ANewerUpdateRereadsTheProductAndAppliesItAsTheSystem()
+    {
+        var world = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+        world.Source.Products[7001L] = ProductSnapshot();
+
+        var result = await world.Processor.ProcessAsync(Delivery("products/create", ProductPayload(Now)), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Equal(7001L, Assert.Single(world.Sync.Applied).Id);
+        var context = Assert.Single(world.Sync.Contexts);
+        Assert.Equal((Guid.Empty, ShopifySyncTrigger.Webhook), (context.ActorId, context.Trigger));
+        Assert.Empty(world.Metrics.Reasons);
+    }
+
+    // P8: un producto que Catalog rechaza no tiene importación a la que anotarse: se loguea con su id y su código (nunca el cuerpo)
+    // y suma en el contador.
+    [Fact]
+    public async Task ARejectedProductIsLoggedAndCountedWithoutPayload()
+    {
+        var world = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+        world.Source.Products[7001L] = ProductSnapshot();
+        world.Sync.Outcomes[7001L] = new ShopifyProductOutcome(
+            ShopifyProductOutcomeKind.Skipped, new ShopifyProductTally(1, 0, 0, 0, 1), ["catalog.product.name_too_long"]);
+
+        var result = await world.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Equal(["catalog.product.name_too_long"], world.Metrics.Reasons);
+        var entry = Assert.Single(world.ProductLog.Entries).Message;
+        Assert.Contains("7001", entry, StringComparison.Ordinal);
+        Assert.Contains("catalog.product.name_too_long", entry, StringComparison.Ordinal);
+        Assert.DoesNotContain("SECRETO", entry, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUnsupportedCurrencyIsProcessedAndCounted()
+    {
+        var world = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+        world.Source.Shop = new ShopifyShopInfo("ARS", true, 1);
+
+        var result = await world.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Equal([ShopifyProductCodes.CurrencyUnsupported], world.Metrics.Reasons);
+        Assert.Empty(world.Sync.Applied);
+    }
+
+    // D9: un THROTTLED o una caída de Shopify no cierra la entrega: lanza y vuelve con el lease.
+    [Fact]
+    public async Task AThrottledReadIsRetried()
+    {
+        var world = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+        world.Source.Failure = new ShopifyProductsSourceException(ShopifyProductsSourceFailure.Throttled, TimeSpan.FromSeconds(2));
+
+        await Assert.ThrowsAsync<ShopifyProductsSourceException>(
+            () => world.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct));
+    }
+
+    [Fact]
+    public async Task AnOperationalConnectionWithoutTokenIsRetried()
+    {
+        var world = new World().WithExpiredTokenConnection().WithStore(productsSynced: true);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => world.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct));
+    }
+
+    [Fact]
+    public async Task RejectedAndAccessDeniedAreIgnoredWithTheirCodes()
+    {
+        var rejected = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+        rejected.Source.Failure = new ShopifyProductsSourceException(ShopifyProductsSourceFailure.Rejected, null);
+        var denied = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+        denied.Source.Failure = new ShopifyProductsSourceException(ShopifyProductsSourceFailure.AccessDenied, null);
+        denied.Source.ShopFailure = denied.Source.Failure;
+        rejected.Source.ShopFailure = rejected.Source.Failure;
+
+        var first = await rejected.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct);
+        var second = await denied.Processor.ProcessAsync(Delivery("products/update", ProductPayload(Now)), Ct);
+
+        Assert.Equal(ShopifyIgnoredReasons.TokenExpired, first.IgnoredReason);
+        Assert.Equal(ShopifyIgnoredReasons.ScopeMissing, second.IgnoredReason);
+    }
+
+    [Fact]
+    public async Task DeleteGoesToTheSyncWithoutReadingShopify()
+    {
+        var world = new World().WithConnection(operational: true).WithStore(productsSynced: true);
+
+        var result = await world.Processor.ProcessAsync(Delivery("products/delete", """{"id":7001}"""), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Equal([7001L], world.Sync.Deleted);
+        Assert.Equal(0, world.Source.ShopRequests + world.Source.ProductRequests);
+    }
+
+    private static string ProductPayload(DateTimeOffset updatedAt) =>
+        new JsonObject { ["id"] = 7001L, ["title"] = "SECRETO del comercio", ["updated_at"] = updatedAt.ToString("O") }.ToJsonString();
+
+    private static ShopifyProductSnapshot ProductSnapshot() =>
+        new(7001L, "Termo", ShopifyProductStatus.Active, Now, [], [new ShopifyVariantSnapshot(70011L, "TERMO-1", null, 40_000m, true, [])], null);
+
     private static ShopifyWebhookDelivery Delivery(string topic, string payload) => new(DeliveryId, topic, Shop, payload);
 
     private static string RestFixture(string name, string? updatedAt = null, string? financialStatus = null, string? cancelledAt = null)
@@ -468,7 +664,7 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
             UnitOfWork = new FakeUnitOfWork(Database);
             Reaction = new FakeOrderChangeReaction(UnitOfWork);
             Ingestion = new ShopifyOrderIngestion(
-                new FakeStoreRepository(Database), new FakeOrderMirrorRepository(Database), Importer, Reaction, UnitOfWork, Clock);
+                new FakeStoreRepository(Database), new FakeOrderMirrorRepository(Database), Importer, Reaction, new NoShopifyOrderEditDetector(), UnitOfWork, Clock);
         }
 
         public FakeShopifyDatabase Database { get; } = new();
@@ -487,6 +683,16 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
 
         public FakeOrderChangeReaction Reaction { get; }
 
+        public FakeProductLinks Links { get; } = new();
+
+        public FakeProductsSource Source { get; } = new();
+
+        public FakeProductSyncScope Sync { get; } = new();
+
+        public FakeProductSyncMetrics Metrics { get; } = new();
+
+        public RecordingLogger<ShopifyProductWebhooks> ProductLog { get; } = new();
+
         public ShopifyWebhookDeliveryProcessor Processor => new(
             Directory,
             Health,
@@ -497,12 +703,55 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
             new FakeWebhookDeliveries(Database),
             new FakeAuditRecorder(Database),
             UnitOfWork,
-            Clock);
+            Clock,
+            new ShopifyProductWebhooks(
+                new FakeStoreRepository(Database),
+                new ShopifyProductPayloadParser(),
+                Links,
+                new ShopifyProductPricingResolver(
+                    new FakeStoreRepository(Database), new FakeBillingAccounts(), Source, new FakeCatalogWriter(new FakeProductLookup()), new FakePriceRounding()),
+                Source,
+                Sync,
+                Metrics,
+                ProductLog));
+
+        /// <summary>La tienda configurada con la empresa de <see cref="ImporterWorld.CompanyId"/>; <paramref name="productsSynced"/>
+        /// es si ya terminó una importación de productos.</summary>
+        public World WithStore(bool productsSynced)
+        {
+            var store = ShopifyStore.Create(ConnectionId, TenantId, Now.AddDays(-1));
+            store.Configure(
+                ImporterWorld.AdvisorId,
+                new ShopifyBillingAccount(ImporterWorld.CompanyId, "Bancolombia", "123-456", "COP"),
+                null,
+                ShopifyStore.DefaultDocumentAttributeKey,
+                ShopifyStore.DefaultDocumentTypeAttributeKey,
+                ShopifyStore.DefaultIdentificationTypeCode,
+                null,
+                ShopifyEditSync.Manual,
+                ShopifyPaymentStatuses.All,
+                ImporterWorld.AdvisorId,
+                Now.AddDays(-1));
+            if (productsSynced)
+            {
+                store.MarkProductsSynced(Now.AddHours(-1));
+            }
+
+            Database.Stores[ConnectionId] = store;
+            return this;
+        }
 
         public World WithConnection(bool operational)
         {
             Directory.Connections[Shop] = new ShopifyConnectionRef(
                 TenantId, ConnectionId, "954889", Shop, operational, operational ? "shpat_sentinel" : null);
+            return this;
+        }
+
+        /// <summary>Lo que entrega el directorio con el token vencido (spec 2026-11-12, D7): operativa y sin token.</summary>
+        public World WithExpiredTokenConnection()
+        {
+            Directory.Connections[Shop] = new ShopifyConnectionRef(TenantId, ConnectionId, "954889", Shop, IsOperational: true, AccessToken: null);
             return this;
         }
 
@@ -515,9 +764,27 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
             services.AddScoped(_ => Processor);
             var provider = services.BuildServiceProvider();
             return new ShopifyWebhookDeliveryWorker(
+                new SilentDoorbell(),
                 provider.GetRequiredService<IServiceScopeFactory>(),
                 Options.Create(new ShopifyWebhookOptions()),
                 NullLogger<ShopifyWebhookDeliveryWorker>.Instance);
         }
     }
+}
+
+internal sealed class FakeProductSyncMetrics : IShopifyProductSyncMetrics
+{
+    public List<string> Reasons { get; } = [];
+
+    public void RecordFailure(string reason) => Reasons.Add(reason);
+}
+
+/// <summary>Sólo DrainAsync corre en estas pruebas: el timbre no se usa.</summary>
+internal sealed class SilentDoorbell : IQueueDoorbell
+{
+    public void Ring(string queue)
+    {
+    }
+
+    public IDoorbellListener Listen(string queue) => throw new NotSupportedException();
 }

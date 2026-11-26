@@ -84,7 +84,7 @@ public sealed class SendAudioMessageHandler(
         var mimeType = OggOpusSniffer.MimeType;
         if (isInstagram)
         {
-            audio = Transcode(audio);
+            audio = InstagramVoiceNote.Transcode(transcoder, audio);
             mimeType = InstagramAudio.WavMimeType;
         }
 
@@ -174,28 +174,6 @@ public sealed class SendAudioMessageHandler(
             CancellationToken.None);
     }
 
-    /// <summary>Decisión 16: OGG/Opus → WAV. Un OGG que no decodifica es un 422 de <c>file</c>, como el que no es Opus; un WAV más
-    /// grande que el tope de Instagram es <c>media_too_large</c> (una nota de 16 MB de Opus serían horas de audio).</summary>
-    private byte[] Transcode(byte[] oggOpus)
-    {
-        byte[] wav;
-        try
-        {
-            wav = transcoder.ToWav(oggOpus);
-        }
-        catch (InvalidDataException)
-        {
-            throw new ValidationException([new ValidationFailure("file", "La nota de voz no se pudo leer. Graba de nuevo.")]);
-        }
-
-        if (wav.Length is 0 or > (int)InstagramAudio.MaxBytes)
-        {
-            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The voice note is bigger than Instagram allows.");
-        }
-
-        return wav;
-    }
-
     private async Task<SendResult> SendInstagramAudioAsync(InstagramSender sender, string recipientId, string key)
     {
         Uri url;
@@ -231,5 +209,32 @@ public sealed class SendAudioMessageHandler(
         {
             // Ver comentario.
         }
+    }
+}
+
+/// <summary>Decisión 16 (spec 2026-10-14): OGG/Opus → WAV para Instagram. Lo comparten el envío de una nota de voz y su programación,
+/// para que las dos validen y topen igual antes de guardar.</summary>
+internal static class InstagramVoiceNote
+{
+    /// <summary>Un OGG que no decodifica es un 422 de <c>file</c>, como el que no es Opus; un WAV más grande que el tope de Instagram es
+    /// <c>media_too_large</c> (una nota de 16 MB de Opus serían horas de audio).</summary>
+    public static byte[] Transcode(IOpusTranscoder transcoder, byte[] oggOpus)
+    {
+        byte[] wav;
+        try
+        {
+            wav = transcoder.ToWav(oggOpus);
+        }
+        catch (InvalidDataException)
+        {
+            throw new ValidationException([new ValidationFailure("file", "La nota de voz no se pudo leer. Graba de nuevo.")]);
+        }
+
+        if (wav.Length is 0 or > (int)InstagramAudio.MaxBytes)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The voice note is bigger than Instagram allows.");
+        }
+
+        return wav;
     }
 }

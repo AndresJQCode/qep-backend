@@ -25,6 +25,19 @@ public interface IApiKeyRepository
 }
 
 /// <summary>
+/// La compuerta del toque de <c>last_used_at</c> (spec 2026-11-13, D-8): con muchas peticiones por minuto, sólo la primera va a
+/// Postgres. El adaptador vive en Bootstrapper (Valkey), con un nulo para el área apagada.
+/// </summary>
+public interface IApiKeyTouchGate
+{
+    /// <summary>
+    /// <c>SET "qep:touch:apikey:{keyId}" 1 NX EX 60</c>: <c>true</c> si la puso (toca ir a Postgres), <c>false</c> si ya existía.
+    /// El nulo y un error de Valkey: <c>true</c>, y el filtro de un minuto del repositorio sigue valiendo.
+    /// </summary>
+    Task<bool> ShouldTouchAsync(Guid keyId, CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Registro de las llamadas a la API externa. Escribe con contexto propio y <b>nunca propaga sus
 /// errores</b>: se invoca después de responder, y perder una fila no puede romper una llamada.
 /// </summary>

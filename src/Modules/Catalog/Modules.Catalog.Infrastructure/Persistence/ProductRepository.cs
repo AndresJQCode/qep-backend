@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
@@ -39,6 +40,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        ProductKind? kind,
         int skip,
         int take,
         CancellationToken cancellationToken)
@@ -59,6 +61,12 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         if (isActive is not null)
         {
             query = query.Where(product => product.IsActive == isActive);
+        }
+
+        // El mismo filtro de tipo que SearchSummariesAsync: se exporta lo que la grilla muestra.
+        if (kind is { } wanted)
+        {
+            query = query.Where(product => product.Kind == wanted);
         }
 
         // Los mismos filtros de texto que el listado: se exporta lo que la grilla está mostrando.
@@ -104,6 +112,74 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         return (items, total);
     }
 
+    public async Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId,
+        string? search,
+        string? pricedInCurrency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
+        bool orderByName,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var source = Aggregates().AsNoTracking();
+        if (pricedInCurrency is not null)
+        {
+            source = source.Where(product => product.Variants.Any(variant =>
+                variant.IsActive && variant.Prices.Any(price => price.Currency == pricedInCurrency)));
+        }
+
+        if (excludedProductIds is { Count: > 0 })
+        {
+            var hiddenProducts = excludedProductIds.Select(id => new ProductId(id)).ToArray();
+            source = source.Where(product => !hiddenProducts.Contains(product.Id));
+        }
+
+        if (excludedCategoryIds is { Count: > 0 })
+        {
+            // Mismo tipo exacto que en SearchQueryAsync (ProductCategoryId?). Un producto sin categoría nunca cae por acá
+            // (regla 4 del spec); el null se pregunta aparte para que no dependa de cómo traduce EF el NOT IN. Lo prueba
+            // PriceListExclusionsApiTests contra Postgres.
+            var hiddenCategories = excludedCategoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            source = source.Where(product => product.CategoryId == null || !hiddenCategories.Contains(product.CategoryId));
+        }
+
+        var (ordered, total) = await SearchQueryAsync(
+            source, tenantId, search, null, null, isActive: true, categoryIds, cancellationToken, byNameOnly: orderByName);
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    public async Task<IReadOnlyList<ProductBasics>> FindBasicsByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        // Proyectado en la base: sin agregado, sin precios ni costos. El código sólo con una variante.
+        var rows = await dbContext.Products
+            .AsNoTracking()
+            .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id))
+            .Select(product => new
+            {
+                product.Id,
+                product.Name,
+                product.CategoryId,
+                VariantCount = product.Variants.Count,
+                Code = product.Variants.Count == 1 ? product.Variants.Min(variant => variant.Code) : null,
+            })
+            .ToListAsync(cancellationToken);
+        return rows.Select(row => new ProductBasics(row.Id, row.Name, row.CategoryId, row.VariantCount, row.Code)).ToList();
+    }
+
     // Con variantes, el listado de productos no trae el agregado (con 2.048 variantes por
     // producto y sus escalas, una página de 200 serían cientos de miles de filas para pintar una
     // grilla). Proyecta lo que la fila muestra y, en una segunda consulta agrupada en la base, el
@@ -114,13 +190,26 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        bool? visibleInStore,
+        ProductKind? kind,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
+        var source = dbContext.Products.AsNoTracking();
+        if (visibleInStore is not null)
+        {
+            source = source.Where(product => product.VisibleInStore == visibleInStore);
+        }
+
+        if (kind is { } wanted)
+        {
+            source = source.Where(product => product.Kind == wanted);
+        }
+
         var (ordered, total) = await SearchQueryAsync(
-            dbContext.Products.AsNoTracking(), tenantId, search, name, code, isActive, categoryIds, cancellationToken);
+            source, tenantId, search, name, code, isActive, categoryIds, cancellationToken);
 
         var rows = await ordered
             .Skip((page - 1) * pageSize)
@@ -130,9 +219,12 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 product.Id,
                 product.Name,
                 product.IsActive,
+                product.VisibleInStore,
                 product.Description,
                 product.TaxRateId,
                 product.CategoryId,
+                product.Kind,
+                product.SalesUnit,
                 ImageFileId = product.Gallery
                     .OrderBy(image => image.Position)
                     .Select(image => (Guid?)image.FileId)
@@ -200,9 +292,12 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.Id,
                 row.Name,
                 row.IsActive,
+                row.VisibleInStore,
                 row.Description,
                 row.TaxRateId,
                 row.CategoryId,
+                row.Kind,
+                row.SalesUnit,
                 row.ImageFileId,
                 variantStats.GetValueOrDefault(row.Id)?.Count ?? 0,
                 variantStats.GetValueOrDefault(row.Id) is { } stats
@@ -229,6 +324,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
     public async Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
         Guid tenantId,
         IReadOnlyCollection<ProductId> productIds,
+        bool includeCosts,
         CancellationToken cancellationToken)
     {
         if (productIds.Count == 0)
@@ -293,6 +389,20 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .ToListAsync(cancellationToken))
             .ToLookup(scale => scale.VariantId);
 
+        // Los costos, igual que los precios: una consulta plana para toda la página, y ninguna si quien llama no puede
+        // verlos (el dato es sensible y la tabla ni se toca).
+        var costs = includeCosts
+            ? (await variants
+                .SelectMany(variant => variant.Costs, (variant, cost) => new
+                {
+                    VariantId = variant.Id,
+                    cost.Currency,
+                    cost.Amount
+                })
+                .ToListAsync(cancellationToken))
+                .ToLookup(cost => cost.VariantId)
+            : null;
+
         // La foto propia: sólo se consulta la galería si alguna variante eligió una.
         var galleryImageIds = rows
             .Where(row => row.GalleryImageId.HasValue)
@@ -332,7 +442,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.PackagingUnits,
                 row.GalleryImageId is { } imageId && galleryFiles.TryGetValue(imageId, out var fileId)
                     ? fileId
-                    : null))
+                    : null,
+                costs?[row.Id].ToDictionary(cost => cost.Currency, cost => cost.Amount)))
             .ToArray();
     }
 
@@ -398,7 +509,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? code,
         bool? isActive,
         IReadOnlyCollection<Guid>? categoryIds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool byNameOnly = false)
     {
         var query = source.Where(product => product.TenantId == tenantId);
         if (isActive is not null)
@@ -406,8 +518,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             query = query.Where(product => product.IsActive == isActive);
         }
 
-        // null = sin filtro; una colección vacía no devuelve filas. Lo usa el POS; el listado de
-        // productos no lo expone todavía (spec 2026-10-26 §3.3).
+        // null = sin filtro; una colección vacía no devuelve filas. Lo usan el POS y el listado de
+        // productos (`categoryId`, spec 2026-11-19 catalogo-productos-filtro-categoria), los dos con la
+        // categoría ya expandida a sus descendientes.
         if (categoryIds is not null)
         {
             // Los ids con el tipo exacto de la propiedad, ProductCategoryId? (nullable), y el Contains sobre
@@ -440,7 +553,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         var codeTerm = code?.Trim() ?? string.Empty;
 
         // Con variantes, la relevancia del código es la de la variante que más se parece.
-        var orderedQuery = searchPattern is not null
+        var orderedQuery = byNameOnly
+            ? query.OrderBy(product => product.Name)
+            : searchPattern is not null
             ? query.OrderByDescending(product =>
                 EF.Functions.TrigramsSimilarity(product.Name, searchTerm) +
                 product.Variants.Max(variant => EF.Functions.TrigramsSimilarity(variant.Code, searchTerm)))
@@ -465,6 +580,126 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .SingleOrDefaultAsync(
                 product => product.TenantId == tenantId && product.Id == productId,
                 cancellationToken);
+
+    // Con seguimiento: el lote de visibilidad muta lo que trae. La visibilidad no toca variantes,
+    // pero el agregado es el único camino de escritura.
+    public async Task<IReadOnlyList<Product>> FindManyForUpdateAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await Aggregates()
+            .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id))
+            .ToListAsync(cancellationToken);
+    }
+
+    // El predicado único de la tienda pública: producto activo, publicado y con al menos una variante
+    // activa con precio en la moneda. Búsqueda, conteos y ficha lo comparten para que lo que se cuenta
+    // sea exactamente lo que se puede abrir. Lo sirve IX_products_tenant_store_visible.
+    private IQueryable<Product> StoreVisible(Guid tenantId, string currency) =>
+        dbContext.Products.Where(product =>
+            product.TenantId == tenantId
+            && product.IsActive
+            && product.VisibleInStore
+            && product.Variants.Any(variant =>
+                variant.IsActive && variant.Prices.Any(price => price.Currency == currency)));
+
+    public async Task<(IReadOnlyList<Product> Items, int Total)> SearchStoreVisibleAsync(
+        Guid tenantId,
+        string currency,
+        string? search,
+        IReadOnlyCollection<Guid>? categoryIds,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        // Sólo por nombre: `search` también encuentra por código y código de barras de una variante, y esos dos nunca salen de la
+        // tienda pública, así que no pueden servir para dar con un producto.
+        var query = ApplyTextFilters(StoreVisible(tenantId, currency).AsNoTracking(), search: null, name: search, code: null);
+        if (categoryIds is not null)
+        {
+            // Mismo tipo exacto que en SearchQueryAsync: ver el comentario de allá.
+            var ids = categoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            query = query.Where(product => ids.Contains(product.CategoryId));
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+
+        // Por nombre y no por relevancia: la tienda es un catálogo, y el orden estable (con el id de
+        // desempate) evita repetir o saltear filas entre páginas.
+        var items = await query
+            .OrderBy(product => product.Name)
+            .ThenBy(product => product.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.PriceScales)
+            .Include(product => product.Gallery)
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    public async Task<IReadOnlyDictionary<ProductCategoryId, int>> CountStoreVisibleByCategoryAsync(
+        Guid tenantId,
+        string currency,
+        CancellationToken cancellationToken)
+    {
+        var rows = await StoreVisible(tenantId, currency)
+            .AsNoTracking()
+            .Where(product => product.CategoryId != null)
+            .GroupBy(product => product.CategoryId)
+            .Select(group => new { CategoryId = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(row => row.CategoryId!.Value, row => row.Count);
+    }
+
+    public Task<Product?> FindStoreVisibleAsync(
+        Guid tenantId,
+        ProductId id,
+        string currency,
+        CancellationToken cancellationToken) =>
+        StoreVisible(tenantId, currency)
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.PriceScales)
+            .Include(product => product.Gallery)
+            .AsSplitQuery()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(product => product.Id == id, cancellationToken);
+
+    // Un producto entra si alguna de las variantes pedidas es vendible; cada uno trae todas sus
+    // variantes, y quien llama elige por id y vuelve a comprobar la variante concreta.
+    public async Task<IReadOnlyList<Product>> FindStoreVisibleVariantsAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid> variantIds,
+        CancellationToken cancellationToken)
+    {
+        if (variantIds.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = variantIds.Select(id => new VariantId(id)).ToArray();
+        return await StoreVisible(tenantId, currency)
+            .Where(product => product.Variants.Any(variant =>
+                ids.Contains(variant.Id)
+                && variant.IsActive
+                && variant.Prices.Any(price => price.Currency == currency)))
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.PriceScales)
+            .Include(product => product.Gallery)
+            .AsSplitQuery()
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+    }
 
     // Igualdad exacta y con mayúsculas, servida por IX_product_variants_tenant_code: es la misma
     // comparación del índice único y del agregado (ordinal), así que un código que este método no
@@ -567,6 +802,10 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
     }
 
     public void Add(Product product) => dbContext.Products.Add(product);
+
+    // Remove y no un ExecuteDelete: el producto viene rastreado de FindAsync y el DELETE tiene que salir en el mismo
+    // SaveChanges que el outbox, con el token de concurrencia de la fila (una versión que cambió es 412, no un borrado).
+    public void Remove(Product product) => dbContext.Products.Remove(product);
 
     // AddRange y no un SaveChanges propio: las filas quedan en el change tracker y salen en el
     // commit de CatalogUnitOfWork, junto al producto que las originó. Una lista vacía —el caso

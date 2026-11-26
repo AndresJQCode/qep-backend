@@ -38,7 +38,7 @@ public sealed class CustomerCompletenessTests
         };
 
     private static CustomerCommercialInfo Commercial(ClientClassificationId classificationId) =>
-        new() { ClassificationId = classificationId, WithRetention = false, VatSurplus = false };
+        new() { ClassificationId = classificationId, VatSurplus = false };
 
     [Fact]
     public void AnIncompleteCustomerHasOnlyNamePhoneCountryAndBsuid()
@@ -119,6 +119,28 @@ public sealed class CustomerCompletenessTests
         Assert.True(Assert.Single(customer.Addresses).IsPrincipal);
         Assert.Equal(2, customer.Version);
         Assert.Equal(Now.AddHours(1), customer.UpdatedAt);
+    }
+
+    [Fact]
+    public void CompleteWithoutIdentificationLeavesBothFieldsNull()
+    {
+        var customer = Incomplete();
+
+        customer.Complete(
+            "CLI08000001",
+            "Laura Pérez",
+            null,
+            null,
+            identification: null,
+            null,
+            ColombianContact(),
+            Commercial(ClassificationId),
+            Now.AddHours(1),
+            new FakeNormalizer());
+
+        Assert.True(customer.IsComplete);
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
     }
 
     // Sin calle no hay fila de libreta que sembrar: el handler manda el principalAddress en null.

@@ -113,13 +113,31 @@ internal sealed class FakeTenantProviders : ITenantProviders
 
 internal sealed class InMemoryConnectionRepository : IIntegrationConnectionRepository
 {
+    public InMemoryConnectionRepository(params IntegrationConnection[] connections) => Connections.AddRange(connections);
+
     public List<IntegrationConnection> Connections { get; } = [];
 
-    public Task<IntegrationConnection?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-        Task.FromResult(Connections.SingleOrDefault(connection => connection.TenantId == tenantId && connection.Id == connectionId));
+    /// <summary>Lo que pasa en cada lectura por id, antes de devolverla (por ejemplo, anotar qué candados había).</summary>
+    public Action? OnFind { get; set; }
 
-    public Task<IReadOnlyList<IntegrationConnection>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<IntegrationConnection>>(Connections.Where(connection => connection.TenantId == tenantId).ToList());
+    /// <summary>Cuántas veces se leyó una conexión por id: cada una es un viaje a la base.</summary>
+    public int FindCalls { get; private set; }
+
+    /// <summary>Cuántas veces se listaron las conexiones del tenant: cada una es un viaje a la base.</summary>
+    public int ListCalls { get; private set; }
+
+    public Task<IntegrationConnection?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        OnFind?.Invoke();
+        return Task.FromResult(Connections.SingleOrDefault(connection => connection.TenantId == tenantId && connection.Id == connectionId));
+    }
+
+    public Task<IReadOnlyList<IntegrationConnection>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        ListCalls++;
+        return Task.FromResult<IReadOnlyList<IntegrationConnection>>(Connections.Where(connection => connection.TenantId == tenantId).ToList());
+    }
 
     public Task<int> CountAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         Task.FromResult(Connections.Count(connection =>
@@ -130,11 +148,33 @@ internal sealed class InMemoryConnectionRepository : IIntegrationConnectionRepos
     public void Remove(IntegrationConnection connection) => Connections.Remove(connection);
 }
 
+/// <summary>Sin base: cuenta guardados, transacciones y candados del token de Shopify (spec 2026-11-12). Los candados
+/// exigen una transacción abierta, como el real; guardar la cierra (confirma) y disponerla también.</summary>
 internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
 {
+    private int _open;
+
     public int Saves { get; private set; }
 
     public Exception? FailWith { get; set; }
+
+    /// <summary>Las transacciones abiertas con <see cref="BeginTransactionAsync"/>.</summary>
+    public int Transactions { get; private set; }
+
+    /// <summary>Los ids con los que se tomó el candado que espera, en orden.</summary>
+    public List<Guid> Locks { get; } = [];
+
+    /// <summary>Los ids con los que se intentó el candado sin espera, en orden.</summary>
+    public List<Guid> TryLocks { get; } = [];
+
+    /// <summary>Lo que responde <see cref="TryLockShopifyTokenAsync"/>.</summary>
+    public bool LockTaken { get; set; } = true;
+
+    /// <summary>Si hay una transacción de <see cref="BeginTransactionAsync"/> abierta y sin disponer ni confirmar.</summary>
+    public bool InTransaction => _open > 0;
+
+    /// <summary>Si el último guardado corrió dentro de la transacción abierta (guardar la confirma, como el real).</summary>
+    public bool SavedInsideTransaction { get; private set; }
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -144,7 +184,54 @@ internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
         }
 
         Saves++;
+        SavedInsideTransaction = InTransaction;
+        _open = 0;
         return Task.FromResult(1);
+    }
+
+    public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        Transactions++;
+        _open++;
+        return Task.FromResult<IAsyncDisposable>(new Handle(this));
+    }
+
+    public Task LockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        Locks.Add(ownerId);
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> TryLockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        TryLocks.Add(ownerId);
+        return Task.FromResult(LockTaken);
+    }
+
+    public Task<bool> TryLockInstagramTokenAsync(Guid connectionId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        TryLocks.Add(connectionId);
+        return Task.FromResult(LockTaken);
+    }
+
+    private void EnsureTransaction()
+    {
+        if (_open == 0)
+        {
+            throw new InvalidOperationException("The Shopify token lock requires a transaction.");
+        }
+    }
+
+    private sealed class Handle(FakeUnitOfWork owner) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            owner._open = Math.Max(0, owner._open - 1);
+            return ValueTask.CompletedTask;
+        }
     }
 }
 
@@ -194,6 +281,25 @@ internal sealed class FakeAuthorNames : IConnectionAuthorNames
         Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             Names.Where(entry => memberIds.Contains(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value));
+}
+
+/// <summary>Who serves each connection (plan 2026-11-12, review corrections, Tasks 3 and 6). Keyed by tenant and connection, like
+/// <c>messaging.connection_bots</c>: an occupant of another connection, or of the same id under another tenant, does not count.</summary>
+internal sealed class FakeConnectionBotOccupancy : IConnectionBotOccupancy
+{
+    private readonly Dictionary<(Guid TenantId, Guid ConnectionId), ConnectionBotOccupant> occupants = [];
+
+    public void Occupy(Guid tenantId, Guid connectionId, ConnectionBotOccupant occupant) =>
+        occupants[(tenantId, connectionId)] = occupant;
+
+    /// <summary>Runs on every lookup, before answering: lets a test observe the state of the unit of work at check time.</summary>
+    public Action? OnFind { get; set; }
+
+    public Task<ConnectionBotOccupant?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        OnFind?.Invoke();
+        return Task.FromResult(occupants.GetValueOrDefault((tenantId, connectionId)));
+    }
 }
 
 /// <summary>
@@ -261,8 +367,10 @@ internal sealed partial class IntegrationsTestBed
     public void ShowEverything() =>
         Modules.Sets[TenantId] = TenantModuleSet.FromStored(TenantModuleKeys.All);
 
+    /// <summary>Sin los dos módulos que consumen a Zenvia: sólo quitar cotizaciones ya no lo oculta, porque los pedidos también lo usan.</summary>
     public void HideQuotations() =>
-        Modules.Sets[TenantId] = TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations]));
+        Modules.Sets[TenantId] = TenantModuleSet.FromStored(
+            TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders]));
 
     public FakeMetaAppSettings MetaApp { get; } = new();
 
@@ -273,6 +381,22 @@ internal sealed partial class IntegrationsTestBed
 
     public ListConnectionsHandler ListHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, Modules, Providers, MetaApp, InstagramApp, ShopifyApp, Protector, AuthorNames, context ?? Context());
+
+    /// <summary>La clave de Anthropic del tenant (plan 2026-11-12, C-1).</summary>
+    public IntegrationConnection SeedAnthropic(string apiKey, string name = "Cuenta de Anthropic")
+    {
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.Anthropic,
+            TenantId,
+            name,
+            new Dictionary<string, string>(),
+            new Dictionary<string, string> { ["apiKey"] = apiKey },
+            Protector.Protect,
+            MemberId,
+            Now);
+        Repository.Connections.Add(connection);
+        return connection;
+    }
 
     /// <summary>Una conexión de Meta ya creada por Embedded Signup: los campos los escribió el backend.</summary>
     public IntegrationConnection SeedWhatsAppCloud(string name = "Ventas")

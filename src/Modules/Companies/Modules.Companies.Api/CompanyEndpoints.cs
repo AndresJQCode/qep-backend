@@ -122,10 +122,16 @@ public static class CompanyEndpoints
                 request.Name,
                 request.BankAccounts,
                 request.TaxId,
+                request.Country,
+                request.DocumentType,
                 request.CityId,
+                request.CityName,
                 request.Phone,
                 request.Email,
-                request.Address),
+                request.Address,
+                request.WithholdingTaxRateIds,
+                request.ChargesVat,
+                request.RegionId),
             cancellationToken);
 
         return Results.Created(
@@ -147,10 +153,16 @@ public static class CompanyEndpoints
                 request.Name,
                 request.BankAccounts,
                 request.TaxId,
+                request.Country,
+                request.DocumentType,
                 request.CityId,
+                request.CityName,
                 request.Phone,
                 request.Email,
-                request.Address),
+                request.Address,
+                request.WithholdingTaxRateIds,
+                request.ChargesVat,
+                request.RegionId),
             cancellationToken);
 
         return Results.Ok(ToResponse(company));
@@ -200,14 +212,20 @@ public static class CompanyEndpoints
         company.Name,
         company.BankAccounts,
         company.TaxId,
+        company.Country,
+        company.DocumentType,
         company.IsActive,
         company.Phone,
         company.Email,
         company.Address,
         company.City,
         company.Department,
+        company.CityName,
         company.CreatedAt,
-        company.UpdatedAt);
+        company.UpdatedAt,
+        company.WithholdingTaxRates,
+        company.ChargesVat,
+        company.Region);
 
     // Del detalle de cada cuenta la grilla recibe banco y numero, sin la moneda. Ver el porque
     // en CompanyListItemResponse.
@@ -219,7 +237,10 @@ public static class CompanyEndpoints
             .Select(account => new CompanyListBankAccount(account.BankName, account.AccountNumber))
             .ToArray(),
         company.TaxId,
+        company.Country,
+        company.DocumentType,
         company.Phone,
-        company.City.Name,
-        company.IsActive);
+        company.City?.Name ?? company.CityName ?? string.Empty,
+        company.IsActive,
+        company.ChargesVat);
 }

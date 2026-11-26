@@ -15,6 +15,7 @@ namespace Modules.Audit.Infrastructure.Messaging;
 // mensaje se commitea independiente, así que una falla no bloquea el lote. Las auditorías
 // críticas/de seguridad no van por acá — se escriben atómicas en la transacción del productor.
 internal sealed partial class AuditProjectionWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     ILogger<AuditProjectionWorker> logger) : BackgroundService
 {
@@ -29,26 +30,34 @@ internal sealed partial class AuditProjectionWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Outbox);
+        await DoorbellPolling.RunAsync(
+            listener,
+            PollInterval,
+            DoorbellQueues.SafetyNet(DoorbellQueues.Outbox),
+            async _ =>
             {
-                await ProcessBatchAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    return await ProcessBatchAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
-    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
+    private async Task<bool> ProcessBatchAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
@@ -66,6 +75,8 @@ internal sealed partial class AuditProjectionWorker(
         {
             await ProjectAsync(dbContext, clock, record, cancellationToken);
         }
+
+        return pending.Count == BatchSize;
     }
 
     private static async Task ProjectAsync(

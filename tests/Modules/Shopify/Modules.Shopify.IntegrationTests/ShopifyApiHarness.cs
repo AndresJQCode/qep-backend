@@ -151,14 +151,17 @@ internal static class ShopifyApiHarness
             // (DrainAsync) y decide cuándo, así que uno en segundo plano reclamaría la misma entrega a la vez.
             builder.ConfigureTestServices(services =>
             {
-                // La conciliación tampoco: la prueba que la necesita la corre a mano (RunOnceAsync). Ni el consumidor de los
-                // eventos de sinónimos (ProcessBatchAsync), ni el worker que corrige (DrainAsync).
+                // La conciliación tampoco: la prueba que la necesita la corre a mano (RunOnceAsync). Ni los consumidores de los
+                // eventos de sinónimos y de pedidos (ProcessBatchAsync), ni el worker que corrige (DrainAsync).
                 foreach (var worker in services
                     .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
                         && (descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker)
                             || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)
                             || descriptor.ImplementationType == typeof(CitySynonymEventsWorker)
-                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)))
+                            || descriptor.ImplementationType == typeof(QuotationOrderEventsWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyOrderPushWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyProductImportWorker)))
                     .ToArray())
                 {
                     services.Remove(worker);
@@ -171,6 +174,8 @@ internal static class ShopifyApiHarness
 
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -188,6 +193,7 @@ internal static class ShopifyApiHarness
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:ScheduledPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             // Fuera de Production, sin el par de la app el proveedor shopify sale del catálogo; se fija para que las
             // pruebas del módulo vean el mismo catálogo que producción.
@@ -316,28 +322,38 @@ internal static class ShopifyApiHarness
 
     /// <summary>
     /// La conexión y la ruta de una tienda, creadas por los servicios de Integrations (repositorio, rutas, cifrado y unidad de
-    /// trabajo) como las deja <c>LinkShopifyStore</c>, sin pasar por el OAuth: el token es un sentinela.
+    /// trabajo) como las deja <c>LinkShopifyStore</c>, sin pasar por el OAuth: el token es un sentinela. Lleva refresh token y
+    /// un vencimiento a un día (spec 2026-11-12): sin ellos, <c>ShopifyTokenRefreshWorker</c> del host marcaría la tienda
+    /// <c>token_expired</c>.
     /// </summary>
     public static async Task<Guid> LinkStoreAsync(
-        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token")
+        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token", string shopId = "954889", string name = "Mi tienda",
+        string scopes = "read_orders,read_customers")
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
         var protector = services.GetRequiredService<ISecretProtector>();
+        var now = services.GetRequiredService<IClock>().UtcNow;
         var connection = IntegrationConnection.Create(
             IntegrationProviders.Shopify,
             tenantId,
-            "Mi tienda",
+            name,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [ShopifyFieldKeys.ShopDomain] = shop,
-                [ShopifyFieldKeys.ShopId] = "954889",
-                [ShopifyFieldKeys.Scopes] = "read_orders,read_customers",
+                [ShopifyFieldKeys.ShopId] = shopId,
+                [ShopifyFieldKeys.Scopes] = scopes,
+                [ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
+                [ShopifyFieldKeys.RefreshTokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
             },
-            new Dictionary<string, string>(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = accessToken },
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [ShopifyFieldKeys.AccessToken] = accessToken,
+                [ShopifyFieldKeys.RefreshToken] = "shprt_sentinel_refresh",
+            },
             protector.Protect,
             createdBy,
-            services.GetRequiredService<IClock>().UtcNow);
+            now);
         services.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
         services.GetRequiredService<IConnectionRouteRepository>().Add(
             IntegrationConnectionRoute.Create(IntegrationProviders.Shopify.Key, shop, accountId: null, tenantId, connection.Id));
@@ -387,6 +403,8 @@ internal static class ShopifyApiHarness
                 name = "Origen Botánico SAS",
                 bankAccounts = new[] { new { bankName = "Bancolombia", accountNumber, currency = "COP" } },
                 taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
                 cityId = await AnyCityIdAsync(client),
                 phone = "6045551234",
                 email = "ventas@origen.example.co",
@@ -457,7 +475,7 @@ internal static class ShopifyApiHarness
         return await ReadIdAsync(response);
     }
 
-    private static async Task<Guid> AnyCityIdAsync(HttpClient client)
+    public static async Task<Guid> AnyCityIdAsync(HttpClient client)
     {
         var departments = await client.GetFromJsonAsync<List<IdDto>>("/api/v1/departments", TestContext.Current.CancellationToken);
         Assert.NotNull(departments);
@@ -538,11 +556,12 @@ internal sealed record ShopifyWorld(
 {
     public Guid TenantId => Tenant.TenantId;
 
-    public static async Task<ShopifyWorld> ArrangeAsync(WebApplicationFactory<Program> factory, string connectionString)
+    public static async Task<ShopifyWorld> ArrangeAsync(
+        WebApplicationFactory<Program> factory, string connectionString, string scopes = "read_orders,read_customers")
     {
         var tenant = await ShopifyApiHarness.RegisterTenantAsync(factory);
         await ShopifyApiHarness.EnableShopifyAsync(connectionString, tenant.TenantId);
-        var connectionId = await ShopifyApiHarness.LinkStoreAsync(factory, tenant.TenantId, tenant.OwnerUserId);
+        var connectionId = await ShopifyApiHarness.LinkStoreAsync(factory, tenant.TenantId, tenant.OwnerUserId, scopes: scopes);
         var advisor = await ShopifyApiHarness.InviteActiveAdvisorAsync(factory, connectionString, tenant);
         var company = await ShopifyApiHarness.CreateCompanyAsync(tenant.Seeder, tenant.TenantId);
         var classification = await ShopifyApiHarness.CreateClassificationAsync(tenant.Seeder, tenant.TenantId);
@@ -555,7 +574,7 @@ internal sealed record ShopifyWorld(
 
     /// <summary>§6.1: la tienda configurada (asesor, cuenta de cobro COP, clasificación y las claves por defecto), como la deja el
     /// <c>PUT</c> de la tienda.</summary>
-    public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory)
+    public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory, int? historyDays = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var store = Modules.Shopify.Domain.ShopifyStore.Create(ConnectionId, TenantId, DateTimeOffset.UtcNow);
@@ -566,6 +585,9 @@ internal sealed record ShopifyWorld(
             Modules.Shopify.Domain.ShopifyStore.DefaultDocumentAttributeKey,
             Modules.Shopify.Domain.ShopifyStore.DefaultDocumentTypeAttributeKey,
             Modules.Shopify.Domain.ShopifyStore.DefaultIdentificationTypeCode,
+            historyDays,
+            Modules.Shopify.Domain.ShopifyEditSync.Manual,
+            Modules.Shopify.Domain.ShopifyPaymentStatuses.All,
             AdvisorMembershipId,
             DateTimeOffset.UtcNow);
         scope.ServiceProvider.GetRequiredService<Modules.Shopify.Application.IShopifyStoreRepository>().Add(store);

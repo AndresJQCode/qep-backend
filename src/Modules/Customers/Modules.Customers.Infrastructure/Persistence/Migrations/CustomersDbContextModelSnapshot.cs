@@ -109,6 +109,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("classification_id");
 
+                    b.Property<Guid?>("CompanyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("company_id");
+
                     b.Property<string>("Completeness")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -204,6 +208,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("phone_e164");
 
+                    b.Property<Guid?>("RegionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("region_id");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -226,17 +234,27 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("whatsapp_user_id");
 
-                    b.Property<bool>("WithRetention")
+                    b.Property<bool>("with_retention")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
+                        .HasDefaultValue(false)
                         .HasColumnName("with_retention");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BusinessName")
+                        .HasDatabaseName("IX_customers_business_name_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("BusinessName"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("BusinessName"), new[] { "gin_trgm_ops" });
 
                     b.HasIndex("CityId")
                         .HasDatabaseName("IX_customers_city");
 
                     b.HasIndex("ClassificationId")
                         .HasDatabaseName("IX_customers_classification");
+
+                    b.HasIndex("CompanyId");
 
                     b.HasIndex("Name")
                         .HasDatabaseName("IX_customers_name_trgm");
@@ -245,6 +263,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Name"), new[] { "gin_trgm_ops" });
 
                     b.HasIndex("TenantId", "ClassificationId");
+
+                    b.HasIndex("TenantId", "CompanyId")
+                        .HasDatabaseName("IX_customers_tenant_company")
+                        .HasFilter("company_id IS NOT NULL");
 
                     b.HasIndex("TenantId", "Cuc")
                         .IsUnique()
@@ -278,9 +300,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                     b.ToTable("customers", "customers", t =>
                         {
-                            t.HasCheckConstraint("CK_customers_complete_fields", "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL AND country IS NOT NULL)");
+                            t.HasCheckConstraint("CK_customers_complete_fields", "completeness = 'Incomplete' OR (cuc IS NOT NULL AND country IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
+
+                            t.HasCheckConstraint("CK_customers_identification_pair", "(identification_type IS NULL) = (identification_number IS NULL)");
 
                             t.HasCheckConstraint("CK_customers_marketing_opt_out_source", "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
                         });
@@ -298,9 +322,22 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("address");
 
-                    b.Property<Guid>("CityId")
+                    b.Property<Guid?>("CityId")
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasDefaultValue("CO")
+                        .HasColumnName("country");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -325,6 +362,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
 
+                    b.Property<Guid?>("RegionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("region_id");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -340,7 +381,115 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     b.HasIndex("CustomerId", "IsPrincipal")
                         .HasDatabaseName("IX_customer_addresses_principal");
 
-                    b.ToTable("customer_addresses", "customers");
+                    b.ToTable("customer_addresses", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_customer_addresses_city_lane", "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerBillingProfile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("address");
+
+                    b.Property<Guid?>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasDefaultValue("CO")
+                        .HasColumnName("country");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("email");
+
+                    b.Property<string>("IdentificationNumber")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("identification_number");
+
+                    b.Property<string>("IdentificationType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("identification_type");
+
+                    b.Property<bool>("IsPrincipal")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_principal");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("PersonType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("person_type");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("phone");
+
+                    b.Property<Guid?>("RegionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("region_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<bool>("VatSurplus")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("vat_surplus");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CityId")
+                        .HasDatabaseName("IX_customer_billing_profiles_city");
+
+                    b.HasIndex("CustomerId")
+                        .HasDatabaseName("IX_customer_billing_profiles_customer");
+
+                    b.HasIndex("CustomerId", "IsPrincipal")
+                        .HasDatabaseName("IX_customer_billing_profiles_principal");
+
+                    b.ToTable("customer_billing_profiles", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_customer_billing_profiles_city_lane", "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerDataConsent", b =>
@@ -393,6 +542,16 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");
+
+                    b.Property<string>("CustomerName")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("customer_name");
+
+                    b.Property<string>("CustomerPhoneE164")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("customer_phone_e164");
 
                     b.Property<string>("Event")
                         .IsRequired()
@@ -677,12 +836,85 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Customers.Domain.Customer", b =>
                 {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("FK_customers_customers_company_id");
+
                     b.HasOne("Modules.Customers.Domain.ClientClassification", null)
                         .WithMany()
                         .HasForeignKey("TenantId", "ClassificationId")
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_customers_client_classifications_classification_id");
+
+                    b.OwnsMany("Modules.Customers.Domain.CustomerTaxRate", "_withholdingTaxRates", b1 =>
+                        {
+                            b1.Property<Guid>("CustomerId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("customer_id");
+
+                            b1.Property<Guid>("TaxRateId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tax_rate_id");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.HasKey("CustomerId", "TaxRateId")
+                                .HasName("PK_customer_tax_rates");
+
+                            b1.HasIndex("TenantId", "TaxRateId")
+                                .HasDatabaseName("IX_customer_tax_rates_tenant_tax_rate");
+
+                            b1.ToTable("customer_tax_rates", "customers");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CustomerId");
+                        });
+
+                    b.OwnsMany("Modules.Customers.Domain.CustomerWithholdingAgentCity", "WithholdingAgentCities", b1 =>
+                        {
+                            b1.Property<Guid>("CustomerId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("customer_id");
+
+                            b1.Property<string>("Country")
+                                .HasMaxLength(2)
+                                .HasColumnType("character(2)")
+                                .HasColumnName("country")
+                                .IsFixedLength();
+
+                            b1.Property<string>("Type")
+                                .HasMaxLength(32)
+                                .HasColumnType("character varying(32)")
+                                .HasColumnName("type");
+
+                            b1.Property<Guid>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.HasKey("CustomerId", "Country", "Type", "CityId")
+                                .HasName("PK_customer_withholding_agent_cities");
+
+                            b1.HasIndex("CityId")
+                                .HasDatabaseName("IX_customer_withholding_agent_cities_city");
+
+                            b1.ToTable("customer_withholding_agent_cities", "customers");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CustomerId");
+                        });
+
+                    b.Navigation("WithholdingAgentCities");
+
+                    b.Navigation("_withholdingTaxRates");
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerAddress", b =>
@@ -692,6 +924,43 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerBillingProfile", b =>
+                {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany("BillingProfiles")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.OwnsMany("Modules.Customers.Domain.CustomerBillingProfileTaxRate", "_withholdingTaxRates", b1 =>
+                        {
+                            b1.Property<Guid>("BillingProfileId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_profile_id");
+
+                            b1.Property<Guid>("TaxRateId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tax_rate_id");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.HasKey("BillingProfileId", "TaxRateId")
+                                .HasName("PK_customer_billing_profile_tax_rates");
+
+                            b1.HasIndex("TenantId", "TaxRateId")
+                                .HasDatabaseName("IX_customer_billing_profile_tax_rates_tenant_tax_rate");
+
+                            b1.ToTable("customer_billing_profile_tax_rates", "customers");
+
+                            b1.WithOwner()
+                                .HasForeignKey("BillingProfileId");
+                        });
+
+                    b.Navigation("_withholdingTaxRates");
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerNote", b =>
@@ -724,6 +993,8 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Modules.Customers.Domain.Customer", b =>
                 {
                     b.Navigation("Addresses");
+
+                    b.Navigation("BillingProfiles");
                 });
 #pragma warning restore 612, 618
         }

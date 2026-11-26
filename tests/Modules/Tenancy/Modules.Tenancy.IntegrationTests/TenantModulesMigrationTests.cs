@@ -8,7 +8,7 @@ using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -37,7 +37,7 @@ public sealed class TenantModulesMigrationTests
     [Fact]
     public async Task AnExistingTenantKeepsTheSixModulesOfToday()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -57,7 +57,7 @@ public sealed class TenantModulesMigrationTests
     [Fact]
     public async Task TheCheckRejectsAnUnknownKey()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         await context.GetService<IMigrator>().MigrateAsync(
@@ -81,7 +81,7 @@ public sealed class TenantModulesMigrationTests
     [Fact]
     public async Task FindAsyncDistinguishesAMissingTenantFromOneWithModules()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using (var context = NewContext(connectionString))
         {
@@ -109,7 +109,7 @@ public sealed class TenantModulesMigrationTests
         Assert.Equal([TenantModuleKeys.Customers], set.MissingDependencies(TenantModuleKeys.Orders));
     }
 
-    private static async Task<string> MigratedWithLegacyTenantAsync(PostgreSqlContainer database, string target)
+    private static async Task<string> MigratedWithLegacyTenantAsync(TestDatabase database, string target)
     {
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
@@ -124,7 +124,7 @@ public sealed class TenantModulesMigrationTests
     [Fact]
     public async Task ExistingRowsStayActiveSinceTheirEnabledAt()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = await MigratedWithLegacyTenantAsync(database, AddTenantModules);
         await ExecuteAsync(connectionString, "UPDATE tenancy.tenant_modules SET enabled_at = '2026-08-12T13:30:00Z';");
         await using var context = NewContext(connectionString);
@@ -139,7 +139,7 @@ public sealed class TenantModulesMigrationTests
     [Fact]
     public async Task AnInsertWithoutStatusGetsTheDefaults()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = await MigratedWithLegacyTenantAsync(database, AddTenantModules);
         await using (var context = NewContext(connectionString))
         {
@@ -164,7 +164,7 @@ public sealed class TenantModulesMigrationTests
     [InlineData("UPDATE tenancy.tenant_modules SET source = 'bogus';")]
     public async Task TheChecksRejectWhatTheSpecForbids(string sql)
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = await MigratedWithLegacyTenantAsync(database, AddTenantModules);
         await using (var context = NewContext(connectionString))
         {
@@ -180,7 +180,7 @@ public sealed class TenantModulesMigrationTests
     [Fact]
     public async Task FindAsyncIgnoresInactiveRows()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = await MigratedWithLegacyTenantAsync(database, AddTenantModules);
         await using (var context = NewContext(connectionString))
         {
@@ -203,7 +203,7 @@ public sealed class TenantModulesMigrationTests
     [Fact]
     public async Task DownDropsInactiveRowsAndTurnsOperatorIntoManual()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = await MigratedWithLegacyTenantAsync(database, AddTenantModules);
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -274,16 +274,5 @@ public sealed class TenantModulesMigrationTests
         }
 
         return rows;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 }

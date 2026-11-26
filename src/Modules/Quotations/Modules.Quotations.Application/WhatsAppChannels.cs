@@ -42,9 +42,13 @@ public interface IWhatsAppChannelChoiceStore
 /// </summary>
 public static class QuotationsPolicies
 {
-    /// <summary>Leer los canales de WhatsApp: quien gestiona cotizaciones (los ofrece al enviar) o quien actualiza la
-    /// configuración (los muestra en Configuración, decisión del owner 2026-10-25).</summary>
+    /// <summary>Leer los canales de WhatsApp: quien gestiona cotizaciones o pedidos (los ofrece al enviar; spec 2026-11-09 D8) o
+    /// quien actualiza la configuración (los muestra en Configuración, decisión del owner 2026-10-25).</summary>
     public const string WhatsAppChannelsRead = "quotations.whatsapp_channels.read";
+
+    /// <summary>Leer las opciones de envío: quien lee cotizaciones o quien lee pedidos, porque un tenant puede ocultar
+    /// cotizaciones y seguir vendiendo por pedidos.</summary>
+    public const string ShippingOptionsRead = "quotations.shipping_options.read";
 }
 
 /// <summary>BFF: <c>NeedsChoice</c> viaja calculado para que la pantalla no repita la regla de la spec 2026-10-21 §4.2;
@@ -56,7 +60,9 @@ public sealed record WhatsAppChannelOptionDto(Guid ConnectionId, string Provider
 public sealed record WhatsAppChannelsDto(
     IReadOnlyList<WhatsAppChannelOptionDto> Channels, Guid? SelectedConnectionId, bool NeedsChoice);
 
-public sealed record GetWhatsAppChannelsQuery(Guid TenantId) : IQuery<WhatsAppChannelsDto>;
+/// <summary><paramref name="Document"/> (spec 2026-11-09 D8): los canales disponibles para ese documento (D6); la elección guardada se
+/// reporta sólo si está en esa lista, y <c>NeedsChoice</c> se calcula sobre ella.</summary>
+public sealed record GetWhatsAppChannelsQuery(Guid TenantId, WhatsAppDocument Document = WhatsAppDocument.Quotation) : IQuery<WhatsAppChannelsDto>;
 
 public sealed record ChooseWhatsAppChannelCommand(Guid TenantId, Guid? ConnectionId) : ICommand<WhatsAppChannelsDto>;
 
@@ -96,12 +102,13 @@ public sealed class GetWhatsAppChannelsHandler(
     public async Task<WhatsAppChannelsDto> HandleAsync(
         GetWhatsAppChannelsQuery query, CancellationToken cancellationToken)
     {
+        // Quien manda pedidos tiene que poder preguntar por el canal (spec 2026-11-09 D8).
         QuotationsAuthorization.EnsureAuthorizedAny(
-            executionContext, query.TenantId, QuotationsPermissions.QuotationManage, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, query.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+            executionContext, query.TenantId, QuotationsPermissions.QuotationManage, OrdersPermissions.OrderManage, TenancyPermissions.SettingsUpdate);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, query.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
 
-        var available = await channels.ListAvailableAsync(query.TenantId, cancellationToken);
+        var available = await channels.ListAvailableAsync(query.TenantId, query.Document, cancellationToken);
         return WhatsAppChannelsMapping.ToDto(available, await choices.FindAsync(query.TenantId, cancellationToken));
     }
 }
@@ -127,12 +134,13 @@ public sealed class ChooseWhatsAppChannelHandler(
     {
         // Se autoriza antes de validar: quien llama desde otro tenant no debe ver el mapa de campos.
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, command.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var connectionId = command.ConnectionId!.Value;
-        var available = await channels.ListAvailableAsync(command.TenantId, cancellationToken);
+        // La elección es una por tenant y se elige entre los canales de cotización, como hasta hoy (spec 2026-11-09 D7).
+        var available = await channels.ListAvailableAsync(command.TenantId, WhatsAppDocument.Quotation, cancellationToken);
         if (available.All(channel => channel.ConnectionId != connectionId))
         {
             throw new QuotationsDomainException(

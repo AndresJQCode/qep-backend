@@ -36,6 +36,16 @@ internal sealed class ProductCategoryRepository(CatalogDbContext dbContext) : IP
             .ToList();
     }
 
+    public async Task<IReadOnlyList<ProductCategoryNode>> ListCategoriesWithParentsAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken) =>
+        await dbContext.ProductCategories
+            .AsNoTracking()
+            .Where(category => category.TenantId == tenantId)
+            .OrderBy(category => category.Name)
+            .Select(category => new ProductCategoryNode(category.Id, category.Name, category.ParentId))
+            .ToListAsync(cancellationToken);
+
     public async Task<IReadOnlyList<ProductCategory>> ListTreeAsync(
         Guid tenantId,
         CancellationToken cancellationToken) =>
@@ -83,5 +93,20 @@ internal sealed class ProductCategoryRepository(CatalogDbContext dbContext) : IP
 
     public void Add(ProductCategory category) => dbContext.ProductCategories.Add(category);
 
-    public void Remove(ProductCategory category) => dbContext.ProductCategories.Remove(category);
+    // DeleteBehavior.Restrict nulls the parent_id of every child this context tracks as soon as the
+    // parent is marked Deleted, so the RESTRICT FK never sees them and they silently become roots. A
+    // tracked child is refused here, before EF touches it; an untracked one (the race after the
+    // load) still reaches the FK, which CatalogUnitOfWork translates to the same code. A child
+    // deleted in the same unit of work is not in the way.
+    public void Remove(ProductCategory category)
+    {
+        var hasTrackedChild = dbContext.ChangeTracker.Entries<ProductCategory>().Any(entry =>
+            entry.State != EntityState.Deleted && entry.Entity.ParentId == category.Id);
+        if (hasTrackedChild)
+        {
+            throw CategoryInUse.HasChildren();
+        }
+
+        dbContext.ProductCategories.Remove(category);
+    }
 }

@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -96,17 +96,6 @@ public sealed class VersionApiTests
         return context.Response.StatusCode;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private sealed record VersionBody(
         string? BuildId,
         string? BuildNumber,
@@ -121,6 +110,8 @@ public sealed class VersionApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

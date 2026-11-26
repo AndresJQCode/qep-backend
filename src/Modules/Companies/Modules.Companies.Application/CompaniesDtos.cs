@@ -18,33 +18,78 @@ public sealed record CompanyCityDto(Guid Id, string DivipolaCode, string Name);
 
 public sealed record CompanyDepartmentDto(Guid Id, string DivipolaCode, string Name);
 
+/// <summary>
+/// La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y documentos.
+/// No reusa <see cref="CompanyCityDto"/>, que trae el código DIVIPOLA y no el departamento.
+/// </summary>
+public sealed record CompanyMunicipalityDto(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+/// <summary>
+/// Una tasa municipal (ReteICA) asignada a la empresa, con su municipio resuelto (backend for frontend): la ficha pinta
+/// «ReteICA Bogotá · Bogotá, D.C. · 0,966 %» sin pedirle nada a Catalog ni a Geography. <c>City</c> es null sólo si la
+/// ciudad ya no se encontró.
+/// </summary>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> de la tasa: <c>All</c>, <c>Goods</c> o <c>Services</c> (spec
+/// 2026-11-18 servicios pendientes §2). Viaja con la tasa guardada para que la ficha diga «ReteICA (servicios)» aunque la
+/// tasa ya no esté en el catálogo activo que tiene la pantalla; sin él tendrías que cruzar el id con ese catálogo, y una
+/// tasa desactivada se quedaría sin etiqueta. Va al final y con default para no tocar las construcciones existentes.</param>
+public sealed record CompanyWithholdingTaxRateDto(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    bool IsActive,
+    CompanyMunicipalityDto? City,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
+
+/// <param name="WithholdingTaxRates">Las tasas municipales de la empresa, ordenadas por departamento, municipio y tipo
+/// (spec ReteICA por empresa §9.2). Nunca null.</param>
+/// <param name="ChargesVat">Si la empresa cobra IVA (spec 2026-11-17 §5.1).</param>
+/// <param name="Region">La región (provincia) guardada de una empresa de afuera (spec 2026-11-23); null para Colombia, que
+/// la deriva de <c>Department</c>, y para lo que no tiene región. El listado no la trae.</param>
 public sealed record CompanyDto(
     Guid Id,
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    string Country,
+    string DocumentType,
     bool IsActive,
     string? Phone,
     string? Email,
     string? Address,
-    CompanyCityDto City,
-    CompanyDepartmentDto Department,
+    CompanyCityDto? City,
+    CompanyDepartmentDto? Department,
+    string? CityName,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates,
+    bool ChargesVat,
+    CompanyRegionDto? Region = null);
+
+/// <summary>La región (provincia) de una empresa de afuera, ya resuelta.</summary>
+public sealed record CompanyRegionDto(Guid Id, string Name);
 
 public sealed record CompanyResponse(
     Guid Id,
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    string Country,
+    string DocumentType,
     bool IsActive,
     string? Phone,
     string? Email,
     string? Address,
-    CompanyCityDto City,
-    CompanyDepartmentDto Department,
+    CompanyCityDto? City,
+    CompanyDepartmentDto? Department,
+    string? CityName,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates,
+    bool ChargesVat,
+    CompanyRegionDto? Region = null);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito: <c>email</c> y <c>address</c> no se pintan
@@ -59,6 +104,11 @@ public sealed record CompanyResponse(
 /// que el consumidor la descarte. El detalle completo lo trae <c>GET /{companyId}</c>, que es la
 /// pantalla donde la moneda si se lee.
 ///
+/// <c>City</c> es una sola columna para los dos carriles: el nombre de DIVIPOLA en Colombia y
+/// el texto libre fuera de ella, asi la grilla no ramifica (BFF). <c>Country</c> y
+/// <c>DocumentType</c> viajan para que la grilla rotule el documento (NIT, NIF, TAX_ID...) sin
+/// pedir el detalle.
+///
 /// <c>AccountNumbers</c> repite los numeros de <c>BankAccounts</c> a proposito: es el contrato
 /// anterior, y quitarlo en el mismo cambio obliga a desplegar frontend y backend a la vez. Se va
 /// cuando ningun consumidor desplegado lo lea.
@@ -69,9 +119,12 @@ public sealed record CompanyListItemResponse(
     IReadOnlyList<string> AccountNumbers,
     IReadOnlyList<CompanyListBankAccount> BankAccounts,
     string TaxId,
+    string Country,
+    string DocumentType,
     string? Phone,
     string City,
-    bool IsActive);
+    bool IsActive,
+    bool ChargesVat);
 
 /// <summary>
 /// Una cuenta en la fila del listado: el subconjunto de <see cref="CompanyBankAccountPayload"/>
@@ -90,22 +143,42 @@ public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemRespon
 // el recurso entero. BankAccounts sigue la misma regla y de forma mas visible: la lista que llega
 // es la lista que queda, asi que quitar una cuenta es mandar el PUT sin ella.
 //
-// CityId, en cambio, no se puede limpiar — es obligatorio, mismo criterio que en Customer:
-// una empresa siempre tiene una ciudad.
+// Country y DocumentType son obligatorios. Siguen siendo string? en el cuerpo a proposito: un
+// campo ausente tiene que llegar al validador como null y salir como 422 con el mapa errors
+// (Country, DocumentType), no morir antes en el binding. La ciudad depende del carril: en
+// Colombia es CityId (obligatorio) y fuera de ella es CityName (texto libre, obligatorio).
+//
+// WithholdingTaxRateIds (spec ReteICA por empresa §9.2) es la excepción al «el PUT reemplaza todo»: ausente o null conserva
+// las tasas guardadas (en el alta, ninguna) para que el frontend viejo, que no lo manda, no las borre; [] las quita todas.
+//
+// ChargesVat (spec 2026-11-17 §5.1) tampoco reemplaza: en el alta, ausente es «cobra IVA»; en el PUT, ausente conserva
+// el valor guardado, para que un frontend que todavía no manda el campo no prenda el IVA que otro apagó.
 public sealed record CreateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
-    string? Address);
+    string? Address,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null,
+    Guid? RegionId = null);
 
 public sealed record UpdateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
-    string? Address);
+    string? Address,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null,
+    Guid? RegionId = null);

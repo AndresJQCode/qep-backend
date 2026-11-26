@@ -13,6 +13,14 @@ public interface ICustomerPhoneDirectory
     Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchAsync(
         Guid tenantId, IReadOnlyCollection<string> e164, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-10: un cliente <b>activo y no fusionado</b> por número, el creado primero (<c>created_at, id</c>).
+    /// Se filtra antes de elegir, así que un inactivo más viejo no esconde al activo. A diferencia de
+    /// <see cref="MatchAsync"/>, un fusionado no se cambia por el que quedó: el sobreviviente puede tener otro teléfono, y
+    /// <c>StartConversation</c> le escribe al teléfono del cliente, no al número buscado. Las claves son el E.164 con «+»
+    /// tal como se pidió; un número sin coincidencia no aparece.</summary>
+    Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchActiveAsync(
+        Guid tenantId, IReadOnlyCollection<string> e164, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-24 §4.1: todos los clientes del tenant con ese número —activos o no, completos o no—, el creado
     /// primero antes (<c>created_at, id</c>). Es la consulta de <see cref="MatchAsync"/> sin quedarse con el primero; el
     /// <paramref name="take"/> se aplica en SQL.</summary>

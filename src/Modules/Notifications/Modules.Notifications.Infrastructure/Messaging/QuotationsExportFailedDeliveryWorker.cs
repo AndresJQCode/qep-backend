@@ -31,11 +31,12 @@ internal sealed class QuotationsExportFailedDeliveryWorker(
             return notification;
         }
 
+        var language = await ResolveLanguageAsync(context, export.TenantId, export.SubjectId, stoppingToken);
         string recipient = email;
         await SendAsync(
             context,
             notification,
-            () => QuotationsExportFailedEmailTemplate.Render(recipient, export.Kind),
+            () => QuotationsExportFailedEmailTemplate.Render(recipient, export.Kind, language),
             stoppingToken);
         return notification;
     }

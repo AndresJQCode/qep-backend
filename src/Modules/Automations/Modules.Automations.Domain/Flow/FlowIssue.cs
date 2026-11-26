@@ -14,11 +14,19 @@ public sealed record FlowIssue(FlowIssueSeverity Severity, string Code, string? 
 /// Lo que el validador necesita saber de fuera del flujo: los canales de las conexiones del chatbot (los nombres de
 /// <c>ConversationChannel</c>, Modules.Messaging.Domain/MessageEnums.cs), las conexiones «API externa» del tenant según su estado
 /// y si todas las conexiones del chatbot tienen horario asignado. <see cref="HandoffMembers"/> son los miembros que hoy pueden responder
-/// conversaciones del tenant (spec 2026-10-25 D-5): el destino de un traspaso fuera de ese conjunto es un error.
+/// conversaciones del tenant (spec 2026-10-25 D-5): el destino de un traspaso fuera de ese conjunto es un error. Spec 2026-11-17 §5.2:
+/// <see cref="AiEnabled"/> dice si el tenant tiene el módulo <c>ai</c> y <see cref="Agents"/> son sus agentes con su estado; sin ellos, un
+/// bloque «Agente IA» no se puede publicar. Spec 2026-11-18: <see cref="MediaFiles"/> son los archivos de los bloques «Mensaje» que resolvieron
+/// para este tenant (id → tipo en minúscula); <c>null</c> = ninguno. Un id ausente, o con otro tipo, es <c>message.media_missing</c>.
+/// Spec 2026-11-19 (chatbot CRM action): <see cref="CustomersEnabled"/> and <see cref="PipelineEnabled"/> say whether the tenant has those
+/// modules; <see cref="CrmTagIds"/> is the tenant's tag catalog and <see cref="CrmOpenStageIds"/> the open stages of its pipeline
+/// (<c>null</c> = empty).
 /// </summary>
 public sealed record FlowValidationContext(
     IReadOnlySet<string> Channels, IReadOnlySet<Guid> ActiveExternalApis, IReadOnlySet<Guid> PausedExternalApis,
-    bool AllConnectionsHaveBusinessHours, IReadOnlySet<Guid> HandoffMembers);
+    bool AllConnectionsHaveBusinessHours, IReadOnlySet<Guid> HandoffMembers, bool AiEnabled = false, IReadOnlyList<FlowAgentRef>? Agents = null,
+    IReadOnlyDictionary<Guid, string>? MediaFiles = null, bool CustomersEnabled = false, bool PipelineEnabled = false,
+    IReadOnlySet<Guid>? CrmTagIds = null, IReadOnlySet<Guid>? CrmOpenStageIds = null);
 
 /// <summary>Los códigos de §4.3, más <c>node.output_unconnected_optional</c>, <c>list.channel_not_supported</c>, <c>buttons.id_invalid</c> y
 /// <c>list.row_id_invalid</c> del brief de la tarea 11 y su revisión.</summary>
@@ -69,6 +77,17 @@ public static class FlowIssueCodes
     public const string ListNoRows = "list.no_rows";
     public const string ListDynamicIncomplete = "list.dynamic_incomplete";
     public const string MessageUrlInvalid = "message.url_invalid";
+
+    // Spec 2026-11-18: el archivo de un bloque «Mensaje».
+
+    /// <summary>Error: el archivo no existe, no es de este tenant, no se terminó de subir o es de otro tipo.</summary>
+    public const string MessageMediaMissing = "message.media_missing";
+
+    /// <summary>Aviso: un audio no lleva pie; el texto sale en un mensaje aparte, después del audio.</summary>
+    public const string MessageAudioCaptionSeparate = "message.audio_caption_separate";
+
+    /// <summary>Aviso: un audio no lleva botón; el botón sale en un interactivo aparte, después del audio.</summary>
+    public const string MessageAudioButtonSeparate = "message.audio_button_separate";
     public const string HttpTimeoutInvalid = "http.timeout_invalid";
     public const string QuestionMaxAttemptsInvalid = "question.max_attempts_invalid";
     public const string QuestionPatternInvalid = "question.pattern_invalid";
@@ -86,4 +105,37 @@ public static class FlowIssueCodes
 
     /// <summary>Es del chatbot y no de un bloque: lo agrega el handler de publicar (<c>NodeId</c> nulo).</summary>
     public const string TriggerKeywordsEmpty = "trigger.keywords_empty";
+
+    // Spec 2026-11-17 (agente IA en chatbots) §5.2. ai_agent.not_first no existe: ningún disparador llega sin entrante y D-B7 cubre el
+    // arranque manual en ejecución (plan 2026-11-17, «Discrepancias» #1).
+
+    /// <summary>Error: el bloque no tiene agente, o el agente ya no existe en el tenant.</summary>
+    public const string AiAgentMissing = "ai_agent.agent_missing";
+
+    /// <summary>Error: el agente está en borrador.</summary>
+    public const string AiAgentNotPublished = "ai_agent.agent_not_published";
+
+    /// <summary>Aviso: el agente está pausado; el bloque saldrá por <c>error</c> mientras siga así (D-B18).</summary>
+    public const string AiAgentPaused = "ai_agent.agent_paused";
+
+    public const string AiAgentObjectiveMissing = "ai_agent.objective_missing";
+
+    public const string AiAgentIdleOutOfRange = "ai_agent.idle_out_of_range";
+
+    /// <summary>Error: el tenant no tiene el módulo <c>ai</c> (D-B16).</summary>
+    public const string AiAgentModuleDisabled = "ai_agent.module_disabled";
+
+    /// <summary>Error: una conexión del chatbot es de un canal donde el motor no corre (hoy Instagram, OB-2).</summary>
+    public const string AiAgentChannelNotSupported = "ai_agent.channel_not_supported";
+
+    // Spec 2026-11-19 (chatbot CRM action).
+
+    /// <summary>Error: the tag operation has no tag, or the tag is not in the tenant's catalog (also after an import into another tenant).</summary>
+    public const string CrmTagMissing = "crm.tag_missing";
+
+    /// <summary>Error: <c>moveDeal</c> has no stage, or the stage is not an open stage of the tenant's pipeline.</summary>
+    public const string CrmStageMissing = "crm.stage_missing";
+
+    /// <summary>Error: the operation needs a module the tenant does not have (tags: Customers; deals: Pipeline).</summary>
+    public const string CrmModuleOff = "crm.module_off";
 }

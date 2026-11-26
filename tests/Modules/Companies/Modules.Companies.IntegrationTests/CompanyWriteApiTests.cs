@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Companies.Application;
+using Npgsql;
 using static Modules.Companies.IntegrationTests.CompaniesApiHarness;
 
 namespace Modules.Companies.IntegrationTests;
@@ -22,6 +24,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "310 555 1122",
                 email = "Contacto@Andes.CO",
@@ -64,6 +68,8 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000456", bankName: "Davivienda", currency: "usd")
                 },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -116,7 +122,9 @@ public sealed class CompanyWriteApiTests
                     // dejaria pasar las dos.
                     BankAccount("  CTA-000123  ", bankName: " bancolombia ")
                 },
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -143,6 +151,8 @@ public sealed class CompanyWriteApiTests
                 name = "Otra Empresa S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "830.222.333-4",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -171,6 +181,8 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000123", bankName: "Davivienda")
                 },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -182,15 +194,15 @@ public sealed class CompanyWriteApiTests
         Assert.Equal(2, company.BankAccounts.Count);
     }
 
-    // Una empresa sin ninguna cuenta no es un estado valido: AccountNumber era NOT NULL antes de
-    // EMP-08 y el modulo no baja esa garantia de paso. La lista vacia es lo que produce quitar la
-    // ultima fila del formulario, asi que el 422 tiene que ser explicito y con su campo marcado.
+    // Spec 2026-11-17 §4.1 y §5.1: una empresa puede existir sin cuentas, y sin "chargesVat" en el
+    // cuerpo cobra IVA, para que un frontend que todavía no manda el campo no lo apague.
     [Fact]
-    public async Task CreateWithoutAnyAccountIsRejected()
+    public async Task CreatesACompanyWithoutBankAccountsThatChargesVatByDefault()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
 
         var response = await client.PostAsJsonAsync(
             CompaniesUrl(),
@@ -198,12 +210,83 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = Array.Empty<object>(),
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
+                cityId,
             },
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Contains("BankAccounts", await ValidationFieldsAsync(response));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var company = await response.Content.ReadFromJsonAsync<CompanyResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(company);
+        Assert.True(company.ChargesVat);
+        Assert.Empty(company.BankAccounts);
+    }
+
+    // Ausente en el PUT conserva lo guardado: un frontend viejo no puede prender el IVA que el
+    // nuevo apagó (decisión del plan 2026-11-17).
+    [Fact]
+    public async Task UpdateWithoutChargesVatKeepsTheStoredValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+        var created = await client.PostAsJsonAsync(
+            CompaniesUrl(),
+            new
+            {
+                name = "Andes Logistica S.A.S.",
+                bankAccounts = Array.Empty<object>(),
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
+                cityId,
+                chargesVat = false,
+            },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var company = await created.Content.ReadFromJsonAsync<CompanyResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(company);
+        Assert.False(company.ChargesVat);
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{company.Id}",
+            new
+            {
+                name = "Andes Logistica S.A.S.",
+                bankAccounts = Array.Empty<object>(),
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
+                cityId,
+            },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+
+        var reread = await client.GetFromJsonAsync<CompanyResponse>(
+            $"{CompaniesUrl()}/{company.Id}",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(reread);
+        Assert.False(reread.ChargesVat);
+    }
+
+    [Fact]
+    public async Task TheListReturnsChargesVat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123");
+
+        var body = await client.GetStringAsync(CompaniesUrl(), TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(body);
+        var item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+        Assert.True(item.GetProperty("chargesVat").GetBoolean());
     }
 
     // La lista ausente del JSON llega como null y no como lista vacia. Sin la regla NotEmpty
@@ -238,7 +321,9 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes",
                 bankAccounts = new[] { BankAccount("CTA-1") },
-                taxId = "900-1"
+                taxId = "900-1",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -289,6 +374,8 @@ public sealed class CompanyWriteApiTests
                 name = "",
                 bankAccounts = new[] { BankAccount("CTA-1") },
                 taxId = "",
+                country = "CO",
+                documentType = "NIT",
                 email = "no-es-un-correo"
             },
             TestContext.Current.CancellationToken);
@@ -326,7 +413,9 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000456", currency: "PESOS"),
                     BankAccount("CTA-000789", bankName: "")
                 },
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -353,6 +442,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123", currency: "eur") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -377,7 +468,9 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123", currency: "MXN") },
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -403,6 +496,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "",
                 email = "",
@@ -443,6 +538,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -481,6 +578,8 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000789", bankName: "BBVA")
                 },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -496,6 +595,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000456", bankName: "Davivienda") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -517,12 +618,13 @@ public sealed class CompanyWriteApiTests
     }
 
     [Fact]
-    public async Task UpdateWithoutAnyAccountIsRejected()
+    public async Task UpdateCanRemoveEveryAccount()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        var created = await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123");
+        var cityId = await EnsureCityIdAsync(client);
+        var created = await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123", cityId: cityId);
 
         var response = await client.PutAsJsonAsync(
             $"{CompaniesUrl()}/{created.Id}",
@@ -530,20 +632,19 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = Array.Empty<object>(),
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
+                cityId,
             },
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-
-        // El rechazo no puede haber dejado la empresa sin cuentas. Update muta en el sitio, asi que
-        // vaciar la coleccion antes de validar dejaria este GET devolviendo una lista vacia aunque
-        // el 422 diga que no se guardo nada.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var reread = await client.GetFromJsonAsync<CompanyResponse>(
             $"{CompaniesUrl()}/{created.Id}",
             TestContext.Current.CancellationToken);
         Assert.NotNull(reread);
-        Assert.Equal("CTA-000123", Assert.Single(reread.BankAccounts).AccountNumber);
+        Assert.Empty(reread.BankAccounts);
     }
 
     [Fact]
@@ -561,6 +662,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes",
                 bankAccounts = new[] { BankAccount("CTA-1") },
                 taxId = "900-1",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -586,6 +689,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -615,10 +720,412 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Robada",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
-                taxId = "900-1"
+                taxId = "900-1",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // ---- Pais y tipo de documento (spec 2026-11-07, §6) ----
+
+    [Fact]
+    public async Task PostSpanishCompanyWithNif()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, SpanishBody());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var json = await ReadJsonAsync(response);
+        Assert.Equal("ES", json.RootElement.GetProperty("country").GetString());
+        Assert.Equal("NIF", json.RootElement.GetProperty("documentType").GetString());
+        Assert.Equal("Madrid", json.RootElement.GetProperty("cityName").GetString());
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("city").ValueKind);
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("department").ValueKind);
+    }
+
+    [Fact]
+    public async Task PostColombiaWithoutCityId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = "CO",
+            documentType = "NIT"
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityId", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task PostSpainWithNit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Iberia S.L.",
+            bankAccounts = new[] { BankAccount("ES-000123") },
+            taxId = "B12345678",
+            country = "ES",
+            documentType = "NIT",
+            cityName = "Madrid"
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("DocumentType", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task PostUsWithoutCityName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Acme Inc.",
+            bankAccounts = new[] { BankAccount("US-000123") },
+            taxId = "12-3456789",
+            country = "US",
+            documentType = "TAX_ID"
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityName", await ValidationFieldsAsync(response));
+    }
+
+    // La ventana del frontend viejo se cerró el 2026-11-08 (decisión del owner): un cuerpo sin
+    // país ni tipo de documento ya no se resuelve a Colombia/NIT ni al país guardado, se rechaza
+    // con el mapa de errores en los dos campos.
+    [Fact]
+    public async Task PostWithoutCountryOrDocumentTypeIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            cityId
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("Country", fields);
+        Assert.Contains("DocumentType", fields);
+    }
+
+    [Fact]
+    public async Task PutWithoutCountryOrDocumentTypeIsRejectedAndLeavesTheCompanyUnchanged()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await CreateSpanishAsync(client);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{created}",
+            new
+            {
+                name = "Iberia Renombrada S.L.",
+                bankAccounts = new[] { BankAccount("ES-000123") },
+                taxId = "B12345678",
+                cityName = "Madrid"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("Country", fields);
+        Assert.Contains("DocumentType", fields);
+
+        var stored = await client.GetAsync(
+            $"{CompaniesUrl()}/{created}", TestContext.Current.CancellationToken);
+        using var json = await ReadJsonAsync(stored);
+        Assert.Equal("Iberia S.L.", json.RootElement.GetProperty("name").GetString());
+        Assert.Equal("ES", json.RootElement.GetProperty("country").GetString());
+        Assert.Equal("NIF", json.RootElement.GetProperty("documentType").GetString());
+    }
+
+    [Fact]
+    public async Task PutColombiaToUsClearsCityIdInTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await CreateCompanyAsync(client, "Andes S.A.S.", "CTA-000123");
+
+        var response = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{created.Id}",
+            new
+            {
+                name = "Andes Inc.",
+                bankAccounts = new[] { BankAccount("CTA-000123") },
+                taxId = "12-3456789",
+                country = "US",
+                documentType = "TAX_ID",
+                cityName = "Miami"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var select = new NpgsqlCommand(
+            "SELECT city_id FROM companies.companies WHERE id = @id", connection);
+        select.Parameters.AddWithValue("id", created.Id);
+        var cityId = await select.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        Assert.True(cityId is null or DBNull);
+    }
+
+    [Fact]
+    public async Task PutUsToColombiaWithoutCityId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await CreateUsAsync(client);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{created}",
+            new
+            {
+                name = "Acme Inc.",
+                bankAccounts = new[] { BankAccount("US-000123") },
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityId", await ValidationFieldsAsync(response));
+    }
+
+    // El pais llega en cualquier caja o con espacios; el validador y el dominio lo normalizan, y la
+    // busqueda de ciudad del handler tiene que coincidir con ellos.
+    [Fact]
+    public async Task PostLowerCaseColombiaWithUnknownCityIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = "co",
+            documentType = "NIT",
+            cityId = Guid.CreateVersion7()
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "companies.company.city_not_found",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task PostPaddedLowerCaseColombiaResolvesTheCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = " co ",
+            documentType = "NIT",
+            cityId
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var json = await ReadJsonAsync(response);
+        Assert.Equal("CO", json.RootElement.GetProperty("country").GetString());
+        Assert.NotEqual(JsonValueKind.Null, json.RootElement.GetProperty("city").ValueKind);
+        Assert.NotEqual(JsonValueKind.Null, json.RootElement.GetProperty("department").ValueKind);
+    }
+
+    // ---- Region (provincia guardada, spec 2026-11-23) ----
+    //
+    // Toda lectura de `region` sale del JSON de la respuesta HTTP, no del DTO: el Response mapea a mano y se come en
+    // silencio un campo nuevo.
+
+    private static object SpanishBodyWithRegion(Guid? regionId, string country = "ES", string documentType = "NIF") => new
+    {
+        name = "Iberia S.L.",
+        bankAccounts = new[] { BankAccount("ES-000123") },
+        taxId = "B12345678",
+        country,
+        documentType,
+        cityName = "Madrid",
+        regionId
+    };
+
+    [Fact]
+    public async Task ForeignCompanyRoundTripsRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var created = await PostRawAsync(client, SpanishBodyWithRegion(madrid));
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using var createdJson = await ReadJsonAsync(created);
+        var companyId = createdJson.RootElement.GetProperty("id").GetGuid();
+        Assert.Equal(madrid, createdJson.RootElement.GetProperty("region").GetProperty("id").GetGuid());
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{CompaniesUrl()}/{companyId}", TestContext.Current.CancellationToken);
+        var region = json.GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task UpdatingWithoutRegionClearsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+        var created = await PostRawAsync(client, SpanishBodyWithRegion(madrid));
+        using var createdJson = await ReadJsonAsync(created);
+        var companyId = createdJson.RootElement.GetProperty("id").GetGuid();
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{companyId}", SpanishBodyWithRegion(regionId: null), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{CompaniesUrl()}/{companyId}", TestContext.Current.CancellationToken);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("region").ValueKind);
+    }
+
+    [Fact]
+    public async Task ColombianCompanyWithRegionIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = "CO",
+            documentType = "NIT",
+            cityId,
+            regionId = madrid
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("RegionId", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task RegionOfAnotherCountryIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await PostRawAsync(client, SpanishBodyWithRegion(madrid, country: "FR", documentType: "TAX_ID"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "companies.company.region_invalid",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+    }
+
+    // GET /countries/CO/regions devuelve departamentos, asi que el frontend puede conservar uno al cambiar de pais.
+    [Fact]
+    public async Task DepartmentIdAsRegionIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var department = await ColombianDepartmentRegionIdAsync(client);
+
+        var response = await PostRawAsync(client, SpanishBodyWithRegion(department));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "companies.company.region_invalid",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+    }
+
+    private static object SpanishBody() => new
+    {
+        name = "Iberia S.L.",
+        bankAccounts = new[] { BankAccount("ES-000123") },
+        taxId = "B12345678",
+        country = "ES",
+        documentType = "NIF",
+        cityName = "Madrid"
+    };
+
+    private static Task<HttpResponseMessage> PostRawAsync(HttpClient client, object body) =>
+        client.PostAsJsonAsync(CompaniesUrl(), body, TestContext.Current.CancellationToken);
+
+    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response) =>
+        JsonDocument.Parse(await response.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken));
+
+    private static async Task<Guid> CreateSpanishAsync(HttpClient client)
+    {
+        var response = await PostRawAsync(client, SpanishBody());
+        response.EnsureSuccessStatusCode();
+        using var json = await ReadJsonAsync(response);
+        return json.RootElement.GetProperty("id").GetGuid();
+    }
+
+    private static async Task<Guid> CreateUsAsync(HttpClient client)
+    {
+        var response = await PostRawAsync(client, new
+        {
+            name = "Acme Inc.",
+            bankAccounts = new[] { BankAccount("US-000123") },
+            taxId = "12-3456789",
+            country = "US",
+            documentType = "TAX_ID",
+            cityName = "Miami"
+        });
+        response.EnsureSuccessStatusCode();
+        using var json = await ReadJsonAsync(response);
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 }

@@ -1,7 +1,7 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Localization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Modules.Identity.Application;
 using Modules.Notifications.Application;
@@ -18,6 +18,9 @@ namespace Modules.Notifications.Infrastructure.Messaging;
 /// cancelación. Cada worker concreto declara su consumidor, su evento y su plantilla, y arma su
 /// notificación en <see cref="DeliverAsync"/>.
 ///
+/// No es un hosted service (spec 2026-11-13, D-7): los trece consumidores son definiciones singleton que drena en
+/// secuencia un solo bucle, <see cref="NotificationsDeliveryWorker"/>. Antes cada uno sondeaba la base por su cuenta.
+///
 /// Garantía: dos réplicas nunca envían el mismo mensaje a la vez. Cada mensaje se reclama en el inbox
 /// propio con un lease (<see cref="InboxClaims"/>) antes de enviar. Queda un residual, el mismo de
 /// antes: si el proceso muere entre el envío y el guardado, el correo sale de nuevo cuando vence el
@@ -25,7 +28,7 @@ namespace Modules.Notifications.Infrastructure.Messaging;
 /// </summary>
 internal abstract partial class OutboxDeliveryWorker(
     IServiceScopeFactory scopeFactory,
-    ILogger logger) : BackgroundService
+    ILogger logger)
 {
     internal const int BatchSize = 20;
 
@@ -49,8 +52,8 @@ internal abstract partial class OutboxDeliveryWorker(
 
     protected abstract string TemplateRef { get; }
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Delivery tick of {Consumer} failed.")]
-    private static partial void LogTickFailed(ILogger logger, string consumer, Exception exception);
+    /// <summary>El consumidor, para el log del bucle cuando un drenado entero falla.</summary>
+    internal string ConsumerName => Consumer;
 
     [LoggerMessage(Level = LogLevel.Error,
         Message = "Outbox message {MessageId} failed in {Consumer}; it is retried when its lease expires.")]
@@ -68,33 +71,10 @@ internal abstract partial class OutboxDeliveryWorker(
     protected abstract Task<Notification> DeliverAsync(
         OutboxRecord record, DeliveryContext context, CancellationToken stoppingToken);
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
-            {
-                await DrainAsync(stoppingToken);
-            }
-            // Sólo el apagado sale del loop (A4). Un timeout del proveedor ya no llega hasta acá
-            // (ver SendAsync), y cualquier otra cancelación se loguea como un tick fallido.
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, Consumer, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
-
-    // `internal` y no `private`: es el punto de entrada que deja probar el reclamo y el aislamiento sin
-    // el PeriodicTimer de por medio (OutboxDeliveryWorkerTests, vía InternalsVisibleTo). Mismo
-    // precedente que ExportJobWorker.DrainAsync.
-    internal async Task DrainAsync(CancellationToken stoppingToken)
+    // Lo llama el bucle de NotificationsDeliveryWorker, y las pruebas directo (OutboxDeliveryWorkerTests, vía
+    // InternalsVisibleTo). Mismo precedente que ExportJobWorker.DrainAsync. Virtual sólo para que las pruebas del
+    // bucle cuenten drenados sin base. Devuelve true si el lote vino lleno: puede haber más (spec 2026-11-13, D-7).
+    internal virtual async Task<bool> DrainAsync(CancellationToken stoppingToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -104,7 +84,9 @@ internal abstract partial class OutboxDeliveryWorker(
             services.GetRequiredService<IUserDirectory>(),
             services.GetRequiredService<ITenantDirectory>(),
             services.GetRequiredService<ITenantClock>(),
-            services.GetRequiredService<IClock>());
+            services.GetRequiredService<IClock>(),
+            dbContext,
+            services.GetRequiredService<IUserPreferenceService>());
 
         // Candidatos: sin fila en el inbox, o con una reclamada y sin terminar cuyo lease venció.
         var now = context.Clock.UtcNow;
@@ -142,6 +124,8 @@ internal abstract partial class OutboxDeliveryWorker(
                 dbContext.ChangeTracker.Clear();
             }
         }
+
+        return candidates.Count == BatchSize;
     }
 
     /// <summary>
@@ -207,6 +191,19 @@ internal abstract partial class OutboxDeliveryWorker(
         return EmailRegionalFormats.For(calendar.TimeZone, settings);
     }
 
+    /// <summary>
+    /// El idioma del correo para un miembro del tenant (spec 2026-11-22, i18n): el que eligió en ese
+    /// tenant y, si no eligió, el del tenant. Es la misma regla de <c>/auth/me</c>
+    /// (<see cref="SupportedLanguages.Effective"/>), así que el correo y la pantalla no discrepan.
+    /// </summary>
+    protected static async Task<string> ResolveLanguageAsync(
+        DeliveryContext context, Guid tenantId, Guid userId, CancellationToken stoppingToken)
+    {
+        var chosen = await context.Preferences.GetLanguagesAsync(userId, [tenantId], stoppingToken);
+        var settings = await context.TenantDirectory.GetRegionalSettingsAsync(new TenantId(tenantId), stoppingToken);
+        return SupportedLanguages.Effective(chosen.GetValueOrDefault(tenantId), settings?.Language);
+    }
+
     private async Task ProcessAsync(
         NotificationsDbContext dbContext,
         DeliveryContext context,
@@ -244,15 +241,27 @@ internal abstract partial class OutboxDeliveryWorker(
             CancellationToken.None);
         entry.ProcessedAt = context.Clock.UtcNow;
         dbContext.Notifications.Add(notification);
+        await BeforeSaveAsync(dbContext, notification, CancellationToken.None);
         await dbContext.SaveChangesAsync(CancellationToken.None);
     }
+
+    /// <summary>
+    /// Último paso antes del guardado de la notificación y el processed_at: lo que se cambie acá en el
+    /// change tracker entra en el mismo SaveChanges. Por defecto no hace nada.
+    /// </summary>
+    protected virtual Task BeforeSaveAsync(
+        NotificationsDbContext dbContext, Notification notification, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }
 
 /// <summary>Lo que un worker concreto necesita para armar y mandar su correo, resuelto en el scope del
-/// tick.</summary>
+/// tick. <paramref name="Database"/> es el mismo contexto del reclamo y del guardado: sólo para leer
+/// antes de enviar (los correos del comprador miran si la cuenta ya se borró).</summary>
 internal sealed record DeliveryContext(
     IEmailChannel Channel,
     IUserDirectory UserDirectory,
     ITenantDirectory TenantDirectory,
     ITenantClock TenantClock,
-    IClock Clock);
+    IClock Clock,
+    NotificationsDbContext Database,
+    IUserPreferenceService Preferences);

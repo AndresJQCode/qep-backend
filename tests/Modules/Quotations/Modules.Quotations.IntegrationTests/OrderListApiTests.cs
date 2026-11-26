@@ -13,7 +13,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// Cliente, asesora, moneda y totales viven en la cotizacion de origen y el pedido no los repite,
 /// asi que cada fila los trae ya resueltos: sin eso, quien pinta la tabla hace un GET por fila.
 /// </summary>
-public sealed class OrderListApiTests
+public sealed class OrderListApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -21,8 +21,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByClientAndSourceOnTheOrderItself()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -76,7 +75,7 @@ public sealed class OrderListApiTests
         // y el respaldo se recorren punta a punta en QuotationAdvisorNameApiTests (spec 2026-09-11,
         // D1, nota del 2026-09-15).
         Assert.NotNull(row.AdvisorName);
-        Assert.Equal("Pending", row.Status);
+        Assert.Equal("Open", row.Status);
         Assert.Equal("PaymentPending", row.PaymentStatus);
         Assert.Equal(quotation.Currency, row.Currency);
         Assert.Equal(quotation.Total, row.Total);
@@ -87,8 +86,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListReturnsEveryOrderOfTheTenantNewestFirst()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -111,8 +109,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByOrderNumberAsPartialText()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -135,8 +132,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByClientCuc()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -158,26 +154,25 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByStatus()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
-        var approved = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var approvedOrder = await ConvertToOrderAsync(client, tenantId, approved.Id);
+        var archived = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var archivedOrder = await ConvertToOrderAsync(client, tenantId, archived.Id);
         (await client.PostAsync(
-            $"{OrdersUrl(tenantId)}/{approvedOrder.Id}/approve",
+            $"{OrdersUrl(tenantId)}/{archivedOrder.Id}/archive",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
-        var pending = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        await ConvertToOrderAsync(client, tenantId, pending.Id);
+        var open = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ConvertToOrderAsync(client, tenantId, open.Id);
 
         var page = await client.GetFromJsonAsync<OrdersPageResponse>(
-            $"{OrdersUrl(tenantId)}?status=Approved", TestContext.Current.CancellationToken);
+            $"{OrdersUrl(tenantId)}?status=Open", TestContext.Current.CancellationToken);
 
         Assert.NotNull(page);
-        Assert.Equal(approved.Id, Assert.Single(page.Items).QuotationId);
+        Assert.Equal(open.Id, Assert.Single(page.Items).QuotationId);
     }
 
     // Un estado que no existe es un 422 con codigo de dominio, no un filtro que en silencio no
@@ -185,8 +180,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListRejectsAnUnknownStatus()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -203,8 +197,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListRequiresThePermissionToReadOrders()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [QuotationsPermissions.QuotationRead]);
         using var _ = client;
@@ -221,8 +214,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task GetReturnsTheOrderWithItsQuotationComposed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -236,7 +228,7 @@ public sealed class OrderListApiTests
         Assert.NotNull(detail);
         Assert.Equal(order.Id, detail.Order.Id);
         Assert.Equal(order.OrderNumber, detail.Order.OrderNumber);
-        Assert.Equal("Pending", detail.Order.Status);
+        Assert.Equal("Open", detail.Order.Status);
         // El detalle llega compuesto (spec 2026-10-15 §6.2): cliente resuelto, líneas con el nombre
         // del producto y la cotización de origen sólo como referencia.
         Assert.Equal(quotation.Id, detail.SourceQuotation?.Id);
@@ -250,8 +242,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task GetAnUnknownOrderIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -291,10 +282,11 @@ public sealed class OrderListApiTests
         Assert.Equal(0, nextDay.Total);
     }
 
-    // Pedido del owner, 2026-10-15: convertido a la 01:00 del 15 en Madrid (23:00 UTC del 14, todavía
-    // el 14 en Bogotá). Quien filtra el 15 desde Madrid lo ve; sin zona, el día sigue siendo el del tenant.
+    // Convertido a la 01:00 del 15 en Madrid (23:00 UTC del 14, todavía el 14 en Bogotá). Desde el spec 2026-11-16 §4 el
+    // filtro corta por la fecha del pedido, que es un día del tenant: la zona de quien filtra ya no lo mueve (antes, desde
+    // Madrid, entraba en el 15). La zona se sigue validando.
     [Fact]
-    public async Task ListFiltersTheConversionRangeByTheDayOfWhoeverFilters()
+    public async Task ListFiltersByTheOrderDateWhateverTheZoneOfWhoeverFilters()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(
@@ -306,22 +298,203 @@ public sealed class OrderListApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         await ConvertToOrderAsync(client, tenantId, quotation.Id);
 
-        var inMadrid = await client.GetFromJsonAsync<OrdersPageResponse>(
+        var fifteenInMadrid = await client.GetFromJsonAsync<OrdersPageResponse>(
             $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15&timeZone=Europe%2FMadrid",
             TestContext.Current.CancellationToken);
-        var inTheTenantsDay = await client.GetFromJsonAsync<OrdersPageResponse>(
-            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15",
+        var fourteenInMadrid = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-14&convertedTo=2026-10-14&timeZone=Europe%2FMadrid",
             TestContext.Current.CancellationToken);
         var notAZone = await client.GetAsync(
             $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15&timeZone=Marte",
             TestContext.Current.CancellationToken);
 
-        Assert.NotNull(inMadrid);
-        Assert.Equal(quotation.Id, Assert.Single(inMadrid.Items).QuotationId);
-        Assert.NotNull(inTheTenantsDay);
-        Assert.Empty(inTheTenantsDay.Items);
+        Assert.NotNull(fifteenInMadrid);
+        Assert.Empty(fifteenInMadrid.Items);
+        Assert.NotNull(fourteenInMadrid);
+        Assert.Equal(quotation.Id, Assert.Single(fourteenInMadrid.Items).QuotationId);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, notAZone.StatusCode);
         Assert.Contains("order.time_zone_invalid", await notAZone.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-16 §4: convertedFrom/convertedTo conservan el nombre pero cortan por la fecha del pedido, inclusive en
+    // las dos puntas. Un pedido creado hoy y movido al 31 de octubre entra en octubre; el otro, de hoy, no.
+    [Fact]
+    public async Task TheDateFilterUsesTheOrderDate()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var moved = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await MoveOrderDateAsync(client, tenantId, moved.Id, new DateOnly(2026, 10, 31));
+
+        var october = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-01&convertedTo=2026-10-31", TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(october!.Items);
+        Assert.Equal((moved.Id, new DateOnly(2026, 10, 31)), (row.Id, row.OrderDate));
+        Assert.Equal(1, october.Total);
+    }
+
+    // Spec 2026-11-16 §5: la lista ordena por la fecha del pedido y, dentro del mismo día, por el instante de creación. El
+    // segundo pedido se creó después, pero movido al 31 de octubre queda detrás del primero.
+    [Fact]
+    public async Task TheListIsSortedByOrderDate()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var first = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        var second = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await MoveOrderDateAsync(client, tenantId, second.Id, new DateOnly(2026, 10, 31));
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal([first.Id, second.Id], page!.Items.Select(row => row.Id).ToArray());
+    }
+
+    // Spec 2026-11-10 §5, como Shopify: sin filtro de estado el listado no trae archivados; filtrarlos los muestra.
+    [Fact]
+    public async Task TheDefaultListHidesArchivedOrders()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var archived = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        var open = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await PostActionAsync(client, tenantId, archived.Id, "archive");
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+        var archivedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?status=Archived", TestContext.Current.CancellationToken);
+
+        Assert.Equal((1, open.Id), (page!.Total, Assert.Single(page.Items).Id));
+        Assert.Equal(archived.Id, Assert.Single(archivedPage!.Items).Id);
+    }
+
+    [Fact]
+    public async Task FilteringByFulfillmentAndInvoiced()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
+        using var _ = client;
+        var prepared = await CreatePaidOrderAsync(client, factory, tenantId);
+        var invoiced = await CreatePaidOrderAsync(client, factory, tenantId);
+        await CreatePaidOrderAsync(client, factory, tenantId);
+        await PostActionAsync(client, tenantId, prepared.Id, "prepare");
+        await PostActionAsync(client, tenantId, invoiced.Id, "invoice");
+
+        var preparedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?fulfillmentStatus=Prepared", TestContext.Current.CancellationToken);
+        var invoicedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?invoiced=true", TestContext.Current.CancellationToken);
+        var notInvoicedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?invoiced=false", TestContext.Current.CancellationToken);
+
+        var preparedRow = Assert.Single(preparedPage!.Items);
+        Assert.Equal((prepared.Id, "Prepared"), (preparedRow.Id, preparedRow.FulfillmentStatus));
+        var invoicedRow = Assert.Single(invoicedPage!.Items);
+        Assert.Equal((invoiced.Id, true), (invoicedRow.Id, invoicedRow.Invoiced));
+        Assert.Equal(2, notInvoicedPage!.Total);
+        Assert.DoesNotContain(notInvoicedPage.Items, row => row.Id == invoiced.Id);
+    }
+
+    // Anti-meta §2: archivar no borra la marca de facturado; el archivado se sigue encontrando por ella.
+    [Fact]
+    public async Task AnInvoicedArchivedOrderStillReadsAsInvoiced()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
+        using var _ = client;
+        var order = await CreatePaidOrderAsync(client, factory, tenantId);
+        await CreatePaidOrderAsync(client, factory, tenantId);
+        await PostActionAsync(client, tenantId, order.Id, "invoice");
+        await PostActionAsync(client, tenantId, order.Id, "archive");
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?status=Archived&invoiced=true", TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page!.Items);
+        Assert.Equal((order.Id, "Archived", true), (row.Id, row.Status, row.Invoiced));
+    }
+
+    [Fact]
+    public async Task AnUnknownFulfillmentOrInvoicedFilterIs422()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+
+        var fulfillment = await client.GetAsync(
+            $"{OrdersUrl(tenantId)}?fulfillmentStatus=Shipped", TestContext.Current.CancellationToken);
+        var invoiced = await client.GetAsync($"{OrdersUrl(tenantId)}?invoiced=yes", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, fulfillment.StatusCode);
+        Assert.Equal(
+            "order.order.fulfillment_status_invalid",
+            (await fulfillment.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken))!.Code);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invoiced.StatusCode);
+        Assert.Equal(
+            "order.order.invoiced_invalid",
+            (await invoiced.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken))!.Code);
+    }
+
+    [Fact]
+    public async Task TheListRowCarriesFulfillmentAndInvoiced()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page!.Items);
+        Assert.Equal(("Open", "NotPrepared", false), (row.Status, row.FulfillmentStatus, row.Invoiced));
+    }
+
+    /// <summary>Un pedido con un comprobante por el neto, marcado como pagado: facturar exige pago completo por defecto.</summary>
+    private static async Task<OrderResponse> CreatePaidOrderAsync(HttpClient client, QepApiFactory factory, Guid tenantId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest(null, [new OrderPaymentProofRequest(fileId, quotation.NetTotal)]),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return await PostActionAsync(client, tenantId, order.Id, "mark-paid");
+    }
+
+    private static async Task<OrderResponse> PostActionAsync(HttpClient client, Guid tenantId, Guid orderId, string action)
+    {
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{orderId}/{action}", content: null, TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"{action}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
     }
 
     /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el
@@ -331,7 +504,7 @@ public sealed class OrderListApiTests
     {
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotationId}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(

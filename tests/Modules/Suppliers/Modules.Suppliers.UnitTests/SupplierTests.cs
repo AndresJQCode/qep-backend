@@ -329,6 +329,19 @@ public sealed class SupplierTests
             CodeOf(() => Create(Data(identificationType: "RUT"))));
     }
 
+    // Un mayorista puede ser de cualquier país: el proveedor vinculado acepta los siete códigos de documento del producto.
+    [Theory]
+    [InlineData("NIF", IdentificationType.Nif)]
+    [InlineData("NIE", IdentificationType.Nie)]
+    [InlineData("TAX_ID", IdentificationType.TaxId)]
+    public void IdentificationTypeParserAcceptsTheForeignDocumentTypes(string wire, IdentificationType expected)
+    {
+        Assert.Equal(expected, IdentificationTypeParser.Parse(wire.ToLowerInvariant()));
+        Assert.Equal(wire, expected.ToWire());
+        Assert.Contains(wire, IdentificationTypeParser.SupportedWireValues);
+        Assert.Equal(expected, Create(Data(identificationType: wire)).Identification.Type);
+    }
+
     [Fact]
     public void IdentificationNumberKeepsDotsAndDashesAndRejectsOver32()
     {
@@ -356,4 +369,117 @@ public sealed class SupplierTests
         Assert.Equal(
             "suppliers.supplier.email_invalid",
             CodeOf(() => Create(Data(email: "no-es-correo"))));
+
+    // Spec 2026-11-17 (mayorista), D-8: el proveedor que representa a un mayorista en QEP.
+    private static readonly Guid Wholesaler = Guid.Parse("01900000-0000-7000-8000-0000000000aa");
+
+    [Fact]
+    public void CreateLinkedSetsTheLinkedTenant()
+    {
+        var supplier = Supplier.CreateLinked(TenantId, Wholesaler, Data(), Phones, Now);
+
+        Assert.Equal((Wholesaler, TenantId, 1, true), (supplier.LinkedTenantId, supplier.TenantId, supplier.Version, supplier.IsActive));
+        Assert.Equal("900.123.456-7", supplier.Identification.Number);
+        Assert.Null(Create().LinkedTenantId);
+    }
+
+    [Fact]
+    public void UpdateOfALinkedSupplierCannotChangeItsIdentification()
+    {
+        var supplier = Supplier.CreateLinked(TenantId, Wholesaler, Data(), Phones, Now);
+
+        Assert.Equal(
+            "suppliers.supplier.linked_identity_locked",
+            CodeOf(() => supplier.Update(Data(identificationNumber: "900.999.999-9"), Phones, Later)));
+        Assert.Equal(
+            "suppliers.supplier.linked_identity_locked",
+            CodeOf(() => supplier.Update(Data(identificationType: "CC"), Phones, Later)));
+        Assert.Equal((1, "900.123.456-7"), (supplier.Version, supplier.Identification.Number));
+
+        // Lo demás sigue libre, y el mismo documento con espacios alrededor no es un cambio.
+        supplier.Update(Data(name: "Distribuciones del Norte", identificationNumber: " 900.123.456-7 "), Phones, Later);
+
+        Assert.Equal(("Distribuciones del Norte", 2), (supplier.Name, supplier.Version));
+    }
+
+    [Fact]
+    public void UpdateOfAnUnlinkedSupplierStillChangesItsIdentification()
+    {
+        var supplier = Create();
+
+        supplier.Update(Data(identificationNumber: "900.999.999-9"), Phones, Later);
+
+        Assert.Equal("900.999.999-9", supplier.Identification.Number);
+    }
+
+    [Fact]
+    public void LinkToAnUnlinkedSupplierSetsTheLinkAndBumpsTheVersion()
+    {
+        var supplier = Create();
+
+        supplier.LinkTo(Wholesaler, Later);
+
+        Assert.Equal((Wholesaler, 2, Later), (supplier.LinkedTenantId, supplier.Version, supplier.UpdatedAt));
+    }
+
+    [Fact]
+    public void LinkToAnotherTenantThrowsLinkedElsewhere()
+    {
+        var supplier = Supplier.CreateLinked(TenantId, Wholesaler, Data(), Phones, Now);
+
+        Assert.Equal(
+            "suppliers.supplier.linked_elsewhere",
+            CodeOf(() => supplier.LinkTo(Guid.CreateVersion7(), Later)));
+        Assert.Equal((Wholesaler, 1), (supplier.LinkedTenantId, supplier.Version));
+    }
+
+    [Fact]
+    public void LinkToTheSameTenantIsANoOp()
+    {
+        var supplier = Supplier.CreateLinked(TenantId, Wholesaler, Data(), Phones, Now);
+
+        supplier.LinkTo(Wholesaler, Later);
+
+        Assert.Equal((Wholesaler, 1, Now), (supplier.LinkedTenantId, supplier.Version, supplier.UpdatedAt));
+    }
+
+    // ---- Region (provincia guardada, spec 2026-11-23) ----
+
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000e1");
+
+    [Fact]
+    public void ColombianSupplierWithRegionIsRejected() =>
+        Assert.Equal(
+            "suppliers.supplier.region_lane_invalid",
+            CodeOf(() => Create(Data() with { RegionId = MadridRegionId })));
+
+    [Fact]
+    public void ForeignSupplierKeepsRegion()
+    {
+        var supplier = Create(Data(country: "ES", cityName: "Madrid") with { RegionId = MadridRegionId });
+
+        Assert.Equal(MadridRegionId, supplier.RegionId);
+    }
+
+    [Fact]
+    public void UpdateWithoutRegionClearsIt()
+    {
+        var supplier = Create(Data(country: "ES", cityName: "Madrid") with { RegionId = MadridRegionId });
+
+        supplier.Update(Data(country: "ES", cityName: "Madrid"), Phones, Later);
+
+        Assert.Null(supplier.RegionId);
+    }
+
+    [Fact]
+    public void ColombianUpdateWithRegionIsRejectedAndLeavesTheSupplierUntouched()
+    {
+        var supplier = Create(Data(country: "ES", cityName: "Madrid") with { RegionId = MadridRegionId });
+
+        var code = CodeOf(() => supplier.Update(Data() with { RegionId = MadridRegionId }, Phones, Later));
+
+        Assert.Equal("suppliers.supplier.region_lane_invalid", code);
+        Assert.Equal(MadridRegionId, supplier.RegionId);
+        Assert.Equal("ES", supplier.Contact.Country);
+    }
 }

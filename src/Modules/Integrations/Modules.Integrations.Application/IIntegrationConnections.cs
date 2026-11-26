@@ -61,7 +61,12 @@ public sealed record ConnectionSummary(Guid Id, string ProviderKey, string Name)
 
 /// <summary>Nombre y estado de una conexión del proveedor, Active o no (spec 2026-10-09 §6.1): la
 /// bandeja muestra <c>connectionName</c> también en conversaciones de una conexión pausada.</summary>
-public sealed record ConnectionListing(Guid Id, string Name, ConnectionStatus Status);
+/// <param name="LastFailureCode">El último motivo de <c>NeedsAttention</c>, tal cual está guardado. Ojo: <c>MarkVerified</c> no lo
+/// limpia, así que en una conexión <c>Active</c> puede quedar un fallo viejo; quien lo muestre filtra por estado.</param>
+/// <param name="ProviderKey">De qué proveedor es: <see cref="IIntegrationConnections.ListByProvidersAsync"/> mezcla varios en una lista.
+/// Vacío por defecto para quien construye la fila a mano.</param>
+public sealed record ConnectionListing(
+    Guid Id, string Name, ConnectionStatus Status, string? LastFailureCode = null, string ProviderKey = "");
 
 /// <summary>
 /// Spec 2026-10-08, «Puertos para los consumidores». Cada consumidor declara su propio puerto en su
@@ -76,12 +81,27 @@ public interface IIntegrationConnections
     /// con "no hay conexión".</summary>
     Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Como <see cref="ResolveAsync"/>, pero también entrega una conexión <c>Paused</c>: es para <b>configurar</b> el consumidor
+    /// (leer listas del proveedor, vincular datos), nunca para operar. Pausar es dejar de operar, no dejar de configurar. Las demás guardas
+    /// no cambian: <c>NeedsAttention</c> sigue afuera, porque su credencial está rechazada.</summary>
+    Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Las Active de un proveedor, para que la pantalla del consumidor deje elegir una; vacío si el proveedor no
     /// es visible o no está habilitado para el tenant.</summary>
     Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
 
+    /// <summary>Las Active de un proveedor ya resueltas, en el orden de <see cref="ListActiveAsync"/>: lo mismo que daría
+    /// <see cref="ResolveAsync"/> con cada una, en una sola lectura de las conexiones. Vacío si el proveedor no es visible o no
+    /// está habilitado; una conexión con un secreto que no descifra se omite.</summary>
+    Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
+
     /// <summary>Todas las del proveedor en el tenant, por nombre; no filtra por estado, visibilidad ni habilitación.</summary>
     Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
+
+    /// <summary>Como <see cref="ListByProviderAsync"/>, pero de cualquiera de los proveedores y en una sola lectura: todas, por nombre
+    /// e id, sin agrupar por proveedor; cada fila dice el suyo en <see cref="ConnectionListing.ProviderKey"/>.</summary>
+    Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+        Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken);
 }
 
 public sealed class IntegrationConnections(
@@ -91,7 +111,14 @@ public sealed class IntegrationConnections(
     ITenantProviders tenantProviders,
     ISecretProtector protector) : IIntegrationConnections
 {
-    public async Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        ResolveAsync(tenantId, connectionId, allowPaused: false, cancellationToken);
+
+    public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        ResolveAsync(tenantId, connectionId, allowPaused: true, cancellationToken);
+
+    private async Task<ConnectionResolution> ResolveAsync(
+        Guid tenantId, Guid connectionId, bool allowPaused, CancellationToken cancellationToken)
     {
         var connection = await repository.FindAsync(tenantId, connectionId, cancellationToken);
         if (connection is null)
@@ -99,7 +126,9 @@ public sealed class IntegrationConnections(
             return ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null);
         }
 
-        if (connection.Status != ConnectionStatus.Active)
+        var usable = connection.Status == ConnectionStatus.Active
+            || (allowPaused && connection.Status == ConnectionStatus.Paused);
+        if (!usable)
         {
             return ConnectionResolution.Unusable(
                 connection.Status == ConnectionStatus.Paused
@@ -119,21 +148,27 @@ public sealed class IntegrationConnections(
             return ConnectionResolution.Unusable(ConnectionUnavailableReason.ProviderDisabled, connection.Name);
         }
 
-        var stored = ConnectionSecrets.Read(protector, connection);
-        if (stored.Unreadable.Count > 0)
-        {
-            return ConnectionResolution.Unusable(ConnectionUnavailableReason.SecretUnreadable, connection.Name);
-        }
-
-        return ConnectionResolution.Resolved(new ResolvedConnection(
-            connection.Id,
-            connection.ProviderKey,
-            connection.Name,
-            new Dictionary<string, string>(connection.Fields, StringComparer.Ordinal),
-            stored.Plain));
+        return Resolve(connection) is { } resolved
+            ? ConnectionResolution.Resolved(resolved)
+            : ConnectionResolution.Unusable(ConnectionUnavailableReason.SecretUnreadable, connection.Name);
     }
 
     public async Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(
+        Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
+        (await ListUsableAsync(tenantId, providerKey, cancellationToken))
+            .Select(connection => new ConnectionSummary(connection.Id, connection.ProviderKey, connection.Name))
+            .ToArray();
+
+    public async Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(
+        Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
+        (await ListUsableAsync(tenantId, providerKey, cancellationToken))
+            .Select(Resolve)
+            .OfType<ResolvedConnection>()
+            .ToArray();
+
+    /// <summary>Las Active del proveedor, por nombre e id, si es visible y está habilitado: las dos guardas de
+    /// <see cref="ResolveAsync"/> que no dependen de la conexión, preguntadas una vez para toda la lista.</summary>
+    private async Task<IReadOnlyList<IntegrationConnection>> ListUsableAsync(
         Guid tenantId, string providerKey, CancellationToken cancellationToken)
     {
         if (catalog.Find(providerKey) is not { } provider
@@ -148,16 +183,41 @@ public sealed class IntegrationConnections(
                 && string.Equals(connection.ProviderKey, provider.Key, StringComparison.Ordinal))
             .OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(connection => connection.Id)
-            .Select(connection => new ConnectionSummary(connection.Id, connection.ProviderKey, connection.Name))
             .ToArray();
     }
 
-    public async Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(
+    /// <summary>Descifra los secretos y arma la conexión; <c>null</c> si alguno no descifra.</summary>
+    private ResolvedConnection? Resolve(IntegrationConnection connection)
+    {
+        var stored = ConnectionSecrets.Read(protector, connection);
+        if (stored.Unreadable.Count > 0)
+        {
+            return null;
+        }
+
+        return new ResolvedConnection(
+            connection.Id,
+            connection.ProviderKey,
+            connection.Name,
+            new Dictionary<string, string>(connection.Fields, StringComparer.Ordinal),
+            stored.Plain);
+    }
+
+    public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(
         Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
-        (await repository.ListAsync(tenantId, cancellationToken))
-            .Where(connection => string.Equals(connection.ProviderKey, providerKey, StringComparison.Ordinal))
+        ListByProvidersAsync(tenantId, [providerKey], cancellationToken);
+
+    public async Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+        Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(providerKeys);
+        var keys = providerKeys.ToHashSet(StringComparer.Ordinal);
+        return (await repository.ListAsync(tenantId, cancellationToken))
+            .Where(connection => keys.Contains(connection.ProviderKey))
             .OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(connection => connection.Id)
-            .Select(connection => new ConnectionListing(connection.Id, connection.Name, connection.Status))
+            .Select(connection => new ConnectionListing(
+                connection.Id, connection.Name, connection.Status, connection.LastFailureCode, connection.ProviderKey))
             .ToArray();
+    }
 }

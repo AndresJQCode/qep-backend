@@ -23,10 +23,25 @@ public sealed record SupplierBankAccountPayload(string BankName, string AccountN
 public sealed record SupplierContactPayload(string Name, string? Role, string? Phone, string? Email);
 
 /// <summary>
+/// Spec 2026-11-17 (mayorista): el mayorista en QEP que este proveedor representa. Viaja resuelto (id y nombre) para que la
+/// ficha muestre «Mayorista en QEP: …» sin otra llamada; el nombre es el vigente del tenant, no una copia guardada.
+/// </summary>
+public sealed record SupplierLinkedTenantDto(Guid Id, string Name);
+
+/// <summary>
+/// La región (provincia) de un proveedor de afuera, ya resuelta (spec 2026-11-23). Colombia no la usa: su departamento sale
+/// de <see cref="SupplierDepartmentDto"/>.
+/// </summary>
+public sealed record SupplierRegionDto(Guid Id, string Name);
+
+/// <summary>
 /// El detalle completo; lo devuelven GET, POST, PUT, activate y deactivate para que la ficha no
 /// tenga que volver a pedirlo tras guardar. La ciudad viaja resuelta (<c>city</c>/<c>department</c>)
 /// en Colombia y como texto (<c>cityName</c>) fuera de ella; los opcionales vuelven siempre como
-/// <c>null</c>, nunca ausentes.
+/// <c>null</c>, nunca ausentes. <c>LinkedTenant</c> es el mayorista en QEP; el nombre es el vigente. Lo fija sólo la
+/// aceptación de una invitación, nunca el cuerpo de POST o PUT. <c>LinkedRelationshipStatus</c> (mayorista fase 3, adenda) es
+/// el estado de la relación con ese mayorista (<c>Active</c>, <c>Blocked</c>, <c>Invited</c>), o <c>null</c> sin mayorista o sin
+/// relación: con <c>Blocked</c> la pantalla no pide el catálogo y explica por qué.
 /// </summary>
 public sealed record SupplierResponse(
     Guid Id,
@@ -48,7 +63,10 @@ public sealed record SupplierResponse(
     IReadOnlyList<SupplierContactPayload> Contacts,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    SupplierLinkedTenantDto? LinkedTenant,
+    string? LinkedRelationshipStatus,
+    SupplierRegionDto? Region = null);
 
 /// <summary>Sólo banco y número: la grilla muestra dónde pagarle, no la moneda de cada cuenta (como en Empresas).</summary>
 public sealed record SupplierListBankAccount(string BankName, string AccountNumber);
@@ -56,7 +74,9 @@ public sealed record SupplierListBankAccount(string BankName, string AccountNumb
 /// <summary>
 /// El subconjunto que pinta la grilla. <c>City</c> es un solo texto —el nombre DIVIPOLA o la
 /// ciudad escrita— porque la grilla no distingue de dónde viene; el servidor lo resuelve para
-/// que el navegador no tenga que combinar dos campos.
+/// que el navegador no tenga que combinar dos campos. <c>IsLinked</c> basta para la marca de la fila: el nombre del mayorista
+/// está en el detalle, y resolverlo por fila sería una consulta más a Tenancy por página. <c>LinkedRelationshipStatus</c> es el
+/// del detalle, resuelto en una consulta por página.
 /// </summary>
 public sealed record SupplierListItemResponse(
     Guid Id,
@@ -69,7 +89,9 @@ public sealed record SupplierListItemResponse(
     string? Category,
     int PaymentTermDays,
     IReadOnlyList<SupplierListBankAccount> BankAccounts,
-    bool IsActive);
+    bool IsActive,
+    bool IsLinked,
+    string? LinkedRelationshipStatus);
 
 /// <summary>La página de la lista con el total que la grilla necesita para paginar.</summary>
 public sealed record SuppliersResponse(
@@ -102,7 +124,8 @@ public sealed record SupplierWriteRequest(
     string? Category,
     string? Notes,
     IReadOnlyList<SupplierBankAccountPayload> BankAccounts,
-    IReadOnlyList<SupplierContactPayload> Contacts);
+    IReadOnlyList<SupplierContactPayload> Contacts,
+    Guid? RegionId = null);
 
 /// <summary>
 /// La respuesta de <c>POST .../suppliers/export</c>. Confirma que el archivo se generó y se subió,

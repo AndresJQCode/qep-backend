@@ -22,7 +22,7 @@ public sealed record ClaimedRecipient(
     Guid Id,
     Guid CampaignId,
     Guid TenantId,
-    Guid CustomerId,
+    Guid? CustomerId,
     string CustomerName,
     string? WaId,
     string? UserId,
@@ -256,7 +256,8 @@ public sealed partial class CampaignDispatcher(
 
         // R6 y R7: el consentimiento vigente al momento de enviar. Vale la categoría guardada al lanzar o la que el catálogo tiene ahora:
         // si cualquiera de las dos es MARKETING, el opt-out excluye. Antes de PrepareAsync, para no dejar un mensaje a medias.
-        if (IsMarketing(recipient.TemplateCategory) || IsMarketing(template.Category))
+        // Un destinatario sin cliente se salta con cualquier categoría: el abridor de conversación exige una ficha.
+        if (recipient.CustomerId is null || IsMarketing(recipient.TemplateCategory) || IsMarketing(template.Category))
         {
             if (await LateSkipReasonAsync(recipient, cancellationToken) is { } reason)
             {
@@ -272,7 +273,8 @@ public sealed partial class CampaignDispatcher(
             return;
         }
 
-        var built = TemplateCatalog.BuildSend(template, await ResolveValuesAsync(recipient, cancellationToken));
+        // Spec 2026-11-17: la imagen fija guardada de la plantilla, leída del catálogo al enviar.
+        var built = TemplateCatalog.BuildSend(template, await ResolveValuesAsync(recipient, cancellationToken), TemplateCatalog.StoredHeaderOf(template));
 
         var prepared = await store.PrepareAsync(recipient, built.Text, built.DetailsJson, clock.UtcNow, cancellationToken);
         if (prepared is null)
@@ -290,7 +292,13 @@ public sealed partial class CampaignDispatcher(
     /// <summary>Misma precedencia que el congelado (<see cref="Seed"/>): sin ficha no hay a quién escribirle, luego inactivo, luego opt-out.</summary>
     private async Task<string?> LateSkipReasonAsync(ClaimedRecipient recipient, CancellationToken cancellationToken)
     {
-        var contact = await customers.FindContactAsync(recipient.TenantId, recipient.CustomerId, cancellationToken);
+        // Sin cliente (borrado después de congelar la audiencia) no hay ficha que consultar ni a quién abrirle conversación.
+        if (recipient.CustomerId is not { } customerId)
+        {
+            return CampaignFailureCodes.Unreachable;
+        }
+
+        var contact = await customers.FindContactAsync(recipient.TenantId, customerId, cancellationToken);
         return contact is null ? CampaignFailureCodes.Unreachable
             : !contact.IsActive ? CampaignFailureCodes.Inactive
             : contact.MarketingOptOut ? CampaignFailureCodes.OptedOut
@@ -378,7 +386,7 @@ public sealed partial class CampaignDispatcher(
         else if (code == MetaErrorCodes.MarketingOptOut)
         {
             // Decisión 10: Meta avisa que la persona apagó el marketing; queda en su ficha.
-            await customers.MarkMarketingOptOutAsync(recipient.TenantId, recipient.CustomerId, CancellationToken.None);
+            await customers.MarkMarketingOptOutAsync(recipient.TenantId, recipient.CustomerId!.Value, CancellationToken.None);
         }
     }
 

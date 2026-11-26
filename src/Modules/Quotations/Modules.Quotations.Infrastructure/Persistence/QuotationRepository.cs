@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -227,6 +228,29 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return found.Select(id => id.Value).ToHashSet();
     }
 
+    // La regla de Quotation.RequiresShipping en SQL (spec 2026-11-18 §5): dos EXISTS por fila en la misma consulta.
+    public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken)
+    {
+        if (quotationIds.Count == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var ids = quotationIds.ToArray();
+        var found = await dbContext.Quotations
+            .AsNoTracking()
+            .Where(quotation => quotation.TenantId == tenantId
+                && ids.Contains(quotation.Id)
+                && (!quotation.Items.Any() || quotation.Items.Any(item => item.Kind == ProductKind.Physical)))
+            .Select(quotation => quotation.Id)
+            .ToListAsync(cancellationToken);
+
+        return found.Select(id => id.Value).ToHashSet();
+    }
+
     public async Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -245,6 +269,15 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
             .ToListAsync(cancellationToken);
         return rows.ToDictionary(row => row.Id, row => row.QuotationNumber);
     }
+
+    // Sin Include: el que la encuentra sólo lee su id, su número y su asesora (ExternalQuotationService).
+    public Task<Quotation?> FindByExternalKeyAsync(
+        Guid tenantId, string externalKey, CancellationToken cancellationToken) =>
+        dbContext.Quotations
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                quotation => quotation.TenantId == tenantId && quotation.ExternalKey == externalKey,
+                cancellationToken);
 
     public void Add(Quotation quotation) => dbContext.Quotations.Add(quotation);
 

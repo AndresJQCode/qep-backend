@@ -28,10 +28,46 @@ public sealed record ManagedTemplateDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     // Sólo en plantillas de cobro que Meta reclasificó: la categoría que QEP pidió. Es un aviso, no frena nada.
-    string? RequestedCategory = null);
+    string? RequestedCategory = null,
+    // Spec 2026-11-17 (BFF): la URL pública de la imagen fija del encabezado, para que la pantalla la muestre sin conocer Storage.
+    // «header» sigue siendo sólo el texto y es null en una plantilla con imagen. null = sin imagen guardada.
+    string? HeaderImageUrl = null,
+    // Spec 2026-11-20 (BFF): el formato del encabezado multimedia («Image», «Video», «Document»), para que la pantalla sepa si ofrece
+    // «Cambiar imagen» sin leer los componentes de Meta. null = encabezado de texto o sin encabezado.
+    string? HeaderMedia = null);
 
 /// <summary>§4.3: el estado de la plantilla de cotización de la conexión. <c>null</c> en la pantalla = no aprovisionada, botón de crear.</summary>
 public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Spec 2026-11-09 D4: el estado de la plantilla de pedido de la conexión, con la misma forma que la de cotización. <c>null</c> =
+/// no aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record OrderTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Spec 2026-11-21: el estado de la plantilla de factura de la conexión, con la misma forma que la de pedido. <c>null</c> = no
+/// aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record InvoiceTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Soporte fase 2: el estado de la plantilla «Aviso de respuesta» de la conexión, con la misma forma que la de pedido. <c>null</c> =
+/// no aprovisionada, botón de crear. Un frontend viejo lo ignora.</summary>
+public sealed record SupportReplyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Soporte fase 4b: el estado de la plantilla «Respuesta formal» (con el PDF de encabezado), aparte de la de «Aviso de respuesta»
+/// porque son dos aprovisionamientos distintos. <c>null</c> = no aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record SupportFormalReplyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Soporte fase 4b: el estado de la plantilla de la encuesta de satisfacción. <c>null</c> = no aprovisionada. Un frontend viejo lo
+/// ignora.</summary>
+public sealed record SupportSurveyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Mayorista: el estado de la plantilla del aviso de invitación de distribuidor. <c>null</c> = no aprovisionada. Un frontend viejo
+/// lo ignora.</summary>
+public sealed record WholesaleInvitationNoticeTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Support task notices: the status of the assignment notice template. <c>null</c> = not provisioned. An old frontend ignores it.</summary>
+public sealed record TaskNoticeTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Agenda: el estado de la plantilla del recordatorio de cita. <c>null</c> = no aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record AppointmentReminderTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
 /// <summary>
 /// §4.3: la pantalla de plantillas de una conexión en una llamada: la conexión (nombre y número), el estado de la plantilla de
@@ -41,5 +77,13 @@ public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, 
 public sealed record TemplateManagementDto(
     MessagingConnectionDto Connection,
     QuotationTemplateStatusDto? QuotationTemplate,
+    OrderTemplateStatusDto? OrderTemplate,
     DateTimeOffset? LastSyncedAt,
-    IReadOnlyList<ManagedTemplateDto> Templates);
+    IReadOnlyList<ManagedTemplateDto> Templates,
+    SupportReplyTemplateStatusDto? SupportReplyTemplate,
+    SupportFormalReplyTemplateStatusDto? SupportFormalReplyTemplate = null,
+    SupportSurveyTemplateStatusDto? SupportSurveyTemplate = null,
+    WholesaleInvitationNoticeTemplateStatusDto? WholesaleInvitationNoticeTemplate = null,
+    InvoiceTemplateStatusDto? InvoiceTemplate = null,
+    TaskNoticeTemplateStatusDto? TaskNoticeTemplate = null,
+    AppointmentReminderTemplateStatusDto? AppointmentReminderTemplate = null);

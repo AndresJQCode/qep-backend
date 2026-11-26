@@ -27,6 +27,8 @@ public sealed record TaxRateDeletedResult(bool Deleted);
 public sealed class DeleteTaxRateHandler(
     ITaxRateRepository repository,
     IProductRepository productRepository,
+    ITaxRateCustomerUsage customerUsage,
+    ITaxRateCompanyUsage companyUsage,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -50,12 +52,19 @@ public sealed class DeleteTaxRateHandler(
         var taxRate = await repository.FindAsync(command.TenantId, taxRateId, cancellationToken)
             ?? throw TaxRateNotFound.For(command.TaxRateId);
 
+        // Los clientes no tienen FK hacia acá (Customers nunca referencia Catalog): para ellos, esta consulta es la única
+        // barrera (spec impuestos por tipo §7.4). Lo mismo con las empresas y sus tasas municipales (spec ReteICA por
+        // empresa §7.2).
         if (await productRepository.AnyWithTaxRateAsync(
-                command.TenantId, taxRateId, cancellationToken))
+                command.TenantId, taxRateId, cancellationToken) ||
+            await customerUsage.AnyCustomerWithTaxRateAsync(
+                command.TenantId, command.TaxRateId, cancellationToken) ||
+            await companyUsage.AnyCompanyWithTaxRateAsync(
+                command.TenantId, command.TaxRateId, cancellationToken))
         {
             throw new CatalogDomainException(
                 "catalog.tax_rate.in_use",
-                "The tax rate cannot be deleted because at least one product uses it.");
+                "The tax rate cannot be deleted because at least one product, customer or company uses it.");
         }
 
         var now = clock.UtcNow;

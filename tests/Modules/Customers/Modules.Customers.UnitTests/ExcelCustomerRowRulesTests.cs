@@ -1,5 +1,6 @@
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Customers.UnitTests;
 
@@ -24,11 +25,118 @@ public sealed class ExcelCustomerRowRulesTests
         string? department = "Antioquia",
         string? city = "Medellin",
         string? classification = "Mayorista",
-        string? withRetention = "No",
-        string? vatSurplus = "No") =>
+        string? retefuente = null,
+        string? vatSurplus = "No",
+        string? tags = null) =>
         new(2, cuc, name, null, identificationType, identificationNumber, phone,
             email, address,
-            department, city, classification, withRetention, vatSurplus);
+            department, city, classification, retefuente, vatSurplus, Tags: tags);
+
+    private static readonly CustomerFieldPolicy Relaxed =
+        new(new FieldRequirement(false, true), new FieldRequirement(false, true));
+
+    [Fact]
+    public void ARowWithoutDocumentIsValidWhenTheDocumentIsOptional()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(
+            ValidRow(identificationType: null, identificationNumber: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void ARowWithOnlyATypeKeepsTheNumberRequiredCode()
+    {
+        // Ruling P2: un tipo sin numero conserva identification_number_required, aun con el documento opcional.
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(
+            ValidRow(identificationType: "NIT", identificationNumber: null));
+
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.identification_number_required" &&
+            error.PropertyName == nameof(ExcelCustomerRow.IdentificationNumber));
+    }
+
+    [Fact]
+    public void ARowWithOnlyANumberIsIncomplete()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(
+            ValidRow(identificationType: null, identificationNumber: "123"));
+
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.identification_incomplete" &&
+            error.PropertyName == nameof(ExcelCustomerRow.IdentificationType));
+        Assert.DoesNotContain(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.identification_type_required");
+    }
+
+    [Fact]
+    public void ARowWithoutDepartmentAndCityIsValidWhenTheCityIsOptional()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(ValidRow(department: null, city: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void ARowWithACityButNoDepartmentIsStillRejected()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(ValidRow(department: null, city: "Medellin"));
+
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.department_required");
+    }
+
+    [Fact]
+    public void ARowWithADepartmentButNoCityIsStillRejected()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(ValidRow(department: "Antioquia", city: null));
+
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.city_required");
+    }
+
+    [Fact]
+    public void TheDefaultPolicyKeepsTodaysRequiredCodes()
+    {
+        var result = new ExcelCustomerRowRules().Validate(
+            ValidRow(identificationType: null, identificationNumber: null, department: null, city: null));
+
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.identification_type_required");
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.identification_number_required");
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.department_required");
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.city_required");
+    }
+
+    [Fact]
+    public void AnUpdateRowWithBlankDocumentIsValidUnderTheDefaultPolicy()
+    {
+        var result = validator.Validate(ValidRow(cuc: "CLI08000037", identificationType: null, identificationNumber: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void AnUpdateRowWithBlankDepartmentAndCityIsValidUnderTheDefaultPolicy()
+    {
+        var result = validator.Validate(ValidRow(cuc: "CLI08000037", department: null, city: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void AnUpdateRowWithHalfAPairStillFails()
+    {
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", identificationType: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.identification_incomplete");
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", identificationNumber: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.identification_number_required");
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", department: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.department_required");
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", city: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.city_required");
+    }
 
     [Fact]
     public void AValidRowPassesEveryRule()
@@ -114,7 +222,7 @@ public sealed class ExcelCustomerRowRulesTests
     [Fact]
     public void AMissingIdentificationTypeFailsWithTheRequiredCodeAndNotTheFormatCode()
     {
-        var result = validator.Validate(ValidRow(identificationType: null));
+        var result = validator.Validate(ValidRow(identificationType: null, identificationNumber: null));
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, error =>
@@ -170,6 +278,51 @@ public sealed class ExcelCustomerRowRulesTests
             error.ErrorCode == "customers.import.row.phone_too_long");
     }
 
+    // La direccion es opcional, igual que en el formulario de alta (CustomerWriteRules): sin calle el
+    // cliente nace sin domicilio y sin libreta, como un contacto que solo trae nombre y celular.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ARowWithoutAnAddressIsValid(string? address)
+    {
+        var result = validator.Validate(ValidRow(address: address));
+
+        Assert.True(result.IsValid);
+    }
+
+    // La celda «Etiquetas» (spec 2026-11-17): cada nombre con el largo de una etiqueta, y nunca más de las que un cliente puede
+    // tener. Son errores de fila, con su código, para que el lote siga.
+    [Fact]
+    public void ATagNameLongerThanTheLimitFails()
+    {
+        var result = validator.Validate(
+            ValidRow(tags: "VIP; " + new string('A', Tag.NameMaxLength + 1)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.tag_name_too_long" &&
+            error.PropertyName == nameof(ExcelCustomerRow.Tags));
+    }
+
+    [Fact]
+    public void MoreThanTwentyTagsInACellFail()
+    {
+        var names = string.Join("; ", Enumerable.Range(1, CustomerTagAssignment.MaxPerCustomer + 1).Select(i => $"Etiqueta {i}"));
+
+        var result = validator.Validate(ValidRow(tags: names));
+
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.tag_limit_per_customer" &&
+            error.PropertyName == nameof(ExcelCustomerRow.Tags));
+    }
+
+    [Fact]
+    public void ACellWithOnlySeparatorsIsValid()
+    {
+        Assert.True(validator.Validate(ValidRow(tags: "; ;")).IsValid);
+    }
+
     [Fact]
     public void AnAddressLongerThanTheLimitFails()
     {
@@ -211,29 +364,14 @@ public sealed class ExcelCustomerRowRulesTests
             error.ErrorCode == "customers.import.row.classification_required");
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("Si")]
-    [InlineData("si")]
-    [InlineData("SI")]
-    [InlineData("No")]
-    [InlineData("no")]
-    public void WithRetentionAcceptsSiNoOrEmpty(string? value)
+    // Las columnas de retencion llevan el nombre de una tasa: el validador de campos no las juzga, las resuelve el handler
+    // contra el catalogo del tenant (spec impuestos por tipo §7.4).
+    [Fact]
+    public void RateColumnsAreNotJudgedByTheFieldRules()
     {
-        var result = validator.Validate(ValidRow(withRetention: value));
+        var result = validator.Validate(ValidRow(retefuente: "IVA 19"));
 
         Assert.True(result.IsValid);
-    }
-
-    [Fact]
-    public void WithRetentionRejectsAnyOtherValue()
-    {
-        var result = validator.Validate(ValidRow(withRetention: "Tal vez"));
-
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, error =>
-            error.ErrorCode == "customers.import.row.with_retention_invalid");
     }
 
     // Una fila puede fallar por mas de un motivo a la vez, y el reporte tiene que decir los dos —
@@ -249,4 +387,18 @@ public sealed class ExcelCustomerRowRulesTests
             error.ErrorCode == "customers.import.row.department_required");
         Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.city_required");
     }
+
+    [Theory]
+    [InlineData("NIF")]
+    [InlineData("NIE")]
+    [InlineData("TAX_ID")]
+    public void ACodeOutsideColombiaFailsWithTheInvalidCode(string code)
+    {
+        var result = validator.Validate(ValidRow(identificationType: code));
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.identification_type_invalid");
+    }
+
+    [Fact]
+    public void TheImportOffersOnlyTheColombianCodes() =>
+        Assert.Equal(["NIT", "CC", "CE", "PASAPORTE"], ExcelCustomerRowRules.IdentificationTypes);
 }

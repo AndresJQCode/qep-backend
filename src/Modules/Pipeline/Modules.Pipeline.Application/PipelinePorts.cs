@@ -9,6 +9,19 @@ public interface IPipelineProvisioner
     Task<SalesPipeline> EnsureAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>An open stage of the tenant's pipeline, named for whoever offers it without being Pipeline.</summary>
+public sealed record PipelineStageRef(Guid Id, string Name);
+
+/// <summary>
+/// Chatbot CRM action spec (2026-11-19): the open stages of the tenant's pipeline in its order, read only. Unlike
+/// <see cref="IPipelineProvisioner"/>, a tenant whose pipeline was never opened gets an empty list and nothing is inserted: the
+/// chatbot editor reads it on every GET.
+/// </summary>
+public interface IPipelineStageLookup
+{
+    Task<IReadOnlyList<PipelineStageRef>> ListOpenAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
 /// <summary>Todo método recibe <c>tenantId</c>: un id de otro tenant responde igual que uno inexistente.</summary>
 public interface IDealRepository
 {
@@ -23,6 +36,13 @@ public interface IDealRepository
 
     /// <summary>De los clientes pedidos, los que tienen al menos un negocio abierto.</summary>
     Task<IReadOnlySet<Guid>> CustomersWithOpenDealsAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>Decisión del owner 2026-11-16: si hay un negocio abierto nacido de esa conversación, sea del cliente que sea.</summary>
+    Task<bool> HasOpenDealFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary>Chatbot CRM action spec (2026-11-19): the open deal born from that conversation, whoever's customer it is, with
+    /// tracking. <c>null</c> when there is none, and also when a race left several: the caller never picks one of them.</summary>
+    Task<Deal?> FindOpenFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
     /// <summary>D12: las etapas con al menos un negocio, abierto o cerrado. Ésas no se borran.</summary>
     Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken);
@@ -93,13 +113,28 @@ public interface ITriageDecisionRepository
 public interface IPipelineUnitOfWork
 {
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Drops every pending change and tracked row, so the next read loads fresh ones. For a caller that retries a
+    /// write after <c>concurrency.conflict</c> in the same scope (<see cref="ChatbotDealMover"/>).</summary>
+    void DiscardChanges();
 }
 
 /// <summary>§6.3: auditoría atómica propia (proyección de <c>audit.entries</c> en <c>PipelineDbContext</c>), en la misma
 /// transacción que el cambio. Lo del worker va con <paramref name="bySystem"/> y actor vacío.</summary>
 public interface IPipelineAuditRecorder
 {
-    void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt);
+    /// <param name="source">Who acts when it is not Pipeline itself (the chatbot's CRM action sends
+    /// <see cref="PipelineAuditSources.Chatbot"/>); <c>null</c> keeps <c>"pipeline"</c>.</param>
+    void Record(
+        Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt,
+        string? source = null);
+}
+
+/// <summary>The <c>source</c> values other entry points hand to <see cref="IPipelineAuditRecorder"/>.</summary>
+public static class PipelineAuditSources
+{
+    /// <summary>Chatbot CRM action spec (2026-11-19): a deal the chatbot moves.</summary>
+    public const string Chatbot = "chatbot";
 }
 
 public static class PipelineAuditActions

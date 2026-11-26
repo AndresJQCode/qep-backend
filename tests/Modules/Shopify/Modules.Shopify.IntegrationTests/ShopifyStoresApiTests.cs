@@ -37,8 +37,10 @@ public sealed class ShopifyStoresApiTests
         var stores = await response.Content.ReadFromJsonAsync<JsonArray>(Ct);
         var store = Assert.Single(stores!)!.AsObject();
         Assert.Equal(
-            ["connectionId", "isConfigured", "lastReconciledAt", "name", "shopDomain", "status", "waitingCount"],
+            ["connectionId", "heldPushCount", "isConfigured", "lastReconciledAt", "name", "shopDomain", "status", "waitingCount"],
             store.Select(pair => pair.Key).Order(StringComparer.Ordinal));
+        // HeldPushCount (af08a8f3, owner 2026-11-14) travels in zero when the store has no held pushes.
+        Assert.Equal(0, store["heldPushCount"]!.GetValue<int>());
         Assert.Equal(
             (world.ConnectionId.ToString(), "Mi tienda", Shop, "Active", true, 2),
             (Str(store, "connectionId"), Str(store, "name"), Str(store, "shopDomain"), Str(store, "status"),
@@ -116,6 +118,38 @@ public sealed class ShopifyStoresApiTests
             await ScalarAsync<string>(
                 connectionString,
                 "SELECT version || '|' || default_identification_type || '|' || (updated_by IS NOT NULL) FROM shopify.stores WHERE connection_id = @c",
+                ("c", world.ConnectionId)));
+    }
+
+    // Spec 2026-11-17 §4.4: la tienda se guarda con la empresa sola; banco y número quedan en NULL y se releen así.
+    [Fact]
+    public async Task AStoreWithoutAccountRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(StoreRoute(world.TenantId, world.ConnectionId), Ct)).StatusCode);
+        var body = Body(world);
+        body["billingBankName"] = null;
+        body["billingAccountNumber"] = null;
+
+        var saved = await PutAsync(client, world.TenantId, world.ConnectionId, body, "\"1\"");
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var read = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+        Assert.NotNull(read);
+        Assert.Equal(
+            (true, world.Company.Id.ToString(), (string?)null, (string?)null, "COP"),
+            (read["isConfigured"]!.GetValue<bool>(), Str(read, "billingCompanyId"), Str(read, "billingBankName"),
+                Str(read, "billingAccountNumber"), Str(read, "billingCurrency")));
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(
+                connectionString,
+                "SELECT count(*) FROM shopify.stores WHERE connection_id = @c AND billing_bank_name IS NULL AND billing_account_number IS NULL",
                 ("c", world.ConnectionId)));
     }
 
@@ -309,6 +343,118 @@ public sealed class ShopifyStoresApiTests
             [HttpStatusCode.Forbidden, HttpStatusCode.Forbidden, HttpStatusCode.Forbidden],
             new[] { foreign.StatusCode, otherRoute.StatusCode, put.StatusCode });
         Assert.Equal("authorization.denied", await CodeAsync(foreign));
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.stores"));
+    }
+
+    // Spec 2026-10-21: historyDays viaja siempre (null = sin historial), se guarda con el PUT y su cambio queda auditado por nombre.
+    // El PUT reemplaza: un cuerpo sin historyDays lo apaga.
+    [Fact]
+    public async Task StoresPutHistoryDaysRoundTripsAndIsAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
+
+        var empty = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+        var withHistory = Body(world);
+        withHistory["historyDays"] = 14;
+        var saved = await PutAsync(client, world.TenantId, world.ConnectionId, withHistory, "\"1\"");
+        var savedBody = await saved.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        var read = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+        var stored = await ScalarAsync<int>(
+            connectionString, "SELECT history_days FROM shopify.stores WHERE connection_id = @c", ("c", world.ConnectionId));
+        var off = await PutAsync(client, world.TenantId, world.ConnectionId, Body(world), "\"2\"");
+        var offBody = await off.Content.ReadFromJsonAsync<JsonObject>(Ct);
+
+        Assert.True(empty!.ContainsKey("historyDays"));
+        Assert.Null(empty["historyDays"]);
+        Assert.Equal((HttpStatusCode.OK, HttpStatusCode.OK), (saved.StatusCode, off.StatusCode));
+        Assert.Equal((14, 14, 14), (savedBody!["historyDays"]!.GetValue<int>(), read!["historyDays"]!.GetValue<int>(), stored));
+        Assert.True(offBody!.ContainsKey("historyDays"));
+        Assert.Null(offBody["historyDays"]);
+        Assert.Equal(
+            """["historyDays"]""",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT changed_fields::text FROM audit.entries
+                WHERE action = 'shopify.store.updated' AND tenant_id = @t ORDER BY occurred_at DESC, id DESC LIMIT 1
+                """,
+                ("t", world.TenantId)));
+    }
+
+    // Spec 2026-11-14: editSync y editPaymentStatuses viajan por nombre, se guardan con el PUT y vuelven en el GET.
+    [Fact]
+    public async Task PutAndGetRoundTripEditSyncAndPaymentStatuses()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
+        var empty = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+        var body = Body(world);
+        body["editSync"] = "Automatic";
+        body["editPaymentStatuses"] = new JsonArray("PaymentPending", "PendingVerification");
+
+        var saved = await PutAsync(client, world.TenantId, world.ConnectionId, body, "\"1\"");
+        var read = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+
+        Assert.Equal(
+            ("Manual", "FullPaymentReceived,PartialPaymentReceived,PaymentPending,PendingVerification"),
+            (Str(empty!, "editSync"), Statuses(empty!)));
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal(("Automatic", "PaymentPending,PendingVerification"), (Str(read!, "editSync"), Statuses(read!)));
+        Assert.Equal("Automatic", await ScalarAsync<string>(
+            connectionString, "SELECT edit_sync FROM shopify.stores WHERE connection_id = @c", ("c", world.ConnectionId)));
+    }
+
+    [Fact]
+    public async Task PutWithAnUnknownPaymentStatusReturns422WithItsIndex()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionManage);
+        var body = Body(world);
+        body["editSync"] = "Automatic";
+        body["editPaymentStatuses"] = new JsonArray("PaymentPending", "Paid");
+
+        var response = await PutAsync(client, world.TenantId, world.ConnectionId, body, "\"1\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("validation.failed", Str(problem!, "code"));
+        Assert.Equal(["editPaymentStatuses[1]"], problem!["errors"]!.AsObject().Select(pair => pair.Key));
+    }
+
+    private static string Statuses(JsonObject store) =>
+        string.Join(',', store["editPaymentStatuses"]!.AsArray().Select(status => status!.GetValue<string>()));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    public async Task StoresPutHistoryDaysOutOfRangeReturns422WithErrors(int historyDays)
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionManage);
+        var body = Body(world);
+        body["historyDays"] = historyDays;
+
+        var response = await PutAsync(client, world.TenantId, world.ConnectionId, body, "\"1\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("validation.failed", Str(problem!, "code"));
+        Assert.Equal(["historyDays"], problem!["errors"]!.AsObject().Select(pair => pair.Key));
         Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.stores"));
     }
 

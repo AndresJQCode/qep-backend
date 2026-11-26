@@ -2,9 +2,9 @@ using Modules.Catalog.Domain;
 
 namespace Modules.Catalog.Application;
 
-// One place for the two codes: DeleteCategoryHandler throws them before the delete, and
-// CatalogUnitOfWork throws the same ones when a RESTRICT FK catches the race. Two copies of the
-// text would drift.
+// One place for the two codes: DeleteCategoryHandler throws them before the delete,
+// ProductCategoryRepository.Remove refuses a parent with a tracked child, and CatalogUnitOfWork
+// throws the same ones when a RESTRICT FK catches the race. Copies of the text would drift.
 public static class CategoryInUse
 {
     public static CatalogDomainException HasProducts() =>

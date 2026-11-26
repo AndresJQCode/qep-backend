@@ -117,6 +117,13 @@ public sealed class ExportSuppliersHandlerTests
 
         public void Add(Supplier supplier) => throw new NotSupportedException();
 
+        public Task<Supplier?> FindByLinkedTenantAsync(Guid tenantId, Guid linkedTenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Supplier?> FindByIdentificationAsync(
+            Guid tenantId, IdentificationType type, string number, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<(IReadOnlyList<Supplier> Items, int Total)> SearchAsync(
             Guid tenantId,
             string? search,
@@ -134,6 +141,10 @@ public sealed class ExportSuppliersHandlerTests
     {
         public Task<SupplierCityRef?> FindCityAsync(Guid cityId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlyDictionary<Guid, SupplierRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, SupplierRegionRef>>(new Dictionary<Guid, SupplierRegionRef>());
 
         public Task<IReadOnlyDictionary<Guid, SupplierCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
@@ -202,5 +213,7 @@ public sealed class ExportSuppliersHandlerTests
             Calls++;
             return Task.CompletedTask;
         }
+
+        public void DiscardPendingChanges() => throw new NotSupportedException();
     }
 }

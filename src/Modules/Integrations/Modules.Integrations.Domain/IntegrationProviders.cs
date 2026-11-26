@@ -8,6 +8,7 @@ public static class ZenviaFieldKeys
     public const string FromNumber = "fromNumber";
     public const string TemplateId = "templateId";
     public const string OrderTemplateId = "orderTemplateId";
+    public const string InvoiceTemplateId = "invoiceTemplateId";
 }
 
 /// <summary>Spec 2026-10-09 §6.1. Los dos primeros son de sólo lectura para la pantalla; los demás son
@@ -42,7 +43,9 @@ public static class InstagramFieldKeys
 /// (los escribe el enlace y el probador refresca el nombre); <see cref="ShopId"/>, <see cref="Scopes"/>,
 /// <see cref="WebhookSubscriptionIds"/> y <see cref="AccessToken"/> son internos. <see cref="Scopes"/> y
 /// <see cref="WebhookSubscriptionIds"/> viajan separados por coma; los ids de las suscripciones los escribe y los repone
-/// Integrations (enlace y probador, D-S19).</summary>
+/// Integrations (enlace y probador, D-S19). Spec 2026-11-12: el token offline expira; <see cref="RefreshToken"/> es el
+/// secreto con el que el worker lo renueva, y <see cref="TokenExpiresAt"/> y <see cref="RefreshTokenExpiresAt"/> viajan en
+/// ISO 8601 (<c>O</c>, UTC), con el formato de <see cref="ShopifyTokenRefresh.Format"/>. Los tres son internos.</summary>
 public static class ShopifyFieldKeys
 {
     public const string ShopDomain = "shopDomain";
@@ -50,7 +53,15 @@ public static class ShopifyFieldKeys
     public const string ShopId = "shopId";
     public const string Scopes = "scopes";
     public const string WebhookSubscriptionIds = "webhookSubscriptionIds";
+    public const string TokenExpiresAt = "tokenExpiresAt";
+    public const string RefreshTokenExpiresAt = "refreshTokenExpiresAt";
     public const string AccessToken = "accessToken";
+    public const string RefreshToken = "refreshToken";
+
+    /// <summary>Spec 2026-11-17 §2 (plan D1): el perfil de la tienda (correo, moneda, dirección de facturación…) como JSON
+    /// compacto. Interno: lleva datos personales del comerciante y no sale en la respuesta de la conexión. Lo escriben el
+    /// enlace y el probador; lo lee el asistente de configuración del módulo <c>shopify</c>.</summary>
+    public const string ShopProfile = "shopProfile";
 }
 
 /// <summary>Spec 2026-10-21 D-H1. Todos son campos que escribe una persona; <see cref="ApiKey"/> es el único secreto.
@@ -61,6 +72,28 @@ public static class ExternalApiFieldKeys
     public const string AuthHeader = "authHeader";
     public const string ApiKey = "apiKey";
     public const string TestPath = "testPath";
+}
+
+/// <summary>Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant, el único campo.</summary>
+public static class AnthropicFieldKeys
+{
+    public const string ApiKey = "apiKey";
+}
+
+/// <summary>Spec 2026-10-29 §4.5: la clave de la cuenta de OpenAI del tenant, el único campo.</summary>
+public static class OpenAiFieldKeys
+{
+    public const string ApiKey = "apiKey";
+}
+
+/// <summary>Spec 2026-11-18 (integración Siigo). <see cref="Username"/> (el usuario API de Siigo) y <see cref="AccessKey"/> (el
+/// secreto) los escribe una persona; <see cref="AccountName"/> es de sólo lectura para la pantalla y lo escribe el probador cuando la
+/// API de Siigo lo da.</summary>
+public static class SiigoFieldKeys
+{
+    public const string Username = "username";
+    public const string AccessKey = "accessKey";
+    public const string AccountName = "accountName";
 }
 
 /// <summary>
@@ -92,7 +125,9 @@ public static class IntegrationProviders
         "zenvia",
         "Zenvia (WhatsApp)",
         IntegrationCategory.Messaging,
-        [TenantModuleKeys.Quotations],
+        // Cotizaciones y pedidos (la plantilla de pedido es un campo de la conexión): un tenant que oculta uno de los dos
+        // sigue configurándolo.
+        [TenantModuleKeys.Quotations, TenantModuleKeys.Orders],
         [
             new FieldDefinition(
                 ZenviaFieldKeys.ApiToken,
@@ -121,6 +156,14 @@ public static class IntegrationProviders
             new FieldDefinition(
                 ZenviaFieldKeys.OrderTemplateId,
                 "ID de la plantilla de pedido",
+                FieldKind.Text,
+                required: false,
+                maxLength: 36,
+                pattern: ZenviaTemplateIdPattern,
+                invalidMessage: ZenviaTemplateIdMessage),
+            new FieldDefinition(
+                ZenviaFieldKeys.InvoiceTemplateId,
+                "ID de la plantilla de factura",
                 FieldKind.Text,
                 required: false,
                 maxLength: 36,
@@ -238,9 +281,26 @@ public static class IntegrationProviders
                 required: false, maxLength: 2048, pattern: null,
                 invalidMessage: "Las suscripciones que devolvió Shopify no tienen una forma válida.", isInternal: true),
             new FieldDefinition(
+                ShopifyFieldKeys.TokenExpiresAt, "Vencimiento del token", FieldKind.Text,
+                required: false, maxLength: 40, pattern: null,
+                invalidMessage: "El vencimiento del token no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                ShopifyFieldKeys.RefreshTokenExpiresAt, "Vencimiento del token de refresco", FieldKind.Text,
+                required: false, maxLength: 40, pattern: null,
+                invalidMessage: "El vencimiento del token de refresco no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
                 ShopifyFieldKeys.AccessToken, "Token de acceso", FieldKind.Secret,
                 required: false, maxLength: 2048, pattern: null,
                 invalidMessage: "El token que devolvió Shopify no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                ShopifyFieldKeys.RefreshToken, "Token de refresco", FieldKind.Secret,
+                required: false, maxLength: 2048, pattern: null,
+                invalidMessage: "El token de refresco que devolvió Shopify no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                // 4096 es ShopifyShopProfile.FieldMaxLength (Integrations.Application, que el dominio no ve): cámbialos juntos.
+                ShopifyFieldKeys.ShopProfile, "Perfil de la tienda", FieldKind.Text,
+                required: false, maxLength: 4096, pattern: null,
+                invalidMessage: "El perfil que devolvió Shopify no tiene una forma válida.", isInternal: true, isPrivate: true),
         ],
         DefaultMaxConnections,
         onboarding: ProviderOnboarding.ShopifyOAuth);
@@ -279,7 +339,73 @@ public static class IntegrationProviders
         onboarding: ProviderOnboarding.Form,
         requiresTenantEnablement: false);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi];
+    /// <summary>Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant (BYOK, owner 2026-11-12), que consumen los agentes
+    /// IA y el copiloto (spec 2026-11-17, D-C2). Una por tenant y sin habilitación por tenant: todo tenant con <c>ai</c> o <c>copilot</c> puede conectarla (P-16). El patrón sólo exige texto
+    /// imprimible sin espacios: el formato de las claves es de Anthropic y lo juzga el probador, no el catálogo. La pantalla ve los
+    /// últimos 4 caracteres (D-A23).</summary>
+    public static readonly IntegrationProvider Anthropic = new(
+        "anthropic",
+        "Anthropic (Claude)",
+        IntegrationCategory.Ai,
+        [TenantModuleKeys.Ai, TenantModuleKeys.Copilot],
+        [
+            new FieldDefinition(
+                AnthropicFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: @"^[\x21-\x7E]{1,256}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla.",
+                revealSuffix: 4),
+        ],
+        maxConnections: 1,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    /// <summary>Spec 2026-10-29 §4.5 y plan 2026-11-12, C-1: la clave de la cuenta de OpenAI del tenant (BYOK), con la misma forma que la
+    /// de Anthropic. Llega con su adaptador (Tarea 6): un proveedor que nadie puede usar no se ofrece. Lo prueba <c>GET /v1/models</c>
+    /// (spec §9.1, O-10).</summary>
+    public static readonly IntegrationProvider OpenAi = new(
+        "openai",
+        "OpenAI",
+        IntegrationCategory.Ai,
+        [TenantModuleKeys.Ai, TenantModuleKeys.Copilot],
+        [
+            new FieldDefinition(
+                OpenAiFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: @"^[\x21-\x7E]{1,256}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla.",
+                revealSuffix: 4),
+        ],
+        maxConnections: 1,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    /// <summary>Spec 2026-11-18 (integración Siigo): la cuenta de Siigo Nube del tenant, que consume el módulo <c>siigo</c> para emitir la
+    /// factura electrónica de un pedido. Sin habilitación por tenant: tener el módulo alcanza. El patrón de la clave sólo exige texto
+    /// imprimible sin espacios: el formato es de Siigo y lo juzga el probador. La pantalla ve los últimos 4 caracteres.</summary>
+    public static readonly IntegrationProvider Siigo = new(
+        "siigo",
+        "Siigo",
+        IntegrationCategory.Accounting,
+        [TenantModuleKeys.Siigo],
+        [
+            new FieldDefinition(
+                SiigoFieldKeys.Username, "Usuario API", FieldKind.Text,
+                required: true, maxLength: 256, pattern: null,
+                invalidMessage: "Escribe el usuario API de Siigo tal como aparece en tu cuenta."),
+            new FieldDefinition(
+                SiigoFieldKeys.AccessKey, "Clave de acceso", FieldKind.Secret,
+                required: true, maxLength: 512, pattern: @"^[\x21-\x7E]{1,512}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla de Siigo.",
+                revealSuffix: 4),
+            new FieldDefinition(
+                SiigoFieldKeys.AccountName, "Nombre de la cuenta", FieldKind.Text,
+                required: false, maxLength: 256, pattern: null,
+                invalidMessage: "El nombre que devolvió Siigo no tiene una forma válida."),
+        ],
+        DefaultMaxConnections,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic, OpenAi, Siigo];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>

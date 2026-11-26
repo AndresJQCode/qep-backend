@@ -37,7 +37,7 @@ public sealed class BillingPersonTypeRequirementTests
         return Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), null, null, null, parties,
-            null, "COP", false, false, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
+            null, "COP", false, [], MunicipalContext.None, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
     }
 
     [Fact]
@@ -87,12 +87,14 @@ public sealed class BillingPersonTypeRequirementTests
     }
 
     [Fact]
-    public async Task ANonColombianTenantIsNotChecked()
+    public async Task ANonColombianTenantIsChecked()
     {
-        // El requisito guardado queda en OnCustomerSave, pero Effective lo vuelve Never fuera de CO.
-        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
-            Directory(PersonTypeRequirement.OnCustomerSave, country: "ES"), TenantId, NewQuotation(null),
-            TestContext.Current.CancellationToken);
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            BillingPersonTypeRequirement.EnsureForQuotationAsync(
+                Directory(PersonTypeRequirement.OnCustomerSave, country: "ES"), TenantId, NewQuotation(null),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.billing.person_type_required", error.Code);
     }
 
     [Fact]
@@ -109,15 +111,18 @@ public sealed class BillingPersonTypeRequirementTests
         var advisor = new MemberId(Guid.CreateVersion7());
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), advisor, "COP", null, false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), advisor, "COP", null, false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
-                CompanyId = Guid.CreateVersion7(), BankName = "Bancolombia", AccountNumber = "7542", Currency = "COP",
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
             },
             new ShippingDetails(null, null, null, 0m, 0, false),
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
-            OrderPaymentStatus.PaymentPending, null, advisor, [], DateTimeOffset.UtcNow);
+            null, advisor, [], DateTimeOffset.UtcNow, orderDate: DateOnly.FromDateTime(DateTimeOffset.UtcNow.UtcDateTime));
         order.SetBilling(
             new QuotationPartyDetails
             {
@@ -130,7 +135,7 @@ public sealed class BillingPersonTypeRequirementTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
             },
-            false, false, false, false, advisor, DateTimeOffset.UtcNow);
+            false, false, false, advisor, DateTimeOffset.UtcNow);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             BillingPersonTypeRequirement.EnsureForOrderAsync(

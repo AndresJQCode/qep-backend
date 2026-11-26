@@ -21,7 +21,8 @@ public abstract record WhatsAppChannel(Guid ConnectionId, string Name, string? P
 /// <summary>
 /// Una conexión de Zenvia: la cuenta, el número emisor y sus plantillas. El token viaja en claro, en memoria,
 /// sólo para ese envío: <see cref="ToString"/> no lo imprime, y el sender no lo registra.
-/// <see cref="OrderTemplateId"/> es opcional en la conexión: sin él, el pedido no se puede enviar.
+/// <see cref="OrderTemplateId"/> e <see cref="InvoiceTemplateId"/> son opcionales en la conexión: sin ellos, el pedido o
+/// la factura no se pueden enviar.
 /// </summary>
 public sealed record ZenviaWhatsAppChannel(
     Guid ConnectionId,
@@ -29,19 +30,20 @@ public sealed record ZenviaWhatsAppChannel(
     string ApiToken,
     string FromNumber,
     string QuotationTemplateId,
-    string? OrderTemplateId)
+    string? OrderTemplateId,
+    string? InvoiceTemplateId = null)
     : WhatsAppChannel(ConnectionId, Name, FromNumber)
 {
     public override string Provider => WhatsAppChannelProviders.Zenvia;
 
     public override string ToString() =>
-        $"ZenviaWhatsAppChannel {{ ConnectionId = {ConnectionId}, QuotationTemplateId = {QuotationTemplateId}, OrderTemplateId = {OrderTemplateId} }}";
+        $"ZenviaWhatsAppChannel {{ ConnectionId = {ConnectionId}, QuotationTemplateId = {QuotationTemplateId}, OrderTemplateId = {OrderTemplateId}, InvoiceTemplateId = {InvoiceTemplateId} }}";
 }
 
 /// <summary>
 /// La conexión de WhatsApp Business (Meta) del tenant. Sin secretos: el envío lo hace Mensajería con la conexión, y
-/// aquí sólo viaja qué conexión es. La plantilla no: el sender de Meta lee la fila aprobada vigente al enviar. Los pedidos no salen
-/// por Meta (spec 2026-10-21 D12).
+/// aquí sólo viaja qué conexión es. La plantilla no: el sender de Meta lee la fila aprobada vigente al enviar, la de cotización o la
+/// de pedido según el documento (spec 2026-11-09 D9).
 /// </summary>
 public sealed record MetaWhatsAppChannel(
     Guid ConnectionId,
@@ -52,6 +54,27 @@ public sealed record MetaWhatsAppChannel(
     public override string Provider => WhatsAppChannelProviders.Meta;
 }
 
+/// <summary>Qué documento va a salir por WhatsApp (spec 2026-11-09 D6): cada uno tiene su plantilla, así que un canal puede servir para
+/// uno y no para el otro. También nombra el prefijo de los códigos de error (<c>quotation.whatsapp.*</c> / <c>order.whatsapp.*</c>).</summary>
+public enum WhatsAppDocument
+{
+    Quotation,
+    Order,
+    Invoice,
+}
+
+public static class WhatsAppDocuments
+{
+    /// <summary>El prefijo de los códigos de error del documento, como los demás códigos de su handler.</summary>
+    public static string PrefixOf(WhatsAppDocument document) => document switch
+    {
+        WhatsAppDocument.Quotation => "quotation",
+        WhatsAppDocument.Order => "order",
+        WhatsAppDocument.Invoice => "invoice",
+        _ => throw new ArgumentOutOfRangeException(nameof(document), document, "Unknown WhatsApp document."),
+    };
+}
+
 /// <summary>
 /// Los canales de WhatsApp del tenant. El adaptador vive en Bootstrapper, sobre las conexiones de
 /// Integrations (<c>QuotationsWhatsAppChannelDirectory</c>): Quotations no referencia
@@ -59,8 +82,9 @@ public sealed record MetaWhatsAppChannel(
 /// </summary>
 public interface IWhatsAppChannelDirectory
 {
-    /// <summary>Las conexiones del tenant que pueden enviar ahora. Meta: <c>Active</c>, visible y con la plantilla de
-    /// cotización <c>APPROVED</c>. Zenvia: como hasta hoy (Active, visibles, con Zenvia habilitado por el operador y con
-    /// token, número y plantilla de cotización). Vacía si no hay ninguna.</summary>
-    Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken);
+    /// <summary>Las conexiones del tenant que pueden enviar <paramref name="document"/> ahora (spec 2026-11-09 D6). Meta: <c>Active</c>,
+    /// visible y con la plantilla de ese documento <c>APPROVED</c>. Zenvia: Active, visible, con Zenvia habilitado por el operador, con
+    /// token, número y plantilla de cotización, y para un pedido además con <c>orderTemplateId</c> y para una factura con
+    /// <c>invoiceTemplateId</c> (para una factura, Meta cuenta con la fila <c>Invoice</c> aprobada). Vacía si no hay ninguna.</summary>
+    Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, WhatsAppDocument document, CancellationToken cancellationToken);
 }

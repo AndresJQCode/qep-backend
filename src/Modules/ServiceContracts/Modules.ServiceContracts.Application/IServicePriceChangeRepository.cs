@@ -6,6 +6,9 @@ public interface IServicePriceChangeRepository
 {
     void Add(ServicePriceChange change);
 
+    /// <summary>Marca para borrar el historial de precios del contrato; se aplica al guardar.</summary>
+    Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken);
+
     /// <summary>El historial de precios de un contrato, del más reciente al más viejo, para el detalle.</summary>
     Task<IReadOnlyList<ServicePriceChange>> ListByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken);
 }

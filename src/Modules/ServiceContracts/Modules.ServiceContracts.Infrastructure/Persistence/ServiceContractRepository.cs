@@ -8,6 +8,8 @@ internal sealed class ServiceContractRepository(ServiceContractsDbContext dbCont
 {
     public void Add(ServiceContract service) => dbContext.Services.Add(service);
 
+    public void Remove(ServiceContract service) => dbContext.Services.Remove(service);
+
     public Task<ServiceContract?> FindAsync(
         Guid tenantId, ServiceContractId id, CancellationToken cancellationToken) =>
         dbContext.Services.FirstOrDefaultAsync(
@@ -89,6 +91,45 @@ internal sealed class ServiceContractRepository(ServiceContractsDbContext dbCont
         await dbContext.Services
             .Where(service => service.TenantId == tenantId && service.Status == ServiceContractStatus.Active)
             .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlySet<ServiceContractId>> FilterIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ServiceContractId> ids,
+        Guid? assigneeMemberId,
+        string? searchTerm,
+        IReadOnlyCollection<Guid>? searchCustomerIds,
+        CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return new HashSet<ServiceContractId>();
+        }
+
+        var wanted = ids.ToArray();
+        var services = dbContext.Services
+            .AsNoTracking()
+            .Where(service => service.TenantId == tenantId && wanted.Contains(service.Id));
+
+        // El encargado vive en el perfil del cliente, como en ChargeRepository.ListAsync.
+        if (assigneeMemberId is { } assigneeId)
+        {
+            services = services.Where(service => dbContext.Profiles.Any(profile =>
+                profile.TenantId == service.TenantId &&
+                profile.CustomerId == service.CustomerId &&
+                profile.AssigneeMemberId == assigneeId));
+        }
+
+        var pattern = LikeSearch.ContainsPattern(searchTerm);
+        var customerIds = searchCustomerIds is { Count: > 0 } found ? found.ToArray() : [];
+        if (pattern is not null)
+        {
+            services = services.Where(service =>
+                EF.Functions.ILike(service.Name, pattern, LikeSearch.EscapeCharacter) ||
+                customerIds.Contains(service.CustomerId));
+        }
+
+        return (await services.Select(service => service.Id).ToListAsync(cancellationToken)).ToHashSet();
+    }
 
     public async Task<IReadOnlyList<ActiveServiceTotal>> ActiveTotalsAsync(
         Guid tenantId, CancellationToken cancellationToken)

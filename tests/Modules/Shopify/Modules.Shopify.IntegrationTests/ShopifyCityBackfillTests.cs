@@ -76,16 +76,18 @@ public sealed class ShopifyCityBackfillTests
         Assert.Equal(1, counts.RootElement.GetProperty("reported").GetInt32());
     }
 
-    // El pedido que ya no cumple (aprobado) y el que ahora casa por el sinónimo no se reportan.
+    // El pedido que ya no es editable (preparado) y el que ahora casa por el sinónimo no se reportan.
     [Fact]
-    public async Task AnApprovedOrderAndACityThatNowMatchesAreNotReported()
+    public async Task APreparedOrderAndACityThatNowMatchesAreNotReported()
     {
         await using var shop = await CalliShop.StartAsync(withSibling: true, operatorTenantId: OperatorTenantId);
         await ExecuteAsync(shop.ConnectionString, "DELETE FROM geography.unresolved_city_occurrences");
         await ExecuteAsync(shop.ConnectionString, "DELETE FROM geography.unresolved_cities");
-        // El hermano se aprueba; el sinónimo CALLI → Cali que dejó CalliShop sigue vivo, así que el otro pedido ahora casa.
+        // El hermano se prepara; el sinónimo CALLI → Cali que dejó CalliShop sigue vivo, así que el otro pedido ahora casa.
         await ExecuteAsync(
-            shop.ConnectionString, "UPDATE quotations.orders SET status = 'Approved' WHERE id = @order", ("order", shop.SiblingOrderId));
+            shop.ConnectionString,
+            "UPDATE quotations.orders SET fulfillment_status = 'Prepared' WHERE id = @order",
+            ("order", shop.SiblingOrderId));
         using var client = CreateClient(
             shop.Factory, OperatorSubjectId, OperatorTenantId,
             GeographyOperatorPermissions.CitiesRead, GeographyOperatorPermissions.CitiesManage);

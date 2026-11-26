@@ -30,6 +30,9 @@ public sealed class OrdersExportColumnCatalogTests
         "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
         "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
         "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
+        "withholding_retefuente", "withholding_reteica",
+        "buyer_notes",
+        "withholding_retefuente_rate", "withholding_reteica_rate",
     ];
 
     private static readonly string[] Headers =
@@ -55,12 +58,15 @@ public sealed class OrdersExportColumnCatalogTests
         "Teléfono facturación", "Email facturación",
         "Nombre envío", "Tipo de identificación envío", "Identificación envío", "Tipo de persona envío",
         "Dirección envío", "Ciudad envío", "Ciudad Coordinadora envío", "Departamento envío", "Teléfono envío", "Email envío",
+        "Retefuente", "ReteICA",
+        "Notas del cliente",
+        "Tarifa Retefuente", "Tarifa ReteICA",
     ];
 
     [Fact]
-    public void HasTheEightyOneColumnsOfTheSpecInItsOrder()
+    public void HasTheEightySixColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(81, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(86, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -151,10 +157,11 @@ public sealed class OrdersExportColumnCatalogTests
                 new OrdersExportCatalogColumn("shipping_phone", "Teléfono envío", 16, DefaultVisible: false),
                 new OrdersExportCatalogColumn("shipping_email", "Email envío", 30, DefaultVisible: false),
             ],
-            OrdersExportColumnCatalog.Columns.Skip(71));
+            OrdersExportColumnCatalog.Columns.Skip(71).Take(10));
         Assert.Equal(71, OrdersExportColumnCatalog.IndexOf("shipping_name"));
         Assert.Equal(OrdersExportColumnCatalog.IndexOf("shipping_city") + 1, OrdersExportColumnCatalog.IndexOf("shipping_city_coordinadora"));
-        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("shipping_email"));
+        // Después del envío: las dos retenciones, buyer_notes y las dos tarifas (416882b8).
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 6, OrdersExportColumnCatalog.IndexOf("shipping_email"));
     }
 
     // Se retiraron las llaves «customer_own_*»: un layout guardado que las nombre las pierde (Effective descarta
@@ -261,7 +268,9 @@ public sealed class OrdersExportColumnCatalogTests
                 "billing_name", "billing_identification_type", "billing_identification_number", "billing_person_type",
                 "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
                 "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
-                "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email"],
+                "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
+                "withholding_retefuente", "withholding_reteica", "buyer_notes",
+                "withholding_retefuente_rate", "withholding_reteica_rate"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 
@@ -303,6 +312,41 @@ public sealed class OrdersExportColumnCatalogTests
             OrdersExportColumnCatalog.Columns[46]);
         Assert.Equal(46, OrdersExportColumnCatalog.IndexOf("retention_amount"));
         Assert.Equal(OrdersExportColumnCatalog.IndexOf("order_total") + 1, OrdersExportColumnCatalog.IndexOf("retention_amount"));
+    }
+
+    // Spec impuestos por tipo (P12): una columna por tipo de retención, al final y ocultas, para que ningún
+    // Excel que ya existe gane una columna visible.
+    [Fact]
+    public void NewColumnsAreHiddenByDefaultAndLast()
+    {
+        var count = OrdersExportColumnCatalog.Columns.Count;
+        Assert.Equal(
+            new OrdersExportCatalogColumn("withholding_retefuente", "Retefuente", 16, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[count - 5]);
+        Assert.Equal(
+            new OrdersExportCatalogColumn("withholding_reteica", "ReteICA", 16, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[count - 4]);
+    }
+
+    // Spec 2026-11-14 (D13): «Notas del cliente» es Order.BuyerNotes. Al final y oculta, también sin layout guardado:
+    // un tenant sin layout puede tener un ERP leyendo la hoja por defecto.
+    [Fact]
+    public void BuyerNotesIsHiddenAfterTheWithholdingAmounts() =>
+        Assert.Equal(
+            new OrdersExportCatalogColumn("buyer_notes", "Notas del cliente", 40, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[^3]);
+
+    // Spec 2026-11-16 (tarifa de retención): la tarifa de Retefuente (%) y de ReteICA (‰) para el import de facturación.
+    // Al final y ocultas; sus encabezados por defecto no chocan con «Retefuente» ni «ReteICA».
+    [Fact]
+    public void WithholdingRateColumnsAreLastAndHidden()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("withholding_retefuente_rate", "Tarifa Retefuente", 16, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[^2]);
+        Assert.Equal(
+            new OrdersExportCatalogColumn("withholding_reteica_rate", "Tarifa ReteICA", 16, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[^1]);
     }
 
     // Las llaves son identificadores: únicas, y el tenant no puede inventar ni repetir una.

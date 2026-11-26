@@ -14,6 +14,7 @@ namespace Modules.Shopify.Application;
 /// cliente en Shopify y los ids de pedidos, nunca su email ni su teléfono; <c>shop/redact</c> borra el espejo y las entregas de la
 /// tienda (no la tienda, la conexión, ni los pedidos o clientes de QEP), resuelta por su dominio y no por la ruta.</item>
 /// <item><c>orders/*</c> → <see cref="ShopifyOrderIngestion"/>: espejo siempre, importación si la conexión es operativa.</item>
+/// <item><c>products/*</c> (spec 2026-11-17 §6) → <see cref="ShopifyProductWebhooks"/>.</item>
 /// </list>
 /// Un payload ilegible o una cabecera que el dominio no guarda (<see cref="ShopifyPayloadException"/>) cierra la entrega con
 /// <c>last_error</c>: reintentar el mismo cuerpo da lo mismo. Cualquier otra excepción sale y la entrega vuelve
@@ -29,7 +30,8 @@ public sealed class ShopifyWebhookDeliveryProcessor(
     IShopifyWebhookDeliveries deliveries,
     IShopifyAuditRecorder auditRecorder,
     IShopifyUnitOfWork unitOfWork,
-    IClock clock)
+    IClock clock,
+    ShopifyProductWebhooks productWebhooks)
 {
     /// <summary>El ancho de <c>last_error</c> en <c>shopify.webhook_deliveries</c>.</summary>
     public const int LastErrorMaxLength = 512;
@@ -69,6 +71,8 @@ public sealed class ShopifyWebhookDeliveryProcessor(
                 case var topic when ShopifyWebhookTopics.IsOrders(topic):
                     await ingestion.ApplyAsync(connection, parser.ParseRest(delivery.Payload), cancellationToken);
                     return ShopifyDeliveryResult.Processed;
+                case var topic when ShopifyWebhookTopics.IsProducts(topic):
+                    return await productWebhooks.ApplyAsync(connection, delivery, cancellationToken);
                 default:
                     return ShopifyDeliveryResult.Ignored(ShopifyIgnoredReasons.UnsupportedTopic);
             }

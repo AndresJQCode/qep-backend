@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using Modules.Customers.Application;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -7,19 +9,18 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>US-12 (envío, reutilizando la carga de archivos que Storage ya expone -- sin motor
 /// de PDF nuevo en el backend) y US-11 (anulación).</summary>
-public sealed class QuotationSendVoidApiTests
+public sealed class QuotationSendVoidApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // `PdfFileId` queda en null a proposito desde que el backend genera el documento: era el
     // `FileResource` que subia el navegador. El PDF ahora vive en `quotation_pdfs`.
     [Fact]
     public async Task SendMarksAsSentAndStampsSentAt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -40,8 +41,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendToTheBillingPartyWithoutOneIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -74,12 +74,11 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendWorksWithoutABody()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -101,8 +100,9 @@ public sealed class QuotationSendVoidApiTests
     // existe una cotizacion sin `ValidUntil` y su 422 quedo inalcanzable. La invariante sigue
     // viva en `EnsureSendable` y cubierta por `QuotationTests` a nivel de dominio.
     //
-    // Enviar exige solo estado y vigencia. Los otros tres requisitos --productos, forma de pago
-    // y cuenta de cobro-- son de `EnsureConvertibleToOrder`, y se prueban contra ese endpoint.
+    // Enviar exige estado, vigencia y, desde impuestos por tipo (spec §7.7), cuenta de cobro: sin empresa no hay país
+    // y no se sabe qué retenciones aplican (QuotationWithholdingsApiTests.SendWithoutCompanyIs422). Productos y forma
+    // de pago son de `EnsureConvertibleToOrder`, y se prueban contra ese endpoint.
 
     // Reemplaza a `SendWithAnUnknownFileIsUnprocessable`, que dejo de tener sentido: enviar ya
     // no recibe un archivo. Lo que esta prueba fija es la compatibilidad -- el frontend todavia
@@ -111,12 +111,11 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendIgnoresAPdfFileIdSentByAnOlderFrontend()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -133,8 +132,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendingAnAlreadySentQuotationResendsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -160,12 +158,11 @@ public sealed class QuotationSendVoidApiTests
     [InlineData(true)]
     public async Task VoidWorksFromDraftOrSent(bool sendFirst)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
         if (sendFirst)
         {
             var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
@@ -190,8 +187,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task VoidingAnAlreadyVoidedQuotationIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -213,8 +209,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task EditingAVoidedQuotationIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -241,13 +236,12 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task AddingAnItemToASentQuotationIsAllowed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -265,8 +259,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task VoidForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
@@ -287,4 +280,155 @@ public sealed class QuotationSendVoidApiTests
     /// <summary>Las extensiones de ProblemDetails llegan aplanadas en la raíz
     /// (ApiExceptionHandler).</summary>
     private sealed record ProblemPayload(string Code);
+
+    // Spec 2026-11-10 §4.6: el destinatario Contact llega al contacto de la empresa, con su teléfono, su nombre y su ficha.
+    [Fact]
+    public async Task SendingToAContactDeliversToThatContact()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(factory.WhatsAppSender.Messages);
+        Assert.Equal(("311 555 0101", "Laura Gómez", (Guid?)contactId), (message.ToPhone, message.FullName, message.CustomerId));
+    }
+
+    [Fact]
+    public async Task AContactOfAnotherClientIs422AndNothingIsSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var otherCompanyId = await CreateActiveCustomerAsync(client, tenantId);
+        var strangerId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
+        await LinkContactAsync(client, tenantId, strangerId, otherCompanyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
+
+        foreach (var contactId in new Guid?[] { strangerId, companyId, Guid.CreateVersion7(), null })
+        {
+            var response = await client.PostAsJsonAsync(
+                $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+                new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Contains(
+                "quotation.quotation.contact_not_of_client",
+                await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        }
+
+        Assert.Empty(factory.WhatsAppSender.Messages);
+        // Rechazado antes de intentar el envío: tampoco deja una línea «SendFailed» en el historial.
+        var history = await client.GetFromJsonAsync<QuotationHistoryResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/history", TestContext.Current.CancellationToken);
+        Assert.NotNull(history);
+        Assert.DoesNotContain(history.Items, entry => entry.EventType == "SendFailed");
+    }
+
+    [Fact]
+    public async Task AMergedContactIs422ContactNotOfClientAndNothingIsSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, CustomersPermissions.CustomerMerge]);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
+        var survivorId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura G.");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
+
+        // El contacto se fusiona en otro cliente: queda marcado como fusionado y ya no es de la empresa.
+        var customersUrl = $"/api/v1/tenants/{tenantId}/customers";
+        var preview = await client.GetFromJsonAsync<JsonElement>(
+            $"{customersUrl}/{survivorId}/merge-preview?mergedCustomerIds={contactId}", TestContext.Current.CancellationToken);
+        var version = preview.GetProperty("survivor").GetProperty("version").GetInt64();
+        using var merge = new HttpRequestMessage(HttpMethod.Post, $"{customersUrl}/{survivorId}/merge")
+        {
+            Content = JsonContent.Create(new { mergedCustomerIds = new[] { contactId } }),
+        };
+        merge.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        var merged = await client.SendAsync(merge, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, merged.StatusCode);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "quotation.quotation.contact_not_of_client",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Empty(factory.WhatsAppSender.Messages);
+    }
+
+    [Fact]
+    public async Task AContactWithoutPhoneIs422RecipientMissing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
+        await ClearCustomerPhoneAsync(database.GetConnectionString(), contactId);
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "quotation.whatsapp.recipient_missing",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Empty(factory.WhatsAppSender.Messages);
+    }
+
+    // Spec 2026-11-10 §4.6: el detalle trae los contactos de la empresa para el diálogo de envío; sin contactos, una lista vacía.
+    [Fact]
+    public async Task TheQuotationDetailListsTheClientsContacts()
+    {
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        var withoutPhoneId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
+        await ClearCustomerPhoneAsync(database.GetConnectionString(), withoutPhoneId);
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        await LinkContactAsync(client, tenantId, withoutPhoneId, companyId);
+        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var standalone = await CreateQuotationAsync(client, tenantId, await CreateActiveCustomerAsync(client, tenantId));
+
+        var detail = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        var none = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{standalone.Id}", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail);
+        Assert.Equal(
+            [("Laura Gómez", "311 555 0101"), ("Pedro Ríos", null)],
+            detail.ClientContacts.OrderBy(contact => contact.Name).Select(contact => (contact.Name, contact.Phone)));
+        Assert.NotNull(none);
+        Assert.Empty(none.ClientContacts);
+    }
 }

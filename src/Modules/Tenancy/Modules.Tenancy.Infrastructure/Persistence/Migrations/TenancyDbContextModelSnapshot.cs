@@ -134,6 +134,11 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("origin");
 
+                    b.Property<string>("PhoneE164")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("phone_e164");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -218,6 +223,12 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("display_name");
 
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("language");
+
                     b.Property<Guid?>("LogoFileId")
                         .HasColumnType("uuid")
                         .HasColumnName("logo_file_id");
@@ -269,6 +280,45 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
                         .HasColumnName("version");
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "CustomerFieldPolicy", "Modules.Tenancy.Domain.Tenant.CustomerFieldPolicy#CustomerFieldPolicy", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.ComplexProperty(typeof(Dictionary<string, object>), "City", "Modules.Tenancy.Domain.Tenant.CustomerFieldPolicy#CustomerFieldPolicy.City#FieldRequirement", b2 =>
+                                {
+                                    b2.IsRequired();
+
+                                    b2.Property<bool>("OnBilling")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_city_required_on_billing");
+
+                                    b2.Property<bool>("OnCustomerSave")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_city_required_on_save");
+                                });
+
+                            b1.ComplexProperty(typeof(Dictionary<string, object>), "Document", "Modules.Tenancy.Domain.Tenant.CustomerFieldPolicy#CustomerFieldPolicy.Document#FieldRequirement", b2 =>
+                                {
+                                    b2.IsRequired();
+
+                                    b2.Property<bool>("OnBilling")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_document_required_on_billing");
+
+                                    b2.Property<bool>("OnCustomerSave")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_document_required_on_save");
+                                });
+                        });
 
                     b.HasKey("Id");
 
@@ -400,9 +450,9 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_modules", "tenancy", t =>
                         {
-                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','wms')");
+                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo','hr','payroll','scheduling','wms')");
 
-                            t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual','operator')");
+                            t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual','operator','invitation')");
 
                             t.HasCheckConstraint("CK_tenant_modules_status", "status IN ('active','inactive')");
                         });

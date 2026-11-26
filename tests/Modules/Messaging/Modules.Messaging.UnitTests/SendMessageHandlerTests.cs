@@ -278,6 +278,39 @@ public sealed class SendMessageHandlerTests
         Assert.Single(bed.Meta.Sends);
     }
 
+    // Spec 2026-11-09 D8b: descartar un programado fallido quema su clientId; reenviarlo sería duplicar lo que el asesor descartó.
+    [Fact]
+    public async Task ADiscardedFailedClientIdIsNotRetriableAndMetaIsNotCalled()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Outbound.Committed = new ExistingOutbound(
+            Guid.CreateVersion7(), MessageStatus.Failed, bed.Now.AddMinutes(-5), bed.MemberId, "de nuevo", RetryDisabled: true);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "de nuevo"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageNotRetriable, error.Code);
+        Assert.Empty(bed.Meta.Sends);
+        Assert.Empty(bed.Outbound.Claims);
+    }
+
+    [Fact]
+    public async Task ADiscardedClientIdSeenOnlyInsideTheClaimIsNotRetriable()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Outbound.Existing = new ExistingOutbound(
+            Guid.CreateVersion7(), MessageStatus.Failed, bed.Now.AddMinutes(-5), bed.MemberId, "de nuevo", RetryDisabled: true);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "de nuevo"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageNotRetriable, error.Code);
+        Assert.Empty(bed.Meta.Sends);
+        Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
+    }
+
     [Theory]
     [InlineData(190, MessagingErrorCodes.ConnectionUnavailable, "rolled-back", "token_expired")]
     [InlineData(133010, MessagingErrorCodes.ConnectionUnavailable, "rolled-back", "number_unregistered")]

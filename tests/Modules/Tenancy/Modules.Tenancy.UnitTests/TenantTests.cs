@@ -142,23 +142,13 @@ public sealed class TenantTests
         Assert.Equal(["personTypeRequirement"], settingsUpdated.ChangedFields);
     }
 
-    // Lo guardado sólo cuenta si el tenant es colombiano (regla única del país, Global Constraints).
+    // El requisito guardado manda en todos los países.
     [Theory]
-    [InlineData("CO", PersonTypeRequirement.OnCustomerSave, PersonTypeRequirement.OnCustomerSave)]
-    [InlineData("co", PersonTypeRequirement.OnOrderApproval, PersonTypeRequirement.OnOrderApproval)]
-    [InlineData("ES", PersonTypeRequirement.OnCustomerSave, PersonTypeRequirement.Never)]
-    [InlineData(null, PersonTypeRequirement.OnOrderApproval, PersonTypeRequirement.Never)]
-    public void EffectiveIsNeverOutsideColombia(
-        string? country, PersonTypeRequirement stored, PersonTypeRequirement expected) =>
-        Assert.Equal(expected, PersonTypeRequirementPolicy.Effective(country, stored));
-
-    [Theory]
-    [InlineData("co", true)]
-    [InlineData("CO", true)]
-    [InlineData("ES", false)]
-    [InlineData(null, false)]
-    public void IsColombianIgnoresCase(string? country, bool expected) =>
-        Assert.Equal(expected, PersonTypeRequirementPolicy.IsColombian(country));
+    [InlineData("CO", PersonTypeRequirement.OnCustomerSave)]
+    [InlineData("ES", PersonTypeRequirement.OnCustomerSave)]
+    [InlineData(null, PersonTypeRequirement.OnOrderApproval)]
+    public void EffectiveIsTheStoredRequirementInEveryCountry(string? country, PersonTypeRequirement stored) =>
+        Assert.Equal(stored, PersonTypeRequirementPolicy.Effective(country, stored));
 
     [Fact]
     public void UpdateSettingsWithoutChangesDoesNotRaiseEvent()
@@ -243,6 +233,71 @@ public sealed class TenantTests
     }
 
     private static readonly MembershipId OwnerMembershipId = MembershipId.New();
+
+    private static readonly CustomerFieldPolicy RelaxedPolicy =
+        new(new FieldRequirement(false, true), new FieldRequirement(false, false));
+
+    private static bool UpdatePolicy(Tenant tenant, CustomerFieldPolicy? policy) =>
+        tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, tenant.Country, tenant.PersonTypeRequirement,
+            CreatedAt.AddMinutes(5), policy);
+
+    [Fact]
+    public void ANewTenantStartsWithTheDefaultPolicy() =>
+        Assert.Equal(CustomerFieldPolicy.Default, CreateTenant().CustomerFieldPolicy);
+
+    [Fact]
+    public void UpdateSettingsChangesThePolicyAndTracksIt()
+    {
+        var tenant = CreateTenant();
+
+        var changed = UpdatePolicy(tenant, RelaxedPolicy);
+
+        Assert.True(changed);
+        Assert.Equal(RelaxedPolicy, tenant.CustomerFieldPolicy);
+        Assert.Equal(2, tenant.Version);
+        var settingsUpdated = Assert.IsType<TenantSettingsUpdatedDomainEvent>(Assert.Single(tenant.DomainEvents));
+        Assert.Equal(["customerFieldPolicy"], settingsUpdated.ChangedFields);
+    }
+
+    [Fact]
+    public void UpdateSettingsWithANullPolicyKeepsTheStoredOne()
+    {
+        var tenant = CreateTenant();
+        UpdatePolicy(tenant, RelaxedPolicy);
+
+        var changed = UpdatePolicy(tenant, null);
+
+        Assert.False(changed);
+        Assert.Equal(RelaxedPolicy, tenant.CustomerFieldPolicy);
+    }
+
+    [Fact]
+    public void UpdateSettingsWithTheSamePolicyChangesNothing()
+    {
+        var tenant = CreateTenant();
+        UpdatePolicy(tenant, RelaxedPolicy);
+        var version = tenant.Version;
+
+        var changed = UpdatePolicy(tenant, new CustomerFieldPolicy(new(false, true), new(false, false)));
+
+        Assert.False(changed);
+        Assert.Equal(version, tenant.Version);
+    }
+
+    [Fact]
+    public void AnInconsistentPolicyIsRejectedAndChangesNothing()
+    {
+        var tenant = CreateTenant();
+
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            UpdatePolicy(tenant, new CustomerFieldPolicy(FieldRequirement.Always, new(true, false))));
+
+        Assert.Equal("tenancy.settings.customer_field_policy.invalid", exception.Code);
+        Assert.Equal(CustomerFieldPolicy.Default, tenant.CustomerFieldPolicy);
+        Assert.Equal(1, tenant.Version);
+    }
 
     private static Tenant CreateTenant(MembershipId? owner = null) =>
         Tenant.Create(
@@ -358,4 +413,74 @@ public sealed class TenantTests
     public void EnsureValidRegistrationThrowsTheSameCodesAsCreate(string slug, string name, string code)
         => Assert.Equal(code, Assert.Throws<TenantDomainException>(() =>
             Tenant.EnsureValidRegistration(slug, name, "es-CO", "America/Bogota", "dd/MM/yyyy")).Code);
+
+    [Theory]
+    [InlineData("consultar")]
+    [InlineData("Consultar ")]
+    public void CreateRejectsAReservedSlug(string slug)
+    {
+        var exception = Assert.Throws<TenantDomainException>(() => Tenant.Create(
+            TenantId.New(),
+            slug,
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            CreatedAt));
+
+        Assert.Equal(TenantSlugReservations.ReservedCode, exception.Code);
+        Assert.Equal("tenancy.slug.reserved", exception.Code);
+    }
+
+    // Spec 2026-11-22: el tenant de un distribuidor nace con el país de la invitación; sin país, el default CO.
+    [Fact]
+    public void CreateWithACountryNormalizesIt()
+    {
+        var tenant = Tenant.Create(
+            TenantId.New(), "distri-mx", "Distri MX", "es-CO", "America/Bogota", "yyyy-MM-dd", MembershipId.New(), CreatedAt,
+            country: " mx ");
+
+        Assert.Equal("MX", tenant.Country);
+    }
+
+    [Fact]
+    public void CreateWithoutACountryKeepsColombia()
+    {
+        var tenant = Tenant.Create(
+            TenantId.New(), "distri-co", "Distri CO", "es-CO", "America/Bogota", "yyyy-MM-dd", MembershipId.New(), CreatedAt);
+
+        Assert.Equal("CO", tenant.Country);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("MEX")]
+    [InlineData("M1")]
+    public void CreateWithAnInvalidCountryThrowsDomainException(string country)
+    {
+        var exception = Assert.Throws<TenantDomainException>(() => Tenant.Create(
+            TenantId.New(), "distri-mx", "Distri MX", "es-CO", "America/Bogota", "yyyy-MM-dd", MembershipId.New(), CreatedAt,
+            country: country));
+
+        Assert.Equal("tenancy.settings.country.invalid", exception.Code);
+    }
+
+    [Fact]
+    public void EnsureValidRegistrationRejectsAnInvalidCountry()
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Tenant.EnsureValidRegistration("distri-mx", "Distri MX", "es-CO", "America/Bogota", "yyyy-MM-dd", country: "MEX"));
+
+        Assert.Equal("tenancy.settings.country.invalid", exception.Code);
+    }
+
+    [Fact]
+    public void EnsureValidRegistrationRejectsAReservedSlug()
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Tenant.EnsureValidRegistration(" API", "Acme", "es-CO", "America/Bogota", "dd/MM/yyyy"));
+
+        Assert.Equal("tenancy.slug.reserved", exception.Code);
+    }
 }

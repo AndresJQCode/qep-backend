@@ -66,8 +66,8 @@ public sealed class SetFreightChargeModesHandler(
     {
         // Autorizar antes de validar: a otro tenant no se le devuelve el mapa de campos.
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, command.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var enabled = command.EnabledModes!

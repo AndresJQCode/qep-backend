@@ -15,6 +15,32 @@ public sealed class IntegrationCatalogTests
         [new FieldDefinition("apiKey", "Clave", FieldKind.Secret, required: true, maxLength: 64, pattern: null, invalidMessage: "Revisa la clave.")],
         maxConnections: 1);
 
+    // Spec 2026-11-18 (integración Siigo): la fila literal del proveedor nuevo.
+    [Fact]
+    public void SiigoIsInTheCatalogWithItsFieldsAndOnboarding()
+    {
+        var provider = IntegrationProviders.Siigo;
+
+        Assert.Equal("siigo", provider.Key);
+        Assert.Equal("Siigo", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Accounting, provider.Category);
+        Assert.Equal([TenantModuleKeys.Siigo], provider.ConsumingModules);
+        Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Equal(["username", "accessKey", "accountName"], provider.Fields.Select(field => field.Key));
+        Assert.True(provider.FindField("username")!.Required);
+        Assert.Equal(256, provider.FindField("username")!.MaxLength);
+        Assert.Null(provider.FindField("username")!.Pattern);
+        Assert.True(provider.FindField("accessKey")!.IsSecret);
+        Assert.True(provider.FindField("accessKey")!.Required);
+        Assert.Equal(512, provider.FindField("accessKey")!.MaxLength);
+        Assert.Equal(@"^[\x21-\x7E]{1,512}\z", provider.FindField("accessKey")!.Pattern!.ToString());
+        Assert.Equal(4, provider.FindField("accessKey")!.RevealSuffix);
+        Assert.False(provider.FindField("accountName")!.Required);
+        Assert.Equal(256, provider.FindField("accountName")!.MaxLength);
+    }
+
     // Spec 2026-10-09 §6.1: la fila literal del proveedor nuevo.
     [Fact]
     public void WhatsAppCloudIsInTheCatalogWithItsFieldsAndOnboarding()
@@ -39,7 +65,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
         Assert.Equal(
-            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi],
+            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic, IntegrationProviders.OpenAi, IntegrationProviders.Siigo],
             IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
     }
@@ -85,12 +111,24 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.ShopifyOAuth, provider.Onboarding);
         Assert.Equal(
-            [ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes, ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.AccessToken],
+            [
+                ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes,
+                ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.TokenExpiresAt, ShopifyFieldKeys.RefreshTokenExpiresAt,
+                ShopifyFieldKeys.AccessToken, ShopifyFieldKeys.RefreshToken, ShopifyFieldKeys.ShopProfile,
+            ],
             provider.Fields.Select(field => field.Key));
-        Assert.Equal(["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "accessToken"], provider.Fields.Select(field => field.Key));
+        Assert.Equal(
+            ["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "tokenExpiresAt", "refreshTokenExpiresAt", "accessToken", "refreshToken", "shopProfile"],
+            provider.Fields.Select(field => field.Key));
+        // Spec 2026-11-17 §2: el perfil lleva correo y teléfono; es interno y cabe en el JSON que arma ShopifyShopProfile.
+        Assert.True(provider.FindField("shopProfile")!.Internal);
+        Assert.Equal(Modules.Integrations.Application.Shopify.ShopifyShopProfile.FieldMaxLength, provider.FindField("shopProfile")!.MaxLength);
         Assert.Equal(["shopDomain", "shopName"], provider.CatalogFields.Select(field => field.Key));
-        Assert.Equal(["accessToken"], provider.SecretFields.Select(field => field.Key));
+        Assert.Equal(["accessToken", "refreshToken"], provider.SecretFields.Select(field => field.Key));
         Assert.True(provider.FindField("accessToken")!.Internal);
+        Assert.True(provider.FindField("refreshToken")!.Internal);
+        Assert.True(provider.FindField("tokenExpiresAt")!.Internal);
+        Assert.True(provider.FindField("refreshTokenExpiresAt")!.Internal);
         Assert.Same(provider, IntegrationProviders.Parse("shopify"));
         Assert.Equal("app_uninstalled", ConnectionFailureCodes.AppUninstalled);
         Assert.Equal("webhooks_not_registered", ConnectionFailureCodes.WebhooksNotRegistered);
@@ -148,6 +186,75 @@ public sealed class IntegrationCatalogTests
         Assert.All(provider.Fields, field => Assert.False(field.Internal));
         Assert.Same(provider, IntegrationProviders.Parse("external-api"));
     }
+
+    // Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant (BYOK, P-13). La consume ai, se conecta por formulario,
+    // una por tenant, sin habilitación por tenant (P-16) y deja ver los últimos 4 caracteres de la clave (D-A23).
+    [Fact]
+    public void AnthropicIsAFormProviderConsumedByAi()
+    {
+        var provider = IntegrationProviders.Anthropic;
+
+        Assert.Equal("anthropic", provider.Key);
+        Assert.Equal("Anthropic (Claude)", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Ai, provider.Category);
+        Assert.Equal([TenantModuleKeys.Ai, TenantModuleKeys.Copilot], provider.ConsumingModules);
+        Assert.Equal(1, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Empty(provider.PublicFields);
+        var apiKey = Assert.Single(provider.SecretFields);
+        Assert.Equal("apiKey", apiKey.Key);
+        Assert.True(apiKey.Required);
+        Assert.Equal(256, apiKey.MaxLength);
+        Assert.Equal(4, apiKey.RevealSuffix);
+        Assert.False(apiKey.Internal);
+        Assert.Same(provider, IntegrationProviders.Parse("anthropic"));
+    }
+
+    [Theory]
+    [InlineData("sk-ant-api03-abc_DEF-123", true)]
+    [InlineData("sk-ant api03", false)]
+    [InlineData("sk-ant-api03\n", false)]
+    public void TheAnthropicKeyHasNoSpaces(string value, bool valid) =>
+        Assert.Equal(valid, IntegrationProviders.Anthropic.FindField("apiKey")!.HasValidShape(value.Replace("\\n", "\n", StringComparison.Ordinal)));
+
+    // Spec 2026-10-29 §4.5 y plan 2026-11-12, C-1: la clave de OpenAI tiene la misma forma que la de Anthropic.
+    [Fact]
+    public void OpenAiIsAFormProviderConsumedByAi()
+    {
+        var provider = IntegrationProviders.OpenAi;
+
+        Assert.Equal("openai", provider.Key);
+        Assert.Equal("OpenAI", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Ai, provider.Category);
+        Assert.Equal([TenantModuleKeys.Ai, TenantModuleKeys.Copilot], provider.ConsumingModules);
+        Assert.Equal(1, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Empty(provider.PublicFields);
+        var apiKey = Assert.Single(provider.SecretFields);
+        Assert.Equal("apiKey", apiKey.Key);
+        Assert.True(apiKey.Required);
+        Assert.Equal(256, apiKey.MaxLength);
+        Assert.Equal(4, apiKey.RevealSuffix);
+        Assert.False(apiKey.Internal);
+        Assert.Same(provider, IntegrationProviders.Parse("openai"));
+    }
+
+    [Theory]
+    [InlineData("sk-proj-abc_DEF-123", true)]
+    [InlineData("sk-proj abc", false)]
+    [InlineData("sk-proj-abc\n", false)]
+    public void TheOpenAiKeyHasNoSpaces(string value, bool valid) =>
+        Assert.Equal(valid, IntegrationProviders.OpenAi.FindField("apiKey")!.HasValidShape(value.Replace("\\n", "\n", StringComparison.Ordinal)));
+
+    // Ningún otro campo secreto deja ver una parte: sólo los que lo declaran.
+    [Fact]
+    public void OnlyTheModelProviderKeysRevealASuffix() =>
+        Assert.Equal(
+            ["anthropic.apiKey", "openai.apiKey", "siigo.accessKey"],
+            IntegrationProviders.All
+                .SelectMany(provider => provider.Fields.Where(field => field.RevealSuffix > 0).Select(field => $"{provider.Key}.{field.Key}")));
 
     [Theory]
     [InlineData("https://api-clasic.qcode.co", true)]
@@ -221,9 +328,9 @@ public sealed class IntegrationCatalogTests
 
         Assert.Equal("Zenvia (WhatsApp)", zenvia.DisplayName);
         Assert.Equal(IntegrationCategory.Messaging, zenvia.Category);
-        Assert.Equal([TenantModuleKeys.Quotations], zenvia.ConsumingModules);
+        Assert.Equal([TenantModuleKeys.Quotations, TenantModuleKeys.Orders], zenvia.ConsumingModules);
         Assert.Equal(20, zenvia.MaxConnections);
-        Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId"], zenvia.Fields.Select(field => field.Key));
+        Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId", "invoiceTemplateId"], zenvia.Fields.Select(field => field.Key));
 
         var apiToken = zenvia.FindField(ZenviaFieldKeys.ApiToken);
         Assert.NotNull(apiToken);
@@ -251,8 +358,24 @@ public sealed class IntegrationCatalogTests
         Assert.False(orderTemplateId.Required);
         Assert.Equal(36, orderTemplateId.MaxLength);
 
-        Assert.Equal(["fromNumber", "templateId", "orderTemplateId"], zenvia.PublicFields.Select(field => field.Key));
+        Assert.Equal(["fromNumber", "templateId", "orderTemplateId", "invoiceTemplateId"], zenvia.PublicFields.Select(field => field.Key));
         Assert.Equal(["apiToken"], zenvia.SecretFields.Select(field => field.Key));
+    }
+
+    [Fact]
+    public void TheZenviaProviderDeclaresAnOptionalInvoiceTemplateId()
+    {
+        Assert.Equal("invoiceTemplateId", ZenviaFieldKeys.InvoiceTemplateId);
+
+        var invoiceTemplateId = IntegrationProviders.Zenvia.FindField(ZenviaFieldKeys.InvoiceTemplateId);
+        var orderTemplateId = IntegrationProviders.Zenvia.FindField(ZenviaFieldKeys.OrderTemplateId);
+
+        Assert.NotNull(invoiceTemplateId);
+        Assert.Equal(FieldKind.Text, invoiceTemplateId.Kind);
+        Assert.False(invoiceTemplateId.Required);
+        Assert.Equal(36, invoiceTemplateId.MaxLength);
+        Assert.Equal(orderTemplateId!.Pattern?.ToString(), invoiceTemplateId.Pattern?.ToString());
+        Assert.Equal(orderTemplateId.InvalidMessage, invoiceTemplateId.InvalidMessage);
     }
 
     [Fact]
@@ -272,12 +395,37 @@ public sealed class IntegrationCatalogTests
     [Fact]
     public void AProviderIsHiddenWhenItsModulesAreOff() =>
         Assert.False(IntegrationProviders.Zenvia.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders]))));
+
+    // Zenvia envía cotizaciones y pedidos (order.whatsapp.not_configured): el tenant que oculta cotizaciones y vende por
+    // pedidos sigue configurándolo, y el que oculta pedidos y cotiza también.
+    [Fact]
+    public void ZenviaIsVisibleWithOnlyOrdersOrOnlyQuotations()
+    {
+        Assert.True(IntegrationProviders.Zenvia.IsVisibleFor(
             TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations]))));
+        Assert.True(IntegrationProviders.Zenvia.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))));
+    }
 
     // Contratado pero apagado por una dependencia: cuenta lo efectivo, como en TenantModuleGuard.
     [Fact]
     public void AContractedButIneffectiveModuleDoesNotMakeItVisible() =>
         Assert.False(IntegrationProviders.Zenvia.IsVisibleFor(TenantModuleSet.FromStored([TenantModuleKeys.Quotations])));
+
+    // Spec 2026-11-17 (copiloto), D-C2: la clave BYOK la consumen los agentes y el copiloto; con cualquiera de los dos encendido se ve.
+    [Fact]
+    public void TheAiProvidersAreVisibleWithAiOrCopilot()
+    {
+        TenantModuleKey[] onlyCopilot = [TenantModuleKeys.Copilot];
+        TenantModuleKey[] onlyAi = [TenantModuleKeys.Messaging, TenantModuleKeys.Ai];
+        foreach (var provider in new[] { IntegrationProviders.Anthropic, IntegrationProviders.OpenAi })
+        {
+            Assert.True(provider.IsVisibleFor(TenantModuleSet.FromStored(onlyCopilot)));
+            Assert.True(provider.IsVisibleFor(TenantModuleSet.FromStored(onlyAi)));
+            Assert.False(provider.IsVisibleFor(TenantModuleSet.FromStored([TenantModuleKeys.Messaging])));
+        }
+    }
 
     [Fact]
     public void TheDevelopmentStubSeesEverything() =>

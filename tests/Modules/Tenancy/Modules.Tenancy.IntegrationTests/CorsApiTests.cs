@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -281,17 +281,6 @@ public sealed class CorsApiTests
                 .ToArray()
             : [];
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private sealed class CorsApiFactory(string connectionString, params string[] allowedOrigins)
         : WebApplicationFactory<Program>
     {
@@ -310,11 +299,17 @@ public sealed class CorsApiTests
             builder.UseEnvironment(UseDevelopmentStub ? "Development" : "IntegrationTests");
             builder.UseSetting("Authentication:UseDevelopmentStub", UseDevelopmentStub ? "true" : "false");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Fuera de Development y Testing la tienda exige sus dos secretos al arrancar (StoreOptionsValidator.cs:13, regla de la
+            // tarea 7); valores de prueba, igual que los de R2.
+            builder.UseSetting("Store:Storefront:SharedSecret", "test-storefront-shared-secret-0123456789");
+            builder.UseSetting("Store:Turnstile:SecretKey", "test-turnstile-secret");
             // Fijado, nunca heredado: mismo criterio que TenantSettingsApiTests (SDD-CT-17).
             builder.UseSetting("Notifications:EmailProvider", "log");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");

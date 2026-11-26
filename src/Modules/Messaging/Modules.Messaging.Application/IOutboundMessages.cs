@@ -5,8 +5,11 @@ namespace Modules.Messaging.Application;
 /// <summary>Spec 2026-10-11 §6.5: el medio de un saliente, ya en R2. Sin clave: la calcula el reclamo con su
 /// <c>MessageId</c> (<see cref="MessagingMediaKeys.For"/>), que en un reintento de un <c>Failed</c> no es el del
 /// borrador. <c>Sha256Hex</c> en minúsculas, como la copia de los entrantes; <c>null</c> si la subida a Meta cortó a mitad y no hay
-/// hash completo (la columna lo admite). <c>FileName</c>: el nombre real que ve la persona (<c>null</c> en una nota de voz).</summary>
-public sealed record OutboundMedia(string MimeType, long SizeBytes, string? Sha256Hex, string? FileName = null);
+/// hash completo (la columna lo admite). <c>FileName</c>: el nombre real que ve la persona (<c>null</c> en una nota de voz).
+/// Spec 2026-11-18: con <c>PublicUrl</c> (el archivo de un chatbot) el medio no está en R2 de Mensajería: la fila guarda la URL pública y
+/// <c>StorageFileId</c>, el id del archivo en Storage, sin clave ni id de Meta.</summary>
+public sealed record OutboundMedia(
+    string MimeType, long SizeBytes, string? Sha256Hex, string? FileName = null, Guid? StorageFileId = null, string? PublicUrl = null);
 
 /// <summary>Spec 2026-10-30 §4.4: la clave de API que escribe un saliente. El nombre se copia a la fila: el hilo firma con el nombre que tenía la clave
 /// al enviar, aunque después la renombren o la revoquen.</summary>
@@ -18,22 +21,25 @@ public sealed record OutboundApiKeyAuthor(Guid Id, string Name);
 /// <c>SentByChatbotId</c> (spec 2026-10-21 D-I3): si viene, el autor es un chatbot y el reclamo escribe <c>sent_by_kind = 2</c> con
 /// <c>SentByMemberId</c> nulo, como lo exigen los CHECK de la tabla.
 /// <c>SentByApiKey</c> (spec 2026-10-30 §4.4): si viene, el autor es una clave de API y el reclamo escribe <c>sent_by_kind = 4</c>. Un borrador lleva
-/// exactamente un autor: miembro, chatbot o clave.
+/// exactamente un autor: miembro, chatbot, agente o clave. <c>SentByAgentId</c> (spec 2026-10-29 §4.4): el autor es un agente de IA y el
+/// reclamo escribe <c>sent_by_kind = 3</c>.
 /// <c>Caption</c> (messaging-media-reply R11): el pie de una imagen o un documento, en <c>messages.caption</c> y no en
 /// <c>message_media</c>, como lo guarda la ingesta de los entrantes.</summary>
 public sealed record OutboundDraft(
     Guid MessageId, Guid ConversationId, Guid TenantId, Guid ConnectionId, Guid ClientId, string? Text, Guid? SentByMemberId,
     DateTimeOffset Now, Guid? ReplyToMessageId = null, string? ReplyToWamid = null, MessageKind Kind = MessageKind.Text, OutboundMedia? Media = null,
-    string? DetailsJson = null, string? Caption = null, Guid? SentByChatbotId = null, OutboundApiKeyAuthor? SentByApiKey = null);
+    string? DetailsJson = null, string? Caption = null, Guid? SentByChatbotId = null, OutboundApiKeyAuthor? SentByApiKey = null,
+    Guid? SentByAgentId = null);
 
 /// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación (con <c>FOR UPDATE</c> en el reclamo).
 /// <c>Kind</c> y <c>MediaMimeType</c> (spec 2026-10-11 §6.5): la idempotencia devuelve la burbuja de audio con su
 /// <c>media.url</c>. <c>DetailsJson</c> (spec 2026-10-11 §5.2): la plantilla de un mensaje <c>Template</c>, para devolver lo guardado.
-/// <c>MediaFileName</c> y <c>Caption</c> (messaging-media-reply R5): repetir un clientId devuelve la burbuja con su nombre y su pie.</summary>
+/// <c>MediaFileName</c> y <c>Caption</c> (messaging-media-reply R5): repetir un clientId devuelve la burbuja con su nombre y su pie.
+/// <c>RetryDisabled</c> (spec 2026-11-09 D8b): un <c>Failed</c> que el asesor descartó desde «Programados»; su clientId ya no se reenvía.</summary>
 public sealed record ExistingOutbound(
     Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text, Guid? ReplyToMessageId = null,
     MessageKind Kind = MessageKind.Text, string? MediaMimeType = null, string? DetailsJson = null, string? MediaFileName = null, string? Caption = null, Guid? SentByChatbotId = null,
-    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null);
+    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null, bool RetryDisabled = false, Guid? SentByAgentId = null);
 
 /// <summary>Spec 2026-10-30 §4.4: el mensaje de una clave de API con ese <c>clientId</c> en el tenant, para devolverlo al repetir el envío.
 /// <c>WaId</c> es el de la conversación; <c>FailureCode</c> distingue un <c>Failed</c> sin confirmar.</summary>
@@ -70,10 +76,20 @@ public interface IOutboundClaim : IAsyncDisposable
     Task RollbackAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-09 (revisión final): el lease de un programado que el reclamo de su mensaje vuelve a mirar. El reclamo sólo sigue si la
+/// fila sigue <c>Sending</c> con este <c>Attempts</c> y este <c>LockedUntil</c> (la recuperación lo renueva) y si el lease vence después de
+/// <c>ValidAfter</c>, el margen para que no venza a mitad del envío.</summary>
+public sealed record ScheduledLease(Guid ScheduledMessageId, Guid TenantId, int Attempts, DateTimeOffset LockedUntil, DateTimeOffset ValidAfter);
+
 /// <summary>Spec 2026-10-09 §8.3: el reclamo idempotente de un saliente por <c>(conversation_id, client_id)</c>.</summary>
 public interface IOutboundMessages
 {
     Task<IOutboundClaim> ClaimAsync(OutboundDraft draft, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-09 (revisión final): <see cref="ClaimAsync"/> de un programado. En la misma transacción toma la fila del programado con
+    /// <c>FOR SHARE</c> y sigue sólo si <paramref name="lease"/> sigue vigente; así el cierre de la recuperación espera al reclamo en vez de cruzarse
+    /// con él. <c>null</c> = el lease ya no es de este ejecutor: no se escribió nada y no se debe enviar.</summary>
+    Task<IOutboundClaim?> ClaimLeasedAsync(OutboundDraft draft, ScheduledLease lease, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-10 §8.5 paso 2: el mensaje ya commiteado con ese clientId, sin candado; <c>null</c> si no hay.</summary>
     Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken);

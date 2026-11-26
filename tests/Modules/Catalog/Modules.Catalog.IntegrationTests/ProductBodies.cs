@@ -23,7 +23,8 @@ internal static class ProductBodies
         Guid? taxRateId = null,
         Guid? imageFileId = null,
         string? barcode = null,
-        Guid? categoryId = null) =>
+        Guid? categoryId = null,
+        object? costs = null) =>
         new
         {
             name,
@@ -31,7 +32,7 @@ internal static class ProductBodies
             taxRateId,
             categoryId,
             gallery = imageFileId is { } image ? new[] { image } : [],
-            variants = new[] { Variant(null, code, pricing ?? UsdPricing(), barcode) }
+            variants = new[] { Variant(null, code, pricing ?? UsdPricing(), barcode, costs) }
         };
 
     /// <summary>
@@ -45,8 +46,9 @@ internal static class ProductBodies
         string? description = null,
         Guid? taxRateId = null,
         Guid? imageFileId = null,
-        Guid? categoryId = null) =>
-        Update(current.Version, Assert.Single(current.Variants).Id, name, code, pricing, description, taxRateId, imageFileId, categoryId);
+        Guid? categoryId = null,
+        object? costs = null) =>
+        Update(current.Version, Assert.Single(current.Variants).Id, name, code, pricing, description, taxRateId, imageFileId, categoryId, costs);
 
     public static object Update(
         long expectedVersion,
@@ -57,7 +59,8 @@ internal static class ProductBodies
         string? description = null,
         Guid? taxRateId = null,
         Guid? imageFileId = null,
-        Guid? categoryId = null) =>
+        Guid? categoryId = null,
+        object? costs = null) =>
         new
         {
             expectedVersion,
@@ -66,11 +69,12 @@ internal static class ProductBodies
             taxRateId,
             categoryId,
             gallery = imageFileId is { } image ? new[] { image } : [],
-            variants = new[] { Variant(variantId, code, pricing ?? UsdPricing(), barcode: null) }
+            variants = new[] { Variant(variantId, code, pricing ?? UsdPricing(), barcode: null, costs) }
         };
 
-    public static object Variant(Guid? id, string code, object? pricing, string? barcode = null) =>
-        new { id, code, barcode, pricing };
+    /// <summary>A null <paramref name="costs"/> goes out as <c>null</c>: keep the saved cost.</summary>
+    public static object Variant(Guid? id, string code, object? pricing, string? barcode = null, object? costs = null) =>
+        new { id, code, barcode, pricing, costs };
 
     /// <summary>La única variante de un producto sin opciones.</summary>
     public static ProductVariantResponse Only(this ProductResponse product) => Assert.Single(product.Variants);

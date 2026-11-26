@@ -19,58 +19,15 @@ public sealed class SendMediaMessageApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>Un solo diccionario para el staging y el R2 final: el documento se promueve copiando, la imagen se sube por stream.</summary>
-    private sealed class FakeBucket : IMessagingMediaStore, IMessagingUploadStaging
-    {
-        public Dictionary<string, (byte[] Bytes, string ContentType)> Objects { get; } = new(StringComparer.Ordinal);
-
-        /// <summary>Un tamaño distinto al real, para probar el tope sin escribir 100 MB.</summary>
-        public Dictionary<string, long> SizeOverrides { get; } = new(StringComparer.Ordinal);
-
-        public Task<MessagingUploadUrl> CreateUploadUrlAsync(string key, string contentType, CancellationToken cancellationToken) =>
-            Task.FromResult(new MessagingUploadUrl(new Uri($"https://r2.test/{key}"), DateTimeOffset.UtcNow.AddMinutes(5)));
-
-        public Task<StagedUpload?> StatAsync(string key, CancellationToken cancellationToken) =>
-            Task.FromResult<StagedUpload?>(Objects.TryGetValue(key, out var stored)
-                ? new StagedUpload(SizeOverrides.TryGetValue(key, out var size) ? size : stored.Bytes.Length, "etag-" + stored.Bytes.Length)
-                : null);
-
-        public Task PromoteAsync(string stagingKey, string finalKey, string eTag, CancellationToken cancellationToken)
-        {
-            Objects[finalKey] = Objects[stagingKey];
-            return Task.CompletedTask;
-        }
-
-        public async Task UploadAsync(string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken)
-        {
-            using var buffer = new MemoryStream();
-            await content.CopyToAsync(buffer, cancellationToken);
-            Objects[key] = (buffer.ToArray(), contentType);
-        }
-
-        public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
-            Task.FromResult(Objects.TryGetValue(key, out var stored) ? new MediaStreamDto(new MemoryStream(stored.Bytes), stored.ContentType, stored.Bytes.Length, null) : null);
-
-        public Task DeleteAsync(string key, CancellationToken cancellationToken)
-        {
-            Objects.Remove(key);
-            return Task.CompletedTask;
-        }
-
-        /// <summary>Spec 2026-10-14 decisión 12: la URL que Meta bajaría; en pruebas apunta al handler falso de Graph.</summary>
-        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) =>
-            Task.FromResult(new Uri($"https://r2.test/{key}?signed=1", UriKind.Absolute));
-    }
-
     private sealed record Fixture(
-        QepApiFactory Factory, WebApplicationFactory<Program> Host, FakeBucket Bucket, string ConnectionString, RegisteredTenant Tenant,
+        QepApiFactory Factory, WebApplicationFactory<Program> Host, FakeMessagingBucket Bucket, string ConnectionString, RegisteredTenant Tenant,
         Guid ConversationId, Guid MemberId, HttpClient Client);
 
     private static async Task<Fixture> ArrangeAsync(TestDatabase database)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
-        var bucket = new FakeBucket();
+        var bucket = new FakeMessagingBucket();
         var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.AddSingleton<IMessagingMediaStore>(bucket);
@@ -382,8 +339,9 @@ public sealed class SendMediaMessageApiTests
         var exeId = Stage(f, "falso.pdf", Encoding.ASCII.GetBytes("MZ-esto-no-es-un-pdf-0123456789"));
         var unsupportedFormat = await ConfirmAsync(f, exeId, "falso.pdf");
 
-        var extensionId = Stage(f, "nota.txt", Pdf());
-        var unsupportedExtension = await ConfirmAsync(f, extensionId, "nota.txt");
+        // .zip y no .txt: desde 49d2452e4 el .txt se envía como documento, y los bytes de Pdf() son texto plano válido.
+        var extensionId = Stage(f, "nota.zip", Pdf());
+        var unsupportedExtension = await ConfirmAsync(f, extensionId, "nota.zip");
 
         var brokenPng = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0, 1, 2, 3, 4 };
         var imageId = Stage(f, "rota.png", brokenPng);

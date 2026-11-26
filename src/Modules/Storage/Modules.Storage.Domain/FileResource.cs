@@ -188,7 +188,15 @@ public sealed class FileResource
         long sizeBytes,
         DateTimeOffset occurredAt)
     {
-        RequirePaymentProof();
+        // Spec 2026-11-18: una imagen de chatbot por encima de 5 MB (el tope de Meta por link) también se reemplaza por su versión
+        // comprimida.
+        if (OwnerType is not (FileOwnerType.PaymentProof or FileOwnerType.ChatbotMedia))
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "Only a payment proof or a chatbot media file can be replaced by its processed image.");
+        }
+
         RequireStatus(FileResourceStatus.PendingScan);
         ArgumentException.ThrowIfNullOrWhiteSpace(mimeType);
         ArgumentException.ThrowIfNullOrWhiteSpace(extension);
@@ -273,6 +281,38 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
+    // Spec 2026-11-08, «Liberación de imágenes»: se purga la imagen que ninguna galería referencia,
+    // sea de un producto eliminado o de una foto que el PUT quitó de la galería. La llama
+    // ProductImageReleaseProcessor en memoria, antes de borrar los objetos de R2; el estado se guarda
+    // sólo si esos borrados salen bien. La copia pública la retira FilePublication.UnpublishAsync, que
+    // también limpia PublicStorageKey: un recurso Purged no conserva URL pública, no se descarga ni se
+    // vuelve a adjuntar.
+    public void PurgeReleasedProductImage(DateTimeOffset occurredAt)
+    {
+        RequireProductImage();
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
+    // Soporte fase 3 (plan F36): el adjunto del formulario público que ningún ticket reclamó a tiempo se purga. Lo llama el barrido de
+    // staging después de preguntar a las sondas; quien llama borra antes los objetos (el final y sus variantes).
+    public void PurgeUnclaimedSupportAttachment(DateTimeOffset occurredAt)
+    {
+        if (OwnerType is not FileOwnerType.SupportTicket)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                $"Expected a {FileOwnerType.SupportTicket} resource but it was {OwnerType}.");
+        }
+
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
     public void UpdateMetadata(
         string? category,
         IEnumerable<string>? tags,
@@ -348,7 +388,10 @@ public sealed class FileResource
     public void Publish(string publicStorageKey, DateTimeOffset occurredAt)
     {
         EnsureDownloadable();
-        if (!MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        // Spec 2026-11-18: el multimedia de un chatbot se manda por link (video, audio, documento), así que se publica cualquier tipo
+        // que su política aceptó. Para cualquier otro dueño, sólo imágenes.
+        if (OwnerType is not FileOwnerType.ChatbotMedia
+            && !MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
         {
             throw new StorageDomainException(
                 "storage.file.public_image_required",
@@ -392,6 +435,16 @@ public sealed class FileResource
             throw new StorageDomainException(
                 "storage.file.invalid_state",
                 $"Expected a {FileOwnerType.PaymentProof} resource but it was {OwnerType}.");
+        }
+    }
+
+    private void RequireProductImage()
+    {
+        if (OwnerType is not FileOwnerType.Product)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                $"Expected a {FileOwnerType.Product} resource but it was {OwnerType}.");
         }
     }
 

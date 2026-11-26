@@ -14,11 +14,15 @@ public enum ConversationChannel
     Instagram,
 }
 
-/// <summary>Spec 2026-10-21 §4.2: quién redactó un saliente. En <c>messages</c> viaja como smallint (Member = 1, Chatbot = 2, ApiKey = 4). El 3 está reservado para los agentes de IA.</summary>
+/// <summary>Spec 2026-10-21 §4.2: quién redactó un saliente. En <c>messages</c> viaja como smallint (Member = 1, Chatbot = 2, Agent = 3,
+/// ApiKey = 4). Un lector de autores que sólo mire el miembro pierde en silencio a los tres que no lo tienen.</summary>
 public enum MessageAuthorKind
 {
     Member = 1,
     Chatbot = 2,
+
+    /// <summary>Spec 2026-10-29 §4.4: un agente de IA. Lleva <c>sent_by_agent_id</c>, nunca miembro.</summary>
+    Agent = 3,
     ApiKey = 4,
 }
 

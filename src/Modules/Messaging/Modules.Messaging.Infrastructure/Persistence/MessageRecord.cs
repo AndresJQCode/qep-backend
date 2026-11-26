@@ -33,6 +33,10 @@ internal sealed class MessageRecord
 
     public string? SentByApiKeyName { get; set; }
 
+    /// <summary>Spec 2026-10-29 §4.4: el agente de IA que lo redactó (referencia blanda a Ai, sin FK); presente si y sólo si
+    /// <see cref="SentByKind"/> es Agent.</summary>
+    public Guid? SentByAgentId { get; set; }
+
     /// <summary>Spec 2026-10-10 §7.1: el mensaje citado, si QEP lo tiene. Sin FK (§7.1).</summary>
     public Guid? ReplyToMessageId { get; set; }
 
@@ -45,6 +49,9 @@ internal sealed class MessageRecord
 
     /// <summary>Decisión del owner del 2026-10-30: lo escribió la importación del historial por coexistencia. Nunca se apaga.</summary>
     public bool Imported { get; set; }
+
+    /// <summary>Spec 2026-11-09 D8b: descartar un programado fallido quema el reintento del mensaje <c>Failed</c> con su <c>clientId</c>.</summary>
+    public bool RetryDisabled { get; set; }
 
     public MessageMediaRecord? Media { get; set; }
 }
@@ -65,6 +72,12 @@ internal sealed class MessageMediaRecord
 
     /// <summary>Spec 2026-10-14 §6.2: la URL del adjunto de Instagram; <c>null</c> en WhatsApp.</summary>
     public string? SourceUrl { get; set; }
+
+    /// <summary>Spec 2026-11-18: el archivo de Storage (dueño <c>ChatbotMedia</c>) que mandó un chatbot; <c>null</c> en el resto.</summary>
+    public Guid? StorageFileId { get; set; }
+
+    /// <summary>Spec 2026-11-18: la URL pública de ese archivo, que la burbuja carga; sin copia en R2 (<c>storage_key</c> nulo).</summary>
+    public string? PublicUrl { get; set; }
 }
 
 internal sealed class WebhookDeliveryRecord

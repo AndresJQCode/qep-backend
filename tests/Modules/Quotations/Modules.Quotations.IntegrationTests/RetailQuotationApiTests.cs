@@ -21,7 +21,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// la vista previa no escriba, que prenderlo limpie el piso guardado, que el pedido pendiente
 /// tambien lo pueda cambiar, y que el rastro quede en historial y auditoria.
 /// </summary>
-public sealed class RetailQuotationApiTests
+public sealed class RetailQuotationApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string QuotationUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}";
@@ -32,8 +32,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task SavingWithRetailOnLeavesEveryLineWithoutDiscount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var before = await DraftWithTenUnitsAsync(client, tenantId);
@@ -65,8 +64,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task TurningRetailOnClearsTheSavedFloorAndTurningItOffDoesNotRestoreIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var draft = await DraftWithTenUnitsAsync(client, tenantId);
@@ -98,8 +96,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task TurningRetailOffAndChoosingAFloorInTheSameSaveWorks()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var draft = await DraftWithTenUnitsAsync(client, tenantId);
@@ -123,8 +120,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task RetailOnWithAFloorInTheSameBodyIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var draft = await DraftWithTenUnitsAsync(client, tenantId);
@@ -146,8 +142,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task ThePreviewAppliesRetailWithoutSavingIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var draft = await DraftWithTenUnitsAsync(client, tenantId);
@@ -181,8 +176,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task ThePendingOrderPreviewsAndSavesRetail()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order) = await PendingOrderAsync(client, factory, tenantId);
@@ -223,12 +217,11 @@ public sealed class RetailQuotationApiTests
         Assert.False((await GetQuotationAsync(client, tenantId, quotation.Id)).IsRetail);
     }
 
-    // El pedido que ya no esta Pending no admite cambiarlo: el mismo error que ya da su guardado.
+    // El pedido que ya no es editable no admite cambiarlo: el mismo error que ya da su guardado.
     [Fact]
-    public async Task AnOrderThatIsNoLongerPendingRejectsTheChange()
+    public async Task AnOrderThatIsNoLongerEditableRejectsTheChange()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
         using var _ = client;
@@ -243,7 +236,7 @@ public sealed class RetailQuotationApiTests
             client, tenantId, order, OrderRequestFor(quotation, quantity: null, isRetail: true));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
+        Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
     }
 
     // Una cotizacion anulada no es editable y no tiene pedido que la rescate: el mismo error que
@@ -251,8 +244,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task AVoidedQuotationRejectsTheChange()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var draft = await DraftWithTenUnitsAsync(client, tenantId);
@@ -276,8 +268,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task SavingRetailOnTheQuotationLeavesHistory()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var draft = await DraftWithTenUnitsAsync(client, tenantId);
@@ -311,8 +302,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task SavingRetailOnThePendingOrderLeavesHistoryAndAudit()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order) = await PendingOrderAsync(client, factory, tenantId);
@@ -357,8 +347,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task ARetailQuotationAcceptsAProductWithIncompleteScales()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithTenUnitsAsync(client, tenantId);
@@ -382,8 +371,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task TurningRetailOnAndAddingAProductWithIncompleteScalesInTheSameSaveWorks()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithTenUnitsAsync(client, tenantId);
@@ -412,8 +400,7 @@ public sealed class RetailQuotationApiTests
     [Fact]
     public async Task ThePendingOrderTurnsRetailOnAndAddsAProductWithIncompleteScalesInTheSameSave()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order) = await PendingOrderAsync(client, factory, tenantId);
@@ -473,7 +460,7 @@ public sealed class RetailQuotationApiTests
             client, factory, tenantId, clientId, productId, paymentMethod: null);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         var order = await converted.Content.ReadConvertedOrderAsync(

@@ -34,7 +34,7 @@ public sealed class BillingTemplateOutboundTests
     private static ApprovedTemplate Named(string body) => new(
         TemplateName, "es", "UTILITY", "NAMED",
         TemplateComponentsBuilder.Components(
-            new TemplateDraft(TemplateName, "es", "UTILITY", null, body, null, [], new Dictionary<string, string>()), "4::handle").ToJsonString());
+            new TemplateDraft(TemplateName, "es", "UTILITY", null, body, null, [], new Dictionary<string, string>()), TemplateMediaHeader.Document("4::handle")).ToJsonString());
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -75,8 +75,9 @@ public sealed class BillingTemplateOutboundTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
+        // Borrar clientes (A-12 y P4): abrir la conversación con cliente toma su candado y comprueba que exista en customers.customers.
         ScriptMetaOk(f.Factory.MetaHandler);
-        var customerId = Guid.CreateVersion7();
+        var customerId = await CreateCustomerAsync(f.Factory, f.Tenant, "ANA PÉREZ", "300 555 0101");
 
         var sent = Assert.IsType<BillingTemplateSendResult.Sent>(await SendAsync(f, Send(f, customerId: customerId)));
 

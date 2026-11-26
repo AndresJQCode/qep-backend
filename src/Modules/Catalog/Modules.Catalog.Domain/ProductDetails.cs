@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+
 namespace Modules.Catalog.Domain;
 
 /// <summary>
@@ -19,6 +21,13 @@ public sealed record ProductDetails
     public TaxRateId? TaxRateId { get; init; }
 
     public ProductCategoryId? CategoryId { get; init; }
+
+    /// <summary>Producto o servicio (spec 2026-11-18 §3.1). Sin asignar es <c>Physical</c>, el valor de
+    /// todo producto de antes.</summary>
+    public ProductKind Kind { get; init; } = ProductKind.Physical;
+
+    /// <summary>La unidad de venta (spec 2026-11-18 §3.2). Sin asignar es <c>Unit</c>.</summary>
+    public SalesUnit SalesUnit { get; init; } = SalesUnit.Unit;
 
     // Espeja el ancho de columna, igual que Name y Code en Product: un valor demasiado largo
     // falla como 422 con código de dominio en vez de llegar a PostgreSQL y volver como 500.

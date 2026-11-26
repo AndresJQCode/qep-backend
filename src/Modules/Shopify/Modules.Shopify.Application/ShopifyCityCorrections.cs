@@ -164,8 +164,9 @@ public sealed class ShopifyCitySynonymEventApplier(
 /// importador siembra sin mensaje, así que un pedido reimportado puede sembrar otro) y un <c>Recorrect</c> cuya huella ya está en
 /// la ciudad del sinónimo terminan <c>Skipped</c> sin llamar a Quotations ni a Customers.</item>
 /// <item>Antes de cada escritura anota en la fila la ciudad que pide (<see cref="IShopifyCityCorrectionJobQueue.RecordRequestedCityAsync"/>,
-/// en su propia sentencia) y le pasa al escritor todas las que pidió el trabajo: así Customers reconoce un reintento suyo y no
-/// confunde lo que hizo una persona con lo que hizo un intento anterior.</item>
+/// en su propia sentencia) y le pasa al escritor todas las que pidió el trabajo: así Customers y Quotations reconocen un reintento
+/// suyo y no confunden lo que hizo una persona con lo que hizo un intento anterior (gana la persona: el trabajo termina
+/// <c>Skipped</c>).</item>
 /// <item>Escribe por <see cref="IShopifyCityCorrectionWriter"/>, que confirma en su propio scope. Con éxito, también con
 /// <c>AlreadyApplied</c> (un intento anterior escribió y cayó antes de guardar acá), la huella guarda la ciudad que de verdad quedó
 /// escrita, que en un reintento puede ser la que el sinónimo tenía antes. Cualquier rechazo termina <c>Skipped</c> con su motivo,
@@ -176,6 +177,9 @@ public sealed class ShopifyCitySynonymEventApplier(
 /// <c>corrected</c> antes de listar las huellas) relee el sinónimo y guarda en un solo guardado la huella, la auditoría, el trabajo
 /// <c>Applied</c> y, si la ciudad del sinónimo ya no es la escrita, el <c>Recorrect</c> de esa huella. Así ninguna huella queda en
 /// la ciudad vieja: o el evento la lista, o esta relectura ve la ciudad nueva.</item>
+/// <item>Spec 2026-11-14 §5: con éxito sobre un pedido, en ese mismo guardado la parte escrita pasa a la proyección de la fila del
+/// espejo (es corrección del sistema, no del asesor: plan D3) y se encola el envío de la dirección a Shopify. Un trabajo
+/// <c>Skipped</c> (el asesor ya editó la parte: <c>shipping_changed</c>) o de cliente no encola nada.</item>
 /// </list>
 /// Lo que lanza (concurrencia, base, red, un payload ilegible) sale tal cual: nada de Shopify se guarda (salvo la ciudad pedida) y
 /// el worker lo reintenta.
@@ -189,6 +193,7 @@ public sealed class ShopifyCityCorrectionProcessor(
     IShopifyCityCorrectionRepository corrections,
     IShopifyCityCorrectionJobRepository jobs,
     IShopifyAuditRecorder audit,
+    ShopifyOrderPushes pushes,
     IShopifyUnitOfWork unitOfWork,
     IClock clock)
 {
@@ -254,6 +259,11 @@ public sealed class ShopifyCityCorrectionProcessor(
                 Json),
             now);
         job.MarkApplied(now);
+        if (job.Target == ShopifyCityCorrectionTarget.Order)
+        {
+            await SyncShopifyAsync(job, correction, result, now, cancellationToken);
+        }
+
         if (current is { IsDeleted: false } && current.CityId != correction.CityId)
         {
             // Sin operador ni mensaje: acá no se sabe quién corrigió, sólo que la ciudad ya no es la escrita.
@@ -262,6 +272,29 @@ public sealed class ShopifyCityCorrectionProcessor(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    // Spec 2026-11-14 §5 y plan D3: la ciudad que corrige el sistema no la tocó el asesor, así que pasa a la proyección (una edición
+    // posterior de Shopify sobre la dirección no es conflicto) y viaja a Shopify, en el mismo guardado que la huella. Sin proyección
+    // (fila importada antes, plan D6) no hay nada que mover: se compara contra el pedido de ahora. Sin pedido en la fila no hay
+    // qué mandar.
+    private async Task SyncShopifyAsync(
+        ShopifyCityCorrectionJob job, ShopifyCityCorrection correction, ShopifyCityWriteResult result, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if ((job.MirrorOrderId ?? correction.MirrorOrderId) is not { } mirrorId
+            || await mirrors.FindByIdAsync(job.TenantId, mirrorId, cancellationToken) is not { QepOrderId: not null } row)
+        {
+            return;
+        }
+
+        if (row.AppliedProjection is { } projection)
+        {
+            row.RecordProjection(ShopifyOrderProjection.Write(
+                ShopifyOrderProjection.Read(projection) with { ShippingParty = result.Party ?? throw MissingFingerprint(job) }));
+        }
+
+        await pushes.EnqueueAsync(row, [ShopifyPushGroup.ShippingAddress], now, cancellationToken);
     }
 
     // Un Resolve busca si ya hay huella de este sinónimo en su destino; un Recorrect lee la suya. La huella no se borra nunca (ni
@@ -291,7 +324,7 @@ public sealed class ShopifyCityCorrectionProcessor(
             var requested = await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
             var recorrected = job.Target == ShopifyCityCorrectionTarget.Order
                 ? await writer.CorrectShippingCityAsync(
-                    job.TenantId, job.TargetId, existing!.Party!, synonym.DepartmentId, synonym.CityId, cancellationToken)
+                    job.TenantId, job.TargetId, existing!.Party!, synonym.DepartmentId, synonym.CityId, requested, cancellationToken)
                 : await writer.CorrectCustomerCityAsync(
                     job.TenantId, job.TargetId, existing!.CustomerVersion!.Value, existing.CityId, synonym.CityId, requested,
                     cancellationToken);
@@ -313,10 +346,12 @@ public sealed class ShopifyCityCorrectionProcessor(
                 return (null, ShopifyCityCorrectionSkipReasons.PartyIncomplete);
             }
 
-            var party = new ShopifyPartyDraft(fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId);
-            await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
+            var party = new ShopifyPartyDraft(
+                fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId,
+                ShopifyOrderImporter.ShippingPostalCode(snapshot));
+            var requested = await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
             return (await writer.AttachShippingAsync(
-                job.TenantId, job.TargetId, party, ShopifyOrderImporter.RawAddressLabel, cancellationToken), null);
+                job.TenantId, job.TargetId, party, ShopifyOrderImporter.RawAddressLabel, requested, cancellationToken), null);
         }
 
         // D-C5: con la configuración actual de la tienda; si ya no tiene clasificación por defecto, el cliente sigue incompleto.

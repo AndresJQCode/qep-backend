@@ -24,4 +24,30 @@ public sealed class TemplateDetailsJsonTests
     [InlineData("[]")]
     [InlineData("{\"template\":{\"name\":\"x\"}}")]
     public void ParseSendIsNullOnGarbage(string? json) => Assert.Null(TemplateDetailsJson.ParseSend(json));
+
+    [Fact]
+    public void ParseSendReadsTheHeaderSerializeWrote()
+    {
+        var header = TemplateHeader.ByLink("document", "https://cdn.example.com/f.pdf", "Factura-1.pdf");
+        var json = TemplateDetailsJson.Serialize("pedido", "es_CO", "UTILITY", new Dictionary<string, string> { ["1"] = "Ana" }, header);
+
+        Assert.Equal(header, TemplateDetailsJson.ParseSend(json)!.Header);
+    }
+
+    [Fact]
+    public void ADetailWithoutHeaderReadsAsNoHeader()
+    {
+        var json = TemplateDetailsJson.Serialize("pedido", "es_CO", "UTILITY", new Dictionary<string, string> { ["1"] = "Ana" });
+
+        Assert.Null(TemplateDetailsJson.ParseSend(json)!.Header);
+    }
+
+    [Fact]
+    public void AMediaIdHeaderIsNeverStored()
+    {
+        var json = TemplateDetailsJson.Serialize(
+            "pedido", "es_CO", "UTILITY", new Dictionary<string, string>(), TemplateHeader.DocumentById("m", "a.pdf"));
+
+        Assert.DoesNotContain("\"header\"", json, StringComparison.Ordinal);
+    }
 }

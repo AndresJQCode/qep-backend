@@ -54,7 +54,8 @@ public sealed class InviteMemberHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         EnsureAuthorized(command.TenantId);
         // Cualquier rol del catálogo del tenant es invitable, incluido admin y los roles
-        // definidos por el tenant: la única validación de rol es que el catálogo lo conozca.
+        // definidos por el tenant, siempre que conceda algo en el tenant (spec 2026-11-15:
+        // Cajero sin pos no). No hay allowlist aparte.
         await EnsureKnownRolesAsync(command.TenantId, command.Roles, cancellationToken);
 
         // Desde acá hasta el commit se corre serializado con el borrado de usuarios huérfanos
@@ -225,11 +226,20 @@ public sealed class InviteMemberHandler(
 
         foreach (var role in normalizedRoles)
         {
-            if (!await roleReferenceValidator.IsKnownRoleAsync(tenantId, role, cancellationToken))
+            var reference = await roleReferenceValidator.CheckAsync(tenantId, role, cancellationToken);
+            if (reference == RoleReference.Unknown)
             {
                 throw new TenantDomainException(
                     "tenancy.membership.role_unknown",
                     $"The role '{role}' is not part of the authorization catalog.");
+            }
+
+            // Spec 2026-11-15: invitar (y reinvitar) es conceder de nuevo, así que valida todos los roles.
+            if (reference == RoleReference.Unassignable)
+            {
+                throw new TenantDomainException(
+                    "tenancy.membership.role_unavailable",
+                    $"The role '{role}' grants nothing in this tenant: its module is not enabled.");
             }
         }
     }

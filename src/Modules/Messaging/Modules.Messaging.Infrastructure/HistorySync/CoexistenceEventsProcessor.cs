@@ -39,7 +39,7 @@ internal sealed partial class CoexistenceEventsProcessor(IServiceScopeFactory sc
     [LoggerMessage(Level = LogLevel.Error, Message = "Messaging keeps failing to apply outbox message {MessageId} ({EventName}) on attempt {Attempt}; it is retried when its claim expires.")]
     private static partial void LogAttemptFailedRepeatedly(ILogger logger, Exception exception, Guid messageId, string eventName, int attempt);
 
-    public Task ProcessBatchAsync(CancellationToken cancellationToken) =>
+    public Task<bool> ProcessBatchAsync(CancellationToken cancellationToken) =>
         Claims.ProcessBatchAsync(ProcessAsync, LogFailure, cancellationToken);
 
     private async Task ProcessAsync(ClaimedMessage message, CancellationToken cancellationToken)

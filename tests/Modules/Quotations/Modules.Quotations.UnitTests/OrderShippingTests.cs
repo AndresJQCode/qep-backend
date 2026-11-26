@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -17,58 +18,42 @@ public sealed class OrderShippingTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
-    private static OrderHeader Header => new(ClientId, Advisor, "COP", null, false, null, false, false);
+    private static OrderHeader Header => new(ClientId, Advisor, "COP", null, false, null, false, []);
 
     private static OrderLineInput Line =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
 
     private static Order NewOrder(
         ShippingDetails shipping,
-        OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
         IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
         bool isStorePickup = false) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, shipping, [Line], paymentStatus, null, Advisor, proofs ?? [], Now);
+            Account, shipping, [Line], null, Advisor, proofs ?? [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     [Fact]
     public void FromQuotationCopiesTheShippingAndTheTotals()
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
-            QuotationParties.Empty, Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
+            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         var shipping = new ShippingDetails(CarrierId, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, true);
         quotation.SetShipping(shipping, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null, Advisor, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(shipping, order.ShippingDetails);
         Assert.Equal(
             (quotation.FreightSubtotal, quotation.FreightTaxAmount, quotation.Total, quotation.RetentionAmount, quotation.NetTotal),
             (order.FreightSubtotal, order.FreightTaxAmount, order.Total, order.RetentionAmount, order.NetTotal));
         Assert.Equal(134_000m, order.Total);
-    }
-
-    [Fact]
-    public void FromQuotationWithCashOnDeliveryMustBePending()
-    {
-        var quotation = Quotation.Create(
-            QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
-            QuotationParties.Empty, Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
-        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
-        quotation.SetShipping(new ShippingDetails(null, null, null, 0m, 0, true), Advisor, Now);
-        quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
-
-        var error = Assert.Throws<QuotationsDomainException>(() => Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.FullPaymentReceived, null, Advisor,
-            [new OrderPaymentProofInput(Guid.CreateVersion7(), 119_000m)], Now));
-
-        Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
     }
 
     [Fact]
@@ -80,25 +65,14 @@ public sealed class OrderShippingTests
         Assert.Equal((CarrierId, "Coordinadora"), (order.CarrierId, order.CarrierName));
     }
 
+    // R16: la misma regla que SetShipping (D-F14). Un comprobante ya es un pago registrado, y un pedido
+    // contraentrega se cobra en la puerta. Desde spec 2026-11-10 §3.2 el estado de pago no viaja: los
+    // comprobantes son lo único que puede registrar un pago al crear.
     [Fact]
-    public void CreateManualWithCashOnDeliveryMustBePending()
+    public void CreateManualWithCashOnDeliveryRejectsProofs()
     {
         var error = Assert.Throws<QuotationsDomainException>(() => NewOrder(
             new ShippingDetails(null, null, null, 0m, 0, true),
-            OrderPaymentStatus.FullPaymentReceived,
-            [new OrderPaymentProofInput(Guid.CreateVersion7(), 119_000m)]));
-
-        Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
-    }
-
-    // R16: la misma regla que SetShipping (D-F14). Pendiente de pago pero con un comprobante ya es un pago
-    // registrado, y un pedido contraentrega se cobra en la puerta.
-    [Fact]
-    public void CreateManualWithCashOnDeliveryRejectsProofsEvenWhilePending()
-    {
-        var error = Assert.Throws<QuotationsDomainException>(() => NewOrder(
-            new ShippingDetails(null, null, null, 0m, 0, true),
-            OrderPaymentStatus.PaymentPending,
             [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)]));
 
         Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
@@ -109,14 +83,15 @@ public sealed class OrderShippingTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
-            QuotationParties.Empty, Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         quotation.SetShipping(new ShippingDetails(null, null, null, 0m, 0, true), Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
 
         var error = Assert.Throws<QuotationsDomainException>(() => Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null, Advisor,
-            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], Now));
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor,
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime)));
 
         Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
     }
@@ -144,7 +119,7 @@ public sealed class OrderShippingTests
     public void CashOnDeliveryCannotBeTurnedOnWithProofs()
     {
         var order = NewOrder(
-            ShippingDetails.None, OrderPaymentStatus.PaymentPending,
+            ShippingDetails.None,
             [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)]);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
@@ -178,15 +153,15 @@ public sealed class OrderShippingTests
     }
 
     [Fact]
-    public void SetShippingOnlyWhilePending()
+    public void SetShippingOnlyWhileEditable()
     {
         var order = NewOrder(ShippingDetails.None);
-        order.Approve(Advisor, Now);
+        order.Prepare(Advisor, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.SetShipping(ShippingDetails.None, Advisor, Now));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     private static Order NewExternal(
@@ -194,11 +169,15 @@ public sealed class OrderShippingTests
         OrderPaymentStatus paymentStatus = OrderPaymentStatus.FullPaymentReceived,
         bool isStorePickup = false,
         string? externalKey = null,
-        string? externalShippingTitle = null) =>
-        Order.CreateExternal(
+        string? externalShippingTitle = null)
+    {
+        var line = Line;
+        return Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, [Line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
-            externalShippingTitle);
+            Account, [line], paymentStatus, null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001", shipping, externalKey,
+            externalShippingTitle, OrderCostFixtures.WithoutCosts([line]));
+    }
 
     [Fact]
     public void CreateExternalWithoutShippingHasNone()
@@ -272,4 +251,21 @@ public sealed class OrderShippingTests
 
         Assert.Equal(((string?)null, (string?)null), (order.ExternalKey, order.ExternalShippingTitle));
     }
+
+    // ---- requiresShipping (spec 2026-11-18 §5) ----
+    // Un pedido no nace ni queda sin líneas (order.order.items_required), así que el caso vacío se prueba en la cotización.
+
+    private static OrderLineInput ServiceLine =>
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 80_000m, 0m, 19, Kind: ProductKind.Service, SalesUnit: SalesUnit.Hour);
+
+    private static Order NewOrderWith(params OrderLineInput[] lines) =>
+        Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001", Header, QuotationParties.Empty, Account, ShippingDetails.None, lines,
+            null, Advisor, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+
+    [Fact]
+    public void OnlyServicesDoesNotRequireShipping() => Assert.False(NewOrderWith(ServiceLine, ServiceLine).RequiresShipping);
+
+    [Fact]
+    public void MixedRequiresShipping() => Assert.True(NewOrderWith(Line, ServiceLine).RequiresShipping);
 }

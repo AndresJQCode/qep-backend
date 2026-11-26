@@ -19,7 +19,17 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         string outcome,
         DateTimeOffset occurredAt,
         string? source = null) =>
-        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt, source);
+        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt, source, []);
+
+    public void PublishWithChangedFields(
+        Guid tenantId,
+        Guid actorId,
+        string action,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt,
+        IReadOnlyCollection<string> changedFields) =>
+        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt, source: null, changedFields);
 
     public void PublishByIntegration(
         Guid tenantId,
@@ -27,15 +37,16 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         string resourceId,
         string outcome,
         DateTimeOffset occurredAt) =>
-        Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt, source: null);
+        Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt, source: null, []);
 
     public void PublishBySystem(
         Guid tenantId,
         string action,
         string resourceId,
         string outcome,
-        DateTimeOffset occurredAt) =>
-        Add(tenantId, Guid.Empty, "System", action, resourceId, outcome, occurredAt, source: null);
+        DateTimeOffset occurredAt,
+        string? source = null) =>
+        Add(tenantId, Guid.Empty, "System", action, resourceId, outcome, occurredAt, source, []);
 
     private void Add(
         Guid tenantId,
@@ -45,7 +56,8 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         string resourceId,
         string outcome,
         DateTimeOffset occurredAt,
-        string? source)
+        string? source,
+        IReadOnlyCollection<string> changedFields)
     {
         var payload = JsonSerializer.Serialize(new AuditEventPayload(
             tenantId,
@@ -55,7 +67,7 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
             "customer",
             resourceId,
             outcome,
-            [],
+            changedFields,
             source ?? "customers",
             occurredAt));
 

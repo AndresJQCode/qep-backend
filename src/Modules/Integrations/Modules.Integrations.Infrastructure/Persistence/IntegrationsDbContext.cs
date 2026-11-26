@@ -150,6 +150,11 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
         install.Property(value => value.ShopName).HasColumnName("shop_name").HasMaxLength(ShopifyInstall.ShopNameMaxLength);
         install.Property(value => value.Scopes).HasColumnName("scopes").HasMaxLength(ShopifyInstall.ScopesMaxLength);
         install.Property(value => value.ProtectedToken).HasColumnName("access_token_protected");
+        // Spec 2026-11-12 D4: el refresh token y los dos vencimientos. Nulos en las filas canjeadas antes del cambio; el
+        // refresh token comparte key_id con el access token porque los dos se sellan juntos.
+        install.Property(value => value.ProtectedRefreshToken).HasColumnName("refresh_token_protected");
+        install.Property(value => value.AccessTokenExpiresAt).HasColumnName("access_token_expires_at");
+        install.Property(value => value.RefreshTokenExpiresAt).HasColumnName("refresh_token_expires_at");
         install.Property(value => value.KeyId).HasColumnName("key_id").HasMaxLength(ProtectedSecret.KeyIdMaxLength);
         install.Property(value => value.CreatedAt).HasColumnName("created_at");
         install.Property(value => value.ExpiresAt).HasColumnName("expires_at");

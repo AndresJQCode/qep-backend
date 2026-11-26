@@ -22,6 +22,11 @@ public sealed class ShopifyInstallTests
     private static ShopifyInstall Start(Guid? tenantId = null, Guid? memberId = null) =>
         ShopifyInstall.Start(Guid.NewGuid(), Shop, State, RedirectUri, tenantId, memberId, Now);
 
+    private static ProtectedSecret Sealed(string keyId) => new(keyId, [4, 5, 6]);
+
+    private static void Exchange(ShopifyInstall install, string shopId, string shopName, string scopes, DateTimeOffset now) =>
+        install.MarkExchanged(shopId, shopName, scopes, Token, Token, now.AddHours(1), now.AddDays(90), now);
+
     [Fact]
     public void StartFromQepCarriesTenantAndMembership()
     {
@@ -68,7 +73,7 @@ public sealed class ShopifyInstallTests
         var install = Start();
         var exchangedAt = Now.AddMinutes(3);
 
-        install.MarkExchanged("12345678", "Mi Tienda", "read_orders,read_customers", Token, exchangedAt);
+        Exchange(install, "12345678", "Mi Tienda", "read_orders,read_customers", exchangedAt);
 
         Assert.True(install.IsExchanged);
         Assert.Equal("12345678", install.ShopId);
@@ -84,9 +89,9 @@ public sealed class ShopifyInstallTests
     public void MarkExchangedTwiceThrows()
     {
         var install = Start();
-        install.MarkExchanged("1", "Mi Tienda", "read_orders", Token, Now);
+        Exchange(install, "1", "Mi Tienda", "read_orders", Now);
 
-        Assert.Throws<InvalidOperationException>(() => install.MarkExchanged("1", "Mi Tienda", "read_orders", Token, Now));
+        Assert.Throws<InvalidOperationException>(() => Exchange(install, "1", "Mi Tienda", "read_orders", Now));
     }
 
     [Fact]
@@ -95,7 +100,7 @@ public sealed class ShopifyInstallTests
         var install = Start();
 
         Assert.Throws<InvalidOperationException>(() =>
-            install.MarkExchanged("1", "Mi Tienda", "read_orders", Token, Now.AddMinutes(16)));
+            Exchange(install, "1", "Mi Tienda", "read_orders", Now.AddMinutes(16)));
         Assert.False(install.IsExchanged);
     }
 
@@ -107,14 +112,91 @@ public sealed class ShopifyInstallTests
         var install = Start();
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            install.MarkExchanged(new string('1', ShopifyInstall.ShopIdMaxLength + 1), "Mi Tienda", "read_orders", Token, Now));
+            Exchange(install, new string('1', ShopifyInstall.ShopIdMaxLength + 1), "Mi Tienda", "read_orders", Now));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            install.MarkExchanged("1", "Mi Tienda", new string('a', ShopifyInstall.ScopesMaxLength + 1), Token, Now));
+            Exchange(install, "1", "Mi Tienda", new string('a', ShopifyInstall.ScopesMaxLength + 1), Now));
         Assert.False(install.IsExchanged);
 
-        install.MarkExchanged("1", new string('n', ShopifyInstall.ShopNameMaxLength + 10), "read_orders", Token, Now);
+        Exchange(install, "1", new string('n', ShopifyInstall.ShopNameMaxLength + 10), "read_orders", Now);
 
         Assert.Equal(ShopifyInstall.ShopNameMaxLength, install.ShopName!.Length);
+    }
+
+    // Spec 2026-11-12 §6.1: el canje guarda los dos tokens y sus vencimientos; la instalación sigue viviendo 7 días.
+    [Fact]
+    public void MarkExchangedStoresBothTokensAndTheirExpiries()
+    {
+        var install = Start();
+
+        install.MarkExchanged("1", "Mi Tienda", "read_orders", Sealed("k1"), Sealed("k1"), Now.AddHours(1), Now.AddDays(90), Now);
+
+        Assert.NotNull(install.ProtectedRefreshToken);
+        Assert.Equal(Now.AddHours(1), install.AccessTokenExpiresAt);
+        Assert.Equal(Now.AddDays(90), install.RefreshTokenExpiresAt);
+        Assert.Equal(Now.AddDays(7), install.ExpiresAt);
+        Assert.Equal("k1", install.KeyId);
+    }
+
+    // D4: un solo key_id para los dos secretos; dos llaves dejarían una fila a medio re-cifrar.
+    [Fact]
+    public void MarkExchangedWithTwoKeysThrows()
+    {
+        var install = Start();
+
+        Assert.Throws<ArgumentException>(() =>
+            install.MarkExchanged("1", "Mi Tienda", "read_orders", Sealed("k1"), Sealed("k2"), Now.AddHours(1), Now.AddDays(90), Now));
+        Assert.False(install.IsExchanged);
+    }
+
+    [Fact]
+    public void ApplyRefreshedTokenKeepsTheInstallExpiry()
+    {
+        var install = Start();
+        install.MarkExchanged("1", "Mi Tienda", "read_orders", Sealed("k1"), Sealed("k1"), Now.AddHours(1), Now.AddDays(90), Now);
+        var refreshedAt = Now.AddMinutes(50);
+        ProtectedSecret token = new("k2", [7]);
+        ProtectedSecret refreshToken = new("k2", [8]);
+
+        install.ApplyRefreshedToken(token, refreshToken, refreshedAt.AddHours(1), refreshedAt.AddDays(90));
+
+        Assert.Equal(Now.AddDays(7), install.ExpiresAt);
+        Assert.Equal(refreshedAt.AddHours(1), install.AccessTokenExpiresAt);
+        Assert.Equal(refreshedAt.AddDays(90), install.RefreshTokenExpiresAt);
+        Assert.Equal(token.Ciphertext, install.ProtectedToken);
+        Assert.Equal(refreshToken.Ciphertext, install.ProtectedRefreshToken);
+        Assert.Equal("k2", install.KeyId);
+        Assert.Throws<ArgumentException>(() =>
+            install.ApplyRefreshedToken(Sealed("k1"), Sealed("k2"), refreshedAt.AddHours(1), refreshedAt.AddDays(90)));
+        Assert.Throws<InvalidOperationException>(() =>
+            Start().ApplyRefreshedToken(Sealed("k1"), Sealed("k1"), refreshedAt.AddHours(1), refreshedAt.AddDays(90)));
+    }
+
+    [Fact]
+    public void NeedsTokenRefreshOnlyWithin20Minutes()
+    {
+        var install = Start();
+        Assert.False(install.NeedsTokenRefresh(Now));
+
+        install.MarkExchanged("1", "Mi Tienda", "read_orders", Sealed("k1"), Sealed("k1"), Now.AddMinutes(21), Now.AddDays(90), Now);
+        Assert.False(install.NeedsTokenRefresh(Now));
+        Assert.True(install.NeedsTokenRefresh(Now.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void ReprotectReplacesBothTokensWithTheSameKey()
+    {
+        var install = Start();
+        install.MarkExchanged("1", "Mi Tienda", "read_orders", Sealed("k1"), Sealed("k1"), Now.AddHours(1), Now.AddDays(90), Now);
+        ProtectedSecret token = new("k2", [9]);
+        ProtectedSecret refreshToken = new("k2", [10]);
+
+        install.Reprotect(token, refreshToken);
+
+        Assert.Equal("k2", install.KeyId);
+        Assert.Equal(token.Ciphertext, install.ProtectedToken);
+        Assert.Equal(refreshToken.Ciphertext, install.ProtectedRefreshToken);
+        Assert.Equal(Now.AddHours(1), install.AccessTokenExpiresAt);
+        Assert.Throws<ArgumentException>(() => install.Reprotect(Sealed("k3"), Sealed("k4")));
     }
 
     // El reclamo reemplaza el state de Shopify por uno con prefijo, una sola vez y sólo mientras esté vigente.
@@ -147,7 +229,7 @@ public sealed class ShopifyInstallTests
     public void ToStringDoesNotPrintTheStateOrTheToken()
     {
         var install = Start();
-        install.MarkExchanged("1", "Mi Tienda", "read_orders", Token, Now);
+        Exchange(install, "1", "Mi Tienda", "read_orders", Now);
 
         Assert.DoesNotContain(State, install.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("System.Byte", install.ToString(), StringComparison.Ordinal);

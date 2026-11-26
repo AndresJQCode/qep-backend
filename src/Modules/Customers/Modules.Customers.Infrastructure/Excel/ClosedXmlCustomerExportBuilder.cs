@@ -9,7 +9,7 @@ namespace Modules.Customers.Infrastructure.Excel;
 /// Arma el Excel del padron con ClosedXML.
 ///
 /// Las columnas de <see cref="CustomerImportColumns"/> van primero y en su orden exacto (el CUC
-/// incluido), y las cuatro propias al final. Esa forma es deliberada: el importador ubica las
+/// incluido), después las opcionales (Empresa) y las cuatro propias al final. Esa forma es deliberada: el importador ubica las
 /// columnas **por nombre de cabecera** (ver <c>ClosedXmlCustomerImporter</c>), asi que un archivo
 /// exportado se puede corregir y volver a importar sin editarle la estructura, y las columnas de
 /// mas no le molestan.
@@ -35,6 +35,9 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     private static readonly IReadOnlyList<string> Columns =
     [
         .. CustomerImportColumns.Ordered,
+        // Spec 2026-11-10 §4.8: el documento de la empresa, con la cabecera que el importador lee, justo después de las de
+        // importación (las opcionales van tras las trece) y antes de las propias: «Tipo de persona» sigue siendo la última.
+        .. CustomerImportColumns.Optional,
         ActiveColumn,
         CreatedAtColumn,
         UpdatedAtColumn,
@@ -46,6 +49,8 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
 
     public CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
+        IReadOnlyDictionary<Guid, string> companyIdentificationNumbers,
+        IReadOnlyDictionary<Guid, IReadOnlyList<string>> tagNamesByCustomer,
         TenantCalendar calendar,
         string dateTimePattern,
         CancellationToken cancellationToken)
@@ -61,7 +66,15 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         for (var index = 0; index < customers.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            WriteRow(sheet, index + 2, customers[index], calendar, dateTimePattern);
+            WriteRow(
+                sheet,
+                index + 2,
+                customers[index],
+                companyIdentificationNumbers.GetValueOrDefault(customers[index].Id, string.Empty),
+                // El mismo separador que el importador lee (ExcelTagCell): un exportado se vuelve a subir sin perder etiquetas.
+                string.Join(ExcelTagCell.Separator + " ", tagNamesByCustomer.GetValueOrDefault(customers[index].Id, [])),
+                calendar,
+                dateTimePattern);
         }
 
         sheet.SheetView.FreezeRows(1);
@@ -84,9 +97,10 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // es un error de programacion (alguien sumo una columna a la importacion y no al export): falla
     // aca y no deja un archivo con las columnas corridas.
     private static void WriteRow(
-        IXLWorksheet sheet, int excelRow, CustomerDto customer, TenantCalendar calendar, string dateTimePattern)
+        IXLWorksheet sheet, int excelRow, CustomerDto customer, string companyIdentificationNumber, string tags,
+        TenantCalendar calendar, string dateTimePattern)
     {
-        var values = RowValues(customer, calendar, dateTimePattern);
+        var values = RowValues(customer, companyIdentificationNumber, tags, calendar, dateTimePattern);
         for (var column = 0; column < Columns.Count; column++)
         {
             sheet.Cell(excelRow, column + 1).Value = values.TryGetValue(Columns[column], out var value)
@@ -99,38 +113,46 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // clasificacion y del departamento/ciudad, no sus ids. Un incompleto deja vacio lo que no tiene
     // (spec 2026-10-10 §5.2).
     private static Dictionary<string, string> RowValues(
-        CustomerDto customer, TenantCalendar calendar, string dateTimePattern) => new(StringComparer.Ordinal)
-    {
-        [CustomerImportColumns.Cuc] = customer.Cuc ?? string.Empty,
-        [CustomerImportColumns.Name] = customer.Name,
-        [CustomerImportColumns.BusinessName] = customer.BusinessName ?? string.Empty,
-        [CustomerImportColumns.IdentificationType] = customer.IdentificationType ?? string.Empty,
-        [CustomerImportColumns.IdentificationNumber] = customer.IdentificationNumber ?? string.Empty,
-        [CustomerImportColumns.Phone] = customer.Phone ?? string.Empty,
-        [CustomerImportColumns.Email] = customer.Email ?? string.Empty,
-        [CustomerImportColumns.Address] = customer.Address ?? string.Empty,
-        // Un cliente de afuera no tiene departamento DIVIPOLA —la columna queda vacia— y su ciudad
-        // es la escrita a mano. Se exporta igual que uno colombiano a proposito: el archivo es
-        // para leerlo, y una fila con la ciudad en blanco esconderia al cliente. Que el importador
-        // no pueda volver a subir esa fila es otro asunto, y esta dicho en ImportCustomers: el
-        // alta de un cliente de afuera es por formulario.
-        [CustomerImportColumns.Department] = customer.Department?.Name ?? string.Empty,
-        [CustomerImportColumns.City] = customer.City?.Name ?? customer.CityName ?? string.Empty,
-        [CustomerImportColumns.Classification] = customer.Classification?.Name ?? string.Empty,
-        // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
-        // que abre el archivo.
-        [CustomerImportColumns.WithRetention] = customer.WithRetention ? "Si" : "No",
-        [CustomerImportColumns.VatSurplus] = customer.VatSurplus ? "Si" : "No",
-        [ActiveColumn] = customer.IsActive ? "Si" : "No",
-        // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
-        // regional de quien abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del
-        // tenant, al minuto y sin offset (spec 2026-09-17, punto 8a), y con el formato de fecha del
-        // tenant (spec 2026-10-23, D-R7).
-        [CreatedAtColumn] = calendar.ToLocal(customer.CreatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
-        [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
-        [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
-        [PersonTypeColumn] = customer.PersonType ?? string.Empty,
-    };
+        CustomerDto customer, string companyIdentificationNumber, string tags, TenantCalendar calendar, string dateTimePattern) =>
+        new(StringComparer.Ordinal)
+        {
+            [CustomerImportColumns.Cuc] = customer.Cuc ?? string.Empty,
+            [CustomerImportColumns.Name] = customer.Name,
+            [CustomerImportColumns.BusinessName] = customer.BusinessName ?? string.Empty,
+            [CustomerImportColumns.IdentificationType] = customer.IdentificationType ?? string.Empty,
+            [CustomerImportColumns.IdentificationNumber] = customer.IdentificationNumber ?? string.Empty,
+            [CustomerImportColumns.Phone] = customer.Phone ?? string.Empty,
+            [CustomerImportColumns.Email] = customer.Email ?? string.Empty,
+            [CustomerImportColumns.Address] = customer.Address ?? string.Empty,
+            // Un cliente de afuera no tiene departamento DIVIPOLA —la columna queda vacia— y su ciudad
+            // es la escrita a mano. Se exporta igual que uno colombiano a proposito: el archivo es
+            // para leerlo, y una fila con la ciudad en blanco esconderia al cliente. Que el importador
+            // no pueda volver a subir esa fila es otro asunto, y esta dicho en ImportCustomers: el
+            // alta de un cliente de afuera es por formulario.
+            [CustomerImportColumns.Department] = customer.Department?.Name ?? string.Empty,
+            [CustomerImportColumns.City] = customer.City?.Name ?? customer.CityName ?? string.Empty,
+            [CustomerImportColumns.Classification] = customer.Classification?.Name ?? string.Empty,
+            // El nombre de la tasa de cada tipo, que es lo que el importador lee de vuelta; vacia si no tiene (spec impuestos por
+            // tipo §7.4). Un cliente no tiene dos tasas del mismo pais y tipo, asi que la primera es la unica.
+            [CustomerImportColumns.Retefuente] = RateName(customer, CustomerImportColumns.Retefuente),
+            // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
+            // que abre el archivo.
+            [CustomerImportColumns.VatSurplus] = customer.VatSurplus ? "Si" : "No",
+            [ActiveColumn] = customer.IsActive ? "Si" : "No",
+            // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
+            // regional de quien abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del
+            // tenant, al minuto y sin offset (spec 2026-09-17, punto 8a), y con el formato de fecha del
+            // tenant (spec 2026-10-23, D-R7).
+            [CreatedAtColumn] = calendar.ToLocal(customer.CreatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
+            [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
+            [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
+            [PersonTypeColumn] = customer.PersonType ?? string.Empty,
+            [CustomerImportColumns.Company] = companyIdentificationNumber,
+            [CustomerImportColumns.Tags] = tags,
+        };
+
+    private static string RateName(CustomerDto customer, string type) =>
+        customer.WithholdingTaxRates.FirstOrDefault(rate => rate.Type == type)?.Name ?? string.Empty;
 
     private static void ApplyMinimumWidth(IXLColumns columns)
     {

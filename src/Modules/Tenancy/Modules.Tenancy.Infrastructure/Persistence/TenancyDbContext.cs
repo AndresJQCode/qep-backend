@@ -78,11 +78,41 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.DefaultCurrency).HasColumnName("default_currency").HasMaxLength(3).IsRequired();
         tenant.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(10).IsRequired();
         tenant.Property(value => value.Country).HasColumnName("country").HasMaxLength(2).IsRequired();
+        tenant.Property(value => value.Language).HasColumnName("language").HasMaxLength(10).IsRequired();
         tenant.Property(value => value.PersonTypeRequirement)
             .HasColumnName("person_type_requirement")
             .HasMaxLength(20)
             .HasConversion<string>()
             .IsRequired();
+        // Política de datos del cliente (spec 2026-11-09): cuatro bool NOT NULL DEFAULT true, dos por
+        // campo. Complejo y no owned: es un valor, y `Default`/`Always` son instancias compartidas
+        // que una entidad owned no admite en dos lugares. El default de la columna rellena a los
+        // tenants existentes con «todo exigido», el comportamiento de antes.
+        tenant.ComplexProperty(value => value.CustomerFieldPolicy, policy =>
+        {
+            policy.ComplexProperty(value => value.Document, document =>
+            {
+                document.Property(value => value.OnCustomerSave)
+                    .HasColumnName("customer_document_required_on_save")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+                document.Property(value => value.OnBilling)
+                    .HasColumnName("customer_document_required_on_billing")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+            });
+            policy.ComplexProperty(value => value.City, city =>
+            {
+                city.Property(value => value.OnCustomerSave)
+                    .HasColumnName("customer_city_required_on_save")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+                city.Property(value => value.OnBilling)
+                    .HasColumnName("customer_city_required_on_billing")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+            });
+        });
         // 512 es el largo de storage.file_resources.public_storage_key (StorageDbContext.cs:56):
         // la clave que se guarda acá es esa misma.
         tenant.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
@@ -119,10 +149,10 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         {
             table.HasCheckConstraint(
                 "CK_tenant_modules_module_key",
-                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','wms')");
+                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo','hr','payroll','scheduling','wms')");
             table.HasCheckConstraint(
                 "CK_tenant_modules_source",
-                "source IN ('backfill','signup','seed','manual','operator')");
+                "source IN ('backfill','signup','seed','manual','operator','invitation')");
             table.HasCheckConstraint("CK_tenant_modules_status", "status IN ('active','inactive')");
         });
         module.HasKey(value => new { value.TenantId, value.ModuleKey });
@@ -321,6 +351,11 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
             .IsUnique()
             .HasFilter("advisor_code IS NOT NULL")
             .HasDatabaseName("IX_memberships_tenant_id_advisor_code");
+        // Optional E.164 work mobile (task notices). Nullable and unindexed: nobody looks a member up
+        // by phone, and two members may share a company line.
+        membership.Property(value => value.PhoneE164)
+            .HasColumnName("phone_e164")
+            .HasMaxLength(MemberPhone.MaxLength);
         membership.Property(value => value.InvitedAt).HasColumnName("invited_at");
         membership.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
         membership.Property(value => value.ExpiresAt).HasColumnName("expires_at");

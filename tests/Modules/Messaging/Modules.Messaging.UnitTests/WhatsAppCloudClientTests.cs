@@ -384,6 +384,63 @@ public sealed class WhatsAppCloudClientTests
         Assert.DoesNotContain("\"context\"", handler.Body, StringComparison.Ordinal);
     }
 
+    // Spec 2026-11-18: el bot manda el archivo por link (la URL pública de Storage), sin subirlo a Meta.
+    [Theory]
+    [InlineData("image")]
+    [InlineData("video")]
+    public async Task SendMediaLinkPostsTheLinkAndCaption(string type)
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.link"}]}""");
+        var kind = type == "image" ? Modules.Messaging.Domain.MessageKind.Image : Modules.Messaging.Domain.MessageKind.Video;
+
+        var result = await ClientFor(handler).SendMediaLinkAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), new MediaLink(kind, new Uri("https://pub.test/x/catálogo.jpg"), "catálogo.jpg"),
+            "Catálogo", "qep:x", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal((SendOutcome.Sent, "wamid.link"), (result.Outcome, result.Wamid));
+        Assert.Equal("/v24.0/111/messages", handler.Path);
+        using var document = System.Text.Json.JsonDocument.Parse(handler.Body!);
+        Assert.Equal(type, document.RootElement.GetProperty("type").GetString());
+        var content = document.RootElement.GetProperty(type);
+        Assert.Equal(("https://pub.test/x/cat%C3%A1logo.jpg", "Catálogo"), (content.GetProperty("link").GetString(), content.GetProperty("caption").GetString()));
+        Assert.False(content.TryGetProperty("filename", out _));
+        Assert.False(content.TryGetProperty("id", out _));
+    }
+
+    [Fact]
+    public async Task AnAudioLinkNeverCarriesACaption()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.link"}]}""");
+
+        await ClientFor(handler).SendMediaLinkAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"),
+            new MediaLink(Modules.Messaging.Domain.MessageKind.Audio, new Uri("https://pub.test/x/saludo.mp3"), "saludo.mp3"),
+            "Escucha", "qep:x", null, TestContext.Current.CancellationToken);
+
+        using var document = System.Text.Json.JsonDocument.Parse(handler.Body!);
+        var content = document.RootElement.GetProperty("audio");
+        Assert.Equal("https://pub.test/x/saludo.mp3", content.GetProperty("link").GetString());
+        Assert.False(content.TryGetProperty("caption", out _));
+        Assert.False(content.TryGetProperty("filename", out _));
+    }
+
+    [Fact]
+    public async Task ADocumentLinkCarriesItsFileName()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.link"}]}""");
+
+        await ClientFor(handler).SendMediaLinkAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"),
+            new MediaLink(Modules.Messaging.Domain.MessageKind.Document, new Uri("https://pub.test/x/lista.pdf"), "Lista de precios.pdf"),
+            null, "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
+
+        using var document = System.Text.Json.JsonDocument.Parse(handler.Body!);
+        var content = document.RootElement.GetProperty("document");
+        Assert.Equal(("https://pub.test/x/lista.pdf", "Lista de precios.pdf"), (content.GetProperty("link").GetString(), content.GetProperty("filename").GetString()));
+        Assert.False(content.TryGetProperty("caption", out _));
+        Assert.Equal("wamid.quoted", document.RootElement.GetProperty("context").GetProperty("message_id").GetString());
+    }
+
     // El multipart lleva un nombre genérico; el que ve la persona en WhatsApp es el de document.filename.
     [Fact]
     public async Task ADocumentGoesWithItsRealFileNameCaptionAndQuotedContext()
@@ -412,6 +469,27 @@ public sealed class WhatsAppCloudClientTests
 
         Assert.Equal(new SendResult(SendOutcome.GraphError, null, 131053, "Media upload error"), result);
         Assert.DoesNotContain("\"caption\"", handler.Body, StringComparison.Ordinal);
+    }
+
+    // Un sticker no lleva caption ni filename: sólo el id de la subida, el contexto citado y el callback.
+    [Fact]
+    public async Task AStickerGoesByMediaIdWithoutCaptionAndWithTheQuotedContext()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.stk"}]}""");
+
+        var result = await ClientFor(handler).SendStickerAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.stk", "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
+
+        Assert.Equal((SendOutcome.Sent, "wamid.stk"), (result.Outcome, result.Wamid));
+        Assert.Equal("/v24.0/111/messages", handler.Path);
+        Assert.Contains("\"type\":\"sticker\"", handler.Body, StringComparison.Ordinal);
+        using var document = System.Text.Json.JsonDocument.Parse(handler.Body!);
+        var content = document.RootElement.GetProperty("sticker");
+        Assert.Equal("media.stk", content.GetProperty("id").GetString());
+        Assert.False(content.TryGetProperty("caption", out _));
+        Assert.False(content.TryGetProperty("filename", out _));
+        Assert.Equal("wamid.quoted", document.RootElement.GetProperty("context").GetProperty("message_id").GetString());
+        Assert.Equal("qep:x", document.RootElement.GetProperty("biz_opaque_callback_data").GetString());
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Persistence;
 
 namespace Modules.Messaging.Infrastructure.Webhook;
 
@@ -26,6 +27,7 @@ internal sealed partial class WebhookDeliveryProcessor
 
     private async Task<DeliveryOutcome> ProcessInstagramAsync(long deliveryId, string payload, CancellationToken cancellationToken)
     {
+        var outcome = DeliveryOutcome.Processed;
         foreach (var entry in InstagramWebhookPayloadParser.Parse(payload))
         {
             var ignored = entry.Events.OfType<InstagramIgnoredEvent>().ToArray();
@@ -33,12 +35,16 @@ internal sealed partial class WebhookDeliveryProcessor
             {
                 var reasons = string.Join(",", ignored.Select(e => e.Reason).Distinct());
                 LogInstagramIgnored(logger, deliveryId, ignored.Length, reasons);
+                metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.Ignored, ignored.Length);
             }
 
             var route = await routing.FindInstagramRouteAsync(entry.AccountId, cancellationToken);
             if (route is null)
             {
                 LogInstagramDiscarded(logger, deliveryId, entry.Events.Count, entry.AccountId, "unknown-route");
+                // Sin los ignorados, que ya contaron arriba: la alerta lee unknown_route y no debe sumarlos dos veces. El log sí
+                // los incluye.
+                metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.UnknownRoute, entry.Events.Count - ignored.Length);
                 continue;
             }
 
@@ -49,10 +55,15 @@ internal sealed partial class WebhookDeliveryProcessor
             if (!accepting && messages.Length > 0)
             {
                 LogInstagramDiscarded(logger, deliveryId, messages.Length, entry.AccountId, route.IsPaused ? "paused" : "module-off");
+                metrics.RecordDiscarded(
+                    WebhookDiscardProviders.Instagram, route.IsPaused ? WebhookDiscardReasons.Paused : WebhookDiscardReasons.ModuleOff, messages.Length);
             }
 
             InstagramSender? sender = null;
             var senderResolved = false;
+            // Spec 2026-10-21 D-M1, como WhatsApp: la posición del mensaje en su entrada corre el created_at de la cola un microsegundo,
+            // así dos mensajes de la misma entrega salen en orden y no empatan.
+            var position = 0;
             foreach (var @event in entry.Events)
             {
                 switch (@event)
@@ -64,7 +75,18 @@ internal sealed partial class WebhookDeliveryProcessor
                             senderResolved = true;
                         }
 
-                        await IngestInstagramAsync(deliveryId, route, sender, message, cancellationToken);
+                        try
+                        {
+                            await IngestInstagramAsync(deliveryId, route, sender, message, position++, cancellationToken);
+                        }
+                        catch (CustomerVanishedException)
+                        {
+                            // A-12 y P4: como en WhatsApp, el cliente se borró mientras la ingesta esperaba el candado; su transacción
+                            // se deshizo y la entrega se reintenta (el mid hace idempotente lo que ya entró).
+                            LogCustomerVanished(logger, deliveryId);
+                            outcome = DeliveryOutcome.RetryLater;
+                        }
+
                         break;
                     case InstagramSeenEvent seen:
                         // Spec 2026-10-14 (tiempo real): como un acuse de WhatsApp, el visto cambió la foto del hilo y quien lo mira lo relee.
@@ -72,6 +94,7 @@ internal sealed partial class WebhookDeliveryProcessor
                         if (applied.Outcome == StatusOutcome.NotFound)
                         {
                             LogInstagramForeign(logger, deliveryId);
+                            metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.ForeignEvent, 1);
                         }
 
                         foreach (var conversationId in applied.ConversationIds)
@@ -88,6 +111,7 @@ internal sealed partial class WebhookDeliveryProcessor
                         else
                         {
                             LogInstagramForeign(logger, deliveryId);
+                            metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.ForeignEvent, 1);
                         }
 
                         break;
@@ -97,12 +121,13 @@ internal sealed partial class WebhookDeliveryProcessor
             }
         }
 
-        return DeliveryOutcome.Processed;
+        return outcome;
     }
 
     /// <summary>Spec 2026-10-14 §8.2: con conversación y cliente no se llama a nadie. Si la conversación es nueva se pide el perfil
     /// (nombre y usuario) con el token de la cuenta, best effort, y se asegura el cliente por <c>instagram_user_id</c> (decisión 10).</summary>
-    private async Task IngestInstagramAsync(long deliveryId, MessagingRoute route, InstagramSender? sender, InstagramMessageEvent @event, CancellationToken cancellationToken)
+    private async Task IngestInstagramAsync(
+        long deliveryId, MessagingRoute route, InstagramSender? sender, InstagramMessageEvent @event, int position, CancellationToken cancellationToken)
     {
         var message = @event.Message;
         var existing = await dbContext.Database.SqlQuery<ExistingConversation>(
@@ -152,7 +177,8 @@ internal sealed partial class WebhookDeliveryProcessor
 
         // Spec 2026-10-14 (tiempo real): ya commiteado; un reenvío de Meta (null) no avisa nada. Un DM suena como uno de WhatsApp;
         // un echo movió la foto de la lista pero no es un entrante, así que sólo avisa que la conversación cambió.
-        // Spec 2026-10-21 D-M6: los chatbots no existen en Instagram; su ingesta nunca encola.
+        // Spec 2026-10-21 D-M6: los chatbots no existen en Instagram. Spec 2026-10-29 §6.1: la ingesta encola sólo lo que le toca a un agente
+        // de IA (bot_kind = 2); una conversación sin agente queda como antes, sin fila.
         var now = clock.UtcNow;
         if (@event.IsEcho)
         {
@@ -164,7 +190,8 @@ internal sealed partial class WebhookDeliveryProcessor
         }
         else
         {
-            var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, enqueueAutomation: false, cancellationToken, ConversationChannel.Instagram);
+            var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken, ConversationChannel.Instagram,
+                position: position, onlyBotKind: BotKind.Agent);
             if (ingested is not null)
             {
                 // Sólo el entrante nuevo mide: un reenvío de Meta (null) no. Antes de NotifyAsync, que puede fallar.

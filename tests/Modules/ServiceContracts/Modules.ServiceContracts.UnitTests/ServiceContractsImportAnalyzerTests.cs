@@ -166,7 +166,7 @@ public sealed class ServiceContractsImportAnalyzerTests
     {
         private readonly List<(ServiceContractsCustomerRef Customer, (string Type, string Number)? Document)> customers = [];
 
-        public Guid[] Ids =>customers.Select(entry => entry.Customer.Id).ToArray();
+        public Guid[] Ids => customers.Select(entry => entry.Customer.Id).ToArray();
 
         public FakeCustomers With(string name, string? phone = null, string? email = null, (string, string)? document = null)
         {
@@ -224,6 +224,8 @@ public sealed class ServiceContractsImportAnalyzerTests
 
         public void Add(ServiceContract service) => throw new NotSupportedException();
 
+        public void Remove(ServiceContract service) => throw new NotSupportedException();
+
         public Task<ServiceContract?> FindAsync(Guid tenantId, ServiceContractId id, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -242,6 +244,14 @@ public sealed class ServiceContractsImportAnalyzerTests
 
         public Task<IReadOnlyList<ActiveServiceTotal>> ActiveTotalsAsync(Guid tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlySet<ServiceContractId>> FilterIdsAsync(
+            Guid tenantId,
+            IReadOnlyCollection<ServiceContractId> ids,
+            Guid? assigneeMemberId,
+            string? searchTerm,
+            IReadOnlyCollection<Guid>? searchCustomerIds,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class AnaManages : IServiceContractsMemberDirectory

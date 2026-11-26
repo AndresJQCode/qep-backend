@@ -51,7 +51,8 @@ internal sealed class TemplateOutbound(OutboundGuards guards, IWhatsAppCloudClie
         var conversation = target.Conversation;
         var permit = await guards.AdmitTemplateAsync(tenantId, target, cancellationToken);
         var template = resolved.Template;
-        var built = TemplateCatalog.BuildSend(template, resolved.Parameters);
+        // Spec 2026-11-17: la imagen fija guardada viaja sola; el request del chat no la trae.
+        var built = TemplateCatalog.BuildSend(template, resolved.Parameters, TemplateCatalog.StoredHeaderOf(template));
         var text = built.Text;
         var details = built.DetailsJson;
         var draft = new OutboundDraft(

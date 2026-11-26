@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Siigo.Application\Modules.Siigo.Application.csproj" />
+    <ProjectReference Include="..\Modules.Siigo.Domain\Modules.Siigo.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

@@ -107,7 +107,13 @@ internal static class AutomationsApiHarness
             .WithDatabase("qep")
             .WithUsername("qep")
             .WithPassword("qep-integration")
-            .WithCommand("-c", "max_connections=400")
+            // fsync, synchronous_commit y full_page_writes apagados: la base es desechable y lo que se mide es la lógica,
+            // no la durabilidad.
+            .WithCommand(
+                "-c", "max_connections=400",
+                "-c", "fsync=off",
+                "-c", "synchronous_commit=off",
+                "-c", "full_page_writes=off")
             .Build();
         await server.StartAsync(CancellationToken.None);
         await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
@@ -192,10 +198,16 @@ internal static class AutomationsApiHarness
         /// el handler anti-SSRF sólo en este host: la URL base de las conexiones sembradas no resuelve en ningún DNS.</summary>
         public FakeExternalApiHandler ExternalApi { get; } = new();
 
+        /// <summary>Spec 2026-11-18: Storage del archivo de un bloque «Mensaje», en memoria. La política sigue siendo la real.</summary>
+        public FakeChatbotMediaStore Media { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.ConfigureTestServices(services =>
             {
+                services.RemoveAll<IChatbotMediaStore>();
+                services.AddSingleton<IChatbotMediaStore>(Media);
+
                 foreach (var name in GraphClientNames)
                 {
                     services.AddHttpClient(name).ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
@@ -229,6 +241,8 @@ internal static class AutomationsApiHarness
             // Sin vigilar archivos de configuración (MessagingApiHarness explica el límite de FSEvents de macOS).
             builder.UseSetting("hostBuilder:reloadConfigOnChange", "false");
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -250,6 +264,7 @@ internal static class AutomationsApiHarness
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:ScheduledPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             // Spec 2026-10-09 §9: las de Meta:App con los centinelas de MessagingApiHarness; el secreto valida la firma del webhook.
             builder.UseSetting("Meta:App:AppId", MetaAppId);
@@ -333,6 +348,35 @@ internal static class AutomationsApiHarness
     {
         await EnableModuleAsync(connectionString, tenantId, "messaging");
         await EnableModuleAsync(connectionString, tenantId, "automations");
+    }
+
+    /// <summary>Spec 2026-11-17 D-B16: el bloque «Agente IA» exige también el módulo <c>ai</c>.</summary>
+    public static Task<int> EnableAiAsync(string connectionString, Guid tenantId) => EnableModuleAsync(connectionString, tenantId, "ai");
+
+    /// <summary>Spec 2026-11-17 §5.2: un agente de IA del tenant, escrito por el repositorio de Ai (sin pasar por la cuenta del proveedor):
+    /// publicado si <paramref name="publish"/>, y pausado después si <paramref name="pause"/>.</summary>
+    public static async Task<Guid> SeedAgentAsync(
+        WebApplicationFactory<Program> host, RegisteredTenant tenant, string name = "Ventas", bool publish = true, bool pause = false)
+    {
+        using var scope = host.Services.CreateScope();
+        var now = DateTimeOffset.UtcNow;
+        var agent = Modules.Ai.Domain.Agent.Create(
+            tenant.TenantId, name,
+            Modules.Ai.Domain.AgentConfig.Default(new Modules.Ai.Domain.AgentModelRef("anthropic", "claude-sonnet-5-5")) with { Instructions = "Atiende." },
+            tenant.OwnerUserId, now);
+        if (publish)
+        {
+            agent.Publish([], tenant.OwnerUserId, now);
+        }
+
+        if (pause)
+        {
+            agent.Pause(now);
+        }
+
+        scope.ServiceProvider.GetRequiredService<Modules.Ai.Application.IAgentRepository>().Add(agent);
+        await scope.ServiceProvider.GetRequiredService<Modules.Ai.Application.IAiUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        return agent.Id;
     }
 
     public static Task<int> DisableModuleAsync(string connectionString, Guid tenantId, string moduleKey) =>

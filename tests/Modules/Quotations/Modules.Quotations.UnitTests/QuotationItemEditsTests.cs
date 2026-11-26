@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -37,7 +38,7 @@ public sealed class QuotationItemEditsTests
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), UpdatedBy,
             new DateOnly(2026, 9, 30), null, null, QuotationParties.Empty, BillingAccount,
             "COP",
-            false, false, UpdatedBy, Now);
+            false, [], MunicipalContext.None, UpdatedBy, Now);
         foreach (var (productId, quantity, unitPrice) in lines)
         {
             quotation.AddItem(QuotationItemId.New(), productId, productId, quantity, unitPrice, 0m, 0, UpdatedBy, Now);
@@ -410,6 +411,50 @@ public sealed class QuotationItemEditsTests
 
         Assert.Equal("quotation.item.product_not_found", error.Code);
         Assert.Empty(quotation.Items);
+    }
+
+    // ---- Tipo y unidad en la línea (spec 2026-11-18 §3.4) ----
+
+    // Se fijan al crear la línea, no al enviar: un borrador ya sabe que vende un servicio.
+    [Fact]
+    public async Task AnAddedLineTakesKindAndUnitFromTheVariant()
+    {
+        var service = Guid.CreateVersion7();
+        var quotation = EditableQuotation();
+        var catalog = new StubPricingCatalog(
+            Product(service, "Soporte técnico", 80_000m) with { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour });
+
+        await ApplyAsync(quotation, catalog, new QuotationItemAddition(service, 2m));
+
+        var line = Assert.Single(quotation.Items);
+        Assert.Equal((ProductKind.Service, SalesUnit.Hour), (line.Kind, line.SalesUnit));
+    }
+
+    // Ningún guardado relee la variante de una línea que ya existe: si el producto cambió de tipo
+    // después, la línea conserva el suyo, también cuando sólo cambia la cantidad.
+    [Fact]
+    public async Task AnUnchangedLineKeepsItsKindOnFullSave()
+    {
+        var service = Guid.CreateVersion7();
+        var unchanged = Guid.CreateVersion7();
+        var quotation = EditableQuotation();
+        await ApplyAsync(
+            quotation,
+            new StubPricingCatalog(
+                Product(service, "Soporte técnico", 80_000m) with { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour },
+                Product(unchanged, "Instalación", 50_000m) with { Kind = ProductKind.Service, SalesUnit = SalesUnit.Service }),
+            new QuotationItemAddition(service, 1m),
+            new QuotationItemAddition(unchanged, 1m));
+        var nowPhysical = new StubPricingCatalog(
+            Product(service, "Soporte técnico", 80_000m), Product(unchanged, "Instalación", 50_000m));
+
+        await ApplyAsync(
+            quotation, nowPhysical, new QuotationItemAddition(service, 3m), new QuotationItemAddition(unchanged, 1m));
+
+        Assert.All(quotation.Items, line => Assert.Equal(ProductKind.Service, line.Kind));
+        Assert.Equal(
+            [SalesUnit.Hour, SalesUnit.Service],
+            quotation.Items.OrderBy(line => line.Position).Select(line => line.SalesUnit));
     }
 
     private sealed class StubPricingCatalog(params QuotationVariantPricingRef[] products)

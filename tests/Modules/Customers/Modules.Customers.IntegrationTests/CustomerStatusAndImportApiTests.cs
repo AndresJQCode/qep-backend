@@ -5,12 +5,13 @@ using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Domain;
 using Modules.Geography.Infrastructure.Persistence;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
 
-public sealed class CustomerStatusAndImportApiTests
+public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private static Task<HttpResponseMessage> DeactivateAsync(HttpClient client, Guid id) =>
         client.PostAsync(
@@ -194,16 +195,14 @@ public sealed class CustomerStatusAndImportApiTests
                     IdentificationNumber: "900.111.111-1",
                     Department: city.DepartmentName,
                     City: city.CityName,
-                    Classification: classification.Name,
-                    WithRetention: "No"),
+                    Classification: classification.Name),
                 new ExcelRowInput(
                     Name: "Azul Comercial Ltda.",
                     IdentificationType: "CC",
                     IdentificationNumber: "1020304050",
                     Department: city.DepartmentName,
                     City: city.CityName,
-                    Classification: classification.Name,
-                    WithRetention: "Si")
+                    Classification: classification.Name)
             ]);
 
         var response = await PostImportAsync(client, upload);
@@ -241,6 +240,48 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
+    /// Review Focus 3: con documento y ciudad opcionales al guardar, dos filas sin documento ni ciudad en el mismo
+    /// archivo conviven (sin <c>duplicate_in_file</c>) y nacen con CUC de departamento <c>00</c>.
+    /// </summary>
+    [Fact]
+    public async Task AnImportWithTwoRowsWithoutDocumentCreatesBothWhenAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateImporter(factory);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Documento Uno",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null),
+                new ExcelRowInput(
+                    Name: "Sin Documento Dos",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(2, result.ImportedCount);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("00000001", result.Imported[0].Cuc);
+        Assert.Equal("00000002", result.Imported[1].Cuc);
+    }
+
+    /// <summary>
     /// La clasificacion es opcional (decision 2026-10-19, <c>Customer.cs</c>): una fila sin ella
     /// crea el cliente con un CUC sin prefijo (departamento + consecutivo) y sin clasificacion.
     /// </summary>
@@ -261,8 +302,7 @@ public sealed class CustomerStatusAndImportApiTests
                     IdentificationNumber: "900.222.222-2",
                     Department: city.DepartmentName,
                     City: city.CityName,
-                    Classification: null,
-                    WithRetention: "No")
+                    Classification: null)
             ]);
 
         var response = await PostImportAsync(client, upload);
@@ -499,6 +539,111 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
+    /// Una fila de actualizacion (Cuc lleno) con documento y departamento+ciudad vacios significa "no enviado": con la
+    /// politica relajada conserva el documento y la ciudad guardados en vez de borrarlos.
+    /// </summary>
+    [Fact]
+    public async Task AnUpdateRowWithBlankDocumentAndCityKeepsTheStoredOnes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var existing = await CreateCustomerAsync(manager, city.CityId, classification.Id);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: existing.Cuc,
+                    Name: "Nombre Actualizado",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("updated", Assert.Single(result.Imported).Action);
+
+        var item = await GetAsync(client, existing.Id);
+        Assert.Equal("Nombre Actualizado", item.Name);
+        Assert.Equal(existing.IdentificationType, item.IdentificationType);
+        Assert.Equal(existing.IdentificationNumber, item.IdentificationNumber);
+        Assert.Equal(city.CityName, item.City?.Name);
+    }
+
+    /// <summary>
+    /// Un cliente que nunca tuvo documento ni ciudad se puede reimportar con la politica estricta: la fila de
+    /// actualizacion en blanco no exige lo que el cliente nunca tuvo (opcion B).
+    /// </summary>
+    [Fact]
+    public async Task AnUpdateRowForALegacyCustomerWithoutDocumentOrCityPassesUnderTheDefaultPolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var classification = await CreateClassificationAsync(manager);
+        var created = await manager.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Legado S.A.S.",
+                identificationType = (string?)null,
+                identificationNumber = (string?)null,
+                phone = "310 935 2187",
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = (Guid?)null,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false
+            },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        var legacy = await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(legacy);
+        await SetTenantCustomerFieldPolicyAsync(factory, true, true, true, true);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: legacy.Cuc,
+                    Name: "Legado Actualizado",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("updated", Assert.Single(result.Imported).Action);
+    }
+
+    /// <summary>
     /// La clasificacion es opcional al crear, pero en una actualizacion la celda vacia no es "quitarla": reimportar un archivo
     /// sin esa columna llena no puede borrarle la clasificacion al cliente ni sacarle el prefijo al CUC. El caso de alta sin
     /// clasificacion lo fija <see cref="ImportingARowWithoutClassificationCreatesTheCustomerWithAnUnprefixedCuc"/>.
@@ -715,12 +860,10 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Equal("El Fusionado", (await GetAsync(manager, merged.Id)).Name);
     }
 
-    // La celda Direccion es obligatoria: es el domicilio del cliente y, al crear, siembra ademas
-    // la primera fila de la libreta (spec 2026-09-18). En modo actualizacion cambia solo el
-    // domicilio. Se rechaza como fila, con su codigo, y no como una excepcion del dominio a mitad
-    // del archivo -- que se llevaria puesto el resto del lote.
+    // La celda Direccion es opcional, como en el formulario de alta: una lista de contactos con solo nombre y
+    // celular tiene que entrar. Sin calle el cliente nace sin domicilio y sin libreta (no hay fila que sembrar).
     [Fact]
-    public async Task ImportRowWithoutAnAddressIsRejectedWithItsOwnCode()
+    public async Task ImportRowWithoutAnAddressCreatesTheCustomerWithoutAddressOrBook()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -747,9 +890,125 @@ public sealed class CustomerStatusAndImportApiTests
         var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(result);
-        Assert.Equal(0, result.ImportedCount);
-        Assert.Contains(result.Errors, error =>
-            error.RowNumber == 2 && error.Code == "customers.import.row.address_required");
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, result.ImportedCount);
+        var customer = await ImportedCustomerAsync(client, result);
+        Assert.Null(customer.Address);
+        Assert.Empty(customer.Addresses);
+    }
+
+    private static readonly IReadOnlyList<string> HeadersWithTags = [.. CustomerImportColumns.Ordered, CustomerImportColumns.Tags];
+
+    private static async Task<IReadOnlyList<TagDto>> TagsOfTenantAsync(HttpClient client) =>
+        (await client.GetFromJsonAsync<IReadOnlyList<TagDto>>($"{CustomersUrl()}/tags", TestContext.Current.CancellationToken))!;
+
+    private static async Task<IReadOnlyList<TagDto>> TagsOfAsync(HttpClient client, Guid customerId) =>
+        (await client.GetFromJsonAsync<IReadOnlyList<TagDto>>($"{CustomersUrl()}/{customerId}/tags", TestContext.Current.CancellationToken))!;
+
+    private static async Task<TagDto> CreateTagAsync(HttpClient manager, string name)
+    {
+        var response = await manager.PostAsJsonAsync($"{CustomersUrl()}/tags", new { name, color = "blue" }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<TagDto>(TestContext.Current.CancellationToken))!;
+    }
+
+    // La celda «Etiquetas» (spec 2026-11-17) suma etiquetas al cliente. La que no existe se crea en tipo oración; la que ya existe
+    // casa sin distinguir mayúsculas y conserva su nombre; y un segundo archivo agrega sin quitar lo que el cliente ya tenía.
+    [Fact]
+    public async Task ImportCreatesMissingTagsInSentenceCaseKeepsExistingOnesAndNeverRemoves()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        using var manager = CreateManager(factory);
+        var here = await EnsureCityAsync(manager);
+        var classification = await CreateClassificationAsync(manager);
+        var vip = await CreateTagAsync(manager, "VIP");
+
+        var created = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Name: "Ana", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName, City: here.CityName,
+                    Classification: classification.Name, Tags: "evento MACEL; vip"),
+                new ExcelRowInput(
+                    Name: "Beto", IdentificationNumber: "900.222.222-2", Department: here.DepartmentName, City: here.CityName,
+                    Classification: classification.Name, Tags: "Evento Macel")
+            ],
+            HeadersWithTags);
+        Assert.Empty(created.Errors);
+        Assert.Equal(2, created.ImportedCount);
+
+        // Una sola etiqueta nueva aunque dos filas la traigan con distintas mayúsculas; la existente no se renombra.
+        var tenantTags = await TagsOfTenantAsync(manager);
+        Assert.Equal(["Evento macel", "VIP"], tenantTags.Select(tag => tag.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(vip.Id, Assert.Single(tenantTags, tag => tag.Name == "VIP").Id);
+
+        var ana = await ImportedCustomerAsync(client, created);
+        var beto = await ImportedCustomerAsync(client, created, 1);
+        Assert.Equal(["Evento macel", "VIP"], (await TagsOfAsync(manager, ana.Id)).Select(tag => tag.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(["Evento macel"], (await TagsOfAsync(manager, beto.Id)).Select(tag => tag.Name));
+
+        var updated = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Cuc: ana.Cuc, Name: "Ana", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName,
+                    City: here.CityName, Classification: classification.Name, Tags: "Mayorista")
+            ],
+            HeadersWithTags);
+        Assert.Empty(updated.Errors);
+
+        Assert.Equal(
+            ["Evento macel", "Mayorista", "VIP"],
+            (await TagsOfAsync(manager, ana.Id)).Select(tag => tag.Name).Order(StringComparer.Ordinal));
+    }
+
+    // Una fila que dejaría al cliente con más de 20 etiquetas falla con su código y no escribe nada: ni la fila ni las etiquetas
+    // nuevas que sólo ella pedía.
+    [Fact]
+    public async Task ARowThatWouldExceedTwentyTagsIsRejectedAndWritesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        using var manager = CreateManager(factory);
+        var here = await EnsureCityAsync(manager);
+        var classification = await CreateClassificationAsync(manager);
+
+        var created = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Name: "Ana", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName, City: here.CityName,
+                    Classification: classification.Name)
+            ]);
+        var ana = await ImportedCustomerAsync(client, created);
+        var nineteen = new List<Guid>();
+        for (var index = 1; index <= CustomerTagAssignment.MaxPerCustomer - 1; index++)
+        {
+            nineteen.Add((await CreateTagAsync(manager, $"Etiqueta {index}")).Id);
+        }
+
+        (await manager.PutAsJsonAsync($"{CustomersUrl()}/{ana.Id}/tags", new { tagIds = nineteen }, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+
+        var updated = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Cuc: ana.Cuc, Name: "Ana renombrada", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName,
+                    City: here.CityName, Classification: classification.Name, Tags: "Nueva uno; Nueva dos")
+            ],
+            HeadersWithTags);
+
+        Assert.Equal(0, updated.ImportedCount);
+        Assert.Contains(updated.Errors, error =>
+            error.RowNumber == 2 && error.Code == "customers.import.row.tag_limit_per_customer" && error.Field == nameof(ExcelCustomerRow.Tags));
+        var after = await GetAsync(client, ana.Id);
+        Assert.Equal("Ana", after.Name);
+        Assert.Equal(CustomerTagAssignment.MaxPerCustomer - 1, (await TagsOfAsync(manager, ana.Id)).Count);
+        Assert.DoesNotContain(await TagsOfTenantAsync(manager), tag => tag.Name == "Nueva uno");
     }
 
     // El telefono es obligatorio y el correo no. Un telefono vacio se rechaza como fila, con su
@@ -805,8 +1064,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ImportCustomersWithMissingColumnsIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         var columnsWithoutDepartment = CustomerImportColumns.Ordered
@@ -830,8 +1088,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ImportCustomersWithNoDataRowsIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         using var upload = BuildExcelUpload("clientes.xlsx", []);
@@ -852,8 +1109,7 @@ public sealed class CustomerStatusAndImportApiTests
     [InlineData("clientes")]
     public async Task ImportRejectsAFileThatIsNotExcel(string fileName)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         using var upload = GarbageUpload(fileName);
@@ -870,8 +1126,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ImportWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         using var upload = GarbageUpload("clientes.xlsx");
@@ -887,8 +1142,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task DownloadTemplateReturnsAnExcelWithTheExpectedColumns()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         var response = await client.GetAsync(
@@ -908,15 +1162,121 @@ public sealed class CustomerStatusAndImportApiTests
             .Select(column => headerRow.Cell(column).GetString())
             .ToArray();
 
-        Assert.Equal(CustomerImportColumns.Ordered, headers);
+        // Las trece de siempre y, al final, «Empresa» (spec 2026-11-10 §4.8).
+        Assert.Equal([.. CustomerImportColumns.Ordered, .. CustomerImportColumns.Optional], headers);
+    }
+
+    private static readonly string[] HeadersWithCompany = [.. CustomerImportColumns.Ordered, .. CustomerImportColumns.Optional];
+
+    // G5: el importador lee por cabecera y exige las trece; «Empresa» es opcional. Un archivo de antes de la columna sigue siendo
+    // válido y se lee como «sin empresa».
+    [Fact]
+    public async Task AFileWithoutTheCompanyColumnIsStillValid()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Empresa",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: city.DepartmentName,
+                    City: city.CityName)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("completed", body.GetProperty("status").GetString());
+        Assert.Equal(1, body.GetProperty("importedCount").GetInt32());
+    }
+
+    // Spec 2026-11-10 §4.8: la empresa puede venir en el mismo archivo y se nombra por su número de documento; la fila que la
+    // nombra queda vinculada.
+    [Fact]
+    public async Task ImportingLinksContactsToTheirCompany()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Ana Contacto",
+                    IdentificationType: "CC",
+                    IdentificationNumber: "1020304050",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Company: "900.111.111-1"),
+                new ExcelRowInput(
+                    Name: "Verde Empresa S.A.S.",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: city.DepartmentName,
+                    City: city.CityName)
+            ],
+            HeadersWithCompany);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal("completed", result.Status);
+        var page = await ListAsync(manager, "?contacts=include&pageSize=50");
+        var company = Assert.Single(page.Items, item => item.Name == "Verde Empresa S.A.S.");
+        var contact = await GetAsync(manager, Assert.Single(page.Items, item => item.Name == "Ana Contacto").Id);
+        Assert.NotNull(contact.Company);
+        Assert.Equal(company.Id, contact.Company.Id);
+    }
+
+    // G6 + A22: el error de la columna trae el campo `companyIdentificationNumber` y la fila tal como vino, para que el modal la
+    // reenvíe; la fila no se escribe.
+    [Fact]
+    public async Task ACompanyErrorComesBackWithFieldAndRowData()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Ana Contacto",
+                    IdentificationType: "CC",
+                    IdentificationNumber: "1020304050",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Company: "999999999")
+            ],
+            HeadersWithCompany);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("failed", body.GetProperty("status").GetString());
+        var error = Assert.Single(body.GetProperty("errors").EnumerateArray());
+        Assert.Equal("customers.import.row.company_not_found", error.GetProperty("code").GetString());
+        Assert.Equal("companyIdentificationNumber", error.GetProperty("field").GetString());
+        Assert.Equal("999999999", error.GetProperty("rowData").GetProperty("companyIdentificationNumber").GetString());
     }
 
     // Mismo permiso que /import: descargar la plantilla es parte del mismo flujo de carga masiva.
     [Fact]
     public async Task DownloadTemplateWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var response = await client.GetAsync(
@@ -934,8 +1294,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ExportFailedRowsReturnsAnExcelWithTheGivenRowsLoaded()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
         var rowData = new CustomerImportRowData(
             null,
@@ -949,6 +1308,7 @@ public sealed class CustomerStatusAndImportApiTests
             "Antioquia",
             "Ciudad Que No Existe",
             "Clasificacion Que No Existe",
+            null,
             null,
             null);
 
@@ -980,8 +1340,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ExportFailedRowsWithNoRowsIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         var response = await client.PostAsJsonAsync(
@@ -998,12 +1357,11 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ExportFailedRowsWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
         var rowData = new CustomerImportRowData(
             null, "Cliente", null, "NIT", "900.000.000-0", null, null, null, "Antioquia",
-            "Medellin", "X", null, null);
+            "Medellin", "X", null, null, null);
 
         var response = await client.PostAsJsonAsync(
             $"{CustomersUrl()}/import/failed-rows",
@@ -1051,8 +1409,7 @@ public sealed class CustomerStatusAndImportApiTests
                     IdentificationNumber: "900.111.111-1",
                     Department: "Valle del Cauca",
                     City: "Calli",
-                    Classification: classification.Name,
-                    WithRetention: "No")
+                    Classification: classification.Name)
             ]);
 
         var response = await PostImportAsync(client, upload);
@@ -1087,7 +1444,6 @@ public sealed class CustomerStatusAndImportApiTests
                 country = "CO",
                 cityId,
                 classificationId,
-                withRetention = false,
                 vatSurplus = false,
                 personType
             },
@@ -1256,5 +1612,258 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.NotNull(result);
         Assert.Empty(result.Errors);
         Assert.Equal(1, result.ImportedCount);
+    }
+
+    // Spec impuestos por tipo §7.4 (D20): una columna por tipo de retencion, con el nombre de la tasa.
+    private static async Task<ImportCustomersResponse> ImportAsync(
+        HttpClient client, IReadOnlyList<ExcelRowInput> rows, IReadOnlyList<string>? headers = null)
+    {
+        using var upload = BuildExcelUpload("clientes.xlsx", rows, headers);
+        var response = await PostImportAsync(client, upload);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        return result;
+    }
+
+    private static async Task<CustomerResponse> ImportedCustomerAsync(
+        HttpClient client, ImportCustomersResponse result, int index = 0) =>
+        await GetAsync(client, (await ListAsync(client, string.Empty)).Items
+            .Single(item => item.Cuc == result.Imported[index].Cuc).Id);
+
+    [Fact]
+    public async Task ImportAssignsRatesByNamePerType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var retefuente = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+
+        // Sin importar mayusculas, como FindByNameAsync.
+        var result = await ImportAsync(client,
+        [
+            new ExcelRowInput(
+                Department: city.DepartmentName, City: city.CityName,
+                Retefuente: "RETEFUENTE SERVICIOS")
+        ]);
+
+        Assert.Empty(result.Errors);
+        var customer = await ImportedCustomerAsync(client, result);
+        Assert.Equal([retefuente], customer.WithholdingTaxRates.Select(rate => rate.Id));
+        Assert.True(customer.WithRetention);
+    }
+
+    // Spec ReteICA por empresa §7.4 (A3): la plantilla ya no trae «ReteICA», y un archivo sin ella importa como siempre.
+    [Fact]
+    public async Task ImportWithoutReteIcaColumnWorks()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var retefuente = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+
+        Assert.DoesNotContain("ReteICA", CustomerImportColumns.Ordered);
+        var result = await ImportAsync(client,
+        [
+            new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, Retefuente: "Retefuente servicios")
+        ]);
+
+        Assert.Empty(result.Errors);
+        Assert.Equal(retefuente, Assert.Single((await ImportedCustomerAsync(client, result)).WithholdingTaxRates).Id);
+    }
+
+    // Un archivo con la columna «ReteICA» (sólo pudo salir de un develop local) se lee ignorándola, como «Con Retencion»:
+    // ni asigna la tasa municipal ni la reporta como error de la fila.
+    [Fact]
+    public async Task OldFileWithReteIcaColumnIsImportedIgnoringIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        await InsertTaxRateAsync(database.GetConnectionString(), "ReteICA Medellin", "ReteICA", 0.966m);
+        string[] oldHeaders = [.. CustomerImportColumns.Ordered, "ReteICA"];
+
+        var result = await ImportAsync(
+            client,
+            [new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, ReteIca: "ReteICA Medellin")],
+            oldHeaders);
+
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, result.ImportedCount);
+        Assert.Empty((await ImportedCustomerAsync(client, result)).WithholdingTaxRates);
+    }
+
+    [Theory]
+    [InlineData("IVA 19")]
+    [InlineData("Retefuente que no existe")]
+    public async Task UnknownOrWrongTypeNameIsARowError(string cell)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        await InsertTaxRateAsync(database.GetConnectionString(), "IVA 19", "IVA", 19m);
+        await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+
+        var result = await ImportAsync(client,
+        [
+            new ExcelRowInput(
+                IdentificationNumber: "900.111.111-1", Department: city.DepartmentName, City: city.CityName,
+                Retefuente: cell),
+            new ExcelRowInput(
+                Name: "Sin Retencion", IdentificationNumber: "900.222.222-2",
+                Department: city.DepartmentName, City: city.CityName)
+        ]);
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(2, error.RowNumber);
+        Assert.Equal("customers.customer.withholding_tax_rate_invalid", error.Code);
+        Assert.Equal("Retefuente", error.Field);
+        Assert.Equal(1, result.ImportedCount);
+    }
+
+    [Fact]
+    public async Task AnInactiveRateIsARowError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente vieja", "Retefuente", 1m, isActive: false);
+
+        var result = await ImportAsync(client,
+        [
+            new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, Retefuente: "Retefuente vieja")
+        ]);
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("customers.customer.withholding_tax_rate_invalid", error.Code);
+        Assert.Equal("Retefuente", error.Field);
+        Assert.Equal(0, result.ImportedCount);
+    }
+
+    [Fact]
+    public async Task EmptyCellMeansNoRate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+
+        var created = await ImportAsync(client,
+        [
+            new ExcelRowInput(
+                Department: city.DepartmentName, City: city.CityName, Classification: classification.Name,
+                Retefuente: "Retefuente servicios")
+        ]);
+        var customer = await ImportedCustomerAsync(client, created);
+        Assert.Single(customer.WithholdingTaxRates);
+
+        // Reimportar la misma ficha con las celdas vacias le quita la tasa: vacia = sin tasa.
+        var updated = await ImportAsync(client,
+        [
+            new ExcelRowInput(
+                Cuc: customer.Cuc, Department: city.DepartmentName, City: city.CityName,
+                Classification: classification.Name)
+        ]);
+
+        Assert.Empty(updated.Errors);
+        Assert.Empty((await GetAsync(client, customer.Id)).WithholdingTaxRates);
+    }
+
+    [Fact]
+    public async Task ImportUpdateAddsRateToExistingCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var rate = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+        var created = await ImportAsync(client,
+        [
+            new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, Classification: classification.Name)
+        ]);
+        var customer = await ImportedCustomerAsync(client, created);
+        Assert.Empty(customer.WithholdingTaxRates);
+
+        var updated = await ImportAsync(client,
+        [
+            new ExcelRowInput(
+                Cuc: customer.Cuc, Department: city.DepartmentName, City: city.CityName,
+                Classification: classification.Name, Retefuente: "Retefuente servicios")
+        ]);
+
+        Assert.Empty(updated.Errors);
+        Assert.Equal(rate, Assert.Single((await GetAsync(client, customer.Id)).WithholdingTaxRates).Id);
+    }
+
+    [Fact]
+    public async Task OldFileWithConRetencionIsReadIgnoringIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var retefuente = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+        string[] oldHeaders =
+        [
+            .. CustomerImportColumns.Ordered.Where(column =>
+                column is not "Retefuente" and not "ReteICA"),
+            "Con Retencion"
+        ];
+
+        // Un archivo viejo no trae las columnas por tipo: crea sin tasas y, al actualizar, conserva las que ya tiene.
+        var created = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Department: city.DepartmentName, City: city.CityName, Classification: classification.Name,
+                    LegacyWithRetention: "Si")
+            ],
+            oldHeaders);
+        Assert.Empty(created.Errors);
+        var customer = await ImportedCustomerAsync(client, created);
+        Assert.Empty(customer.WithholdingTaxRates);
+
+        (await manager.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
+            new
+            {
+                name = customer.Name,
+                identificationType = customer.IdentificationType,
+                identificationNumber = customer.IdentificationNumber,
+                phone = customer.Phone,
+                email = customer.Email,
+                address = customer.Address,
+                country = "CO",
+                cityId = city.CityId,
+                classificationId = classification.Id,
+                vatSurplus = false,
+                withholdingTaxRateIds = new[] { retefuente }
+            },
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var updated = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Cuc: customer.Cuc, Department: city.DepartmentName, City: city.CityName,
+                    Classification: classification.Name, LegacyWithRetention: "No")
+            ],
+            oldHeaders);
+
+        Assert.Empty(updated.Errors);
+        Assert.Equal(retefuente, Assert.Single((await GetAsync(client, customer.Id)).WithholdingTaxRates).Id);
     }
 }

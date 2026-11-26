@@ -19,7 +19,19 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
     private static void ConfigureCompany(ModelBuilder modelBuilder)
     {
         var company = modelBuilder.Entity<Company>();
-        company.ToTable("companies", "companies");
+        company.ToTable("companies", "companies", table =>
+        {
+            // En Colombia la ciudad sale del catalogo (city_id) y nunca lleva texto libre; fuera
+            // de Colombia es al reves. El subconjunto de tipos por pais NO va aca: es regla de
+            // dominio que crece por pais y una constraint pediria una migracion por cada cambio.
+            table.HasCheckConstraint(
+                "CK_companies_city_lane",
+                "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) OR " +
+                "(country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_companies_document_type",
+                "document_type IN ('NIT','CC','CE','PASAPORTE','NIF','NIE','TAX_ID')");
+        });
         company.HasKey(value => value.Id);
         company.Property(value => value.Id)
             .HasColumnName("id")
@@ -32,6 +44,21 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
         company.Property(value => value.TaxId)
             .HasColumnName("tax_id")
             .HasMaxLength(Company.TaxIdMaxLength);
+
+        company.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(Company.CountryLength);
+        company.Property(value => value.DocumentType)
+            .HasColumnName("document_type")
+            .HasConversion(type => type.ToWire(), wire => CompanyDocumentTypes.Parse(wire))
+            .HasMaxLength(16);
+        company.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(Company.CityNameMaxLength);
+
+        // La región (provincia) de una empresa de afuera: referencia blanda a geography.regions, sin FK entre esquemas.
+        // Nula en Colombia (lo respalda el CHECK de arriba).
+        company.Property(value => value.RegionId).HasColumnName("region_id");
 
         // FK a geography.cities(id) — otro schema, de otro modulo, de otro DbContext.
         // CompaniesDbContext no la modela con HasOne<City>(): EF Core no soporta una relacion
@@ -56,6 +83,14 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
             .IsConcurrencyToken();
         company.Property(value => value.CreatedAt).HasColumnName("created_at");
         company.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        // Default true en la base para que las empresas existentes sigan cobrando IVA (spec
+        // 2026-11-17 §5.1). El sentinel es obligatorio: sin él EF omite el `false` del INSERT —es
+        // el valor CLR por defecto— y la base guarda true (precedente: stores.show_prices).
+        company.Property(value => value.ChargesVat)
+            .HasColumnName("charges_vat")
+            .HasDefaultValue(true)
+            .HasSentinel(true);
         company.HasIndex(value => value.TenantId).HasDatabaseName("IX_companies_tenant");
 
         // GIN trigram, no btree: CompanyRepository.SearchAsync filtra `Name` con
@@ -72,7 +107,30 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
         // empresa, incluido el numero de cuenta" y nada mas. La unicidad que quedo —que una
         // empresa no repita la misma cuenta— es invariante del agregado y se comprueba en memoria.
         ConfigureBankAccounts(company);
+        ConfigureWithholdingTaxRates(company);
     }
+
+    // Las tasas municipales asignadas (spec ReteICA por empresa §7.3): sólo el id de la tasa, sin FK a catalog (Companies
+    // nunca referencia Catalog). El índice (tenant_id, tax_rate_id) responde «¿alguna empresa usa esta tasa?» sin recorrer
+    // la tabla. Calcado de customers.customer_tax_rates.
+    private static void ConfigureWithholdingTaxRates(
+        Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<Company> company) =>
+        company.OwnsMany<CompanyTaxRate>("_withholdingTaxRates", rate =>
+        {
+            rate.ToTable("company_withholding_tax_rates", "companies");
+            rate.WithOwner().HasForeignKey("CompanyId");
+            rate.Property<CompanyId>("CompanyId")
+                .HasColumnName("company_id")
+                .HasConversion(id => id.Value, value => new CompanyId(value))
+                .ValueGeneratedNever();
+            rate.Property(value => value.TenantId).HasColumnName("tenant_id");
+            // Clave asignada por el cliente: sin ValueGeneratedNever, EF toma una fila nueva de una empresa rastreada como
+            // Modified (UPDATE de 0 filas -> 412) en vez de Added. Mismo motivo que en customer_tax_rates.
+            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id").ValueGeneratedNever();
+            rate.HasKey("CompanyId", nameof(CompanyTaxRate.TaxRateId)).HasName("PK_company_withholding_tax_rates");
+            rate.HasIndex(value => new { value.TenantId, value.TaxRateId })
+                .HasDatabaseName("IX_company_withholding_tax_rates_tenant_tax_rate");
+        });
 
     /// <summary>
     /// Las cuentas bancarias, como coleccion **owned** en tabla propia.

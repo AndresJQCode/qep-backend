@@ -7,7 +7,7 @@ using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 namespace Modules.Customers.IntegrationTests;
 
 /// <summary>CD-03: <c>GET /customers/identification-matches</c> avisa, antes de guardar, quién más tiene ese número.</summary>
-public sealed class CustomerIdentificationMatchesApiTests
+public sealed class CustomerIdentificationMatchesApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private const string OwnerName = "GYSELYS VIVAS PACHECO";
     private const string OwnerNit = "92-1396892";
@@ -62,8 +62,7 @@ public sealed class CustomerIdentificationMatchesApiTests
     [Fact]
     public async Task WithoutMatchesItemsIsEmpty()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var response = await client.GetAsync(MatchesUrl("?number=555666777&type=NIT"), TestContext.Current.CancellationToken);
@@ -75,8 +74,7 @@ public sealed class CustomerIdentificationMatchesApiTests
     [Fact]
     public async Task AnEmptyNumberIs422OnNumberAndAnUnknownTypeIs422OnType()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var empty = await client.GetAsync(MatchesUrl("?number="), TestContext.Current.CancellationToken);
@@ -97,8 +95,7 @@ public sealed class CustomerIdentificationMatchesApiTests
     [Fact]
     public async Task AnotherTenantIs403AndWithoutReadIs403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var reader = CreateClient(factory, SubjectId, TenantId, CustomersPermissions.CustomerRead);
         using var noPermission = CreateClient(factory, SubjectId, TenantId);
 

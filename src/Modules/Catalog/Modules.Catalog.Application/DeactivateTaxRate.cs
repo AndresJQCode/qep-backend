@@ -12,6 +12,9 @@ public sealed record DeactivateTaxRateCommand(Guid TenantId, Guid TaxRateId)
 public sealed class DeactivateTaxRateHandler(
     ITaxRateRepository repository,
     IProductRepository productRepository,
+    ITaxRateCustomerUsage customerUsage,
+    ITaxRateCompanyUsage companyUsage,
+    ITaxRateGeographyLookup geography,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -41,13 +44,21 @@ public sealed class DeactivateTaxRateHandler(
         // devolviendo `already_inactive` aunque además esté en uso — eso es lo que de verdad pasó,
         // y `in_use` ahí confundiría a alguien que ni siquiera está pidiendo la primera
         // desactivación.
+        //
+        // Spec impuestos por tipo §7.4: un cliente con la tasa asignada también la usa. Sin FK entre Catalog y Customers,
+        // esta consulta es la única barrera. Lo mismo con las empresas y sus tasas municipales (spec ReteICA por empresa
+        // §7.2).
         if (taxRate.IsActive &&
-            await productRepository.AnyWithTaxRateAsync(
-                command.TenantId, taxRateId, cancellationToken))
+            (await productRepository.AnyWithTaxRateAsync(
+                command.TenantId, taxRateId, cancellationToken) ||
+             await customerUsage.AnyCustomerWithTaxRateAsync(
+                command.TenantId, command.TaxRateId, cancellationToken) ||
+             await companyUsage.AnyCompanyWithTaxRateAsync(
+                command.TenantId, command.TaxRateId, cancellationToken)))
         {
             throw new CatalogDomainException(
                 "catalog.tax_rate.in_use",
-                "The tax rate cannot be deactivated because at least one product uses it.");
+                "The tax rate cannot be deactivated because at least one product, customer or company uses it.");
         }
 
         var now = clock.UtcNow;
@@ -61,6 +72,6 @@ public sealed class DeactivateTaxRateHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return taxRate.ToDto();
+        return await taxRate.ToDtoAsync(geography, cancellationToken);
     }
 }

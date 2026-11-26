@@ -5,7 +5,7 @@ namespace Modules.Customers.IntegrationTests;
 
 /// <summary>Spec 2026-10-24 §7: el documento deja de ser único entre todos los clientes y pasa a serlo entre los que no
 /// están fusionados; un índice parcial sobre <c>merged_into_id</c> sirve la consulta «quiénes apuntan a este».</summary>
-public sealed class CustomerMergeMigrationTests
+public sealed class CustomerMergeMigrationTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private static async Task<string> IndexDefinitionAsync(string connectionString, string indexName)
     {
@@ -20,12 +20,11 @@ public sealed class CustomerMergeMigrationTests
     [Fact]
     public async Task TheIdentificationIndexIsPartialOnNotMerged()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
         await EnsureCityAsync(client);
 
-        var definition = await IndexDefinitionAsync(database.GetConnectionString(), "IX_customers_tenant_identification");
+        var definition = await IndexDefinitionAsync(sharedHost.Database.GetConnectionString(), "IX_customers_tenant_identification");
 
         Assert.Contains("UNIQUE", definition);
         Assert.Contains("WHERE (merged_into_id IS NULL)", definition);
@@ -34,12 +33,11 @@ public sealed class CustomerMergeMigrationTests
     [Fact]
     public async Task TheMergedIntoIndexExistsAndIsPartial()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
         await EnsureCityAsync(client);
 
-        var definition = await IndexDefinitionAsync(database.GetConnectionString(), "IX_customers_tenant_merged_into");
+        var definition = await IndexDefinitionAsync(sharedHost.Database.GetConnectionString(), "IX_customers_tenant_merged_into");
 
         Assert.Contains("(tenant_id, merged_into_id)", definition);
         Assert.Contains("WHERE (merged_into_id IS NOT NULL)", definition);

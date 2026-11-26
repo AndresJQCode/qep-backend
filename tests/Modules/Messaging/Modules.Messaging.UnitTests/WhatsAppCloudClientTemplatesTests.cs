@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
@@ -138,7 +139,7 @@ public sealed class WhatsAppCloudClientTemplatesTests
             new TemplateSend(
                 "qep_cotizacion_v2", "es", Named: true,
                 [new TemplateParameter("fullname", "Juan Perez"), new TemplateParameter("order_number", "COT-1")],
-                HeaderDocument: new TemplateHeaderDocument("media.out", "Cotizacion-COT-1.pdf")));
+                Header: TemplateHeader.DocumentById("media.out", "Cotizacion-COT-1.pdf")));
 
         using var body = JsonDocument.Parse(request.Body!);
         var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
@@ -294,5 +295,81 @@ public sealed class WhatsAppCloudClientTemplatesTests
         var result = await ClientOver(handler).ListTemplatesAsync(new MessagingTemplateSource("222", "tok"), Ct);
 
         Assert.False(result.Succeeded);
+    }
+
+    [Theory]
+    [InlineData("image")]
+    [InlineData("video")]
+    public async Task ALinkHeaderTravelsFirstWithItsType(string type)
+    {
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"),
+            new TemplateSend(
+                "aviso_logo", "es", Named: false, [new TemplateParameter("1", "1014853")],
+                Header: TemplateHeader.ByLink(type, "https://cdn.example.com/logo.png", null)));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse($$$"""{"type":"header","parameters":[{"type":"{{{type}}}","{{{type}}}":{"link":"https://cdn.example.com/logo.png"}}]}"""),
+            JsonNode.Parse(components[0].GetRawText())));
+        Assert.Equal("body", components[1].GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task ADocumentLinkHeaderCarriesItsFilename()
+    {
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"),
+            new TemplateSend(
+                "factura_pdf", "es", Named: false, [new TemplateParameter("1", "Ana")],
+                Header: TemplateHeader.ByLink("document", "https://cdn.example.com/f.pdf", "Factura-1.pdf")));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse("""{"type":"header","parameters":[{"type":"document","document":{"link":"https://cdn.example.com/f.pdf","filename":"Factura-1.pdf"}}]}"""),
+            JsonNode.Parse(components[0].GetRawText())));
+    }
+
+    [Theory]
+    [InlineData(false, """{"type":"text","text":"Ana"}""", """{"type":"text","text":"A-1"}""")]
+    [InlineData(true, """{"type":"text","parameter_name":"first_name","text":"Ana"}""", """{"type":"text","parameter_name":"order_id","text":"A-1"}""")]
+    public async Task AnIntegratorSendHasHeaderBodyAndButtonInThatOrder(bool named, string first, string second)
+    {
+        var (key1, key2) = named ? ("first_name", "order_id") : ("1", "2");
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"),
+            new TemplateSend(
+                "aviso_logo", "es", named, [new TemplateParameter(key1, "Ana"), new TemplateParameter(key2, "A-1")], [new TemplateUrlButton(0, "A-1")],
+                Header: TemplateHeader.ByLink("image", "https://cdn.example.com/logo.png", null)));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
+        Assert.Equal(3, components.Length);
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse("""{"type":"header","parameters":[{"type":"image","image":{"link":"https://cdn.example.com/logo.png"}}]}"""),
+            JsonNode.Parse(components[0].GetRawText())));
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse($$"""{"type":"body","parameters":[{{first}},{{second}}]}"""),
+            JsonNode.Parse(components[1].GetRawText())));
+        Assert.Equal("button", components[2].GetProperty("type").GetString());
+        Assert.Equal("url", components[2].GetProperty("sub_type").GetString());
+        Assert.Equal("0", components[2].GetProperty("index").GetString());
+    }
+
+    [Fact]
+    public async Task ADocumentLinkWithoutFilenameSendsNoFilename()
+    {
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"),
+            new TemplateSend(
+                "factura_pdf", "es", Named: false, [new TemplateParameter("1", "Ana")],
+                Header: TemplateHeader.ByLink("document", "https://cdn.example.com/f.pdf", null)));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
+        var document = components[0].GetProperty("parameters")[0].GetProperty("document");
+        Assert.Equal(["link"], document.EnumerateObject().Select(property => property.Name));
     }
 }

@@ -38,10 +38,11 @@ internal sealed class CorsSettingsValidator(IHostEnvironment environment) : IVal
             : ValidateOptionsResult.Success;
     }
 
-    private static bool IsExactHttpsOrigin(string? origin) =>
+    // Internos: los usa también SupportPublicFormOptionsValidator, para que las dos listas de orígenes sigan la misma regla.
+    internal static bool IsExactHttpsOrigin(string? origin) =>
         IsExactOrigin(origin, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 
-    private static bool IsExactHttpLocalhostOrigin(string? origin) =>
+    internal static bool IsExactHttpLocalhostOrigin(string? origin) =>
         IsExactOrigin(origin, out var uri) && uri.Scheme == Uri.UriSchemeHttp && uri.Host == "localhost";
 
     private static bool IsExactOrigin(string? origin, out Uri uri)

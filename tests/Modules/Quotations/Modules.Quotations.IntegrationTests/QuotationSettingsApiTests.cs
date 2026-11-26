@@ -7,7 +7,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
 
-public sealed class QuotationSettingsApiTests
+public sealed class QuotationSettingsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -17,8 +17,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task ATenantWithoutStoredSettingsReadsTheDefaults()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
         using var _ = client;
 
@@ -32,8 +31,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task PutReplacesTheWholeDocument()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -59,8 +57,7 @@ public sealed class QuotationSettingsApiTests
     [InlineData(6, "COP", -1, "MinimumTotals.COP")]
     public async Task InvalidValuesAre422OnTheirField(int minimumUnits, string code, int amount, string field)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var ownedClient = client;
 
@@ -78,8 +75,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task APutWithoutTheTotalsMapIs422OnMinimumTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var ownedClient = client;
 
@@ -94,8 +90,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task PutWithoutTheSettingsUpdatePermissionIs403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
         using var _ = client;
 
@@ -112,8 +107,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task AnEurQuotationWithoutAConfiguredTotalOnlyGetsTheDiscountByUnits()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, SettingsRead, SettingsUpdate]);
         using var _ = client;
@@ -134,8 +128,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task AnEurQuotationWithAConfiguredTotalPassesByTotal()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, SettingsRead, SettingsUpdate]);
         using var _ = client;
@@ -196,8 +189,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task TwoConcurrentFirstPutsNeverFailWithA500NorMergeTheirBodies()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -222,8 +214,7 @@ public sealed class QuotationSettingsApiTests
     [Fact]
     public async Task WithTheQuotationsModuleOffGetAndPutAreModuleNotEnabled()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var cancellationToken = TestContext.Current.CancellationToken;

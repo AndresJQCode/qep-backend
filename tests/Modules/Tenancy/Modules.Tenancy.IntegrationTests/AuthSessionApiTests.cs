@@ -4,11 +4,12 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -185,6 +186,9 @@ public sealed class AuthSessionApiTests
             await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
+        await SeedRolesAsync(factory, secondTenantId);
+        await SeedRolesAsync(factory, suspendedTenantId);
+
         using (var admin = CreateAdminClient(factory))
         {
             Assert.Equal(HttpStatusCode.Created, (await InviteAsync(admin, email)).StatusCode);
@@ -295,10 +299,26 @@ public sealed class AuthSessionApiTests
         Assert.Equal("OnCustomerSave", tenant.GetProperty("personTypeRequirement").GetString());
     }
 
-    // Un tenant no colombiano guarda el valor pero la sesión publica Never: el cliente no tiene que
-    // repetir la regla del país.
+    // Spec 2026-11-22 (i18n): la SPA elige el diccionario antes de la primera pintura, así que el
+    // idioma efectivo de cada tenant viaja en la sesión. Quien no eligió uno ve el del tenant.
     [Fact]
-    public async Task ANonColombianTenantPublishesNever()
+    public async Task SessionCarriesTheEffectiveLanguageOfEachTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+
+        var before = await LoginAndGetSeededTenantAsync(factory);
+        await StoreLanguageAsync(factory, "es-ES");
+        var after = await LoginAndGetSeededTenantAsync(factory);
+
+        Assert.Equal("es-419", before.GetProperty("language").GetString());
+        Assert.Equal("es-ES", after.GetProperty("language").GetString());
+    }
+
+    // El requisito guardado se publica tal cual en cualquier país.
+    [Fact]
+    public async Task ANonColombianTenantPublishesTheStoredRequirement()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -308,7 +328,7 @@ public sealed class AuthSessionApiTests
         var tenant = await LoginAndGetSeededTenantAsync(factory);
 
         Assert.Equal("ES", tenant.GetProperty("country").GetString());
-        Assert.Equal("Never", tenant.GetProperty("personTypeRequirement").GetString());
+        Assert.Equal("OnOrderApproval", tenant.GetProperty("personTypeRequirement").GetString());
     }
 
     // Spec de redondeo de precios (D9): el cajero no tiene `tenancy.settings.read`, así que la regla de
@@ -362,6 +382,66 @@ public sealed class AuthSessionApiTests
             roundings);
     }
 
+    // Customer field policy spec (2026-11-09): the policy travels in the session, like the person type
+    // requirement, because the cashier cannot read /settings.
+    [Fact]
+    public async Task TheSessionCarriesTheDefaultCustomerFieldPolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+
+        var tenant = await LoginAndGetSeededTenantAsync(factory);
+
+        var policy = tenant.GetProperty("customerFieldPolicy");
+        Assert.True(policy.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onBilling").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TheSessionCarriesTheStoredCustomerFieldPolicyToACashier()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var stored = dbContext.Tenants.Single();
+            stored.UpdateSettings(
+                stored.DisplayName, stored.DefaultCulture, stored.TimeZone, stored.DateFormat,
+                stored.DefaultCurrency, stored.NumberFormat, stored.Country, stored.PersonTypeRequirement,
+                DateTimeOffset.UtcNow,
+                new CustomerFieldPolicy(new FieldRequirement(false, true), new FieldRequirement(false, false)));
+            await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var email = NewEmail();
+        using (var admin = CreateAdminClient(factory))
+        {
+            Assert.Equal(HttpStatusCode.Created, (await InviteAsync(admin, email)).StatusCode);
+        }
+
+        using var client = CreateLoginClient(factory, Guid.CreateVersion7().ToString(), email, verified: true);
+        // Any non-settings permission: without X-Permissions the stub grants settings.read.
+        client.DefaultRequestHeaders.Add("X-Permissions", TenancyPermissions.AdvisorshipRead);
+        var login = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var body = await login.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        var tenant = body.GetProperty("activeTenants").EnumerateArray()
+            .Single(item => item.GetProperty("tenantId").GetGuid() == Guid.Parse(SeededTenantId));
+
+        var policy = tenant.GetProperty("customerFieldPolicy");
+        Assert.False(policy.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.False(policy.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.False(policy.GetProperty("city").GetProperty("onBilling").GetBoolean());
+    }
+
     private static async Task StoreSettingsAsync(
         QepApiFactory factory, string country, PersonTypeRequirement requirement)
     {
@@ -371,6 +451,18 @@ public sealed class AuthSessionApiTests
         tenant.UpdateSettings(
             tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
             tenant.DefaultCurrency, tenant.NumberFormat, country, requirement, DateTimeOffset.UtcNow);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task StoreLanguageAsync(QepApiFactory factory, string language)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenant = dbContext.Tenants.Single();
+        tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, tenant.Country, tenant.PersonTypeRequirement,
+            DateTimeOffset.UtcNow, language: language);
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
@@ -515,6 +607,15 @@ public sealed class AuthSessionApiTests
             MembershipId.New(),
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await SeedRolesAsync(factory, Guid.Parse(SeededTenantId));
+    }
+
+    /// <summary>Un tenant insertado directo después del arranque nace sin los roles que el alta le sembraría.</summary>
+    private static async Task SeedRolesAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(tenantId, TestContext.Current.CancellationToken);
     }
 
     private static string NewEmail() => $"login-{Guid.NewGuid():N}@example.com";
@@ -559,17 +660,6 @@ public sealed class AuthSessionApiTests
         }
 
         return values;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateAdminClient(QepApiFactory factory) =>
@@ -637,6 +727,9 @@ public sealed class AuthSessionApiTests
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            // Pinned, never inherited: with Seed:Enabled=true in the developer's user-secrets the host seeds the development and
+            // operator tenants, and Tenants.Single() sees three.
+            builder.UseSetting("Seed:Enabled", "false");
         }
     }
 }

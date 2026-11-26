@@ -11,9 +11,13 @@ namespace Modules.Messaging.Application;
 /// <c>waId</c> es <c>null</c> cuando Meta no mandó el teléfono. Al menos uno viene (CK_conversations_identity).</summary>
 public sealed record ContactDto(string? UserId, string? WaId, string? Username, string? ProfileName);
 
+/// <summary>Spec 2026-11-10: la empresa del cliente de la conversación. <c>name</c> ya es la etiqueta (<c>BusinessName</c> o, si no hay,
+/// <c>Name</c>); <c>isActive</c> deja que el hilo avise de una empresa desactivada.</summary>
+public sealed record CustomerCompanyRefDto(Guid Id, string Name, bool IsComplete, bool IsActive);
+
 /// <summary>Spec 2026-10-10 §5.1 (D-A8): <c>isComplete</c> viaja para que el encabezado del hilo ofrezca «Completar
 /// ficha» sin otra llamada.</summary>
-public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete)
+public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete, CustomerCompanyRefDto? Company = null)
 {
     /// <summary>Spec qep-frontend 2026-10-15 (BFF): los chips de la fila de la bandeja. Siempre viaja, vacía si no tiene: la
     /// pantalla no sabe qué etiquetas tiene cada cliente sin otra llamada por fila.</summary>
@@ -61,7 +65,9 @@ public sealed record ConversationSummary(
     /// alcanza, porque una conversación que abrió QEP tampoco tiene ventana. No es <c>history_managed</c>: esa bandera se apaga cuando
     /// el asesor toma, transfiere o marca leída la conversación, o cuando llega un eco, y nada de eso abre la ventana: el aviso se
     /// iría mientras la respuesta sigue exigiendo plantilla.</summary>
-    bool FromHistory = false)
+    bool FromHistory = false,
+    /// <summary>Spec 2026-10-29 §4.4 (BFF): el bot del asistente (chatbot o agente de IA) con su nombre; <c>null</c> sin asistente.</summary>
+    AutomationBotDto? AutomationBot = null)
 {
     /// <summary>Spec 2026-10-24 §4.1 (BFF): los otros clientes del tenant con el número de la conversación, sin el que ella muestra, por
     /// created_at, hasta 10; sin etiquetas. Viaja siempre. Se llena en toda respuesta de una sola conversación (detalle, PUT
@@ -144,19 +150,30 @@ public sealed record EventCustomerRefDto(Guid Id, string Name);
 /// CustomerChanged como evento desconocido, sin romperse. <c>handoff</c> sólo en un <c>AutomationPaused</c> con
 /// <c>pauseReason = Handoff</c> (spec 2026-10-24 §6); ausente en eventos viejos. <c>chatbot</c> sólo en un <c>Resolved</c> hecho
 /// por el bot (bloque «Resolver»), con <c>actor</c> null: el hilo dice «El asistente «X» resolvió la conversación» en vez de
-/// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe.</summary>
+/// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe. <c>ticketId</c> y <c>ticketNumber</c> sólo en
+/// <c>TicketOpened</c>/<c>TicketClosed</c> (Soporte fase 2): el número (<c>SOP-000127</c>) se resuelve al leer para que el hilo diga
+/// «Se abrió el ticket SOP-000127» sin otra consulta; <c>null</c> si el ticket ya no está, y el hilo dibuja el evento sin número.
+/// <c>AutomationDelegated</c>/<c>AutomationReturned</c> (spec 2026-11-17, adenda D-5) traen <c>chatbot</c> y <c>agent</c> con la foto del
+/// nombre del momento (si falta, el de hoy, o «Chatbot» / «Agente IA»), y el de retorno <c>output</c> (<c>done</c>, <c>human</c>,
+/// <c>noAnswer</c>, <c>idle</c>, <c>error</c>; <c>null</c> si volvió sin salida): el hilo dice quién pasó la conversación a quién sin otra
+/// consulta.</summary>
 public sealed record MessageEventDto(
     string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null,
     EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null,
-    ChatbotRefDto? Chatbot = null);
+    ChatbotRefDto? Chatbot = null, Guid? TicketId = null, string? TicketNumber = null, AgentRefDto? Agent = null, string? Output = null);
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
 /// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>, <c>DataConsentRejected</c>, <c>DataConsentUnavailable</c>): uno desconocido
 /// lo pinta con el texto genérico. <c>AssignedTo</c> (spec 2026-10-25 D-8): a quién quedó asignada la conversación; <c>null</c> = sin asignar.
-/// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
+/// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.
+/// <c>Provider</c> (plan 2026-11-12): sólo en el traspaso de un agente de IA, el proveedor de su modelo (<c>anthropic</c>, <c>openai</c>);
+/// los kinds de agente son <c>AgentRequested</c>, <c>AgentLimitReached</c>, <c>AgentFailed</c>, <c>ProviderFailed</c>, <c>ModuleDisabled</c>
+/// y <c>WindowClosed</c>. Spec 2026-11-17 adenda D-6: <c>AgentBlockOutputUnhandled</c> es el bloque «Agente IA» que volvió por una salida sin
+/// conectar; <c>Code</c> es esa salida (<c>human</c>, <c>noAnswer</c>, <c>error</c>) y <c>ChatbotName</c>/<c>AgentName</c> la foto de los
+/// nombres del momento, para que la bandeja diga qué chatbot y qué agente sin otra consulta (sólo en ese kind; si no, <c>null</c>).</summary>
 public sealed record AutomationHandoffDto(
     string Kind, string? Code, string? NodeId, string? NodeTitle, string? ConnectionName, string? ConnectionReason,
-    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null);
+    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null, string? Provider = null, string? ChatbotName = null, string? AgentName = null);
 
 /// <summary>Spec 2026-10-24 §6: el bloque HTTP fallido que arrancó el paso del traspaso. <c>Status</c> sólo si la API respondió.</summary>
 public sealed record AutomationHandoffHttpDto(
@@ -196,7 +213,47 @@ public sealed record MessageDto(
     string? MediaState = null,
     /// <summary>Spec 2026-10-30 §4.4: la clave de API que envió el saliente, con el nombre que tenía al enviar; excluyente con <c>SentBy</c> y
     /// <c>SentByChatbot</c>.</summary>
-    ApiKeyRefDto? SentByApiKey = null);
+    ApiKeyRefDto? SentByApiKey = null,
+    /// <summary>Spec 2026-11-09 D8b: un <c>Failed</c> descartado desde «Programados»; el SPA oculta «Reintentar». Un backend viejo no lo manda.</summary>
+    bool RetryDisabled = false,
+    /// <summary>Las tarjetas de un <c>Contacts</c> (la persona compartió contactos de su agenda); <c>null</c> en todo otro kind o si el
+    /// <c>details</c> guardado no se puede leer.</summary>
+    IReadOnlyList<SharedContactDto>? Contacts = null,
+    /// <summary>Spec 2026-10-29 §4.4: el agente de IA que escribió el saliente; excluyente con <c>SentBy</c>, <c>SentByChatbot</c> y
+    /// <c>SentByApiKey</c>.</summary>
+    AgentRefDto? SentByAgent = null);
+
+/// <summary>Spec 2026-10-29 §4.4: el agente de IA autor de un mensaje o que atiende una conversación, con el nombre que hoy tiene; uno
+/// borrado firma «Agente IA».</summary>
+public sealed record AgentRefDto(Guid Id, string Name);
+
+/// <summary>Spec 2026-10-29 §4.4 (BFF): el bot que atiende o atendió la conversación, para que el chip distinga «Agente IA» de «Chatbot» sin
+/// cruzar con otra pantalla. <c>Kind</c> es <c>chatbot</c> o <c>agent</c>. Spec 2026-11-17 §7: <c>DelegatedBy</c> es el chatbot que le
+/// pasó la conversación al agente por un bloque del flujo, para que el chip diga «Agente IA · desde el chatbot X»; <c>null</c> si el agente
+/// atiende la conexión por su cuenta o el bot es un chatbot.</summary>
+public sealed record AutomationBotDto(string Kind, Guid Id, string Name, AutomationDelegatedByDto? DelegatedBy = null);
+
+/// <summary>Spec 2026-11-17 §7: el chatbot que delegó, con «Chatbot» si ya no existe.</summary>
+public sealed record AutomationDelegatedByDto(Guid ChatbotId, string Name);
+
+/// <summary>Un contacto que el cliente compartió desde su agenda (<c>messages[].contacts</c> de Meta). BFF: la burbuja del asesor
+/// necesita los números y correos para llamar o escribir; antes de esto sólo se veía el nombre, que viaja en <c>text</c>.
+/// <c>Phones</c> y <c>Emails</c> viajan siempre, vacíos si no hay: la burbuja no tiene que distinguir ausente de vacío.</summary>
+public sealed record SharedContactDto(
+    string? Name, string? Organization, IReadOnlyList<SharedContactPhoneDto> Phones, IReadOnlyList<SharedContactEmailDto> Emails);
+
+/// <summary>Un teléfono de la tarjeta. Meta puede mandar <c>phone</c> sin <c>wa_id</c> (el número no tiene WhatsApp) o al revés;
+/// uno sin ninguno de los dos no se manda. <c>Type</c> es el de Meta (<c>CELL</c>, <c>HOME</c>, <c>WORK</c>…), tal cual.
+/// Spec 2026-11-10, BFF: la tarjeta tiene que saber si el número ya es un cliente (<c>Customer</c>, por la regla de
+/// <c>ResolveSharedPhonesAsync</c>: activo y no fusionado) para ofrecer «Escribirle» o «Agregar como contacto», y el formulario de cliente
+/// pide el país y el número nacional por separado (<c>Country</c> y <c>NationalNumber</c>; su campo sólo acepta dígitos). Prellenar el
+/// <c>waId</c> entero con país <c>CO</c> deja <c>PhoneE164</c> en <c>null</c> y <c>StartConversation</c> falla con
+/// <c>422 messaging.customer.unreachable</c>. Los tres son <c>null</c> sin <c>waId</c> o si el número no es válido.</summary>
+public sealed record SharedContactPhoneDto(
+    string? Phone, string? WaId, string? Type, CustomerRefDto? Customer = null, string? Country = null, string? NationalNumber = null);
+
+/// <summary>Un correo de la tarjeta; <c>Type</c> es el de Meta (<c>HOME</c>, <c>WORK</c>), tal cual.</summary>
+public sealed record SharedContactEmailDto(string Email, string? Type);
 
 /// <summary>Spec 2026-10-30 §4.4: la clave de API autora de un mensaje.</summary>
 public sealed record ApiKeyRefDto(Guid Id, string Name);
@@ -219,8 +276,12 @@ public sealed record InteractiveListRowDto(string Id, string Title, string? Desc
 public sealed record InteractiveCtaDto(string DisplayText, string Url);
 
 /// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
-/// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>
-public sealed record MessageTemplateRefDto(string Name, string Language);
+/// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»). Spec 2026-11-13: <c>Header</c> es el encabezado multimedia
+/// que mandó la API externa por enlace, para que la burbuja lo muestre; <c>null</c> si no lo hubo.</summary>
+public sealed record MessageTemplateRefDto(string Name, string Language, MessageTemplateHeaderDto? Header = null);
+
+/// <summary>Spec 2026-11-13: <c>Type</c> es <c>image</c>, <c>video</c> o <c>document</c>; <c>Link</c> la URL https que se entregó a Meta.</summary>
+public sealed record MessageTemplateHeaderDto(string Type, string Link, string? Filename);
 
 public sealed record MessagePageDto(IReadOnlyList<MessageDto> Items, bool HasMore);
 

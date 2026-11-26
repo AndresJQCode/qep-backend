@@ -1,4 +1,7 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Catalog;
+using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -57,6 +60,18 @@ public static class ProductEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Borrar es permanente aunque el producto esté en uso (modelo Shopify, spec 2026-11-08 D-5): las líneas que lo
+        // vendieron se quedan con su código y su nombre congelados. En cambio, deletedVariantIds del PUT sigue
+        // desactivando la variante usada en vez de borrarla; la diferencia es deliberada (decisión del owner 6). La
+        // versión va en If-Match, como en las categorías: un DELETE no lleva cuerpo.
+        group.MapDelete("/products/{productId:guid}", DeleteProductAsync)
+            .RequireAuthorization(CatalogPermissions.ProductManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         // Un recurso propio y no un PUT por destino: la operación es "copiar estas escalas a
         // estas variantes", y partirla en N escrituras deja al cliente orquestando una
         // transacción que no puede cerrar. Bajo /products y no bajo la variante origen porque
@@ -66,6 +81,16 @@ public static class ProductEndpoints
             .RequireAuthorization(CatalogPermissions.ProductManage)
             .Accepts<CopyPriceScalesRequest>("application/json")
             .Produces<CopyPriceScalesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Un lote y no un PUT por producto: cambiar la visibilidad de N productos es una sola
+        // operación todo-o-nada, y el PUT reemplaza el recurso entero con variantes y galería.
+        group.MapPost("/products/store-visibility", SetStoreVisibilityAsync)
+            .RequireAuthorization(CatalogPermissions.ProductManage)
+            .Accepts<SetProductsStoreVisibilityRequest>("application/json")
+            .Produces<ProductStoreVisibilityResult>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -102,10 +127,15 @@ public static class ProductEndpoints
         string? search = null,
         string? name = null,
         string? code = null,
-        bool? isActive = null)
+        bool? isActive = null,
+        string? kind = null)
     {
+        // El mismo parseo que el listado: un valor fuera del enum es el mismo 422 con el mapa `errors`.
         var result = await dispatcher.SendAsync(
-            new ExportProductsCommand(tenantId, search, name, code, isActive), cancellationToken);
+            new ExportProductsCommand(
+                tenantId, search, name, code, isActive,
+                CatalogEnumParsing.ParseOptional<ProductKind>(kind, "kind")),
+            cancellationToken);
 
         // 202 y no 200: lo que se acepto es la exportacion. El archivo se sube durante el
         // request pero el correo lo manda el worker despues, asi que la respuesta no trae el
@@ -124,10 +154,17 @@ public static class ProductEndpoints
         bool? isActive = null,
         int page = 1,
         int pageSize = ProductPaging.DefaultPageSize,
-        bool includeVariants = false)
+        bool includeVariants = false,
+        string? visibleInStore = null,
+        string? kind = null,
+        Guid? categoryId = null)
     {
         var result = await dispatcher.QueryAsync(
-            new ListProductsQuery(tenantId, search, name, code, isActive, page, pageSize, includeVariants),
+            new ListProductsQuery(
+                tenantId, search, name, code, isActive, page, pageSize, includeVariants,
+                ParseVisibleInStore(visibleInStore),
+                CatalogEnumParsing.ParseOptional<ProductKind>(kind, "kind"),
+                categoryId),
             cancellationToken);
 
         return Results.Ok(new ProductsResponse(
@@ -165,7 +202,10 @@ public static class ProductEndpoints
                 request.CategoryId,
                 request.OptionIds,
                 request.Variants,
-                request.Gallery),
+                request.Gallery,
+                request.VisibleInStore,
+                CatalogEnumParsing.ParseOptional<ProductKind>(request.Kind, nameof(request.Kind)),
+                CatalogEnumParsing.ParseOptional<SalesUnit>(request.SalesUnit, nameof(request.SalesUnit))),
             cancellationToken);
 
         return Results.Created(
@@ -192,10 +232,51 @@ public static class ProductEndpoints
                 request.OptionIds,
                 request.Variants,
                 request.Gallery,
-                request.DeletedVariantIds),
+                request.DeletedVariantIds,
+                request.VisibleInStore,
+                CatalogEnumParsing.ParseOptional<ProductKind>(request.Kind, nameof(request.Kind)),
+                CatalogEnumParsing.ParseOptional<SalesUnit>(request.SalesUnit, nameof(request.SalesUnit))),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
+    }
+
+    private static async Task<IResult> DeleteProductAsync(
+        Guid tenantId,
+        Guid productId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteProductCommand(tenantId, productId, CatalogIfMatch.RequireVersion(httpContext, "product")),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> SetStoreVisibilityAsync(
+        Guid tenantId,
+        SetProductsStoreVisibilityRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new SetProductsStoreVisibilityCommand(tenantId, request.ProductIds ?? [], request.Visible),
+            cancellationToken));
+
+    // string y no bool?: con bool? un valor que no es booleano lo rechaza el binder con 400, y el
+    // contrato dice 422 validation.failed como el resto de los filtros inválidos.
+    private static bool? ParseVisibleInStore(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+
+        return bool.TryParse(value, out var parsed)
+            ? parsed
+            : throw new ValidationException(
+                [new ValidationFailure("visibleInStore", "visibleInStore tiene que ser true o false.")]);
     }
 
     private static async Task<IResult> CopyPriceScalesAsync(
@@ -245,11 +326,15 @@ public static class ProductEndpoints
         product.Id,
         product.Name,
         product.IsActive,
+        product.VisibleInStore,
+        product.ExternalSource,
         product.Description,
         product.ImageFileId,
         product.ImageUrl,
         product.TaxRateId,
         product.CategoryId,
+        product.Kind,
+        product.SalesUnit,
         product.Options,
         product.Variants,
         product.Gallery,

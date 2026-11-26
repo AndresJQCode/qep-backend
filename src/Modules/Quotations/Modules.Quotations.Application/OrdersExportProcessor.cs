@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -21,7 +22,8 @@ public sealed class OrdersExportProcessor(
     IPaymentProofPublisher paymentProofPublisher,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IQuotationPhoneNumbers phoneNumbers)
     : IExportJobProcessor
 {
     public const string FilePrefix = "pedidos";
@@ -45,21 +47,22 @@ public sealed class OrdersExportProcessor(
     public async Task<ExportJobResult> ProcessAsync(ExportJob job, CancellationToken cancellationToken)
     {
         var filters = ExportJobFilters.Read<OrdersExportFilters>(job);
-        var (status, paymentStatus, source) = ParseFilters(filters);
+        var (status, paymentStatus, fulfillmentStatus, invoiced, source) = ParseFilters(filters);
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
-        // Un calendario por job (spec 2026-09-17). El rango se corta en la zona de quien lo pidió, la
-        // misma con que vio la tabla; las fechas del archivo siguen en el día del tenant, porque las
-        // importa su ERP.
+        // Un calendario por job (spec 2026-09-17): las fechas del archivo van en el día del tenant, porque las importa su
+        // ERP. El rango corta por la fecha del pedido, que ya es un día del tenant (spec 2026-11-16 §4): la zona guardada
+        // en el trabajo no lo mueve.
         var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
-        var converted = TenantDayRange.Of(
-            OrderListing.CalendarFor(calendar, filters.TimeZone), filters.ConvertedFrom, filters.ConvertedTo);
         var generatedAt = calendar.UtcNow;
 
         var storedLayout = await layoutRepository.FindAsync(job.TenantId, cancellationToken);
         var layout = OrdersExportLayoutProjection.For(OrdersExportLayout.Effective(storedLayout));
         var sheetName = OrdersExportLayout.EffectiveSheetName(storedLayout);
+        Func<string, string> phoneText = OrdersExportLayout.EffectiveIncludePhoneDialCode(storedLayout)
+            ? stored => stored
+            : WithoutDialCode;
 
         var exportedRows = 0;
         using var workbook = writer.Create(sheetName, layout.Columns);
@@ -72,8 +75,10 @@ public sealed class OrdersExportProcessor(
                 advisorId,
                 status,
                 paymentStatus,
-                converted.From,
-                converted.Before,
+                fulfillmentStatus,
+                invoiced,
+                filters.ConvertedFrom,
+                filters.ConvertedTo,
                 filters.OrderNumber,
                 source,
                 after,
@@ -83,13 +88,13 @@ public sealed class OrdersExportProcessor(
             {
                 var context = await LoadBatchContextAsync(job.TenantId, batch, ct);
                 var rows = batch
-                    .SelectMany(order => RowsFor(order, context, calendar, paymentProofPublisher))
+                    .SelectMany(order => RowsFor(order, context, calendar, paymentProofPublisher, phoneText))
                     .Select(cells => layout.Project(cells))
                     .ToArray();
                 exportedRows += rows.Length;
                 return rows;
             },
-            order => new OrderExportCursor(order.ConvertedAt, order.OrderNumber),
+            order => new OrderExportCursor(order.OrderDate, order.ConvertedAt, order.OrderNumber),
             cancellationToken);
 
         if (orderCount == 0)
@@ -104,8 +109,18 @@ public sealed class OrdersExportProcessor(
         return new ExportJobResult(fileName, exportedRows, upload.DownloadUrl, upload.ExpiresAt);
     }
 
+    // Spec 2026-11-25 indicativo: sólo se parte lo que empieza por «+»; sin él, o si no se puede partir,
+    // sale como está guardado. El teléfono no va a ningún log.
+    private string WithoutDialCode(string stored) =>
+        stored.StartsWith('+') ? phoneNumbers.NationalNumberOf(stored) ?? stored : stored;
+
     // Un filtro ilegible es definitivo: el trabajo nació con él y reintentar no lo arregla.
-    private static (OrderStatus? Status, OrderPaymentStatus? PaymentStatus, OrderSource? Source) ParseFilters(
+    private static (
+        OrderStatus? Status,
+        OrderPaymentStatus? PaymentStatus,
+        OrderFulfillmentStatus? FulfillmentStatus,
+        bool? Invoiced,
+        OrderSource? Source) ParseFilters(
         OrdersExportFilters filters)
     {
         try
@@ -113,6 +128,8 @@ public sealed class OrdersExportProcessor(
             return (
                 OrderListing.ParseStatus(filters.Status),
                 OrderListing.ParsePaymentStatus(filters.PaymentStatus),
+                OrderListing.ParseFulfillmentStatus(filters.FulfillmentStatus),
+                OrderListing.ParseInvoiced(filters.Invoiced),
                 OrderListing.ParseSource(filters.Source));
         }
         catch (QuotationsDomainException exception)
@@ -154,8 +171,9 @@ public sealed class OrdersExportProcessor(
             ? new Dictionary<Guid, QuotationVariantRef>()
             : await productLookup.FindManyAsync(tenantId, variantIds, cancellationToken);
 
-        // Un pedido guardado siempre tiene cuenta de cobro: sólo el cálculo previo nace sin ella, y no se
-        // guarda (Order.Preview). De ahí el `!` acá y en RowsFor.
+        // Un pedido guardado siempre tiene empresa emisora: sólo el cálculo previo nace sin ella, y no se
+        // guarda (Order.Preview). De ahí el `!` acá y en RowsFor. La cuenta bancaria sí puede faltar (spec
+        // 2026-11-17, R3): ver RowsFor.
         var companyIds = batch.Select(order => order.BillingAccount!.CompanyId).Distinct().ToArray();
         var companies = new Dictionary<Guid, QuotationCompanyRef>();
         foreach (var companyId in companyIds)
@@ -214,8 +232,15 @@ public sealed class OrdersExportProcessor(
 
     // Una fila por línea del pedido. Un pedido sin líneas no puede existir (el dominio lo exige),
     // pero el procesador se defiende igual.
+    // `phoneText` escribe las cuatro columnas de teléfono del catálogo (`phone`, `customer_phone`,
+    // `billing_phone`, `shipping_phone`) según el interruptor del indicativo; una columna de teléfono nueva
+    // pasa por él.
     private static IEnumerable<ExportCell[]> RowsFor(
-        Order order, BatchContext context, TenantCalendar calendar, IPaymentProofPublisher publisher)
+        Order order,
+        BatchContext context,
+        TenantCalendar calendar,
+        IPaymentProofPublisher publisher,
+        Func<string, string> phoneText)
     {
         var items = context.ItemsByOrder.TryGetValue(order.Id, out var foundItems)
             ? foundItems
@@ -251,7 +276,8 @@ public sealed class OrdersExportProcessor(
         var shippingContact = ShippingContactFor(shipping, customer, context.CityNames, context.DepartmentNames);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
-        var orderDate = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        // Spec 2026-11-16 §5: la fecha del pedido, que el asesor puede corregir; ya es un día del tenant.
+        var orderDate = order.OrderDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // Spec 2026-10-15 §6.4 (y el hotfix del mismo día): las observaciones son las del pedido, que
         // al convertir heredó las de la cotización.
@@ -282,8 +308,10 @@ public sealed class OrdersExportProcessor(
             _ => string.Empty,
         });
         var cashOnDelivery = ExportCell.OfText(order.CashOnDelivery ? "Sí" : "No");
-        var bank = order.BillingAccount.BankName;
-        var account = order.BillingAccount.AccountNumber;
+        // Una empresa sin cuenta (spec 2026-11-17 §4.2) deja vacías las celdas del banco, del número y de
+        // payment_method_N: el ERP no recibe una cuenta que no existe.
+        var bank = order.BillingAccount.BankName ?? string.Empty;
+        var account = order.BillingAccount.AccountNumber ?? string.Empty;
         var bankAndAccount = BankAndAccount(bank, account);
         var proofCells = Enumerable.Range(0, PaymentDateColumns)
             .SelectMany(index => ProofCells(proofs, index, publisher))
@@ -308,6 +336,9 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfNumber(item.Quantity),
                 ExportCell.OfNumber(item.DiscountedUnitPriceWithoutTax),
                 ExportCell.OfNumber(item.TaxAmount),
+                // Desde 2026-11-23 el descuento de la línea es sin IVA, igual que el unitario y el IVA de la
+                // fila, y la hoja del ERP lo recibe así. Decisión pendiente del owner: confirmar si el ERP
+                // esperaba el descuento con IVA de antes.
                 ExportCell.OfNumber(item.DiscountAmount),
                 ExportCell.OfText(string.Empty), // Nota Detalle: no existe nota por línea.
                 .. Enumerable.Range(0, PaymentDateColumns).Select(index => PaymentDateCell(proofs, index, calendar)),
@@ -316,7 +347,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(order.OrderNumber),
                 ExportCell.OfText(address),
                 ExportCell.OfText(notes),
-                ExportCell.OfText(phone),
+                ExportCell.OfText(phoneText(phone)),
                 ExportCell.OfText(email),
                 advisorCode,
                 ExportCell.OfText(bank),
@@ -347,7 +378,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(customer?.Address ?? string.Empty),
                 ExportCell.OfText(customer?.CityName ?? string.Empty),
                 ExportCell.OfText(customer?.DepartmentName ?? string.Empty),
-                ExportCell.OfText(customer?.Phone ?? string.Empty),
+                ExportCell.OfText(phoneText(customer?.Phone ?? string.Empty)),
                 ExportCell.OfText(customer?.Email ?? string.Empty),
                 // Grupo billing_*: a quién se factura (OrderBilledParty.SourceFor).
                 ExportCell.OfText(billingName),
@@ -357,7 +388,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(billingContact.Address),
                 ExportCell.OfText(billingContact.City),
                 ExportCell.OfText(billingContact.Department),
-                ExportCell.OfText(billingContact.Phone),
+                ExportCell.OfText(phoneText(billingContact.Phone)),
                 ExportCell.OfText(billingContact.Email),
                 // Grupo shipping_*: a quién se despacha; sin parte de envío, la ficha del cliente (ShippingContactFor).
                 ExportCell.OfText(shippingContact.Name),
@@ -368,10 +399,49 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(shippingContact.City),
                 ExportCell.OfText(coordinadoraCity),
                 ExportCell.OfText(shippingContact.Department),
-                ExportCell.OfText(shippingContact.Phone),
+                ExportCell.OfText(phoneText(shippingContact.Phone)),
                 ExportCell.OfText(shippingContact.Email),
+                WithholdingCell(order, TaxCountries.RetefuenteType),
+                WithholdingCell(order, TaxCountries.ReteIcaType),
+                ExportCell.OfText(order.BuyerNotes ?? string.Empty),
+                WithholdingRateCell(order, TaxCountries.RetefuenteType),
+                WithholdingRateCell(order, TaxCountries.ReteIcaType),
             ];
         }
+    }
+
+    /// <summary>La suma de lo retenido de ese tipo en el pedido; 0 si ninguna aplicó, como «Retencion».</summary>
+    private static ExportCell WithholdingCell(Order order, string type) =>
+        ExportCell.OfNumber(order.AppliedWithholdings
+            .Where(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal))
+            .Sum(withholding => withholding.Amount));
+
+    /// <summary>
+    /// La tarifa efectiva de ese tipo en porcentaje, tal como está guardada (spec 2026-11-16); 0 si ninguna aplicó. La
+    /// ReteICA tampoco se escala a por mil (owner, 2026-11-16): 2,8 % sale 2.8, no 28. Con varias aplicadas del mismo
+    /// tipo sin alcance sale la primera por <c>Position</c>: límite conocido, el owner confirmó que no se da hoy.
+    /// Con alguna de alcance <c>Goods</c> o <c>Services</c> (spec 2026-11-18 §4) su base no es el subtotal y puede haber
+    /// dos del tipo: sale la tarifa que da el monto de la columna sobre el subtotal del pedido, a tres decimales, para que
+    /// el ERP que la multiplica por el subtotal llegue al mismo monto.
+    /// </summary>
+    private static ExportCell WithholdingRateCell(Order order, string type)
+    {
+        var applied = order.AppliedWithholdings
+            .Where(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal))
+            .ToList();
+        if (applied.Count == 0)
+        {
+            return ExportCell.OfNumber(0m);
+        }
+
+        if (applied.All(withholding => withholding.AppliesTo == WithholdingScope.All))
+        {
+            return ExportCell.OfNumber(applied[0].Percentage);
+        }
+
+        return ExportCell.OfNumber(order.Subtotal == 0m
+            ? 0m
+            : Math.Round(applied.Sum(withholding => withholding.Amount) / order.Subtotal * 100m, 3, MidpointRounding.AwayFromZero));
     }
 
     private static ExportCell PaymentMethodCell(
@@ -454,7 +524,7 @@ public sealed class OrdersExportProcessor(
             BilledPartySource.BillingParty => new BilledContact(
                 billing!.IdentificationType?.ToWireValue() ?? string.Empty,
                 billing.Address ?? string.Empty,
-                NameOf(billing.CityId, cityNames),
+                CityOf(billing, cityNames),
                 NameOf(billing.DepartmentId, departmentNames),
                 billing.Phone ?? string.Empty,
                 billing.Email ?? string.Empty),
@@ -485,7 +555,7 @@ public sealed class OrdersExportProcessor(
                 shipping.IdentificationNumber ?? string.Empty,
                 shipping.PersonType?.ToWireValue() ?? string.Empty,
                 shipping.Address ?? string.Empty,
-                NameOf(shipping.CityId, cityNames),
+                CityOf(shipping, cityNames),
                 NameOf(shipping.DepartmentId, departmentNames),
                 shipping.Phone ?? string.Empty,
                 shipping.Email ?? string.Empty)
@@ -500,6 +570,10 @@ public sealed class OrdersExportProcessor(
                 customer?.Phone ?? string.Empty,
                 customer?.Email ?? string.Empty);
 
+    // Una parte de afuera no tiene ciudad de DIVIPOLA: la columna lleva el texto que se escribió.
+    private static string CityOf(OrderParty party, IReadOnlyDictionary<Guid, string> cityNames) =>
+        party.Country is null ? NameOf(party.CityId, cityNames) : party.CityName ?? string.Empty;
+
     private static string NameOf(Guid? id, IReadOnlyDictionary<Guid, string> names) =>
         id is { } value && names.TryGetValue(value, out var name) ? name : string.Empty;
 
@@ -510,10 +584,7 @@ public sealed class OrdersExportProcessor(
     {
         if (shipping is not null)
         {
-            var ciudad = shipping.CityId is { } cityId && cityNames.TryGetValue(cityId, out var name)
-                ? name
-                : string.Empty;
-            return (ciudad, shipping.Address ?? string.Empty, shipping.Phone ?? string.Empty, shipping.Email ?? string.Empty);
+            return (CityOf(shipping, cityNames), shipping.Address ?? string.Empty, shipping.Phone ?? string.Empty, shipping.Email ?? string.Empty);
         }
 
         return (
@@ -534,7 +605,8 @@ public sealed class OrdersExportProcessor(
             : string.Empty;
     }
 
-    // El NIT como lo importa el ERP: sin dígito de verificación, puntos ni espacios.
+    // El documento como lo importa el ERP: sin puntos ni espacios; el guion y el dígito de
+    // verificación se conservan (decisión del dueño, D11). No depende del tipo de documento.
     private static string ErpTaxId(string? taxId)
     {
         if (string.IsNullOrEmpty(taxId))
@@ -542,9 +614,7 @@ public sealed class OrdersExportProcessor(
             return string.Empty;
         }
 
-        var hyphen = taxId.IndexOf('-', StringComparison.Ordinal);
-        var withoutCheckDigit = hyphen < 0 ? taxId : taxId[..hyphen];
-        return string.Concat(withoutCheckDigit.Where(character => character != '.' && !char.IsWhiteSpace(character)));
+        return string.Concat(taxId.Where(character => character != '.' && !char.IsWhiteSpace(character)));
     }
 
     private static ExportCell AdvisorCodeCell(

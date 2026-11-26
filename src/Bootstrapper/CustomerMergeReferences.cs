@@ -1,3 +1,4 @@
+using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure.Persistence;
@@ -5,7 +6,7 @@ using Modules.Customers.Infrastructure.Persistence;
 namespace Bootstrapper;
 
 /// <summary>
-/// Adapta Quotations, Pos, Pipeline, Messaging, ServiceContracts, Loans y Shopify al puerto <see cref="ICustomerMergeReferences"/> de Customers
+/// Adapta Quotations, Pos, Pipeline, Messaging, ServiceContracts, Loans, Support, Ai, Scheduling y Shopify al puerto <see cref="ICustomerMergeReferences"/> de Customers
 /// (spec 2026-10-24 §4). Vive en el composition root por la misma razón que <see cref="CatalogVariantUsageChecker"/>:
 /// Customers no referencia los otros módulos (<c>CustomersLayerTests</c>) y el acoplamiento entre esquemas se cablea acá.
 ///
@@ -16,11 +17,12 @@ namespace Bootstrapper;
 ///
 /// Cada sentencia filtra por <c>tenant_id</c> y por <c>&lt;col&gt; = ANY(ids)</c>, con todo valor como parámetro. Ninguna
 /// sube <c>version</c> salvo la de campañas (F15 y ruling C1): una conversación o un negocio abiertos en otra pestaña no
-/// deben dar 412 por la fusión; una campaña en edición sí, porque su audiencia cambió. <c>messaging.campaign_recipients</c>
+/// deben dar 412 por la fusión (tampoco un préstamo ni un ticket de <c>support.tickets</c>); una campaña en edición sí,
+/// porque su audiencia cambió. <c>messaging.campaign_recipients</c>
 /// no se toca: es la foto de un envío y su índice único <c>(campaign_id, customer_id)</c> chocaría. La foto del nombre de
 /// <c>pos.sales</c> tampoco: es lo que se cobró.
 ///
-/// **El costo de este camino (§4).** La fusión conoce por nombre las tablas y columnas de cinco módulos. Renombrar una de
+/// **El costo de este camino (§4).** La fusión conoce por nombre las tablas y columnas de los ocho módulos de arriba. Renombrar una de
 /// ellas compila y rompe la fusión en ejecución con <c>42703 undefined_column</c> o <c>42P01 undefined_table</c>. Lo amarran
 /// <c>CustomerMergeReferencesTests</c> (réplicas mínimas, que no siguen solas a las migraciones) y
 /// <c>CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema</c>, que resuelve este adaptador del
@@ -28,6 +30,32 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class CustomerMergeReferences(CustomersDbContext customers) : ICustomerMergeReferences
 {
+    public async Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(customerIds);
+        Guid[] ids = [.. customerIds.Distinct().Order()];
+        if (ids.Length == 0)
+        {
+            return;
+        }
+
+        // Sin transacción el candado se soltaría al terminar su sentencia y la fusión no se serializaría con nada.
+        if (customers.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("Locking the merge references requires the transaction of the CustomersDbContext.");
+        }
+
+        // Una sentencia por cliente y en orden de id, como CustomerDeletionReferences.LockAsync: dos que se crucen piden los candados
+        // en el mismo orden. Un deadlock igual sería una carrera (412), no un 500.
+        await CustomersWriteRaces.RunAsync(async () =>
+        {
+            foreach (var id in ids)
+            {
+                await customers.Database.ExecuteSqlAsync(CustomerReferenceLock.Exclusive(tenantId, id), cancellationToken);
+            }
+        });
+    }
+
     public async Task MoveAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken)
     {
@@ -123,6 +151,25 @@ internal sealed class CustomerMergeReferences(CustomersDbContext customers) : IC
         // Préstamos: sin subir versión (F15). Las cuotas no guardan cliente, así que loans.loans es la única tabla que mover.
         await database.ExecuteSqlAsync($"""
             UPDATE loans.loans SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // Soporte (D4 del spec 2026-11-14): sin subir versión (F15), como los préstamos. Los eventos guardan el id del cliente en
+        // details, que es historia: el «vinculó a» de antes de la fusión sigue nombrando al fusionado.
+        await database.ExecuteSqlAsync($"""
+            UPDATE support.tickets SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // Las pruebas del playground de agentes de IA que fijaron al fusionado (§7): sin subir versión (F15). Las sesiones siguen a su
+        // conversación, que ya se movió arriba.
+        await database.ExecuteSqlAsync($"""
+            UPDATE ai.tests SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // Agenda (plan 2026-11-21, Tarea 11 y PD-6): las citas del fusionado, en cualquier estado, pasan al que queda, sin subir la
+        // versión (F15): una cita abierta en otra pestaña no da 412 por la fusión. Es la salida de quien tiene un cliente duplicado con
+        // citas, porque borrar a ese cliente está bloqueado.
+        await database.ExecuteSqlAsync($"""
+            UPDATE scheduling.appointments SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
             """, cancellationToken);
 
         await database.ExecuteSqlAsync($"""

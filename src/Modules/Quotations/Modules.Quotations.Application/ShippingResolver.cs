@@ -31,6 +31,7 @@ public sealed class ShippingResolver(
         ShippingDetails current,
         bool isStorePickup,
         string currency,
+        bool chargesVat,
         string errorPrefix,
         CancellationToken cancellationToken)
     {
@@ -114,20 +115,26 @@ public sealed class ShippingResolver(
         var amount = mode == FreightChargeMode.Free ? 0m : request.FreightAmount;
         var taxPercentage = 0;
         // Con valor 0 el dominio responde freight_amount_required, que es la causa real: leer la tasa antes
-        // podría tapar ese error con uno de configuración.
-        if (mode == FreightChargeMode.Charged && amount > 0 && ItemizesTax(currency))
+        // podría tapar ese error con uno de configuración. Una empresa que no cobra IVA (spec 2026-11-17 §5.2) va al 0 %
+        // sin leer la tasa del tenant: nunca le sale freight_tax_rate_missing.
+        if (chargesVat && mode == FreightChargeMode.Charged && amount > 0 && ItemizesTax(currency))
         {
             taxPercentage = mode == current.ChargeMode && amount == current.FreightAmount
                 // Un guardado que no tocó el envío conserva la foto de la tasa: cambiar la del tenant no
                 // re-precia documentos ya cotizados.
                 ? current.FreightTaxPercentage
-                : await TenantFreightTaxPercentageAsync(tenantId, errorPrefix, cancellationToken);
+                : await FreightTaxPercentageAsync(tenantId, errorPrefix, cancellationToken);
         }
 
         return new ShippingDetails(carrierId, carrierName, mode, amount, taxPercentage, request.CashOnDelivery);
     }
 
-    private async Task<int> TenantFreightTaxPercentageAsync(
+    /// <summary>
+    /// La tasa del IVA del envío del tenant, o <c>{errorPrefix}.freight_tax_rate_missing</c> si no hay una activa. La pide
+    /// también el handler que pasa un documento de una empresa sin IVA a una con IVA con el envío cobrado (spec 2026-11-17,
+    /// R2), antes de tocar el agregado.
+    /// </summary>
+    public async Task<int> FreightTaxPercentageAsync(
         Guid tenantId, string errorPrefix, CancellationToken cancellationToken)
     {
         var rateId = await settingsStore.GetFreightTaxRateIdAsync(tenantId, cancellationToken);

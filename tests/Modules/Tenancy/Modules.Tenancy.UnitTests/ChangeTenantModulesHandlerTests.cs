@@ -33,7 +33,7 @@ public sealed class ChangeTenantModulesHandlerTests
         public ChangeTenantModulesHandler Handler(IExecutionContext? context = null) =>
             new(new StepsTenantRepository(Steps, Target), Modules, Changes, new StepsUnitOfWork(Steps), Audit,
                 context ?? Context, new FixedOperatorTenant(Operator.Value), Reader, new FixedClock(Now),
-                new ChangeTenantModulesValidator());
+                new ChangeTenantModulesValidator(), new RecordingTenantAccessVersion(Steps));
 
         public Task<OperatorTenantDetailDto> SendAsync(string reason, string? note, params (string? Key, string? Status)[] changes) =>
             Handler().HandleAsync(Command(Target.Id, reason, note, changes), TestContext.Current.CancellationToken);
@@ -55,6 +55,20 @@ public sealed class ChangeTenantModulesHandlerTests
         Assert.Empty(fixture.Steps);
     }
 
+    // Spec 2026-11-13, D-5: la caché de permisos del tenant destino se invalida antes del commit y otra vez después.
+    [Fact]
+    public async Task ChangeTenantModulesBumpsTheTargetAroundTheCommit()
+    {
+        var fixture = new Fixture();
+
+        await fixture.SendAsync("contract", null, ("pos", "active"));
+
+        var target = fixture.Target.Id.Value;
+        Assert.Equal(
+            [$"bump:{target}", "commit", $"bump:{target}"],
+            fixture.Steps.Where(step => step == "commit" || step.StartsWith("bump:", StringComparison.Ordinal)));
+    }
+
     // §3: sin el candado antes de leer, dos operadores pasarían la validación a la vez (Review Focus 3).
     [Fact]
     public async Task TheLockIsTakenBeforeReadingTheState()
@@ -64,7 +78,9 @@ public sealed class ChangeTenantModulesHandlerTests
         await fixture.SendAsync("cancellation", null, ("reporting", "inactive"));
 
         Assert.Equal($"lock:{fixture.Target.Id}", fixture.Steps[0]);
-        Assert.Equal(["save", "commit"], fixture.Steps.TakeLast(2));
+        Assert.Equal(
+            ["save", "commit"],
+            fixture.Steps.Where(step => !step.StartsWith("bump:", StringComparison.Ordinal)).TakeLast(2));
     }
 
     [Fact]

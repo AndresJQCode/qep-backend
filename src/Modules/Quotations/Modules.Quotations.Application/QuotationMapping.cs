@@ -27,7 +27,10 @@ internal static class QuotationMapping
         quotation.Notes,
         quotation.Parties.Select(ToDto).ToArray(),
         quotation.BillingUsesBusinessName,
-        quotation.PartyWithRetention,
+        // Derivado para el frontend viejo (spec impuestos por tipo §9.3): con parte propia, si hay algún selector
+        // (= billingWithholdingTaxRates no vacía); nunca null con parte propia, porque el frontend viejo bloquea la
+        // conversión con null.
+        quotation.Billing is null ? null : quotation.BillingWithholdings.Any(),
         quotation.PartyVatSurplus,
         quotation.IsStorePickup,
         quotation.BillsToFinalConsumer,
@@ -45,8 +48,65 @@ internal static class QuotationMapping
         quotation.ShippingDtoOf(),
         quotation.FreightSubtotal,
         quotation.FreightTaxAmount,
+        [.. quotation.AppliedWithholdings.Select(ToDto)],
+        [.. quotation.CustomerWithholdings.Select(ToRateDto)],
+        [.. quotation.BillingWithholdings.Select(ToRateDto)],
         quotation.GlobalScaleFloor,
-        quotation.IsRetail);
+        quotation.IsRetail,
+        quotation.OperationCityId,
+        [.. quotation.WithholdingVerdicts.Select(ToDto)],
+        quotation.RequiresShipping);
+
+    /// <summary>El veredicto de una tasa tal como viaja (spec retenciones por UVT §6); el motivo, con el nombre del enum. La
+    /// usa también el pedido.</summary>
+    internal static WithholdingVerdictDto ToDto(WithholdingVerdict verdict) => new(
+        verdict.Rate.TaxRateId,
+        verdict.Rate.Name,
+        verdict.Rate.Type,
+        verdict.Rate.Country,
+        verdict.Rate.Percentage,
+        verdict.Rate.CatalogPercentage,
+        verdict.Rate.Overridden,
+        verdict.Rate.CityId,
+        verdict.Applies,
+        verdict.Reason.ToString(),
+        verdict.Base,
+        verdict.Rate.MinimumBase,
+        verdict.Rate.MinimumBaseUnit,
+        verdict.MinimumBaseAmount,
+        verdict.Rate.TaxUnitValue,
+        verdict.Rate.TaxUnitYear,
+        verdict.Amount,
+        verdict.Rate.AppliesTo.ToString());
+
+    /// <summary>Una retención aplicada tal como viaja (spec impuestos por tipo §9.3). La usa también el pedido.</summary>
+    internal static WithholdingDto ToDto(DocumentWithholding withholding) => new(
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.MinimumBase,
+        withholding.MinimumBaseUnit,
+        withholding.TaxUnitValue,
+        withholding.BaseAmount,
+        withholding.Amount,
+        withholding.CatalogPercentage,
+        withholding.Overridden,
+        withholding.CityId,
+        withholding.AppliesTo.ToString());
+
+    /// <summary>Una tasa congelada, aplique o no: lo que prellena un selector.</summary>
+    internal static WithholdingTaxRateDto ToRateDto(DocumentWithholding withholding) => new(
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.CatalogPercentage,
+        withholding.Overridden,
+        withholding.CityId,
+        withholding.AppliesTo.ToString());
 
     /// <summary>La entrega por envío con forma fija, también en recogida (spec 2026-10-17 §7).</summary>
     public static ShippingDto ShippingDtoOf(this Quotation quotation) => new(
@@ -65,7 +125,8 @@ internal static class QuotationMapping
         account is null
             ? null
             : new QuotationBillingAccountDto(
-                account.CompanyId, account.BankName, account.AccountNumber, account.Currency);
+                account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country,
+                account.CityId, account.ChargesVat);
 
     private static QuotationPartyDto ToDto(QuotationParty party) => new(
         party.Id.Value,
@@ -78,11 +139,15 @@ internal static class QuotationMapping
         party.DepartmentId,
         party.CityId,
         party.PersonType?.ToWireValue(),
-        party.IdentificationType?.ToWireValue());
+        party.IdentificationType?.ToWireValue(),
+        party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
+        party.CityName,
+        party.RegionId,
+        party.PostalCode);
 
     /// <summary>
-    /// La fila del listado. <paramref name="hasItems"/> y <paramref name="order"/> llegan
-    /// resueltos por el handler y no se leen del agregado: la busqueda del listado no trae las
+    /// La fila del listado. <paramref name="hasItems"/>, <paramref name="requiresShipping"/> y <paramref name="order"/>
+    /// llegan resueltos por el handler y no se leen del agregado: la busqueda del listado no trae las
     /// lineas (la tabla no las pinta) y el pedido vive en otra tabla, asi que <c>quotation.Items</c>
     /// aca esta vacia aunque la cotizacion tenga lineas.
     /// </summary>
@@ -91,6 +156,7 @@ internal static class QuotationMapping
         string? clientName,
         string? advisorName,
         bool hasItems,
+        bool requiresShipping,
         Order? order) => new(
         quotation.Id.Value,
         quotation.QuotationNumber,
@@ -106,7 +172,8 @@ internal static class QuotationMapping
         hasItems && quotation.ValidUntil is not null && quotation.BillingAccount is not null,
         order?.Id.Value,
         order?.Status.ToString(),
-        quotation.ShippingDtoOf());
+        quotation.ShippingDtoOf(),
+        requiresShipping);
 
     private static QuotationItemDto ToDto(QuotationItem item, PriceRounding rounding) => new(
         item.Id.Value,
@@ -123,7 +190,9 @@ internal static class QuotationMapping
         item.Position,
         item.DiscountOrigin.ToString(),
         item.ProductCode,
-        item.ProductName);
+        item.ProductName,
+        item.Kind.ToString(),
+        item.SalesUnit.ToString());
 
     /// <summary>El modo tal como viaja (nombre exacto del enum) al enum del dominio. El validador ya rechaza un
     /// nombre que no existe con el campo en <c>errors</c>; esto es el respaldo para quien llegue sin pasar por
@@ -155,8 +224,9 @@ internal static class QuotationMapping
                 request.BillingUsesBusinessName,
                 request.IsStorePickup,
                 request.BillsToFinalConsumer,
-                request.BillingWithRetention,
-                request.BillingVatSurplus);
+                // BillingWithRetention del cuerpo no baja al dominio (spec impuestos por tipo §9.3): las retenciones
+                // salen de la foto de tasas, no de un interruptor.
+                BillingVatSurplus: request.BillingVatSurplus);
 
     internal static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null
@@ -171,6 +241,10 @@ internal static class QuotationMapping
                 Email = request.Email,
                 Address = request.Address,
                 DepartmentId = request.DepartmentId,
-                CityId = request.CityId
+                CityId = request.CityId,
+                Country = request.Country,
+                CityName = request.CityName,
+                RegionId = request.RegionId,
+                PostalCode = request.PostalCode
             };
 }

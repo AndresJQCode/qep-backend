@@ -336,7 +336,80 @@ public sealed class SimulationRunnerTests
             transcript.Where(entry => entry.From == "system").Select(entry => entry.Text));
     }
 
-    private static SimulationRunner Runner(IHttpBlockExecutor http) => new(http, new ClosedHours(), new FixedClock());
+    // Spec 2026-11-18 «Simulator»: el archivo se resuelve por tenant y la línea del bot lo trae para pintarlo.
+    private static readonly Guid MediaFile = Guid.Parse("7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11");
+
+    private static FlowDefinition MediaFlow(string kind, string text, string? urlButton = null) => FlowJson.Parse($$"""
+        { "schema": 1, "start": { "firstNodeId": "m1" }, "variables": [],
+          "nodes": [
+            { "id": "m1", "kind": "message", "title": "Catálogo", "text": "{{text}}", "urlButton": {{urlButton ?? "null"}},
+              "media": { "kind": "{{kind}}", "fileId": "{{MediaFile}}" }, "outputs": { "next": null } }
+          ] }
+        """);
+
+    private static ChatbotMediaFile StoredFile(string kind, string fileName, string contentType) =>
+        new(MediaFile, kind, fileName, contentType, 2048, new Uri($"https://public.test/{MediaFile}/{fileName}"));
+
+    [Fact]
+    public async Task AnImageShowsAsMediaInTheTranscript()
+    {
+        var media = new StoredMedia(StoredFile("image", "catalogo.jpg", "image/jpeg"));
+        var flow = MediaFlow("image", "Mira, {nombre_contacto}", """{ "label": "Ver", "url": "https://qcode.co/catalogo" }""");
+
+        var (_, transcript) = await Runner(new RecordingHttpBlocks(null), media).RunAsync(flow, Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+
+        var line = transcript[0];
+        Assert.Equal(("bot", "m1", "Mira, Cliente de prueba"), (line.From, line.NodeId, line.Text));
+        Assert.Equal(new TranscriptMedia("image", $"https://public.test/{MediaFile}/catalogo.jpg", "catalogo.jpg", "image/jpeg"), line.Media);
+        Assert.Equal(new TranscriptUrlButton("Ver", "https://qcode.co/catalogo"), line.UrlButton);
+        Assert.Equal([(TenantId, MediaFile)], media.Asked);
+    }
+
+    [Fact]
+    public async Task AudioWithTextIsTwoTranscriptLines()
+    {
+        var media = new StoredMedia(StoredFile("audio", "saludo.mp3", "audio/mpeg"));
+
+        var (_, transcript) = await Runner(new RecordingHttpBlocks(null), media).RunAsync(
+            MediaFlow("audio", "Escúchalo"), Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+
+        var bot = transcript.Where(entry => entry.From == "bot").ToList();
+        Assert.Equal(2, bot.Count);
+        Assert.Equal(("", "audio"), (bot[0].Text, bot[0].Media?.Kind));
+        Assert.Equal(("Escúchalo", null), (bot[1].Text, bot[1].Media));
+    }
+
+    [Fact]
+    public async Task AMissingFileAddsASystemLine()
+    {
+        var (_, transcript) = await Runner(new RecordingHttpBlocks(null), new StoredMedia()).RunAsync(
+            MediaFlow("image", "Mira"), Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+
+        Assert.Equal(["system", "bot"], transcript.Take(2).Select(entry => entry.From));
+        Assert.Equal("Falta el archivo de este mensaje. Vuelve a subirlo.", transcript[0].Text);
+        Assert.Equal(("Mira", null), (transcript[1].Text, transcript[1].Media));
+    }
+
+    private static SimulationRunner Runner(IHttpBlockExecutor http, IChatbotMediaStore? media = null) =>
+        new(http, new ClosedHours(), media ?? new StoredMedia(), new FixedClock());
+
+    private sealed class StoredMedia(params ChatbotMediaFile[] files) : IChatbotMediaStore
+    {
+        public List<(Guid TenantId, Guid FileId)> Asked { get; } = [];
+
+        public Task<ChatbotMediaSession> OpenUploadAsync(
+            Guid tenantId, string fileName, string contentType, long sizeBytes, long maxBytes, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ChatbotMediaCompletion> CompleteAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ChatbotMediaFile>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken)
+        {
+            Asked.AddRange(fileIds.Select(fileId => (tenantId, fileId)));
+            return Task.FromResult<IReadOnlyList<ChatbotMediaFile>>([.. files.Where(file => fileIds.Contains(file.FileId))]);
+        }
+    }
 
     private sealed class RecordingHttpBlocks(HttpCallResult? result) : IHttpBlockExecutor
     {

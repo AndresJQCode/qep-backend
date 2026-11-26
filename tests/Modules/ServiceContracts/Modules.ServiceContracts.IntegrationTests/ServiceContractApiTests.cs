@@ -192,7 +192,7 @@ public sealed class ServiceContractApiTests
         Assert.Equal(PastAnchor(3), detail.Service.NextCharge!.DueDate);
     }
 
-    // Task 2 diferido (a): NextDueDateToGenerate ignora la reactivación cuando nunca generó; es inalcanzable porque crear siempre
+    // Task 2 diferido (a): NextPeriodToGenerate ignora la reactivación cuando nunca generó; es inalcanzable porque crear siempre
     // genera el primer cobro. Si alguien deja de generar al crear, esta prueba lo atrapa.
     [Fact]
     public async Task CreateAlwaysGeneratesTheFirstChargeSoAPauseAndResumeNeverSeesAnUngeneratedService()
@@ -211,8 +211,8 @@ public sealed class ServiceContractApiTests
         var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
         var stored = await new ServiceContractRepository(db)
             .FindAsync(Tenant, new ServiceContractId(created.Service.Id), Ct);
-        Assert.NotNull(stored!.LastGeneratedDueDate);
-        Assert.Equal(created.Service.FirstDueDate, stored.LastGeneratedDueDate);
+        Assert.NotNull(stored!.LastGeneratedPeriodDate);
+        Assert.Equal(created.Service.FirstDueDate, stored.LastGeneratedPeriodDate);
     }
 
     [Fact]
@@ -1232,8 +1232,11 @@ public sealed class ServiceContractApiTests
         var future = await reader.GetFromJsonAsync<ChargesPreviewDto>(
             $"{ServicesUrl()}/preview-charges?cycle=Annual&firstDueDate={Iso(TenantToday.AddMonths(2))}", Ct);
 
-        Assert.Equal(new ChargesPreviewDto(4, OverdueOf(3)), past);
-        Assert.Equal(new ChargesPreviewDto(1, 0), future);
+        Assert.Equal((4, OverdueOf(3)), (past!.ChargesToGenerate, past.OverdueCharges));
+        Assert.Equal((1, 0), (future!.ChargesToGenerate, future.OverdueCharges));
+        // La revisión que el formulario propone: el aniversario siguiente a lo último que el alta generaría.
+        Assert.Equal(PastAnchor(3).AddMonths(12), past.DefaultNextReviewDate);
+        Assert.Equal(TenantToday.AddMonths(2).AddMonths(12), future.DefaultNextReviewDate);
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
         Assert.Empty(db.Services);
@@ -1258,5 +1261,360 @@ public sealed class ServiceContractApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("validation.failed", await CodeOfAsync(response));
         Assert.True(Has((await ErrorsOfAsync(response)), field));
+    }
+
+    // Spec reajuste §6.8: sin priceReview (un frontend viejo) nada cambia de comportamiento.
+    [Fact]
+    public async Task CreatingWithoutPriceReviewIsManualWithTheDefaultReview()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        // Anclado hace 14 meses: la revisión es el aniversario siguiente al último período generado, no el primero.
+        var anchor = PastAnchor(14);
+
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin), firstDueDate: anchor));
+
+        var stored = await StoredServiceAsync(factory, created.Service.Id);
+        Assert.Equal((AdjustmentMode.Manual, 0m), (stored.AdjustmentMode, stored.IpcExtraPoints));
+        Assert.Equal(anchor.AddMonths(24), stored.NextReviewDate);
+        Assert.Null(stored.HeldSince);
+        Assert.Equal(1, stored.Version);
+        Assert.DoesNotContain(
+            "priceReview",
+            await ChangedFieldsOfAsync(factory, ServiceContractsAuditActions.ServiceCreated, created.Service.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task CreatingWithAnIpcPriceReviewStoresIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var first = TenantToday.AddMonths(2);
+        var review = first.AddMonths(5);
+
+        var created = await CreateAsync(
+            manager,
+            ReviewedServiceBody(customerId, ProfileBody("Email", admin), first, new { adjustmentMode = "Ipc", ipcExtraPoints = 2.5m, nextReviewDate = Iso(review) }));
+        var defaulted = await CreateAsync(
+            manager,
+            ReviewedServiceBody(customerId, null, first, new { adjustmentMode = "Ipc", ipcExtraPoints = 0m, nextReviewDate = (string?)null }));
+
+        var stored = await StoredServiceAsync(factory, created.Service.Id);
+        Assert.Equal((AdjustmentMode.Ipc, 2.5m, review), (stored.AdjustmentMode, stored.IpcExtraPoints, stored.NextReviewDate));
+        Assert.Equal(first.AddMonths(12), (await StoredServiceAsync(factory, defaulted.Service.Id)).NextReviewDate);
+        Assert.Contains(
+            "priceReview",
+            await ChangedFieldsOfAsync(factory, ServiceContractsAuditActions.ServiceCreated, created.Service.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task AReviewDateNotAfterTheLastGeneratedIsInvalid()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var first = TenantToday.AddMonths(2);
+
+        var response = await manager.PostAsJsonAsync(
+            ServicesUrl(),
+            ReviewedServiceBody(customerId, ProfileBody("Email", admin), first, new { adjustmentMode = "Ipc", ipcExtraPoints = 0m, nextReviewDate = Iso(first) }),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.service.review_date_invalid", await CodeOfAsync(response));
+        var list = await manager.GetFromJsonAsync<ServicePageDto>($"{ServicesUrl()}?status=all", Ct);
+        Assert.Equal(0, list!.Total);
+    }
+
+    [Fact]
+    public async Task AReviewDateMoreThanTenYearsAheadIsValidationFailed()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+
+        var response = await manager.PostAsJsonAsync(
+            ServicesUrl(),
+            ReviewedServiceBody(
+                customerId, ProfileBody("Email", admin), TenantToday.AddMonths(2),
+                new { adjustmentMode = "Ipc", ipcExtraPoints = 0m, nextReviewDate = "9999-12-31" }),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.True(Has(await ErrorsOfAsync(response), "PriceReview.NextReviewDate"));
+        var list = await manager.GetFromJsonAsync<ServicePageDto>($"{ServicesUrl()}?status=all", Ct);
+        Assert.Equal(0, list!.Total);
+    }
+
+    [Fact]
+    public async Task PriceReviewFieldsAreValidatedWithTheirPrefix()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+
+        var response = await manager.PostAsJsonAsync(
+            ServicesUrl(),
+            ReviewedServiceBody(customerId, ProfileBody("Email", admin), TenantToday.AddMonths(2), new { adjustmentMode = "Annual", ipcExtraPoints = 50.01m }),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        var errors = await ErrorsOfAsync(response);
+        Assert.True(Has(errors, "PriceReview.AdjustmentMode"));
+        Assert.True(Has(errors, "PriceReview.IpcExtraPoints"));
+    }
+
+    [Fact]
+    public async Task ChangingTheCurrencyWithAPendingScheduleIsLocked()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        var version = await SeedPendingScheduleAsync(factory, created.Service.Id);
+
+        var currency = await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), version,
+                new { name = "Hosting", price = Price, currency = "USD", priceChangeReason = "Pasa a dólares" }), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, currency.StatusCode);
+        Assert.Equal("billing.price_schedule.currency_locked", await CodeOfAsync(currency));
+        // Cambiar sólo el precio se permite: el programado lo reemplaza cuando aplique.
+        var price = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), version,
+                new { name = "Hosting", price = 175000m, currency = "COP", priceChangeReason = "Ajuste" }), Ct));
+        Assert.Equal(("COP", 175000m), (price.Service.Currency, price.Service.Price));
+    }
+
+    [Fact]
+    public async Task CancellingAServiceCancelsItsPendingSchedule()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        var version = await SeedPendingScheduleAsync(factory, created.Service.Id);
+
+        var cancelled = await ReadDetailAsync(await TransitionAsync(manager, created.Service.Id, "cancel", version));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        var schedule = Assert.Single(db.ServicePriceSchedules);
+        Assert.Equal(PriceScheduleStatus.Cancelled, schedule.Status);
+        Assert.NotNull(schedule.CancelledAt);
+        Assert.Equal(cancelled.Service.Version, (await StoredServiceAsync(factory, created.Service.Id)).Version);
+    }
+
+    [Fact]
+    public async Task DeletingAServiceDeletesItsSchedules()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var doomed = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        var survivor = await CreateAsync(manager, ServiceBody(customerId, null, name: "Dominio"));
+        var version = await SeedPendingScheduleAsync(factory, doomed.Service.Id);
+        await SeedPendingScheduleAsync(factory, survivor.Service.Id);
+
+        var response = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(doomed.Service.Id), version), Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(0, await CountRowsAsync(factory, "service_price_schedules", doomed.Service.Id));
+        Assert.Equal(1, await CountRowsAsync(factory, "service_price_schedules", survivor.Service.Id));
+    }
+
+    private static object ReviewedServiceBody(Guid customerId, object? profile, DateOnly firstDueDate, object priceReview) => new
+    {
+        customerId,
+        name = "Hosting",
+        price = Price,
+        cycle = "Monthly",
+        firstDueDate = Iso(firstDueDate),
+        profile,
+        priceReview,
+    };
+
+    private static async Task<ServiceContract> StoredServiceAsync(QepApiFactory factory, Guid serviceId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        return (await new ServiceContractRepository(db).FindAsync(Tenant, new ServiceContractId(serviceId), Ct))!;
+    }
+
+    /// <summary>Un cambio pendiente sembrado a mano; devuelve la versión con que queda el contrato.</summary>
+    private static async Task<long> SeedPendingScheduleAsync(QepApiFactory factory, Guid serviceId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        var service = (await new ServiceContractRepository(db).FindAsync(Tenant, new ServiceContractId(serviceId), Ct))!;
+        db.ServicePriceSchedules.Add(
+            ServicePriceSchedule.Schedule(service, null, Price + 10000m, null, "Más usuarios", null, DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync(Ct);
+        return service.Version;
+    }
+
+    // Eliminar un contrato (spec 2026-11-19): borrado duro de cualquier estado, con cobros pagados incluidos.
+    [Fact]
+    public async Task DeleteRemovesTheServiceItsChargesRemindersAndPriceChangesWithAuditAndKeepsTheOthers()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        await SeedCallerMembershipAsync(factory, "Caro Cobros");
+        using var manager = CreateManager(factory);
+        var doomed = await CreateAsync(
+            manager, ServiceBody(customerId, ProfileBody("Email", admin), name: "Hosting", firstDueDate: PastAnchor(2)));
+        var survivor = await CreateAsync(
+            manager, ServiceBody(customerId, null, name: "Dominio", firstDueDate: PastAnchor(1)));
+        var paid = await manager.PostAsJsonAsync(
+            $"{ServiceContractsUrl()}/charges/{doomed.Charges[^1].Id}/pay", new { paidOn = Iso(TenantToday) }, Ct);
+        Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+        var priced = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(doomed.Service.Id), 1,
+                new { name = "Hosting", price = 200000m, currency = "COP", priceChangeReason = "IPC" }), Ct));
+        await SeedReminderStepAsync(factory, customerId, doomed.Charges[0].Id);
+        await SeedReminderStepAsync(factory, customerId, survivor.Charges[0].Id);
+
+        var response = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(doomed.Service.Id), priced.Service.Version), Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await manager.GetAsync(ServiceUrl(doomed.Service.Id), Ct)).StatusCode);
+        Assert.Equal(0, await CountRowsAsync(factory, "services", doomed.Service.Id));
+        Assert.Equal(0, await CountRowsAsync(factory, "charges", doomed.Service.Id));
+        Assert.Equal(0, await CountRowsAsync(factory, "service_price_changes", doomed.Service.Id));
+        Assert.Equal(1, await CountRowsAsync(factory, "services", survivor.Service.Id));
+        Assert.Equal(survivor.Charges.Count, await CountRowsAsync(factory, "charges", survivor.Service.Id));
+        Assert.Equal(1, await CountReminderStepsAsync(factory));
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, ServiceContractsAuditActions.ServiceDeleted, doomed.Service.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task DeleteWorksOnACancelledService()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        var cancelled = await ReadDetailAsync(await TransitionAsync(manager, created.Service.Id, "cancel", 1));
+
+        var response = await manager.SendAsync(
+            WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), cancelled.Service.Version), Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteNeedsIfMatchAndAFreshVersionAndLeavesTheServiceIntact()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+
+        var missing = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), null), Ct);
+        var stale = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), 99), Ct);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, missing.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal(1, await CountRowsAsync(factory, "services", created.Service.Id));
+        Assert.Equal(0, await CountAuditEntriesAsync(factory, ServiceContractsAuditActions.ServiceDeleted, created.Service.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task DeleteOfAnUnknownOrForeignServiceAnswers404AndWithoutManageAnswers403()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        await SeedTenantAsync(factory, ServiceContractsApiHarness.OtherTenantId);
+        using var outsider = CreateClient(
+            factory, ServiceContractsApiHarness.OtherSubjectId, ServiceContractsApiHarness.OtherTenantId,
+            ServiceContractsPermissions.Read, ServiceContractsPermissions.Manage);
+        using var reader = CreateReader(factory);
+
+        var unknown = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(Guid.CreateVersion7()), 1), Ct);
+        var foreign = await outsider.SendAsync(
+            WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id, ServiceContractsApiHarness.OtherTenantId), 1), Ct);
+        var forbidden = await reader.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), 1), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Equal("billing.service.not_found", await CodeOfAsync(unknown));
+        Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
+        Assert.Equal("billing.service.not_found", await CodeOfAsync(foreign));
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        Assert.Equal(1, await CountRowsAsync(factory, "services", created.Service.Id));
+    }
+
+    private static async Task<NpgsqlConnection> OpenConnectionAsync(QepApiFactory factory)
+    {
+        var connection = new NpgsqlConnection(
+            factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("QepDatabase")!);
+        await connection.OpenAsync(Ct);
+        return connection;
+    }
+
+    /// <summary>Filas de una tabla de <c>billing</c> de ese servicio (<c>id</c> en services, <c>service_id</c> en el resto).</summary>
+    private static async Task<int> CountRowsAsync(QepApiFactory factory, string table, Guid serviceId)
+    {
+        await using var connection = await OpenConnectionAsync(factory);
+        var column = table == "services" ? "id" : "service_id";
+        await using var count = new NpgsqlCommand($"SELECT count(*) FROM billing.{table} WHERE {column} = @id", connection);
+        count.Parameters.AddWithValue("id", serviceId);
+        return (int)(long)(await count.ExecuteScalarAsync(Ct))!;
+    }
+
+    private static async Task<int> CountReminderStepsAsync(QepApiFactory factory)
+    {
+        await using var connection = await OpenConnectionAsync(factory);
+        await using var count = new NpgsqlCommand("SELECT count(*) FROM billing.reminder_steps", connection);
+        return (int)(long)(await count.ExecuteScalarAsync(Ct))!;
+    }
+
+    private static async Task SeedReminderStepAsync(QepApiFactory factory, Guid customerId, Guid chargeId)
+    {
+        await using var connection = await OpenConnectionAsync(factory);
+        var messageId = Guid.CreateVersion7();
+        await using var message = new NpgsqlCommand(
+            "INSERT INTO billing.customer_messages (id, tenant_id, customer_id, run_date, kind, channel, status, claimed_until, attempted_at) " +
+            "VALUES (@id, @tenant, @customer, @day, 'Reminder', 'Email', 'Sent', now(), now())", connection);
+        message.Parameters.AddWithValue("id", messageId);
+        message.Parameters.AddWithValue("tenant", Tenant);
+        message.Parameters.AddWithValue("customer", customerId);
+        message.Parameters.AddWithValue("day", TenantToday.AddDays(-Random.Shared.Next(1, 3000)));
+        await message.ExecuteNonQueryAsync(Ct);
+        await using var step = new NpgsqlCommand(
+            "INSERT INTO billing.reminder_steps (charge_id, step, message_id, tenant_id) VALUES (@charge, 'D0', @message, @tenant)", connection);
+        step.Parameters.AddWithValue("charge", chargeId);
+        step.Parameters.AddWithValue("message", messageId);
+        step.Parameters.AddWithValue("tenant", Tenant);
+        await step.ExecuteNonQueryAsync(Ct);
     }
 }

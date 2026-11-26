@@ -29,8 +29,8 @@ public sealed class SetFreightTaxRateHandler(
     public async Task<CarrierSettingsDto> HandleAsync(SetFreightTaxRateCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, command.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
 
         if (command.TaxRateId is { } taxRateId)
         {
@@ -43,6 +43,13 @@ public sealed class SetFreightTaxRateHandler(
                 throw new QuotationsDomainException(
                     "quotations.freight_tax_rate.inactive",
                     "La tasa de impuesto está inactiva.");
+            }
+
+            if (!taxRate.AddsTax)
+            {
+                throw new QuotationsDomainException(
+                    "quotations.freight_tax_rate.not_vat",
+                    "La tasa de impuesto retiene: el envío sólo admite una que suma (IVA).");
             }
         }
 

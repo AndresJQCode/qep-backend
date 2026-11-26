@@ -18,6 +18,43 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
     {
         ArgumentNullException.ThrowIfNull(draft);
         var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        return await ClaimInAsync(transaction, draft, cancellationToken);
+    }
+
+    public async Task<IOutboundClaim?> ClaimLeasedAsync(OutboundDraft draft, ScheduledLease lease, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(lease);
+        var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // FOR SHARE y no una lectura suelta: el cierre de la recuperación (un UPDATE con CAS) espera a que este reclamo termine, y su
+            // reclamo de vencidos (FOR UPDATE SKIP LOCKED) salta la fila. locked_until igual al de este lease: la recuperación lo renueva
+            // sin sumar intentos, así que el intento solo no distingue a un ejecutor tardío.
+            var held = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                SELECT id AS "Value" FROM messaging.scheduled_messages
+                 WHERE id = {lease.ScheduledMessageId} AND tenant_id = {lease.TenantId} AND status = 'Sending' AND attempts = {lease.Attempts}
+                   AND locked_until = {lease.LockedUntil} AND locked_until > {lease.ValidAfter}
+                   FOR SHARE
+                """).ToListAsync(cancellationToken);
+            if (held.Count == 0)
+            {
+                await transaction.DisposeAsync();
+                return null;
+            }
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+
+        return await ClaimInAsync(transaction, draft, cancellationToken);
+    }
+
+    private async Task<IOutboundClaim> ClaimInAsync(IDbContextTransaction transaction, OutboundDraft draft, CancellationToken cancellationToken)
+    {
         try
         {
             // Un segundo request con el mismo clientId espera acá hasta que el primero cierre su transacción.
@@ -26,9 +63,10 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             var inserted = await dbContext.Database.SqlQuery<Guid>(
                 $"""
                 INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, client_id, sent_by_member_id, created_at,
-                                                reply_to_message_id, reply_to_wamid, details, sent_by_kind, sent_by_chatbot_id, sent_by_api_key_id, sent_by_api_key_name)
+                                                reply_to_message_id, reply_to_wamid, details, sent_by_kind, sent_by_chatbot_id, sent_by_api_key_id, sent_by_api_key_name, sent_by_agent_id)
                 VALUES ({draft.MessageId}, {draft.ConversationId}, {draft.TenantId}, {draft.ConnectionId}, {draft.Now}, 2, {kind}, 1, {draft.Text}, {draft.Caption}, {draft.ClientId}, {draft.SentByMemberId}, {draft.Now},
-                        {draft.ReplyToMessageId}, {draft.ReplyToWamid}, {draft.DetailsJson}::jsonb, {authorKind}, {draft.SentByChatbotId}, {draft.SentByApiKey?.Id}, {draft.SentByApiKey?.Name})
+                        {draft.ReplyToMessageId}, {draft.ReplyToWamid}, {draft.DetailsJson}::jsonb, {authorKind}, {draft.SentByChatbotId}, {draft.SentByApiKey?.Id}, {draft.SentByApiKey?.Name},
+                        {draft.SentByAgentId})
                 ON CONFLICT (conversation_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
                 RETURNING id AS "Value"
                 """).ToListAsync(cancellationToken);
@@ -43,7 +81,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId", coalesce(m.text, '') AS "Text",
                        m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
                        mm.file_name AS "MediaFileName", m.caption AS "Caption", m.failure_code AS "FailureCode",
-                       m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName"
+                       m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName", m.retry_disabled AS "RetryDisabled",
+                       m.sent_by_agent_id AS "SentByAgentId"
                 FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
                 WHERE m.conversation_id = {draft.ConversationId} AND m.client_id = {draft.ClientId} FOR UPDATE OF m
                 """).ToListAsync(cancellationToken);
@@ -85,32 +124,37 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId",
                    coalesce(m.text, '') AS "Text", m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
                    mm.file_name AS "MediaFileName", m.caption AS "Caption", m.failure_code AS "FailureCode",
-                   m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName"
+                   m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName", m.retry_disabled AS "RetryDisabled",
+                       m.sent_by_agent_id AS "SentByAgentId"
             FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
             WHERE m.conversation_id = {conversationId} AND m.client_id = {clientId}
             """).ToListAsync(cancellationToken);
         return rows.Count == 1 ? ToExisting(rows[0]) : null;
     }
 
-    /// <summary>Los CHECK de la tabla (spec 2026-10-21 §5.5 y 2026-10-30 §4.4): <c>sent_by_kind = 2</c> si y sólo si hay chatbot y <c>4</c> si y
-    /// sólo si hay clave de API, y en ambos casos sin miembro.</summary>
+    /// <summary>Los CHECK de la tabla (spec 2026-10-21 §5.5, 2026-10-29 §4.4 y 2026-10-30 §4.4): <c>sent_by_kind = 2</c> si y sólo si hay
+    /// chatbot, <c>3</c> si y sólo si hay agente de IA y <c>4</c> si y sólo si hay clave de API, y en los tres casos sin miembro.</summary>
     private static short AuthorKindOf(OutboundDraft draft)
     {
         // Exactamente un autor: con dos, o con ninguno, los CHECK saltarían después (o se escribiría una fila kind 1 sin miembro);
         // mejor fallar aquí, antes de abrir nada contra la tabla.
-        var authors = (draft.SentByMemberId is null ? 0 : 1) + (draft.SentByChatbotId is null ? 0 : 1) + (draft.SentByApiKey is null ? 0 : 1);
+        var authors = (draft.SentByMemberId is null ? 0 : 1) + (draft.SentByChatbotId is null ? 0 : 1) + (draft.SentByApiKey is null ? 0 : 1)
+            + (draft.SentByAgentId is null ? 0 : 1);
         if (authors != 1)
         {
-            throw new ArgumentException("A draft needs exactly one author: SentByMemberId, SentByChatbotId or SentByApiKey.", nameof(draft));
+            throw new ArgumentException("A draft needs exactly one author: SentByMemberId, SentByChatbotId, SentByAgentId or SentByApiKey.", nameof(draft));
         }
 
-        return (short)(draft.SentByChatbotId is not null ? MessageAuthorKind.Chatbot : draft.SentByApiKey is not null ? MessageAuthorKind.ApiKey : MessageAuthorKind.Member);
+        return (short)(draft.SentByChatbotId is not null ? MessageAuthorKind.Chatbot
+            : draft.SentByAgentId is not null ? MessageAuthorKind.Agent
+            : draft.SentByApiKey is not null ? MessageAuthorKind.ApiKey
+            : MessageAuthorKind.Member);
     }
 
     private static ExistingOutbound ToExisting(ExistingRow row) =>
         new(row.Id, MessageColumnCodes.ToStatus(row.Status), row.OccurredAt, row.SentByMemberId, row.Text, row.ReplyToMessageId,
             MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson, row.MediaFileName, row.Caption, row.SentByChatbotId,
-            row.FailureCode, row.SentByApiKeyId, row.SentByApiKeyName);
+            row.FailureCode, row.SentByApiKeyId, row.SentByApiKeyName, row.RetryDisabled, row.SentByAgentId);
 
     private sealed class ExistingRow
     {
@@ -143,6 +187,10 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         public Guid? SentByApiKeyId { get; set; }
 
         public string? SentByApiKeyName { get; set; }
+
+        public bool RetryDisabled { get; set; }
+
+        public Guid? SentByAgentId { get; set; }
     }
 
     private sealed class ApiMessageRow
@@ -185,7 +233,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 $"""
                 UPDATE messaging.messages SET status = 1, wamid = {wamid}, occurred_at = {occurredAt}, text = {draft.Text}, caption = {draft.Caption}, kind = {kind},
                     failure_code = NULL, failure_title = NULL, sent_by_member_id = {draft.SentByMemberId},
-                    sent_by_kind = {authorKind}, sent_by_chatbot_id = {draft.SentByChatbotId},
+                    sent_by_kind = {authorKind}, sent_by_chatbot_id = {draft.SentByChatbotId}, sent_by_agent_id = {draft.SentByAgentId},
                     sent_by_api_key_id = {draft.SentByApiKey?.Id}, sent_by_api_key_name = {draft.SentByApiKey?.Name},
                     reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}, details = {draft.DetailsJson}::jsonb
                 WHERE id = {MessageId}
@@ -238,7 +286,9 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         /// <summary>Spec 2026-10-11 §6.5 y §7: con <c>stored_at</c> no nulo la fila queda fuera de
         /// <c>IX_message_media_pending</c> y el <c>MediaCopyWorker</c> no la toma. <c>meta_media_id</c> es
         /// <c>NOT NULL</c>: sin id de Meta se guarda <c>''</c> (D-V2). La clave es la de <see cref="MessageId"/>, que en
-        /// un reintento es la de la fila <c>Failed</c>: R2 sobrescribe el mismo objeto.</summary>
+        /// un reintento es la de la fila <c>Failed</c>: R2 sobrescribe el mismo objeto. Spec 2026-11-18: con <c>PublicUrl</c> (el archivo de un
+        /// chatbot) no hay objeto en R2 de Mensajería: <c>storage_key</c> nulo (el borrado de un cliente lo salta), <c>meta_media_id</c> vacío y
+        /// <c>stored_at</c> lleno, así la copia no lo toma.</summary>
         private async Task UpsertMediaAsync(DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
         {
             if (draft.Media is not { } media)
@@ -246,15 +296,18 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 return;
             }
 
-            var key = MessagingMediaKeys.For(draft.TenantId, MessageId);
-            var mediaId = metaMediaId ?? string.Empty;
+            var key = media.PublicUrl is null ? MessagingMediaKeys.For(draft.TenantId, MessageId) : null;
+            var mediaId = media.PublicUrl is null ? metaMediaId ?? string.Empty : string.Empty;
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, size_bytes, storage_key, stored_at, attempts, next_attempt_at, last_error)
-                VALUES ({MessageId}, {media.MimeType}, {media.FileName}, {mediaId}, {media.Sha256Hex}, {media.SizeBytes}, {key}, {occurredAt}, 0, {occurredAt}, NULL)
+                INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, size_bytes, storage_key, stored_at, attempts, next_attempt_at, last_error,
+                    storage_file_id, public_url)
+                VALUES ({MessageId}, {media.MimeType}, {media.FileName}, {mediaId}, {media.Sha256Hex}, {media.SizeBytes}, {key}, {occurredAt}, 0, {occurredAt}, NULL,
+                    {media.StorageFileId}, {media.PublicUrl})
                 ON CONFLICT (message_id) DO UPDATE SET
                     mime_type = EXCLUDED.mime_type, file_name = EXCLUDED.file_name, meta_media_id = EXCLUDED.meta_media_id, sha256 = EXCLUDED.sha256, size_bytes = EXCLUDED.size_bytes,
-                    storage_key = EXCLUDED.storage_key, stored_at = EXCLUDED.stored_at, attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at, last_error = NULL
+                    storage_key = EXCLUDED.storage_key, stored_at = EXCLUDED.stored_at, attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at, last_error = NULL,
+                    storage_file_id = EXCLUDED.storage_file_id, public_url = EXCLUDED.public_url
                 """, cancellationToken);
         }
 

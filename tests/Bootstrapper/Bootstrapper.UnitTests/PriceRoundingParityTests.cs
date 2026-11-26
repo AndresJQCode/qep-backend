@@ -36,28 +36,31 @@ public sealed class PriceRoundingParityTests
 
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), Advisor, null, null, null,
-            QuotationParties.Empty, null, currency, false, false, Advisor, Now);
+            QuotationParties.Empty, null, currency, false, [], MunicipalContext.None, Advisor, Now);
         quotation.UsePriceRounding(rule, Now);
         quotation.AddItem(QuotationItemId.New(), variant, variant, quantity, price, discount, 0, Advisor, Now);
         var quotationItem = Assert.Single(quotation.Items);
 
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), Advisor, currency, null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), Advisor, currency, null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
-                CompanyId = Guid.CreateVersion7(), BankName = "Banco", AccountNumber = "123", Currency = currency,
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Banco",
+                AccountNumber = "123",
+                Currency = currency,
             },
             ShippingDetails.None,
             [new OrderLineInput(variant, variant, quantity, price, discount, 0)],
-            OrderPaymentStatus.PaymentPending, null, Advisor, [], Now);
+            null, Advisor, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         order.UsePriceRounding(rule, Now);
         var orderItem = Assert.Single(order.Items);
 
         var session = CashSession.Open(
             CashSessionId.New(), TenantId, Cashier, "Cajero",
-            new PosCompanySnapshot(Guid.CreateVersion7(), "Empresa", "900123456-1", "Calle 1", "6045551234"),
+            new PosCompanySnapshot(Guid.CreateVersion7(), "Empresa", "900123456-1", "NIT", "Calle 1", "6045551234"),
             currency, 0m, Now);
         var sale = PosSale.Create(
             PosSaleId.New(), new string('a', 64), session,

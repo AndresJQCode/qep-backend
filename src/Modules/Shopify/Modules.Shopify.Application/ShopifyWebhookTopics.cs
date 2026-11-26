@@ -17,6 +17,14 @@ public static class ShopifyWebhookTopics
     public const string CustomersRedact = "customers/redact";
     public const string ShopRedact = "shop/redact";
 
+    // Spec 2026-11-17 §6: el enlace los registra sólo con read_products (P10).
+    public const string ProductsCreate = "products/create";
+    public const string ProductsUpdate = "products/update";
+    public const string ProductsDelete = "products/delete";
+
     public static bool IsOrders(string topic) =>
         topic is OrdersCreate or OrdersUpdated or OrdersPaid or OrdersCancelled;
+
+    public static bool IsProducts(string topic) =>
+        topic is ProductsCreate or ProductsUpdate or ProductsDelete;
 }

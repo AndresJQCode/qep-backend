@@ -83,6 +83,11 @@ public sealed class QuotationEventApplier(
         {
             deal = open[0];
         }
+        else if (!await CanReceiveDealsAsync(fact.TenantId, fact.ClientId, cancellationToken))
+        {
+            // Decisión del owner 2026-11-16: el pedido sigue; sólo queda suelto, como con varios negocios abiertos.
+            return true;
+        }
         else
         {
             deal = Deal.Create(fact.TenantId, pipeline, fact.ClientId, fact.AdvisorMemberId, fact.OrderNumber, fact.Total, fact.Currency, null,
@@ -150,6 +155,9 @@ public sealed class QuotationEventApplier(
         await ReopenAsync(fact.TenantId, pipeline, deal, now, cancellationToken);
         return true;
     }
+
+    private async Task<bool> CanReceiveDealsAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        DealCustomers.CanReceiveDeals((await customers.FindAsync(tenantId, [customerId], cancellationToken)).GetValueOrDefault(customerId));
 
     private async Task<bool> ApplyOrderWithoutQuotationCancelledAsync(OrderCancelledFact fact, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -236,6 +244,11 @@ public sealed class QuotationEventApplier(
             if (open.Count == 1)
             {
                 deal = open[0];
+            }
+            else if (!await CanReceiveDealsAsync(fact.TenantId, fact.ClientId, cancellationToken))
+            {
+                // Decisión del owner 2026-11-16: la cotización sigue; sólo queda suelta, como con varios negocios abiertos.
+                return true;
             }
             else
             {

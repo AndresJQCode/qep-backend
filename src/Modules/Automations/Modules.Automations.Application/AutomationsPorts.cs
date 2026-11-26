@@ -1,6 +1,7 @@
 using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
+using Modules.Automations.Domain.Flow;
 
 namespace Modules.Automations.Application;
 
@@ -112,8 +113,9 @@ public interface IConversationRunQueries
     Task<IReadOnlyDictionary<Guid, (int Handled, int HandedOff)>> TodayAsync(
         Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, DateTimeOffset dayStartUtc, DateTimeOffset dayEndUtc, CancellationToken cancellationToken);
 
-    /// <summary>¿Hay corridas <c>Running</c> o <c>Waiting</c>? Bloquea el borrado.</summary>
-    Task<bool> HasLiveRunsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
+    /// <summary>Las corridas <c>Running</c> o <c>Waiting</c> del chatbot, sin seguimiento, por <c>started_at</c>. El borrado decide con
+    /// ellas si el bot de verdad atiende alguna conversación (spec 2026-11-03 D-7).</summary>
+    Task<IReadOnlyList<ConversationRun>> ListLiveAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-21 §4.4 y D-M6: una conexión de Mensajería del tenant, en cualquier estado. <see cref="Channel"/> es el nombre
@@ -174,6 +176,55 @@ public interface IAutomationDataConsents
     Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-19 (chatbot CRM action): the conversation the «Acción de CRM» block acts for.</summary>
+public sealed record CrmActionContext(Guid TenantId, Guid ConversationId);
+
+/// <summary>
+/// Spec 2026-11-19 (chatbot CRM action): the tenant's CRM as the system (adapter in Bootstrapper over Customers and Pipeline):
+/// Automations references neither. Each call answers one of <c>CrmResultCodes</c> and never throws a domain error (a broken rule is
+/// <c>failed</c>); a cancellation, a concurrency conflict or a transient database failure goes up, so the engine unit is retried.
+/// </summary>
+public interface IAutomationCrm
+{
+    Task<string> AddTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken);
+
+    Task<string> RemoveTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken);
+
+    Task<string> MoveDealAsync(CrmActionContext context, Guid stageId, CancellationToken cancellationToken);
+}
+
+public sealed record CrmTagRef(Guid Id, string Name);
+
+public sealed record CrmStageRef(Guid Id, string Name);
+
+/// <summary>Spec 2026-11-19 (chatbot CRM action): what the «Acción de CRM» block can pick. <see cref="OpenStages"/> are the open stages of
+/// the tenant's pipeline in pipeline order. Each list is empty when its module is off.</summary>
+public sealed record CrmCatalog(bool CustomersEnabled, bool PipelineEnabled, IReadOnlyList<CrmTagRef> Tags, IReadOnlyList<CrmStageRef> OpenStages);
+
+/// <summary>Spec 2026-11-19: the tenant's tag catalog and open stages (adapter in Bootstrapper over Customers and Pipeline), for the editor
+/// and the validator.</summary>
+public interface IAutomationsCrmDirectory
+{
+    Task<CrmCatalog> ReadAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.2 y §7: un agente de IA del tenant. <see cref="Status"/> es el nombre del
+/// <c>AgentStatus</c> de Ai (<c>Draft</c>, <c>Active</c>, <c>Paused</c>); <see cref="Provider"/> y <see cref="Model"/> son los de la versión
+/// publicada, o los del borrador si todavía no tiene.</summary>
+public sealed record AutomationAgentRef(Guid Id, string Name, string Status, string Provider, string Model);
+
+/// <summary>Spec 2026-11-17 §5.2: los agentes de IA del tenant (adaptador en Bootstrapper sobre Ai): Automations no referencia Ai (D-A3).</summary>
+public interface IAutomationsAgentDirectory
+{
+    /// <summary>Todos los agentes del tenant, en cualquier estado, ordenados por nombre.</summary>
+    Task<IReadOnlyList<AutomationAgentRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 D-B15: los tokens de entrada y de salida de las llamadas al modelo hechas en [<paramref name="from"/>,
+    /// <paramref name="until"/>) por las sesiones de bloque de cada chatbot. Un chatbot sin consumo no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, (long InputTokens, long OutputTokens)>> UsageByChatbotAsync(
+        Guid tenantId, DateTimeOffset from, DateTimeOffset until, CancellationToken cancellationToken);
+}
+
 /// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>
 public sealed record ExternalApiRef(Guid Id, string Name, string Status);
 
@@ -230,8 +281,14 @@ public interface IAutomationBusinessHours
 }
 
 /// <summary>Spec 2026-10-21 §5.1: una fila reclamada de <c>messaging.automation_inbox</c>. <see cref="Opened"/> (D-M16) dice que el
-/// entrante abrió o reabrió la conversación; <see cref="Attempts"/> ya cuenta el reclamo que la devolvió y es el testigo con que se cierra.</summary>
-public sealed record InboundQueueItem(Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts);
+/// entrante abrió o reabrió la conversación; <see cref="Attempts"/> ya cuenta el reclamo que la devolvió y es el testigo con que se cierra.
+/// Spec 2026-11-03 D-4: <see cref="ReleaseRun"/> marca la señal «una persona tomó la conversación», que sólo cierra la corrida viva del bot
+/// (nunca arranca ni avanza nada); <see cref="CreatedAt"/> es entonces el instante de la señal y <see cref="MessageId"/> no es un mensaje.
+/// Spec 2026-11-17 §6.3: <see cref="DelegationId"/> sólo lo trae la fila <c>AgentReturned</c> (el agente devolvió la conversación): no es un
+/// entrante ni un arranque manual, aunque tampoco tenga mensaje.</summary>
+public sealed record InboundQueueItem(
+    Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts,
+    bool ReleaseRun = false, Guid? DelegationId = null);
 
 /// <summary><see cref="Stored"/>: la copia a R2 ya terminó; mientras sea <c>false</c> el adjunto no se puede servir ni reenviar.</summary>
 public sealed record InboundAttachment(string MimeType, string? FileName, bool Stored);
@@ -329,6 +386,36 @@ public interface IAutomationConversations
     /// <summary>D-M14: <c>Active → None</c>, sin evento. Si el asistente ya no está activo (terminó, lo pausó una persona o la
     /// conversación se resolvió) no hace nada.</summary>
     Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3 y §6.1: el chatbot le pasa la conversación al agente del bloque. En un solo
+    /// guardado de Mensajería: la delegación <c>Live</c>, la conversación <c>Active</c> con el agente (sin pasar por <c>None</c> y sin tocar el
+    /// arranque) y la fila <c>Delegated</c> de la cola de agentes. Devuelve el id de la delegación. Si la conversación ya no es del chatbot
+    /// (una persona la tomó entre el claim y el efecto) sale la excepción de dominio de Mensajería, como cualquier otro efecto.</summary>
+    Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 §6.3: la delegación como está, para retomar con la fila <c>AgentReturned</c>; <c>null</c> si no existe o es
+    /// de otro tenant. Sin seguimiento.</summary>
+    Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: lo que el motor manda al delegar. <see cref="NodeId"/> es el id del bloque
+/// <c>aiAgent</c> (hasta 64). <see cref="LastInboundMessageId"/> (D-B7) es el entrante que llevó la corrida hasta el bloque, <c>null</c> sin
+/// entrante. <see cref="BriefJson"/> es <c>{objective, context, firstTurn, idleMinutes}</c> con el contexto ya interpolado: lo arma
+/// Automations y lo lee Ai; Mensajería no lo interpreta. <see cref="InboxRowId"/> (revisión de la rama, hallazgo 1) es la fila de la cola
+/// que procesa la unidad que delega: Mensajería pasa a la cola del agente los demás entrantes pendientes de la conversación, pero no ésa,
+/// que cierra el motor de chatbots al confirmar su unidad.</summary>
+public sealed record DelegationRequest(
+    Guid RunId, Guid ChatbotId, string NodeId, Guid AgentId, Guid? LastInboundMessageId, string BriefJson, Guid? InboxRowId = null);
+
+/// <summary>Spec 2026-11-17 §6.3: la delegación leída por el motor. <see cref="Status"/> es <c>Live</c>, <c>Returned</c> o
+/// <c>Interrupted</c> (los nombres del enum de Mensajería). <see cref="ResultJson"/>, sólo con <c>Returned</c>, es
+/// <c>{output, reason, summary?, quotationNumber?, advisorMemberId?}</c>, escrito por Ai.</summary>
+public sealed record DelegationResult(
+    Guid DelegationId, Guid ConversationId, Guid ChatbotId, Guid RunId, string NodeId, Guid AgentId, string Status, string? ResultJson)
+{
+    public const string Live = "Live";
+    public const string Returned = "Returned";
+    public const string Interrupted = "Interrupted";
 }
 
 /// <summary>Cómo terminó un envío del bot (D-I4). <see cref="NotAutomated"/>: la conversación ya no es del bot (resuelta, con asesor o
@@ -356,7 +443,15 @@ public interface IAutomationMessenger
 
     Task<BotSendOutcome> SendInteractiveAsync(
         Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, InteractiveMessage message, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-18: el archivo de un Mensaje por link; con botón, un solo <c>cta_url</c> con el archivo de encabezado.</summary>
+    Task<BotSendOutcome> SendMediaAsync(
+        Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, BotMediaMessage message, CancellationToken cancellationToken);
 }
+
+/// <summary>Spec 2026-11-18: lo que sale de un <c>Effect.SendMedia</c>. <see cref="File"/> es el archivo ya resuelto por tenant: su tipo, nombre
+/// y MIME son los de Storage, nunca los del flujo. <see cref="Caption"/> y <see cref="UrlButton"/> ya vienen interpolados.</summary>
+public sealed record BotMediaMessage(ChatbotMediaFile File, string? Caption, UrlButton? UrlButton);
 
 /// <summary>El adjunto de un entrante ya copiado al almacén: <see cref="Key"/> es la llave en R2.</summary>
 public sealed record StoredAttachment(string Key, string? FileName, string MimeType, long? SizeBytes);
@@ -410,6 +505,10 @@ public interface IAutomationsUnitOfWork
 public interface IAutomationsModuleStatus
 {
     Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 D-B16: ¿el tenant tiene el módulo <c>ai</c>? Sin él, un bloque «Agente IA» sale por <c>error</c> sin delegar.
+    /// Con la misma caché por tenant que <see cref="IsEnabledAsync"/>.</summary>
+    Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-21 §5.2 y D-M12/D-M13: las corridas del motor. Las lecturas <c>ForUpdate</c> y el barrido sólo valen dentro de
@@ -464,6 +563,7 @@ public static class AutomationsAuditActions
     public const string ChatbotConnectionReleased = "automations.chatbot.connection_released";
     public const string ChatbotPaused = "automations.chatbot.paused";
     public const string ChatbotResumed = "automations.chatbot.resumed";
+    public const string ChatbotVersionRestored = "automations.chatbot.version_restored";
     public const string ChatbotDeleted = "automations.chatbot.deleted";
     public const string ChatbotImported = "automations.chatbot.imported";
     public const string TemplateCreated = "automations.template.created";
@@ -480,6 +580,16 @@ public static class AutomationsAuditActions
     /// <summary>Spec 2026-10-26 D-7: Política de datos no tenía un cliente al que registrarle la respuesta y siguió por «No acepto» sin
     /// preguntar.</summary>
     public const string DataConsentUnavailable = "automations.run.data_consent_unavailable";
+
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the «Acción de CRM» block changed the CRM (added, removed or moved). An idempotent
+    /// no-op (already tagged, not tagged, already in the stage) writes no row. The node, operation and result code are in the run's trace.</summary>
+    public const string CrmActionApplied = "automations.run.crm_action_applied";
+
+    /// <summary>Spec 2026-11-19: the «Acción de CRM» block had nothing to act on and left by <c>skipped</c>.</summary>
+    public const string CrmActionSkipped = "automations.run.crm_action_skipped";
+
+    /// <summary>Spec 2026-11-19: the «Acción de CRM» block left by <c>error</c>.</summary>
+    public const string CrmActionFailed = "automations.run.crm_action_failed";
 
     /// <summary>No está en la lista de §4.6: el barrido de D-M13 termina corridas sin una persona y la auditoría es la única huella.</summary>
     public const string RunAbandoned = "automations.run.abandoned";
@@ -521,6 +631,9 @@ public static class RunUnitTriggers
     public const string CustomerMessage = "CustomerMessage";
     public const string Resume = "Resume";
     public const string Closed = "Closed";
+
+    /// <summary>Spec 2026-11-17 §6.3: el agente del bloque «Agente IA» devolvió la conversación (fila <c>AgentReturned</c>).</summary>
+    public const string AgentReturned = "AgentReturned";
 }
 
 /// <summary>Spec 2026-10-25 D-E14: por qué una corrida terminó sin que el motor la cerrara.</summary>

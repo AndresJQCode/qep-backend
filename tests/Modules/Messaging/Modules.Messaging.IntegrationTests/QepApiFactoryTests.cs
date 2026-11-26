@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -22,5 +23,21 @@ public sealed class QepApiFactoryTests
 
         Assert.NotEmpty(files);
         Assert.Empty(files.Where(provider => provider.Source.ReloadOnChange).Select(provider => provider.Source.Path));
+    }
+
+    /// <summary>Most tests build their host inside an arrange helper and only take ownership (<c>using var host = f.Factory</c>)
+    /// after it returns, so an arrange that throws leaves the host running. Its workers then poll a database that
+    /// <c>TestDatabase.DisposeAsync</c> drops, fail on every tick and log the exception; with enough leaked hosts the logging
+    /// starves the thread pool and the full suite stops making progress. Dropping the database stops such a host first.</summary>
+    [Fact]
+    public async Task DroppingTheDatabaseStopsAHostTheTestNeverDisposed()
+    {
+        var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var lifetime = factory.Services.GetRequiredService<IHostApplicationLifetime>();
+
+        await database.DisposeAsync();
+
+        Assert.True(lifetime.ApplicationStopped.IsCancellationRequested);
     }
 }

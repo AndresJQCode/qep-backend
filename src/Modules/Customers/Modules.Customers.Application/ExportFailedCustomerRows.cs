@@ -55,7 +55,7 @@ public sealed class ExportFailedCustomerRowsHandler(
         var content = templateBuilder.BuildWithRows(
             departmentOptions,
             activeClassificationNames,
-            IdentificationTypeParser.SupportedWireValues,
+            ExcelCustomerRowRules.IdentificationTypes,
             query.Rows,
             cancellationToken);
         return new CustomerImportTemplateFile(content, FileName);

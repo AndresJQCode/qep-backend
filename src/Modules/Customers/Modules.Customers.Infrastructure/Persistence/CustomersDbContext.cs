@@ -11,6 +11,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 
     internal DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
 
+    internal DbSet<CustomerBillingProfile> CustomerBillingProfiles => Set<CustomerBillingProfile>();
+
     public DbSet<ClientClassification> ClientClassifications => Set<ClientClassification>();
 
     internal DbSet<CustomerNote> CustomerNotes => Set<CustomerNote>();
@@ -29,17 +31,19 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// <c>DataConsentReplyRecordedException</c>.</summary>
     internal const string DataConsentReplyIndex = "IX_data_consents_reply_message";
 
-    /// <summary>La FK a <c>customers.customers</c>. No está en el modelo: la agrega a mano la migración
-    /// <c>AddCustomerDataConsents</c>, ver <see cref="ConfigureDataConsent"/>.</summary>
-    internal const string DataConsentCustomerForeignKey = "FK_data_consents_customers_customer_id";
-
-    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. Teléfono y ciudad siguen exigidos
-    /// por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
+    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. El teléfono sigue exigido por
+    /// CustomerWriteRules, como antes; la ciudad, desde el 2026-11-09, la exige (o no) la política de campos del tenant en
+    /// Application (<c>CustomerFieldPolicyRequirement</c>), así que tampoco va en este check. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
     /// ficha completa puede no tenerla, y su CUC va sin prefijo. La dirección salió el 2026-11-01: es opcional, y sin
-    /// ella la ficha guarda <c>null</c> y nace sin libreta.</summary>
+    /// ella la ficha guarda <c>null</c> y nace sin libreta. La identificación salió el 2026-11-09: la política de campos
+    /// del tenant decide en Application si una ficha completa la lleva; aquí sólo se exige que tipo y número vayan
+    /// juntos, ver <see cref="IdentificationPairCheck"/>.</summary>
     public const string CompleteFieldsCheck =
-        "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL "
-        + "AND country IS NOT NULL)";
+        "completeness = 'Incomplete' OR (cuc IS NOT NULL AND country IS NOT NULL)";
+
+    /// <summary>Tipo y número de identificación van juntos o ninguno: media identificación no es un dato. Vale para
+    /// fichas completas e incompletas, y deja fuera del índice único a las que no la tienen.</summary>
+    public const string IdentificationPairCheck = "(identification_type IS NULL) = (identification_number IS NULL)";
 
     /// <summary>El único por <c>(tenant_id, lower(name))</c>. Va en la migración con SQL —EF no modela índices por
     /// expresión— y <c>CustomersUnitOfWork</c> lo traduce por este nombre a 409 <c>customers.tag.name_taken</c>.</summary>
@@ -53,10 +57,17 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// <summary>La clave de <c>customer_tags</c>: dos <c>PUT</c> simultáneos que agregan la misma etiqueta chocan acá.</summary>
     public const string CustomerTagPrimaryKey = "PK_customer_tags";
 
+    // Los dos carriles de ciudad de las libretas (direcciones y perfiles de facturación): Colombia lleva el id DIVIPOLA y
+    // el resto del mundo el texto; la región sólo existe fuera de Colombia.
+    private const string CityLaneCheck =
+        "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) "
+        + "OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)";
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureCustomer(modelBuilder);
         ConfigureCustomerAddress(modelBuilder);
+        ConfigureCustomerBillingProfile(modelBuilder);
         ConfigureClientClassification(modelBuilder);
         ConfigureCucCounter(modelBuilder);
         ConfigureCustomerNote(modelBuilder);
@@ -73,6 +84,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         {
             table.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
             table.HasCheckConstraint("CK_customers_complete_fields", CompleteFieldsCheck);
+            table.HasCheckConstraint("CK_customers_identification_pair", IdentificationPairCheck);
             table.HasCheckConstraint(
                 "CK_customers_marketing_opt_out_source",
                 "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
@@ -149,6 +161,9 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.CityName)
             .HasColumnName("city_name")
             .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        // La region (provincia) del domicilio de afuera: referencia blanda a geography.regions, sin
+        // FK entre esquemas (igual que city_id antes de que se agregara a mano). Nula en Colombia.
+        customer.Property(value => value.RegionId).HasColumnName("region_id");
         // La clasificacion, FK compuesta (tenant_id, classification_id) a
         // customers.client_classifications(tenant_id, id) — compuesta y no simple sobre id, para
         // que un cliente no pueda referenciar la clasificacion de otro tenant. A diferencia de la
@@ -173,6 +188,21 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.HasIndex(value => new { value.TenantId, value.MergedIntoId })
             .HasFilter("merged_into_id IS NOT NULL")
             .HasDatabaseName("IX_customers_tenant_merged_into");
+        // Empresa de un contacto (spec 2026-11-10 §3.2, G3): un solo nivel, reglas en el agregado. A diferencia de MergedIntoId
+        // sí lleva FK: la autorreferencia no puede quedar colgando, y SET NULL deja al contacto suelto si la empresa se borra.
+        customer.Property(value => value.CompanyId)
+            .HasColumnName("company_id")
+            .HasConversion(new ValueConverter<CustomerId, Guid>(
+                id => id.Value, value => new CustomerId(value)));
+        customer.HasOne<Customer>()
+            .WithMany()
+            .HasForeignKey(value => value.CompanyId)
+            .HasConstraintName("FK_customers_customers_company_id")
+            .OnDelete(DeleteBehavior.SetNull);
+        // Parcial: sólo los contactos. Sirve «los contactos de esta empresa» y su conteo.
+        customer.HasIndex(value => new { value.TenantId, value.CompanyId })
+            .HasFilter("company_id IS NOT NULL")
+            .HasDatabaseName("IX_customers_tenant_company");
         customer.HasOne<ClientClassification>()
             .WithMany()
             .HasForeignKey(value => new { value.TenantId, value.ClassificationId })
@@ -190,7 +220,10 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasConversion(new ValueConverter<MarketingConsentSource, string>(
                 source => source.ToWireValue(), wire => MarketingConsentSourceParser.Parse(wire)));
 
-        customer.Property(value => value.WithRetention).HasColumnName("with_retention");
+        // Sombra hasta la migración de contrato (spec §11.5): la retención ya no es un booleano del dominio (son tasas
+        // asignadas, customer_tax_rates), pero la columna es NOT NULL y el binario viejo todavía la lee y la escribe durante
+        // el despliegue. El DEFAULT hace que el INSERT nuevo, que no la nombra, no falle.
+        customer.Property<bool>("with_retention").HasColumnName("with_retention").HasDefaultValue(false);
         customer.Property(value => value.VatSurplus).HasColumnName("vat_surplus");
         customer.Property(value => value.Version)
             .HasColumnName("version")
@@ -222,6 +255,61 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // La coleccion se lee por el campo de respaldo: el agregado la expone como
         // IReadOnlyCollection y EF no puede escribir en ella.
         customer.Navigation(value => value.Addresses)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+        customer.Navigation(value => value.BillingProfiles)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // Las retenciones asignadas: sólo el id de la tasa, sin FK a catalog (Customers nunca referencia Catalog). El
+        // índice (tenant_id, tax_rate_id) responde «¿alguien usa esta tasa?» sin recorrer la tabla.
+        customer.OwnsMany<CustomerTaxRate>("_withholdingTaxRates", rate =>
+        {
+            rate.ToTable("customer_tax_rates", "customers");
+            rate.WithOwner().HasForeignKey("CustomerId");
+            rate.Property<CustomerId>("CustomerId")
+                .HasColumnName("customer_id")
+                .HasConversion(id => id.Value, value => new CustomerId(value))
+                .ValueGeneratedNever();
+            rate.Property(value => value.TenantId).HasColumnName("tenant_id");
+            // Clave asignada por el cliente: sin ValueGeneratedNever, EF toma una fila nueva con clave Guid ya puesta de una
+            // coleccion de un cliente rastreado como Modified (UPDATE de 0 filas -> 412) en vez de Added.
+            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id").ValueGeneratedNever();
+            rate.HasKey("CustomerId", nameof(CustomerTaxRate.TaxRateId)).HasName("PK_customer_tax_rates");
+            rate.HasIndex(value => new { value.TenantId, value.TaxRateId })
+                .HasDatabaseName("IX_customer_tax_rates_tenant_tax_rate");
+        });
+
+        // Los municipios donde el cliente es agente retenedor (spec ReteICA por empresa §7.4). La FK city_id →
+        // geography.cities va escrita a mano en la migración AddCustomerWithholdingAgentCities, como la de la ciudad del
+        // cliente: Customers no referencia Geography en el modelo. Customers migra después de Geography, así que sí puede.
+        customer.OwnsMany(value => value.WithholdingAgentCities, city =>
+        {
+            city.ToTable("customer_withholding_agent_cities", "customers");
+            city.WithOwner().HasForeignKey("CustomerId");
+            city.Property<CustomerId>("CustomerId")
+                .HasColumnName("customer_id")
+                .HasConversion(id => id.Value, value => new CustomerId(value))
+                .ValueGeneratedNever();
+            city.Property(value => value.TenantId).HasColumnName("tenant_id");
+            city.Property(value => value.Country)
+                .HasColumnName("country")
+                .HasMaxLength(2)
+                .IsFixedLength()
+                .ValueGeneratedNever();
+            city.Property(value => value.Type)
+                .HasColumnName("type")
+                .HasMaxLength(32)
+                .ValueGeneratedNever();
+            // Clave asignada por el cliente, por el mismo motivo que tax_rate_id arriba.
+            city.Property(value => value.CityId).HasColumnName("city_id").ValueGeneratedNever();
+            city.HasKey(
+                    "CustomerId",
+                    nameof(CustomerWithholdingAgentCity.Country),
+                    nameof(CustomerWithholdingAgentCity.Type),
+                    nameof(CustomerWithholdingAgentCity.CityId))
+                .HasName("PK_customer_withholding_agent_cities");
+            city.HasIndex(value => value.CityId).HasDatabaseName("IX_customer_withholding_agent_cities_city");
+        });
+        customer.Navigation(value => value.WithholdingAgentCities)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         // Con nombre: sin él, EF funde este índice con IX_customers_tenant_incomplete (misma columna) y
@@ -266,12 +354,19 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasDatabaseName("IX_customers_name_trgm")
             .HasMethod("gin")
             .HasOperators("gin_trgm_ops");
+
+        // Lo mismo para la razón social: la búsqueda de empresas del listado compara BusinessName con ILIKE '%término%'.
+        customer.HasIndex(value => value.BusinessName)
+            .HasDatabaseName("IX_customers_business_name_trgm")
+            .HasMethod("gin")
+            .HasOperators("gin_trgm_ops");
     }
 
     private static void ConfigureCustomerAddress(ModelBuilder modelBuilder)
     {
         var address = modelBuilder.Entity<CustomerAddress>();
-        address.ToTable("customer_addresses", "customers");
+        address.ToTable("customer_addresses", "customers", table => table.HasCheckConstraint(
+            "CK_customer_addresses_city_lane", CityLaneCheck));
         address.HasKey(value => value.Id);
         address.Property(value => value.Id)
             .HasColumnName("id")
@@ -294,7 +389,18 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // hacia una entidad que no esta en el mismo ModelBuilder. La restriccion real
         // (FK a geography.cities(id), ON DELETE RESTRICT) la agrega a mano la migracion, con
         // migrationBuilder.AddForeignKey — Postgres la impone igual, EF simplemente no la "ve".
+        // Nulo en una direccion de afuera de Colombia (spec tienda publica 4.2): su ciudad es
+        // texto libre. El carril lo respalda CK_customer_addresses_city_lane.
         address.Property(value => value.CityId).HasColumnName("city_id");
+        address.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(CustomerContactInfo.CountryLength)
+            .HasDefaultValue(Customer.ColombiaCountryCode);
+        address.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        // Referencia blanda a geography.regions; solo fuera de Colombia (lo respalda el CHECK de arriba).
+        address.Property(value => value.RegionId).HasColumnName("region_id");
         address.Property(value => value.IsPrincipal).HasColumnName("is_principal");
         address.Property(value => value.CreatedAt).HasColumnName("created_at");
         address.Property(value => value.UpdatedAt).HasColumnName("updated_at");
@@ -314,6 +420,83 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .WithMany(customer => customer.Addresses)
             .HasForeignKey(value => value.CustomerId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // La libreta de perfiles de facturación (spec 2026-11-24 §4), gemela de la de direcciones.
+    private static void ConfigureCustomerBillingProfile(ModelBuilder modelBuilder)
+    {
+        var profile = modelBuilder.Entity<CustomerBillingProfile>();
+        profile.ToTable("customer_billing_profiles", "customers", table => table.HasCheckConstraint(
+            "CK_customer_billing_profiles_city_lane", CityLaneCheck));
+        profile.HasKey(value => value.Id);
+        // Clave asignada por el agregado: sin ValueGeneratedNever, EF toma un perfil nuevo de un cliente rastreado como
+        // Modified (UPDATE de 0 filas) en vez de Added.
+        profile.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new CustomerBillingProfileId(value))
+            .ValueGeneratedNever();
+        profile.Property(value => value.CustomerId)
+            .HasColumnName("customer_id")
+            .HasConversion(id => id.Value, value => new CustomerId(value));
+        profile.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(CustomerBillingProfile.NameMaxLength);
+        profile.Property(value => value.PersonType).HasColumnName("person_type").HasMaxLength(16);
+        profile.Property(value => value.IdentificationType).HasColumnName("identification_type").HasMaxLength(16);
+        profile.Property(value => value.IdentificationNumber)
+            .HasColumnName("identification_number")
+            .HasMaxLength(CustomerBillingProfile.IdentificationNumberMaxLength);
+        profile.Property(value => value.Phone)
+            .HasColumnName("phone")
+            .HasMaxLength(CustomerBillingProfile.PhoneMaxLength);
+        profile.Property(value => value.Email)
+            .HasColumnName("email")
+            .HasMaxLength(CustomerBillingProfile.EmailMaxLength);
+        profile.Property(value => value.Address)
+            .HasColumnName("address")
+            .HasMaxLength(CustomerBillingProfile.AddressMaxLength);
+        profile.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(CustomerContactInfo.CountryLength)
+            .HasDefaultValue(Customer.ColombiaCountryCode);
+        // FK real a geography.cities escrita a mano en la migración, como la de customer_addresses.
+        profile.Property(value => value.CityId).HasColumnName("city_id");
+        profile.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        profile.Property(value => value.RegionId).HasColumnName("region_id");
+        profile.Property(value => value.VatSurplus).HasColumnName("vat_surplus").HasDefaultValue(false);
+        profile.Property(value => value.IsPrincipal).HasColumnName("is_principal");
+        profile.Property(value => value.CreatedAt).HasColumnName("created_at");
+        profile.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        profile.HasIndex(value => value.CustomerId).HasDatabaseName("IX_customer_billing_profiles_customer");
+        profile.HasIndex(value => value.CityId).HasDatabaseName("IX_customer_billing_profiles_city");
+        // No único, por lo mismo que IX_customer_addresses_principal: el invariante vive en el agregado.
+        profile.HasIndex(value => new { value.CustomerId, value.IsPrincipal })
+            .HasDatabaseName("IX_customer_billing_profiles_principal");
+
+        profile.HasOne<Customer>()
+            .WithMany(customer => customer.BillingProfiles)
+            .HasForeignKey(value => value.CustomerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Como customer_tax_rates: sólo el id de la tasa, sin FK a catalog, con el índice «en uso».
+        profile.OwnsMany<CustomerBillingProfileTaxRate>("_withholdingTaxRates", rate =>
+        {
+            rate.ToTable("customer_billing_profile_tax_rates", "customers");
+            rate.WithOwner().HasForeignKey("BillingProfileId");
+            rate.Property<CustomerBillingProfileId>("BillingProfileId")
+                .HasColumnName("billing_profile_id")
+                .HasConversion(id => id.Value, value => new CustomerBillingProfileId(value))
+                .ValueGeneratedNever();
+            rate.Property(value => value.TenantId).HasColumnName("tenant_id");
+            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id").ValueGeneratedNever();
+            rate.HasKey("BillingProfileId", nameof(CustomerBillingProfileTaxRate.TaxRateId))
+                .HasName("PK_customer_billing_profile_tax_rates");
+            rate.HasIndex(value => new { value.TenantId, value.TaxRateId })
+                .HasDatabaseName("IX_customer_billing_profile_tax_rates_tenant_tax_rate");
+        });
     }
 
     // Spec 2026-10-11 §4.1. La nota es su propio agregado (no una colección de Customer): una nota no sube la versión
@@ -406,10 +589,9 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// garantía de que cada fila es prueba completa: las del bot llevan la evidencia y ninguna nota, una revocación lleva
     /// miembro, medio y nota, y la identidad falta sólo en una revocación por otro medio. <c>wa_id</c> es siempre opcional.
     ///
-    /// Sin <c>HasOne&lt;Customer&gt;()</c> a propósito: con la relación en el modelo EF agrega por convención un índice sobre
-    /// <c>customer_id</c> solo, que sobra —el de orden ya empieza por <c>(tenant_id, customer_id)</c> y un cliente nunca se
-    /// borra—. La FK real (<see cref="DataConsentCustomerForeignKey"/>, <c>ON DELETE RESTRICT</c>) la agrega a mano la
-    /// migración, como <c>FK_customers_cities_city_id</c>.
+    /// Sin <c>HasOne&lt;Customer&gt;()</c> y sin FK en la base: el consentimiento es prueba legal y sobrevive al cliente
+    /// borrado (spec 2026-11-10). Por eso la fila guarda <c>customer_name</c> y <c>customer_phone_e164</c>, que escribe el
+    /// borrado. La FK que agregó a mano <c>AddCustomerDataConsents</c> la quita <c>DetachDataConsentsFromCustomers</c>.
     /// </summary>
     private static void ConfigureDataConsent(ModelBuilder modelBuilder)
     {
@@ -471,6 +653,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         consent.Property(value => value.NodeId).HasColumnName("node_id").HasMaxLength(64);
         consent.Property(value => value.Medium).HasColumnName("medium").HasConversion<string>().HasMaxLength(24);
         consent.Property(value => value.Note).HasColumnName("note").HasMaxLength(CustomerDataConsent.NoteMaxLength);
+        consent.Property(value => value.CustomerName).HasColumnName("customer_name").HasMaxLength(160);
+        consent.Property(value => value.CustomerPhoneE164).HasColumnName("customer_phone_e164").HasMaxLength(16);
 
         // La historia de la ficha y el estado vigente (la primera fila de este orden).
         consent.HasIndex(value => new { value.TenantId, value.CustomerId, value.OccurredAt, value.Sequence })

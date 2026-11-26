@@ -26,7 +26,6 @@ public sealed class UpdateQuotationItemHandler(
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
-    IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
@@ -45,15 +44,6 @@ public sealed class UpdateQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
-
-        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
-        // — ver Quotation.RefreshCustomerTaxProfile.
-        var customer = await customerLookup.FindAsync(
-            command.TenantId, quotation.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
 
         // Mismo código que Quotation.UpdateItemQuantity usaría si se le pasara un id
         // desconocido: se busca acá primero porque hace falta el VariantId de la línea antes de

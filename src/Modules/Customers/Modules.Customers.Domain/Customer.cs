@@ -13,6 +13,9 @@ namespace Modules.Customers.Domain;
 public sealed class Customer
 {
     private readonly List<CustomerAddress> _addresses = [];
+    private readonly List<CustomerBillingProfile> _billingProfiles = [];
+    private readonly List<CustomerTaxRate> _withholdingTaxRates = [];
+    private readonly List<CustomerWithholdingAgentCity> _withholdingAgentCities = [];
 
     // Espejan los anchos de columna de customers.customers. Guardar aca significa que un valor
     // demasiado largo falla como 422 con codigo de dominio en vez de llegar a PostgreSQL y volver
@@ -58,7 +61,7 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -66,7 +69,13 @@ public sealed class Customer
         IPhoneNumberNormalizer? phoneNormalizer)
     {
         // Antes de cualquier asignación: el país que cuenta es el del contacto ya normalizado.
-        EnsurePersonTypeMatches(personType, identification.Type, contact.Normalized().Country);
+        var country = contact.Normalized().Country;
+        if (identification is not null)
+        {
+            EnsureDocumentAllowedForCountry(identification.Type, country);
+            EnsurePersonTypeMatches(personType, identification.Type, country);
+        }
+
         Id = id;
         TenantId = tenantId;
         Cuc = cuc;
@@ -90,8 +99,8 @@ public sealed class Customer
         // que asignar IdentificationNumber alla deja el constructor con un CS8618. Country tiene
         // el mismo problema: se inicializa aca por lo mismo, y Assign(contact) la pisa enseguida
         // con el valor normalizado real.
-        IdentificationType = identification.Type;
-        IdentificationNumber = identification.Number;
+        IdentificationType = identification?.Type;
+        IdentificationNumber = identification?.Number;
         PersonType = personType;
         Country = string.Empty;
         Assign(contact);
@@ -148,6 +157,10 @@ public sealed class Customer
     /// <see cref="CityId"/>.
     /// </summary>
     public IReadOnlyCollection<CustomerAddress> Addresses => _addresses;
+
+    /// <summary>La libreta de perfiles de facturación (spec 2026-11-24): a quién se le puede facturar. Vacía por defecto y,
+    /// como <see cref="Addresses"/>, sólo si la consulta los incluyó.</summary>
+    public IReadOnlyCollection<CustomerBillingProfile> BillingProfiles => _billingProfiles;
 
     /// <summary>La direccion que la cotizacion propone por defecto. Null en un cliente sin libreta
     /// (ver <see cref="Addresses"/>), o si la consulta no incluyo las direcciones: EF materializa
@@ -250,6 +263,13 @@ public sealed class Customer
     public string? CityName { get; private set; }
 
     /// <summary>
+    /// La region (provincia) del domicilio, FK blanda a <c>geography.regions</c>. Solo con un pais
+    /// distinto de Colombia; nula en Colombia, que deriva el departamento de <see cref="CityId"/>.
+    /// Ver <see cref="CustomerContactInfo.RegionId"/>.
+    /// </summary>
+    public Guid? RegionId { get; private set; }
+
+    /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
     /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado. Reemplaza al
     /// viejo enum fijo <c>CustomerClassification</c>, que no tenia relacion con este catalogo y ya
@@ -277,7 +297,15 @@ public sealed class Customer
     /// <summary>Decisión 10: el <c>@usuario</c> de Instagram, informativo; puede cambiar y viajar en <c>null</c> (V-7).</summary>
     public string? InstagramUsername { get; private set; }
 
-    public bool WithRetention { get; private set; }
+    /// <summary>Las tasas de retención que se le aplican a este cliente (ids del catálogo de impuestos).</summary>
+    public IReadOnlyCollection<Guid> WithholdingTaxRateIds =>
+        _withholdingTaxRates.Select(rate => rate.TaxRateId).ToArray();
+
+    /// <summary>
+    /// Los municipios donde el cliente es agente retenedor de un impuesto municipal (ReteICA), por país y tipo (spec ReteICA
+    /// por empresa §7.4). Que el tipo sea municipal y la ciudad exista lo valida Application.
+    /// </summary>
+    public IReadOnlyCollection<CustomerWithholdingAgentCity> WithholdingAgentCities => _withholdingAgentCities;
 
     public bool VatSurplus { get; private set; }
 
@@ -308,6 +336,11 @@ public sealed class Customer
 
     public bool IsMerged => MergedIntoId is not null;
 
+    /// <summary>Spec 2026-11-10 §3.2: la empresa (otro cliente) de la que esta persona es contacto. Un solo nivel: quien
+    /// tiene empresa no puede tener contactos. Sólo lo escriben <see cref="LinkToCompany"/> (también desde el alta, que puede
+    /// nacer con empresa: spec 2026-11-15), <see cref="UnlinkFromCompany"/> y la fusión; editar un cliente nunca lo toca.</summary>
+    public CustomerId? CompanyId { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -319,7 +352,7 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -332,7 +365,7 @@ public sealed class Customer
             NormalizeName(name),
             NormalizeBusinessName(businessName),
             principalAddress,
-            identification.Normalized(),
+            identification?.Normalized(),
             personType,
             contact,
             commercial,
@@ -387,16 +420,23 @@ public sealed class Customer
         CustomerId id,
         Guid tenantId,
         string name,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         string? phone,
         DateTimeOffset now,
         IPhoneNumberNormalizer phoneNormalizer,
-        string? email = null)
+        string? email = null,
+        string? country = null)
     {
-        ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(phoneNormalizer);
         var normalizedName = NormalizeName(name);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
+        // Sin país, Colombia: la caja del POS y los cobros no lo mandan. Un distribuidor de Mayorista sí (spec 2026-11-18).
+        var registerCountry = string.IsNullOrWhiteSpace(country) ? ColombiaCountryCode : country.Trim().ToUpperInvariant();
+        if (normalizedIdentification is not null)
+        {
+            EnsureDocumentAllowedForCountry(normalizedIdentification.Type, registerCountry);
+        }
+
         var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
         if (normalizedPhone?.Length > CustomerContactInfo.PhoneMaxLength)
         {
@@ -412,8 +452,8 @@ public sealed class Customer
             Name = normalizedName,
             Phone = normalizedPhone,
             Email = CustomerContactInfo.NormalizeEmail(email),
-            Country = ColombiaCountryCode,
-            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, ColombiaCountryCode),
+            Country = registerCountry,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, registerCountry),
             Completeness = CustomerCompleteness.Incomplete,
             IsActive = true,
             Version = 1,
@@ -434,14 +474,13 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         DateTimeOffset occurredAt,
         IPhoneNumberNormalizer? phoneNormalizer = null)
     {
-        ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(commercial);
         EnsureNotMerged();
@@ -454,10 +493,10 @@ public sealed class Customer
         var normalizedCuc = NormalizeCuc(cuc);
         var normalizedName = NormalizeName(name);
         var normalizedBusinessName = NormalizeBusinessName(businessName);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
         var normalizedContact = contact.Normalized();
         var location = EnsureValidLocation(normalizedContact);
-        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
+        EnsureIdentificationAllowed(normalizedIdentification, personType, normalizedContact.Country);
         _ = EnsureValidClassificationId(commercial.ClassificationId);
 
         Cuc = normalizedCuc;
@@ -501,7 +540,8 @@ public sealed class Customer
         }
 
         CityId = cityId;
-        if (PrincipalAddress is { } principal && principal.CityId == previousCityId)
+        if (PrincipalAddress is { } principal && principal.Country == ColombiaCountryCode
+            && principal.CityId == previousCityId)
         {
             principal.MoveToCity(cityId, occurredAt);
         }
@@ -713,6 +753,53 @@ public sealed class Customer
         return address;
     }
 
+    /// <summary>
+    /// Tienda pública, «Tomar»: la dirección de la libreta que ya dice lo mismo, o una nueva si no hay. Igual es mismo país, misma
+    /// dirección normalizada, misma ciudad (el id en <c>CO</c>, el texto normalizado afuera) y mismo teléfono en E.164; el
+    /// <c>Name</c> no cuenta, porque «Casa» y «Bodega» con la misma calle son el mismo destino. Lo encontrado se devuelve sin
+    /// tocarlo; lo nuevo entra como no principal, salvo que sea la primera de la libreta (<see cref="AddAddress"/>). Lanza lo
+    /// mismo que <see cref="AddAddress"/> con un cliente incompleto, fusionado o inactivo.
+    /// </summary>
+    /// <param name="phoneToE164">El normalizador con el país de <paramref name="details"/>: sólo se comparan direcciones del mismo
+    /// país, así que un único país basta. <c>null</c> si el teléfono no normaliza.</param>
+    public (CustomerAddress Address, bool Added) EnsureAddress(
+        CustomerAddressDetails details, Func<string?, string?> phoneToE164, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        ArgumentNullException.ThrowIfNull(phoneToE164);
+        EnsureNotMerged();
+        EnsureActive();
+        if (!IsComplete)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.incomplete",
+                "An incomplete customer cannot be edited until it is completed.");
+        }
+
+        var wanted = details.Normalized();
+        var wantedPhone = PhoneKey(wanted.Phone, phoneToE164);
+        var found = _addresses.FirstOrDefault(entry =>
+            entry.Country == wanted.Country
+            && SameText(entry.Address, wanted.Address)
+            && (wanted.Country == ColombiaCountryCode
+                ? entry.CityId == wanted.CityId
+                : SameText(entry.CityName, wanted.CityName))
+            && string.Equals(PhoneKey(entry.Phone, phoneToE164), wantedPhone, StringComparison.Ordinal));
+
+        return found is not null ? (found, false) : (AddAddress(details, false, occurredAt), true);
+    }
+
+    // Trim, mayúsculas y los blancos repetidos en uno: «Cra 7  # 12-30» y «CRA 7 # 12-30» son la misma calle.
+    private static bool SameText(string? left, string? right) =>
+        string.Equals(CollapseText(left), CollapseText(right), StringComparison.Ordinal);
+
+    private static string CollapseText(string? value) =>
+        string.Join(' ', (value ?? string.Empty).ToUpperInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    // E.164 cuando normaliza; si la librería lo rechaza, el texto recortado (dos teléfonos iguales e ilegibles siguen siendo iguales).
+    private static string? PhoneKey(string? phone, Func<string?, string?> phoneToE164) =>
+        string.IsNullOrWhiteSpace(phone) ? null : phoneToE164(phone) ?? phone.Trim();
+
     /// <summary>Reemplaza los datos de una direccion. Reemplaza el recurso entero, mismo criterio
     /// que <see cref="Update"/>.</summary>
     public CustomerAddress UpdateAddress(
@@ -782,6 +869,196 @@ public sealed class Customer
         }
     }
 
+    /// <summary>
+    /// El <c>POST</c> de la libreta de perfiles (spec 2026-11-24 §3.2): idempotente por contenido, porque el frontend guarda
+    /// el perfil después de grabar el documento y un reintento no puede duplicarlo. Igual es mismo país, mismo tipo, mismo
+    /// número normalizado, mismo nombre y dirección, y misma ciudad (el id en <c>CO</c>, el texto afuera); teléfono, correo,
+    /// región, tipo de persona, tasas y excedente no cuentan. Lo encontrado se devuelve sin tocarlo (para cambiarlo está
+    /// <see cref="UpdateBillingProfile"/>) y no cuenta contra el tope. El primero queda principal aunque no lo pida.
+    /// </summary>
+    public (CustomerBillingProfile Profile, bool Added) EnsureBillingProfile(
+        CustomerBillingProfileDetails details, bool isPrincipal, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        EnsureNotMerged();
+        EnsureActive();
+        if (!IsComplete)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.incomplete",
+                "An incomplete customer cannot be edited until it is completed.");
+        }
+
+        var wanted = details.Normalized();
+        var wantedNumber = CustomerIdentificationNumbers.Normalize(wanted.IdentificationNumber);
+        var found = _billingProfiles.FirstOrDefault(entry =>
+            entry.Country == wanted.Country
+            && entry.IdentificationType == wanted.IdentificationType
+            && CustomerIdentificationNumbers.Normalize(entry.IdentificationNumber) == wantedNumber
+            && SameText(entry.Name, wanted.Name)
+            && SameText(entry.Address, wanted.Address)
+            && (wanted.Country == ColombiaCountryCode
+                ? entry.CityId == wanted.CityId
+                : SameText(entry.CityName, wanted.CityName)));
+        if (found is not null)
+        {
+            return (found, false);
+        }
+
+        if (_billingProfiles.Count >= CustomerBillingProfile.MaxPerCustomer)
+        {
+            throw new CustomersDomainException(
+                CustomerBillingProfileErrors.LimitReached,
+                $"A customer cannot have more than {CustomerBillingProfile.MaxPerCustomer} billing profiles.");
+        }
+
+        var profile = CustomerBillingProfile.Create(Id, TenantId, wanted, occurredAt);
+        _billingProfiles.Add(profile);
+        if (isPrincipal || _billingProfiles.Count == 1)
+        {
+            ApplyPrincipalBillingProfile(profile, occurredAt);
+        }
+
+        Touch(occurredAt);
+        return (profile, true);
+    }
+
+    /// <summary>Reemplaza el perfil entero. <paramref name="isPrincipal"/> en <c>false</c> no desmarca: se cambia marcando
+    /// otro, como en <see cref="UpdateAddress"/>.</summary>
+    public CustomerBillingProfile UpdateBillingProfile(
+        CustomerBillingProfileId id,
+        CustomerBillingProfileDetails details,
+        bool isPrincipal,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        EnsureNotMerged();
+        EnsureActive();
+
+        var profile = FindBillingProfile(id);
+        profile.Apply(TenantId, details, occurredAt);
+        if (isPrincipal)
+        {
+            ApplyPrincipalBillingProfile(profile, occurredAt);
+        }
+
+        Touch(occurredAt);
+        return profile;
+    }
+
+    /// <summary>Quita un perfil. El principal no se quita: primero hay que nombrar otro.</summary>
+    public void RemoveBillingProfile(CustomerBillingProfileId id, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+
+        var profile = FindBillingProfile(id);
+        if (profile.IsPrincipal)
+        {
+            throw new CustomersDomainException(
+                CustomerBillingProfileErrors.PrincipalNotRemovable,
+                "The principal billing profile cannot be removed. Mark another one as principal first.");
+        }
+
+        _billingProfiles.Remove(profile);
+        Touch(occurredAt);
+    }
+
+    public void MakeBillingProfilePrincipal(CustomerBillingProfileId id, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+
+        ApplyPrincipalBillingProfile(FindBillingProfile(id), occurredAt);
+        Touch(occurredAt);
+    }
+
+    private void ApplyPrincipalBillingProfile(CustomerBillingProfile profile, DateTimeOffset occurredAt)
+    {
+        foreach (var other in _billingProfiles)
+        {
+            other.MarkPrincipal(other == profile, occurredAt);
+        }
+    }
+
+    private CustomerBillingProfile FindBillingProfile(CustomerBillingProfileId id) =>
+        _billingProfiles.FirstOrDefault(profile => profile.Id == id)
+            ?? throw new CustomersDomainException(
+                CustomerBillingProfileErrors.NotFound, "The customer billing profile was not found.");
+
+    /// <summary>
+    /// Reemplaza las tasas de retención del cliente. Deduplica; <see cref="Guid.Empty"/> se rechaza. Sube la versión y
+    /// devuelve <c>true</c> sólo si el conjunto cambió: guardar lo mismo no es un cambio.
+    /// </summary>
+    public bool SetWithholdingTaxRates(IReadOnlyCollection<Guid> taxRateIds, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(taxRateIds);
+        EnsureNotMerged();
+        if (taxRateIds.Any(id => id == Guid.Empty))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_tax_rate_invalid",
+                "A withholding tax rate id cannot be empty.");
+        }
+
+        var wanted = taxRateIds.ToHashSet();
+        if (wanted.SetEquals(_withholdingTaxRates.Select(rate => rate.TaxRateId)))
+        {
+            return false;
+        }
+
+        _withholdingTaxRates.RemoveAll(rate => !wanted.Contains(rate.TaxRateId));
+        var kept = _withholdingTaxRates.Select(rate => rate.TaxRateId).ToHashSet();
+        foreach (var id in wanted.Where(id => !kept.Contains(id)))
+        {
+            _withholdingTaxRates.Add(new CustomerTaxRate(TenantId, id));
+        }
+
+        Touch(occurredAt);
+        return true;
+    }
+
+    /// <summary>
+    /// Reemplaza los municipios donde el cliente es agente retenedor. Normaliza el país a mayúsculas y colapsa los
+    /// repetidos; sube la versión y devuelve <c>true</c> sólo si el conjunto cambió, como
+    /// <see cref="SetWithholdingTaxRates"/>.
+    /// </summary>
+    public bool SetWithholdingAgentCities(
+        IReadOnlyCollection<WithholdingAgentCityEntry> entries, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        EnsureNotMerged();
+
+        var wanted = entries
+            .Select(entry => new CustomerWithholdingAgentCity(
+                TenantId, NormalizeAgentCountry(entry.Country), entry.Type, entry.CityId))
+            .ToHashSet();
+        if (wanted.SetEquals(_withholdingAgentCities))
+        {
+            return false;
+        }
+
+        _withholdingAgentCities.RemoveAll(city => !wanted.Contains(city));
+        var kept = _withholdingAgentCities.ToHashSet();
+        _withholdingAgentCities.AddRange(wanted.Where(city => !kept.Contains(city)));
+
+        Touch(occurredAt);
+        return true;
+    }
+
+    /// <summary>Si el cliente está registrado como agente retenedor de ese tipo en ese municipio.</summary>
+    public bool IsWithholdingAgent(string country, string type, Guid cityId)
+    {
+        var normalized = NormalizeAgentCountry(country);
+        return _withholdingAgentCities.Any(city =>
+            city.Country == normalized
+            && string.Equals(city.Type, type, StringComparison.Ordinal)
+            && city.CityId == cityId);
+    }
+
+    private static string NormalizeAgentCountry(string? country) =>
+        country?.Trim().ToUpperInvariant() ?? string.Empty;
+
     // Una direccion nueva o cambiada es un cambio del cliente: mueve su version optimista igual
     // que editar su nombre, asi que dos pestañas que lo editan a la vez chocan como corresponde.
     private void Touch(DateTimeOffset occurredAt)
@@ -811,7 +1088,7 @@ public sealed class Customer
     public void Update(
         string name,
         string? businessName,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -832,12 +1109,12 @@ public sealed class Customer
         // CUC, y ese cambio tiene que quedar cubierto por la misma garantia de todo-o-nada.
         var normalizedName = NormalizeName(name);
         var normalizedBusinessName = NormalizeBusinessName(businessName);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
         var normalizedContact = contact.Normalized();
         // El pais y la ciudad se comprueban acá y no sólo en Assign: hacen falta **antes** de
         // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
         EnsureValidLocation(normalizedContact);
-        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
+        EnsureIdentificationAllowed(normalizedIdentification, personType, normalizedContact.Country);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         // Sin clasificacion no hay prefijo que validar: el CUC queda con sus ocho caracteres
         // estables. Con clasificacion, el prefijo es obligatorio, llegue nulo o en blanco.
@@ -881,10 +1158,10 @@ public sealed class Customer
 
     // Desarma el value object en las dos columnas. Ver Customer.Identification para el porque del
     // aplanado.
-    private void Assign(CustomerIdentification identification)
+    private void Assign(CustomerIdentification? identification)
     {
-        IdentificationType = identification.Type;
-        IdentificationNumber = identification.Number;
+        IdentificationType = identification?.Type;
+        IdentificationNumber = identification?.Number;
     }
 
     // Asigna todo siempre. Telefono y correo se pueden **limpiar**, no solo setear: una
@@ -902,12 +1179,12 @@ public sealed class Customer
         Country = location.Country;
         CityId = location.CityId;
         CityName = location.CityName;
+        RegionId = location.RegionId;
     }
 
     private void Assign(CustomerCommercialInfo commercial)
     {
         ClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
-        WithRetention = commercial.WithRetention;
         VatSurplus = commercial.VatSurplus;
     }
 
@@ -992,6 +1269,73 @@ public sealed class Customer
         return true;
     }
 
+    /// <summary>
+    /// Vincula este cliente como contacto de <paramref name="company"/>. <c>false</c> y sin cambios si ya lo era.
+    ///
+    /// El orden de las reglas importa: el no-op va antes de «inactiva» para que repetir el vínculo existente responda igual
+    /// aunque la empresa se inactivara después (ruling P10). <paramref name="hasContacts"/> lo calcula quien llama, porque
+    /// los contactos de este cliente no cuelgan del agregado. No exige <see cref="EnsureActive"/> a este cliente: las
+    /// notas y las etiquetas tampoco, y vincular no es editar la ficha.
+    /// </summary>
+    public bool LinkToCompany(Customer company, bool hasContacts, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        if (company.Id == Id)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyIsSelf, "A customer cannot be its own company.");
+        }
+
+        if (company.TenantId != TenantId || company.IsMerged)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyNotFound, "The company does not exist.");
+        }
+
+        if (CompanyId == company.Id)
+        {
+            return false;
+        }
+
+        if (!company.IsActive)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyInactive, "The company is inactive.");
+        }
+
+        if (company.CompanyId is not null)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyIsContact, "A contact cannot be the company of another customer.");
+        }
+
+        if (hasContacts)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.HasContacts, "A customer that has contacts cannot become a contact.");
+        }
+
+        CompanyId = company.Id;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
+    /// <summary>La vuelta de <see cref="LinkToCompany"/>. <c>false</c> y sin cambios si no tenía empresa.</summary>
+    public bool UnlinkFromCompany(DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        if (CompanyId is null)
+        {
+            return false;
+        }
+
+        CompanyId = null;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
     /// <summary>Spec 2026-10-24 §3.1: va primero en toda escritura, antes de <see cref="EnsureActive"/>, para que el
     /// código diga «fusionado» y no «inactivo».</summary>
     public void EnsureNotMerged()
@@ -1009,6 +1353,8 @@ public sealed class Customer
         MergedIntoId = survivorId;
         MergedAt = now;
         IsActive = false;
+        // Spec 2026-11-10 §4.7: un fusionado deja de ser contacto; los suyos se mueven al que queda.
+        CompanyId = null;
         if (releaseWhatsAppUserId)
         {
             WhatsAppUserId = null;
@@ -1028,6 +1374,9 @@ public sealed class Customer
 
         Touch(now);
     }
+
+    // Sin versión ni auditoría propias: el que queda ya sube su versión en TouchForMerge.
+    internal void ClearCompanyLink() => CompanyId = null;
 
     internal void FillEmail(string value) => Email = value;
 
@@ -1154,12 +1503,15 @@ public sealed class Customer
     /// los dos dejaria dos respuestas a "donde esta el cliente" sin nada que diga cual gana al
     /// pintar la ficha — y la que sobra envejece sola, porque el formulario ya no la muestra.
     ///
-    /// Para Colombia el chequeo es estructural y minimo (no vacia): la FK de base
+    /// La obligacion de tener ciudad ya no vive aca: depende del tenant y la decide
+    /// <c>CustomerFieldPolicyRequirement</c> (Application). Sin ciudad el trio queda en null.
+    ///
+    /// Para Colombia el chequeo es estructural y minimo (no Guid.Empty): la FK de base
     /// (<c>customers.customers.city_id -> geography.cities.id</c>) garantiza que la ciudad exista,
     /// pero no corre hasta el SaveChanges, y fallar rapido con un codigo de dominio es mejor que
     /// dejar que un Guid.Empty vuelva como una violacion de FK que no dice nada util.
     /// </summary>
-    private static (string Country, Guid? CityId, string? CityName) EnsureValidLocation(
+    private static (string Country, Guid? CityId, string? CityName, Guid? RegionId) EnsureValidLocation(
         CustomerContactInfo normalized)
     {
         // Normalized() ya rechazo un pais ausente o que no sean dos letras.
@@ -1167,18 +1519,64 @@ public sealed class Customer
 
         if (country == ColombiaCountryCode)
         {
-            return normalized.CityId is { } cityId && cityId != Guid.Empty
-                ? (country, cityId, null)
-                : throw new CustomersDomainException(
-                    "customers.customer.city_required",
-                    "The customer city is required.");
+            // Red del dominio: el validador ya rechaza la region con CO con un error por campo.
+            if (normalized.RegionId is not null)
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.region_lane_invalid",
+                    "A Colombian customer takes its region from the city, not from a region id.");
+            }
+
+            // Solo null es "sin ciudad"; un Guid.Empty es un id roto y se sigue rechazando (G5).
+            return normalized.CityId is { } cityId
+                ? (country, cityId != Guid.Empty
+                    ? cityId
+                    : throw new CustomersDomainException(
+                        "customers.customer.city_required",
+                        "The customer city is required."), null, null)
+                : (country, null, null, null);
         }
 
-        return string.IsNullOrWhiteSpace(normalized.CityName)
-            ? throw new CustomersDomainException(
-                "customers.customer.city_name_required",
-                "The customer city is required for a customer outside Colombia.")
-            : (country, null, normalized.CityName);
+        return (
+            country,
+            null,
+            string.IsNullOrWhiteSpace(normalized.CityName) ? null : normalized.CityName,
+            normalized.RegionId);
+    }
+
+    // Con documento corren las dos reglas de pais; sin documento no hay nada que comprobar.
+    private static void EnsureIdentificationAllowed(
+        CustomerIdentification? identification, PersonType? personType, string country)
+    {
+        if (identification is null)
+        {
+            return;
+        }
+
+        EnsureDocumentAllowedForCountry(identification.Type, country);
+        EnsurePersonTypeMatches(personType, identification.Type, country);
+    }
+
+    /// <summary>
+    /// El tipo de documento tiene que estar en la lista del país del cliente
+    /// (<see cref="IdentificationTypeParser.IsAllowedFor"/>). Va **antes** de
+    /// <see cref="EnsurePersonTypeMatches"/>: una jurídica colombiana con NIF es un problema de país
+    /// antes que un problema de NIT. Sólo en escrituras: nunca en el constructor de EF, para que un
+    /// cliente guardado con un par que ya no cumple se siga leyendo. Marca <c>IdentificationType</c>,
+    /// el campo que la persona corrige en el formulario.
+    /// </summary>
+    private static void EnsureDocumentAllowedForCountry(IdentificationType type, string country)
+    {
+        if (type.IsAllowedFor(country))
+        {
+            return;
+        }
+
+        const string message = "The identification type is not allowed for the country.";
+        throw new CustomersDomainException(
+            CustomersErrorCodes.DocumentTypeNotAllowed,
+            message,
+            new Dictionary<string, string[]>(StringComparer.Ordinal) { ["IdentificationType"] = [message] });
     }
 
     /// <summary>

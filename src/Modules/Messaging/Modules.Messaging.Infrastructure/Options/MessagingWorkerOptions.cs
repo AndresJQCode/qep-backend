@@ -13,6 +13,9 @@ public sealed class MessagingWorkerOptions
     /// y sólo retrasa el arranque de una campaña programada; <c>DrainAsync</c> sostiene el caudal.</summary>
     public int CampaignPollSeconds { get; set; } = 10;
 
+    /// <summary>Spec 2026-11-09 «Worker y ejecución»: el tick del worker de mensajes programados. Sólo retrasa la salida de uno vencido.</summary>
+    public int ScheduledPollSeconds { get; set; } = 5;
+
     public int PurgeIntervalHours { get; set; } = 24;
 
     public int DeliveryRetentionDays { get; set; } = 7;

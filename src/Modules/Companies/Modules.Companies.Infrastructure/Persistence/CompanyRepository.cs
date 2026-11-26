@@ -31,7 +31,7 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
         CompanyStatusFilter? status,
         CancellationToken cancellationToken)
     {
-        var query = dbContext.Companies
+        var query = CompaniesWithOrderedBankAccounts()
             .AsNoTracking()
             .Where(company => company.TenantId == tenantId);
 
@@ -96,9 +96,46 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
         Guid tenantId,
         CompanyId companyId,
         CancellationToken cancellationToken) =>
-        dbContext.Companies.SingleOrDefaultAsync(
+        CompaniesWithOrderedBankAccounts().SingleOrDefaultAsync(
             company => company.TenantId == tenantId && company.Id == companyId,
             cancellationToken);
+
+    // Las cuentas en el orden en que se guardaron (el ordinal), que es el que muestran la ficha y el listado. Con dos
+    // colecciones owned (cuentas y tasas municipales) EF une las dos y no ordena la última por su clave: sin este
+    // OrderBy el orden de las cuentas quedaba a merced del plan de Postgres y salía invertido
+    // (CompanyApiTests.ListReturnsTheBankNameOfEachAccountInStoredOrder).
+    //
+    // AsSingleQuery explícito, como QuotationRepository: dos colecciones owned en un JOIN disparan el aviso 20504 de EF
+    // (MultipleCollectionIncludeWarning) en cada /companies. Las cuentas son a lo sumo 20 por empresa y las tasas
+    // municipales unas pocas por tenant: las filas repetidas no pesan, y partir la consulta serían tres viajes a la
+    // base en vez de uno, que es lo que cuesta con Postgres en otro nodo.
+    private IQueryable<Company> CompaniesWithOrderedBankAccounts() =>
+        dbContext.Companies
+            .Include(company => company.BankAccounts.OrderBy(account => EF.Property<int>(account, "Id")))
+            .AsSingleQuery();
+
+    public async Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await dbContext.Companies
+            .AsNoTracking()
+            .Where(company => company.TenantId == tenantId)
+            .Select(company => company.Country)
+            .Distinct()
+            .ToListAsync(cancellationToken))
+        .ToHashSet(StringComparer.Ordinal);
+
+    // Activas e inactivas: una empresa desactivada se puede reactivar con sus tasas, así que las sigue usando.
+    public Task<bool> AnyWithTaxRateAsync(
+        Guid tenantId,
+        Guid taxRateId,
+        CancellationToken cancellationToken) =>
+        dbContext.Companies
+            .AsNoTracking()
+            .AnyAsync(
+                company =>
+                    company.TenantId == tenantId &&
+                    EF.Property<List<CompanyTaxRate>>(company, "_withholdingTaxRates")
+                        .Any(rate => rate.TaxRateId == taxRateId),
+                cancellationToken);
 
     public void Add(Company company) => dbContext.Companies.Add(company);
 

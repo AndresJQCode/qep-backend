@@ -324,4 +324,42 @@ public sealed class SimulationsApiTests
         Assert.Equal(AutomationsErrorCodes.SimulationNotFound, (await ProblemAsync(again)).Code);
         Assert.Equal(0L, await CountAsync(setup.ConnectionString, "SELECT count(*) FROM automations.simulations"));
     }
+
+    /// <summary>Spec 2026-11-17 D-B17 y adenda D-3/D-4: el simulador se para en el bloque «Agente IA» sin llamar al modelo, avisa dónde espera
+    /// (<c>waitingAt</c>) y sigue por la salida que elige el tester. Un mensaje del cliente en ese punto, o un <c>agentResult</c> fuera de él,
+    /// es 422.</summary>
+    [Fact]
+    public async Task TheTesterChoosesTheAgentBlockOutput()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var setup = await SetupAsync(database);
+        await EnableAiAsync(setup.ConnectionString, setup.Tenant.TenantId);
+        var agentId = await SeedAgentAsync(setup.Factory, setup.Tenant);
+        var chatbotId = await CreateDraftAsync(setup, $$"""
+            { "schema": 1, "start": { "firstNodeId": "ai" }, "variables": [],
+              "nodes": [
+                { "id": "ai", "kind": "aiAgent", "title": "Asesor IA", "agentId": "{{agentId}}", "objective": "Resuelve dudas.", "context": "",
+                  "saveTo": "asesor", "outputs": { "done": "bye", "human": "desk", "noAnswer": "desk", "idle": "bye", "error": "desk" } },
+                { "id": "bye", "kind": "message", "title": "Despedida", "text": "Listo: {asesor.summary}", "outputs": { "next": "end" } },
+                { "id": "desk", "kind": "handoff", "title": "Asesor", "text": "Te paso con un asesor." },
+                { "id": "end", "kind": "resolve", "title": "Listo" }
+              ] }
+            """);
+
+        var started = await StartOkAsync(setup, chatbotId);
+
+        Assert.Equal(new SimulationWaitingAtDto("ai", "aiAgent"), started.WaitingAt);
+        Assert.Equal("Waiting", started.Status);
+        var text = await SendAsync(setup.Client, setup, started.Id, new SimulationMessageRequest("Hola", null, null));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, text.StatusCode);
+        Assert.Equal(AutomationsErrorCodes.SimulationWaitingAtAgent, (await ProblemAsync(text)).Code);
+
+        var done = await SendOkAsync(
+            setup, started.Id, new SimulationMessageRequest(null, null, null, new SimulationAgentResultRequest("done", "Sí hay talla M", null, null)));
+
+        Assert.Null(done.WaitingAt);
+        Assert.True(done.Ended);
+        Assert.Contains(done.Transcript, entry => entry.From == "bot" && entry.Text == "Listo: Sí hay talla M");
+        Assert.Equal("objective_completed", done.Variables.GetProperty("asesor").GetProperty("reason").GetString());
+    }
 }

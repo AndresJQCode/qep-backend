@@ -20,24 +20,16 @@ public sealed record CustomerCommercialInfo
     public ClientClassificationId? ClassificationId { get; init; }
 
     /// <summary>
-    /// Si al cliente se le aplica retencion de impuestos.
-    ///
-    /// <c>bool</c> y no <c>bool?</c>: el formulario lo presenta como un interruptor con dos
-    /// estados y ningun "sin definir". Un tercer estado nulo obligaria a cada consumidor a
-    /// decidir que hacer con el, y ese consumidor —cotizaciones— todavia no existe para opinar.
-    /// </summary>
-    public bool WithRetention { get; init; }
-
-    /// <summary>
     /// Si el cliente tiene excedente de IVA.
     ///
-    /// Mismo criterio que <see cref="WithRetention"/>: <c>bool</c>, no <c>bool?</c> — el
-    /// formulario lo presenta como un interruptor con dos estados, sin "sin definir".
+    /// <c>bool</c> y no <c>bool?</c>: el formulario lo presenta como un interruptor con dos
+    /// estados, sin "sin definir". Las retenciones ya no viajan acá: son tasas asignadas
+    /// (<see cref="Customer.SetWithholdingTaxRates"/>).
     /// </summary>
     public bool VatSurplus { get; init; }
 
     /// <summary>
-    /// Sin clasificacion, sin retencion y sin excedente de IVA. Existe para pruebas que arman un
+    /// Sin clasificacion y sin excedente de IVA. Existe para pruebas que arman un
     /// <c>CustomerCommercialInfo</c> parcial y sobreescriben el campo que les importa con un
     /// <c>with</c> o un inicializador propio.
     /// </summary>

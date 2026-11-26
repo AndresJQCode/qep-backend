@@ -144,7 +144,9 @@ public sealed class ResolveConversationHandler(
     IClock clock,
     IMessagingNotifier notifier,
     ReadReceipts receipts,
-    IValidator<ResolveConversationCommand> validator)
+    IValidator<ResolveConversationCommand> validator,
+    IAutomationInbox inbox,
+    IBotDelegationRepository delegations)
     : ICommandHandler<ResolveConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(ResolveConversationCommand command, CancellationToken cancellationToken)
@@ -159,7 +161,12 @@ public sealed class ResolveConversationHandler(
         var now = clock.UtcNow;
         var reason = await ResolutionReasonChoice.ChooseAsync(reasons, command.TenantId, command.ReasonId, command.ReasonName, cancellationToken);
         var hadUnread = conversation.UnreadCount > 0;
+        // D-6: Resolve deja el asistente en None, así que se lee antes. EnsureCanResolve ya lanzó si no había cambio.
+        var before = conversation.AutomationStatus;
+        var beforeBot = conversation.AutomationBotKind;
+        var beforeDelegation = conversation.AutomationDelegationId;
         conversation.Resolve(now, reason?.Id);
+        await inbox.EnqueueIfAssistedAsync(delegations, conversation, before, beforeBot, beforeDelegation, changes: 1, now, cancellationToken);
         if (reason is { IsNew: true })
         {
             ResolutionReason.EnsureTenantCapacity(await reasons.CountActiveAsync(command.TenantId, cancellationToken));

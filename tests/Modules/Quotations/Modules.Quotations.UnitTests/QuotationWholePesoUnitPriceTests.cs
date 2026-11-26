@@ -44,7 +44,7 @@ public sealed class QuotationWholePesoUnitPriceTests
 
         Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(19_609.24m, item.DiscountedUnitPriceWithoutTax);
-        Assert.Equal(1_166_500m, item.DiscountAmount);
+        Assert.Equal(980_252.10m, item.DiscountAmount); // sin IVA (spec 2026-11-23); con IVA eran 1.166.500
         Assert.Equal(2_333_500m, quotation.Total);
     }
 
@@ -121,6 +121,7 @@ public sealed class QuotationWholePesoUnitPriceTests
             new Dictionary<Guid, QuotationItemPricing> { [productId] = new(24_563m, 5m, 19) },
             isRetail: false,
             globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -163,8 +164,9 @@ public sealed class QuotationWholePesoUnitPriceTests
             QuotationParties.Empty,
             BillingAccount(currency),
             currency,
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

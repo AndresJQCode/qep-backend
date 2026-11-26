@@ -30,6 +30,19 @@ public enum ConversationEventType
 
     /// <summary>Spec 2026-11-01 D-13: un asesor devolvió la conversación para que el asistente siga en el paso pendiente (va al final).</summary>
     AutomationContinued,
+
+    /// <summary>Soporte fase 2 (plan E11): se abrió un ticket desde esta conversación o se le vinculó (va al final).</summary>
+    TicketOpened,
+
+    /// <summary>Soporte fase 2 (plan E11): se cerró un ticket que sigue esta conversación (va al final).</summary>
+    TicketClosed,
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: el chatbot delegó la conversación en un agente de IA (va al final). Lleva el
+    /// chatbot en <c>ChatbotId</c>.</summary>
+    AutomationDelegated,
+
+    /// <summary>Spec 2026-11-17 §5.3: el agente devolvió la conversación al chatbot que la delegó (va al final). Lleva el chatbot.</summary>
+    AutomationReturned,
 }
 
 /// <summary>
@@ -43,6 +56,12 @@ public enum ConversationEventType
 /// <c>PauseReason = Handoff</c> (spec 2026-10-24 D-T7): la causa del traspaso, en códigos. <see cref="ChatbotId"/>
 /// sólo lo lleva un <c>Resolved</c> hecho por el bot (bloque «Resolver»): el bot no es una membresía, así que
 /// <see cref="Actor"/> queda <c>null</c> y el nombre se resuelve al leer, como <c>SentByChatbotId</c> (spec 2026-10-21 D-I3).
+/// <see cref="TicketId"/> sólo lo usan <c>TicketOpened</c> y <c>TicketClosed</c> (Soporte fase 2): el id del ticket; su número se
+/// resuelve al leer, como los nombres. Esos dos eventos son una marca en el hilo, no una acción del asesor sobre la conversación:
+/// no tocan su versión, su estado, sus no leídos ni <c>history_managed</c>.
+/// <c>AutomationDelegated</c> y <c>AutomationReturned</c> (spec 2026-11-17, adenda D-5) llevan <see cref="ChatbotId"/>, <see cref="AgentId"/>
+/// y la <b>foto</b> de sus nombres (<see cref="ChatbotName"/>, <see cref="AgentName"/>: el nombre del momento, no el de hoy); el de
+/// retorno suma <see cref="Output"/> (<see cref="BotDelegationOutputs"/>, <c>null</c> si volvió sin salida por ventana o bloqueo).
 /// Nunca teléfonos, BSUIDs ni textos de Meta (§11).
 /// </summary>
 public sealed record ConversationEvent(
@@ -56,4 +75,9 @@ public sealed record ConversationEvent(
     AutomationPauseReason? PauseReason = null,
     Guid? PreviousCustomerId = null,
     AutomationHandoff? Handoff = null,
-    Guid? ChatbotId = null);
+    Guid? ChatbotId = null,
+    Guid? TicketId = null,
+    string? ChatbotName = null,
+    Guid? AgentId = null,
+    string? AgentName = null,
+    string? Output = null);

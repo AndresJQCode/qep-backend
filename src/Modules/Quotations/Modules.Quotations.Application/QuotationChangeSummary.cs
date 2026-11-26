@@ -32,6 +32,13 @@ public static class QuotationChangeSummary
             ? $"Cotización creada en {currency}."
             : $"Cotización creada para {clientName}, en {currency}.");
 
+    /// <summary>El borrador que crea un agente IA (spec 2026-10-29 §8.2): sin persona detrás, así que la fila no lleva miembro y el
+    /// texto dice de dónde salió.</summary>
+    public static string CreatedByAgent(string? clientName, string currency) =>
+        Trim(clientName is null
+            ? $"Borrador creado por un agente IA en {currency}."
+            : $"Borrador creado por un agente IA para {clientName}, en {currency}.");
+
     public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
         Trim($"Agregó {productName} x{format.Number(quantity)}.");
 
@@ -46,9 +53,15 @@ public static class QuotationChangeSummary
         Trim($"Cambió el cliente: {from ?? "sin cliente"} → {to ?? "sin cliente"}. " +
              "Se borraron los datos propios de facturación y envío.");
 
-    public static string Sent() => "Enviada al cliente con su PDF.";
+    /// <summary>Con <paramref name="contactName"/> el texto nombra a la persona (spec 2026-11-10 §4.6); sin él, es el de siempre.</summary>
+    public static string Sent(string? contactName = null) =>
+        contactName is null ? "Enviada al cliente con su PDF." : Trim($"Enviada a {contactName} con su PDF.");
 
-    public static string Resent() => "Reenviada al cliente con su PDF.";
+    public static string Resent(string? contactName = null) =>
+        contactName is null ? "Reenviada al cliente con su PDF." : Trim($"Reenviada a {contactName} con su PDF.");
+
+    /// <summary>Sin destinatario ni PDF: QEP no mandó nada, sólo anota lo que dice el asesor.</summary>
+    public static string MarkedSent() => "Marcada como enviada por fuera de QEP.";
 
     /// <summary>
     /// Un intento de envío que falló, contado para quien vende y no para quien programa.
@@ -99,6 +112,30 @@ public static class QuotationChangeSummary
     public static string RetailChanged(bool isRetail) => isRetail
         ? "Marcó la cotización como detal: ninguna línea recibe descuento."
         : "Quitó el detal: las líneas vuelven a su descuento por escala.";
+
+    /// <summary>El asesor cambió el porcentaje de una retención municipal (spec ReteICA por empresa §7.8). Lo comparte el
+    /// historial del pedido: el texto es el mismo.</summary>
+    public static string WithholdingRateEdited(string name, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió la tarifa de {name} de {format.Percentage(from)} a {format.Percentage(to)}.");
+
+    /// <summary>Volvió al porcentaje del catálogo.</summary>
+    public static string WithholdingRateRestored(string name, decimal catalog, HistoryFormat format) =>
+        Trim($"Restableció la tarifa de {name} a {format.Percentage(catalog)}.");
+
+    /// <summary>Una re-resolución (o «Sin retención») se llevó un porcentaje editado.</summary>
+    public static string WithholdingOverrideDiscarded(string type, decimal percentage, HistoryFormat format) =>
+        Trim($"Se volvió a calcular la {type} por cambio de municipio o de empresa; se descartó la tarifa editada ({format.Percentage(percentage)}).");
+
+    /// <summary>Cambió el municipio de la operación. El llamador no lo escribe cuando no había municipio antes (la primera
+    /// vez que se fija la empresa, o un documento anterior): el spec sólo tiene el texto «de … a …», y la empresa nueva ya
+    /// queda en el resumen como cuenta de cobro.</summary>
+    public static string OperationCityChanged(string from, string to) =>
+        Trim($"Cambió el municipio de la operación de {from} a {to}.");
+
+    /// <summary>Con facturación propia el asesor aplicó a mano la tasa municipal de la empresa (R11). Sin punto: va dentro
+    /// del resumen del <c>Edited</c>.</summary>
+    public static string ManualMunicipalWithholdingApplied(string type, string city) =>
+        Trim($"Aplicó {type} {city} por facturación propia");
 
     public static string Voided() => "Anulada.";
 
@@ -175,14 +212,18 @@ public static class QuotationChangeSummary
         {
             AppendParty(changes, "facturación", before.Billing, after.Billing);
 
-            // Cambiar la respuesta de retención/excedente de IVA no cambia el texto de la fila
-            // (Describe no las lee), así que sin esto una edición que sólo tocara estas dos
-            // preguntas quedaría sin fila de historial.
-            if (after.Billing is not null &&
-                (before.BillingWithRetention != after.BillingWithRetention ||
-                 before.BillingVatSurplus != after.BillingVatSurplus))
+            // Las retenciones que elige la facturación propia tampoco viven en el texto de la fila: se comparan los
+            // ids de las tasas, en orden, porque el orden es el de las filas del documento (spec §7.8).
+            if (!before.BillingWithholdingTaxRateIds.SequenceEqual(after.BillingWithholdingTaxRateIds))
             {
-                changes.Add("retención/excedente de IVA de facturación");
+                changes.Add("retenciones de facturación");
+            }
+
+            // Cambiar el excedente de IVA no cambia el texto de la fila (Describe no lo lee), así que sin esto una
+            // edición que sólo tocara esa pregunta quedaría sin fila de historial.
+            if (after.Billing is not null && before.BillingVatSurplus != after.BillingVatSurplus)
+            {
+                changes.Add("excedente de IVA de facturación");
             }
         }
 
@@ -292,9 +333,16 @@ public static class QuotationChangeSummary
     /// número completo repetido en cada fila.
     /// </summary>
     private static string MaskAccount(QuotationBillingAccountSummary account) =>
-        account.AccountNumber.Length <= 4
-            ? $"{account.BankName} {account.Currency}"
-            : $"{account.BankName} ···{account.AccountNumber[^4..]} {account.Currency}";
+        account.AccountNumber switch
+        {
+            // Empresa sin cuenta (spec 2026-11-17, R3).
+            null => $"sin cuenta {account.Currency}",
+            { Length: <= 4 } => $"{account.BankName} {account.Currency}",
+            var number => $"{account.BankName} ···{number[^4..]} {account.Currency}",
+        };
+
+    /// <summary>Varias frases en una sola fila del historial, recortada al ancho de la columna.</summary>
+    public static string Combine(IEnumerable<string> parts) => Trim(string.Join(" ", parts));
 
     private static string Trim(string summary) =>
         summary.Length <= MaxLength ? summary : summary[..(MaxLength - 1)] + "…";
@@ -315,7 +363,7 @@ public sealed record QuotationHeaderSnapshot(
     string Currency,
     bool IsStorePickup,
     bool BillsToFinalConsumer,
-    bool? BillingWithRetention,
+    IReadOnlyList<Guid> BillingWithholdingTaxRateIds,
     bool? BillingVatSurplus,
     int? GlobalScaleFloor = null,
     bool IsRetail = false,
@@ -342,7 +390,7 @@ public sealed record QuotationHeaderSnapshot(
         quotation.Currency,
         quotation.IsStorePickup,
         quotation.BillsToFinalConsumer,
-        quotation.PartyWithRetention,
+        [.. quotation.BillingWithholdings.Select(withholding => withholding.Rate.TaxRateId)],
         quotation.PartyVatSurplus,
         quotation.GlobalScaleFloor,
         quotation.IsRetail,
@@ -363,13 +411,16 @@ public sealed record QuotationHeaderSnapshot(
                 party.Email,
                 party.Address,
                 party.DepartmentId,
-                party.CityId);
+                party.CityId,
+                party.Country,
+                party.CityName,
+                party.RegionId);
 }
 
 /// <summary>La cuenta de cobro dentro de una foto del encabezado. Es un record para que la
 /// comparación entre antes y después sea por valor, y para que el enmascarado tenga sus partes
 /// separadas en vez de un texto ya armado.</summary>
 public sealed record QuotationBillingAccountSummary(
-    string BankName,
-    string AccountNumber,
+    string? BankName,
+    string? AccountNumber,
     string Currency);

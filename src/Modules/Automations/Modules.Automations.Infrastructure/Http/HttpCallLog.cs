@@ -15,7 +15,8 @@ internal sealed class HttpCallLog(IServiceScopeFactory scopeFactory) : IHttpCall
 
     private const int NodeIdMaxLength = 64;
 
-    private const int ErrorCodeMaxLength = 64;
+    /// <summary>El <c>varchar(64)</c> de <c>http_calls.error_code</c>; <see cref="NetworkFailure"/> arma sus códigos dentro de él.</summary>
+    internal const int ErrorCodeMaxLength = 64;
 
     public async Task RecordAsync(HttpCallEntry entry, CancellationToken cancellationToken)
     {

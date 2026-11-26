@@ -74,7 +74,8 @@ public static class OrdersExportLayoutEndpoints
                     .ToArray(),
                 expectedVersion,
                 httpContext.TraceIdentifier,
-                request.SheetName),
+                request.SheetName,
+                request.IncludePhoneDialCode),
             cancellationToken);
         return LayoutResult(layout, httpContext);
     }
@@ -97,7 +98,8 @@ public static class OrdersExportLayoutEndpoints
                 .ToArray(),
             layout.Version,
             layout.SheetName,
-            layout.DefaultSheetName));
+            layout.DefaultSheetName,
+            layout.IncludePhoneDialCode));
     }
 
     // Copia de OrderEndpoints.TryParseVersion (mismo proyecto, privado allá): acepta "3", 3 y
@@ -125,10 +127,12 @@ public static class OrdersExportLayoutEndpoints
 /// de convertirse en "restaurar todo" por accidente. `sheetName` (spec 2026-10-05, D6) es
 /// opcional por la razón contraria: nulo o ausente conserva el nombre actual, así que un frontend
 /// anterior a este campo sigue guardando columnas sin borrarle el nombre de la hoja al tenant.
-/// Vacío o sólo espacios no es ausente: es un 422 con `errors.SheetName`.</summary>
+/// Vacío o sólo espacios no es ausente: es un 422 con `errors.SheetName`. `includePhoneDialCode`
+/// (spec 2026-11-25 indicativo) es opcional por lo mismo: nulo o ausente conserva el actual.</summary>
 public sealed record UpdateOrdersExportLayoutRequest(
     IReadOnlyList<OrdersExportColumnRequest>? Columns,
-    string? SheetName = null);
+    string? SheetName = null,
+    bool? IncludePhoneDialCode = null);
 
 public sealed record OrdersExportColumnRequest(
     string? Kind,
@@ -139,13 +143,15 @@ public sealed record OrdersExportColumnRequest(
 
 /// <summary>`sheetName` es el nombre efectivo de la hoja y `defaultSheetName` el de fábrica
 /// (`Pedidos`): viaja por la misma razón que `defaultHeader` por columna (regla BFF), para que
-/// "Restaurar todo" no tenga que saberlo de memoria (spec 2026-10-05, D6).</summary>
+/// "Restaurar todo" no tenga que saberlo de memoria (spec 2026-10-05, D6). `includePhoneDialCode`
+/// es el valor efectivo del interruptor del indicativo (spec 2026-11-25), `true` sin nada guardado.</summary>
 public sealed record OrdersExportLayoutResponse(
     Guid TenantId,
     IReadOnlyList<OrdersExportColumnResponse> Columns,
     long Version,
     string SheetName,
-    string DefaultSheetName);
+    string DefaultSheetName,
+    bool IncludePhoneDialCode);
 
 /// <summary>`DefaultHeader`, `DefaultPosition` (1-based) y `DefaultVisible` viajan por columna
 /// (regla BFF): la pantalla los necesita como placeholder, para "restaurar" una sola y para
