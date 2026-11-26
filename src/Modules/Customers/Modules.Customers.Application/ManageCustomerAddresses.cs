@@ -24,7 +24,8 @@ public sealed record AddCustomerAddressCommand(
     string? Phone,
     bool IsPrincipal,
     string? Country = null,
-    string? CityName = null) : ICommand<CustomerDto>, ICustomerAddressWriteCommand;
+    string? CityName = null,
+    Guid? RegionId = null) : ICommand<CustomerDto>, ICustomerAddressWriteCommand;
 
 public sealed record UpdateCustomerAddressCommand(
     Guid TenantId,
@@ -36,7 +37,8 @@ public sealed record UpdateCustomerAddressCommand(
     string? Phone,
     bool IsPrincipal,
     string? Country = null,
-    string? CityName = null) : ICommand<CustomerDto>, ICustomerAddressWriteCommand;
+    string? CityName = null,
+    Guid? RegionId = null) : ICommand<CustomerDto>, ICustomerAddressWriteCommand;
 
 public sealed record RemoveCustomerAddressCommand(
     Guid TenantId,
@@ -97,6 +99,14 @@ public sealed class CustomerAddressWriteRules : AbstractValidator<ICustomerAddre
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
         RuleFor(command => command.Phone)
             .MaximumLength(CustomerAddress.PhoneMaxLength);
+
+        // La region solo existe fuera de Colombia (la de una ciudad colombiana sale de su departamento). Que exista y sea del
+        // pais lo resuelve el handler contra Geography.
+        RuleFor(command => command.RegionId)
+            .Null()
+            .WithMessage("A Colombian address takes its region from the city, not from a region id.")
+            .When(IsColombian);
+        RuleFor(command => command.RegionId).NotEqual(Guid.Empty);
     }
 
     private static bool IsColombian(ICustomerAddressWriteCommand command) =>
@@ -118,6 +128,8 @@ public interface ICustomerAddressWriteCommand
     Guid? CityId { get; }
 
     string? CityName { get; }
+
+    Guid? RegionId { get; }
 
     string? Phone { get; }
 }
@@ -154,6 +166,8 @@ public sealed class AddCustomerAddressHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        _ = await CustomerRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country, command.RegionId, CustomerRegionRules.AddressRegionInvalid, cancellationToken);
 
         var customer = await CustomerAddressWorkflow.LoadAsync(
             repository, geographyLookup, executionContext,
@@ -169,6 +183,7 @@ public sealed class AddCustomerAddressHandler(
                     : command.Country,
                 CityId = command.CityId,
                 CityName = command.CityName,
+                RegionId = command.RegionId,
                 Phone = command.Phone
             },
             command.IsPrincipal,
@@ -201,6 +216,8 @@ public sealed class UpdateCustomerAddressHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        _ = await CustomerRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country, command.RegionId, CustomerRegionRules.AddressRegionInvalid, cancellationToken);
 
         var customer = await CustomerAddressWorkflow.LoadAsync(
             repository, geographyLookup, executionContext,
@@ -217,6 +234,7 @@ public sealed class UpdateCustomerAddressHandler(
                     : command.Country,
                 CityId = command.CityId,
                 CityName = command.CityName,
+                RegionId = command.RegionId,
                 Phone = command.Phone
             },
             command.IsPrincipal,

@@ -132,6 +132,40 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // La libreta de perfiles de facturación (spec 2026-11-24 §3), gemela de la de direcciones: sin If-Match, y las
+        // cuatro responden el cliente entero.
+        group.MapPost("/{customerId:guid}/billing-profiles", AddCustomerBillingProfileAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Accepts<CustomerBillingProfileRequest>("application/json")
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/{customerId:guid}/billing-profiles/{profileId:guid}", UpdateCustomerBillingProfileAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Accepts<CustomerBillingProfileRequest>("application/json")
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/{customerId:guid}/billing-profiles/{profileId:guid}", RemoveCustomerBillingProfileAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost(
+                "/{customerId:guid}/billing-profiles/{profileId:guid}/principal",
+                MakeCustomerBillingProfilePrincipalAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Spec 2026-11-10 §4.1: vincular o desvincular la empresa de un contacto. Sin If-Match: no edita la ficha, y repetir el
         // vínculo es un 200 sin cambios (ruling P10). Un solo permiso, el de administrar clientes.
         group.MapPut("/{customerId:guid}/company", SetCustomerCompanyAsync)
@@ -340,7 +374,9 @@ public static class CustomerEndpoints
             survivor.ContactCount,
             result.DroppedTags,
             survivor.WithholdingTaxRates,
-            survivor.WithholdingAgentCities));
+            survivor.WithholdingAgentCities,
+            survivor.Region,
+            survivor.BillingProfiles));
     }
 
     private static async Task<IResult> CreateCustomerAsync(
@@ -367,7 +403,8 @@ public static class CustomerEndpoints
                 request.PersonType,
                 request.WithholdingTaxRateIds,
                 request.WithholdingAgentCities,
-                CompanyId: request.CompanyId),
+                CompanyId: request.CompanyId,
+                RegionId: request.RegionId),
             cancellationToken);
 
         return Results.Created(
@@ -400,7 +437,8 @@ public static class CustomerEndpoints
                 request.VatSurplus,
                 request.PersonType,
                 request.WithholdingTaxRateIds,
-                request.WithholdingAgentCities),
+                request.WithholdingAgentCities,
+                request.RegionId),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -524,8 +562,8 @@ public static class CustomerEndpoints
                 request.Phone,
                 request.IsPrincipal,
                 request.Country,
-                request.CityName),
-            cancellationToken);
+                request.CityName,
+                request.RegionId), cancellationToken);
 
         return Results.Ok(ToResponse(customer));
     }
@@ -549,8 +587,8 @@ public static class CustomerEndpoints
                 request.Phone,
                 request.IsPrincipal,
                 request.Country,
-                request.CityName),
-            cancellationToken);
+                request.CityName,
+                request.RegionId), cancellationToken);
 
         return Results.Ok(ToResponse(customer));
     }
@@ -578,6 +616,94 @@ public static class CustomerEndpoints
     {
         var customer = await dispatcher.SendAsync(
             new MakeCustomerAddressPrincipalCommand(tenantId, customerId, addressId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> AddCustomerBillingProfileAsync(
+        Guid tenantId,
+        Guid customerId,
+        CustomerBillingProfileRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new AddCustomerBillingProfileCommand(
+                tenantId,
+                customerId,
+                request.Name,
+                request.PersonType,
+                request.IdentificationType,
+                request.IdentificationNumber,
+                request.Phone,
+                request.Email,
+                request.Address,
+                request.Country,
+                request.CityId,
+                request.CityName,
+                request.RegionId,
+                request.WithholdingTaxRateIds,
+                request.VatSurplus,
+                request.IsPrincipal), cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> UpdateCustomerBillingProfileAsync(
+        Guid tenantId,
+        Guid customerId,
+        Guid profileId,
+        CustomerBillingProfileRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new UpdateCustomerBillingProfileCommand(
+                tenantId,
+                customerId,
+                profileId,
+                request.Name,
+                request.PersonType,
+                request.IdentificationType,
+                request.IdentificationNumber,
+                request.Phone,
+                request.Email,
+                request.Address,
+                request.Country,
+                request.CityId,
+                request.CityName,
+                request.RegionId,
+                request.WithholdingTaxRateIds,
+                request.VatSurplus,
+                request.IsPrincipal), cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> RemoveCustomerBillingProfileAsync(
+        Guid tenantId,
+        Guid customerId,
+        Guid profileId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new RemoveCustomerBillingProfileCommand(tenantId, customerId, profileId),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> MakeCustomerBillingProfilePrincipalAsync(
+        Guid tenantId,
+        Guid customerId,
+        Guid profileId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new MakeCustomerBillingProfilePrincipalCommand(tenantId, customerId, profileId),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -645,7 +771,9 @@ public static class CustomerEndpoints
         customer.Contacts ?? [],
         customer.ContactCount,
         customer.WithholdingTaxRates,
-        customer.WithholdingAgentCities);
+        customer.WithholdingAgentCities,
+        customer.Region,
+        customer.BillingProfiles);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,

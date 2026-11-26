@@ -1,5 +1,5 @@
-using Modules.ServiceContracts.Application;
 using Modules.Customers.Domain;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper;
 

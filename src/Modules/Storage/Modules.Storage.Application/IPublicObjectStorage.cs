@@ -9,6 +9,17 @@ public interface IPublicObjectStorage
         string publicKey,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Sube los bytes directo al bucket público, sin pasar por el privado. Es para lo que no tiene
+    /// canónico que copiar: la copia de una factura para Zenvia, que se genera en memoria y se
+    /// descarta con la regla de lifecycle del prefijo.
+    /// </summary>
+    Task UploadAsync(
+        string publicKey,
+        ReadOnlyMemory<byte> content,
+        string contentType,
+        CancellationToken cancellationToken);
+
     Task DeleteAsync(string publicKey, CancellationToken cancellationToken);
 
     /// <summary>

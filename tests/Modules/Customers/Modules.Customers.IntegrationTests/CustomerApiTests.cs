@@ -286,10 +286,11 @@ public sealed class CustomerApiTests(SharedCustomersHost sharedHost) : IClassFix
         Assert.Equal("Verde Esencial S.A.S.", Assert.Single(fragment.Items).Name);
     }
 
-    // Con menos de siete digitos el telefono no entra al criterio: un fragmento corto aparece en
+    // Con menos de seis digitos el telefono no entra al criterio: un fragmento corto aparece en
     // casi cualquier numero y el listado dejaria de filtrar. El nombre sigue buscando igual.
+    // Desde seis ya entra (owner, 2026-11-23): lo que se teclea para encontrar a un cliente por su numero.
     [Fact]
-    public async Task TheCombinedSearchIgnoresThePhoneBelowSevenDigits()
+    public async Task TheCombinedSearchIgnoresThePhoneBelowSixDigits()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -301,15 +302,17 @@ public sealed class CustomerApiTests(SharedCustomersHost sharedHost) : IClassFix
         await CreateCustomerWithPhoneAsync(
             client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2", "3109352187");
 
-        var shortDigits = await ListAsync(client, "?search=123456");
+        var shortDigits = await ListAsync(client, "?search=34567");
+        var sixDigits = await ListAsync(client, "?search=234567");
         var byName = await ListAsync(client, "?search=naturaleza");
 
         Assert.DoesNotContain(shortDigits.Items, item => item.Name == "Verde Esencial S.A.S.");
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(sixDigits.Items).Name);
         Assert.Equal("Naturaleza Viva Ltda.", Assert.Single(byName.Items).Name);
     }
 
     // `phone` es la caja propia del telefono, al nivel de nombre, documento y CUC. Compara solo los
-    // digitos contra `phone_e164`, sin el minimo de siete de `search`: quien llena el campo Telefono
+    // digitos contra `phone_e164`, sin el minimo de seis de `search`: quien llena el campo Telefono
     // ya dijo que busca un telefono, asi que un fragmento corto (los ultimos cuatro) es intencional.
     // Sin ningun digito (`abc`) no hay telefono que buscar y el filtro no aplica.
     [Fact]

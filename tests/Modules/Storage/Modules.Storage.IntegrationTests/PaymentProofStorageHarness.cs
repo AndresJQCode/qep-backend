@@ -640,6 +640,8 @@ internal sealed class InMemoryObjectStorage : IObjectStorage
 /// S3: borrar lo ya listado no corre las páginas siguientes.</summary>
 internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets.qep.test";
 
     private readonly ConcurrentDictionary<string, DateTimeOffset> _objects = new(StringComparer.Ordinal);

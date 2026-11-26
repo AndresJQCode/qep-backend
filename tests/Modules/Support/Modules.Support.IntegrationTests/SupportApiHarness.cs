@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Modules.Authorization.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Support.Application;
@@ -47,7 +48,7 @@ internal static class SupportApiHarness
     }
 
     /// <summary>
-    /// Siembra la fila del tenant y sus módulos. Inserta únicamente las claves que faltan, por lo
+    /// Siembra la fila del tenant, sus roles de fábrica y sus módulos. Inserta únicamente las claves que faltan, por lo
     /// que se puede llamar dos veces sobre el mismo tenant.
     /// </summary>
     public static async Task SeedTenantAsync(
@@ -75,6 +76,11 @@ internal static class SupportApiHarness
                 now));
             await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
+
+        // El tenant se inserta directo y después del arranque, así que nace sin los roles que el alta le sembraría.
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(id.Value, TestContext.Current.CancellationToken);
 
         foreach (var key in modules ?? TenantModuleKeys.All)
         {
@@ -152,7 +158,7 @@ internal static class SupportApiHarness
     }
 
     /// <summary>
-    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> y <c>advisor</c> conceden
+    /// Siembra una membresía del tenant (con su usuario) con un rol de fábrica: <c>admin</c> y <c>advisor</c> conceden
     /// <c>support.ticket.manage</c>, <c>billing</c> no. <paramref name="removed"/> la deja quitada.
     /// </summary>
     public static async Task<Guid> SeedMemberAsync(
@@ -305,19 +311,39 @@ internal static class SupportApiHarness
     }
 
     /// <summary>Fase 4b (Tareas 11 y 14): saca el worker de la encuesta y el del cierre automático. Cada resolución pide una encuesta, y
-    /// el worker la procesaría por detrás (la salta con survey_disabled, o la manda) mientras la prueba la mira; y el cierre automático
+    /// (spec 2026-11-22: también el del aviso de «sin asignar», que mira tickets de todos los tenants del host) el worker la procesaría por detrás (la salta con survey_disabled, o la manda) mientras la prueba la mira; y el cierre automático
     /// cerraría los tickets resueltos de una prueba que adelanta el reloj del tenant. Las pruebas de los dos los corren a mano.</summary>
     public static void RemoveSurveyWorker(IServiceCollection services)
     {
         var workers = services
             .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
                 && (descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportSurveyWorker)
-                    || descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportAutoCloseWorker)))
+                    || descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportAutoCloseWorker)
+                    || descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportUnassignedAlertWorker)))
             .ToList();
         foreach (var descriptor in workers)
         {
             services.Remove(descriptor);
         }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22: a real business-hours schedule of the tenant (Monday to Friday 08:00-18:00, the rest closed), created through the
+    /// Messaging endpoint the way a tenant does, so the provider reads what the product stores. Returns its id.
+    /// </summary>
+    public static async Task<Guid> CreateOfficeScheduleAsync(QepApiFactory factory, string tenant, string name)
+    {
+        using var client = CreateClient(
+            factory, SubjectId, tenant, "messaging.conversation.read", "messaging.business_hours.manage");
+        var weekly = Enumerable.Range(1, 7)
+            .Select(day => new { day, ranges = day <= 5 ? new[] { new { from = 480, to = 1080 } } : [] })
+            .ToArray();
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenant}/messaging/business-hours",
+            new { name, weekly, exceptions = Array.Empty<object>(), holidayCountry = (string?)null, connectionIds = Array.Empty<Guid>() },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(System.Net.HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
     }
 
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>

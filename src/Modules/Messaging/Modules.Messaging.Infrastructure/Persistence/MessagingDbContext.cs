@@ -154,6 +154,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-11-09 D1: una fila <c>Order</c> por conexión.</summary>
     public const string MessageTemplateOrderIndex = "UX_message_templates_order";
 
+    /// <summary>Spec 2026-11-21: una fila <c>Invoice</c> por conexión.</summary>
+    public const string MessageTemplateInvoiceIndex = "UX_message_templates_invoice";
+
     /// <summary>Soporte fase 2: una fila <c>SupportReply</c> por conexión.</summary>
     public const string MessageTemplateSupportReplyIndex = "UX_message_templates_support_reply";
 
@@ -163,8 +166,14 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Soporte fase 4b: una fila <c>SupportSurvey</c> por conexión.</summary>
     public const string MessageTemplateSupportSurveyIndex = "UX_message_templates_support_survey";
 
+    /// <summary>Support task notices: one <c>TaskNotice</c> row per connection.</summary>
+    public const string MessageTemplateTaskNoticeIndex = "UX_message_templates_task_notice";
+
     /// <summary>Mayorista: una fila <c>WholesaleInvitationNotice</c> por conexión.</summary>
     public const string MessageTemplateWholesaleInvitationNoticeIndex = "UX_message_templates_wholesale_invitation_notice";
+
+    /// <summary>Agenda: una fila <c>AppointmentReminder</c> por conexión.</summary>
+    public const string MessageTemplateAppointmentReminderIndex = "UX_message_templates_appointment_reminder";
 
     /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
@@ -818,7 +827,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.ToTable("message_templates", Schema, table =>
             table.HasCheckConstraint(
                 "CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply',"
-                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice')"));
+                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -846,6 +855,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
         // Spec 2026-11-09 D1: la del pedido, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateOrderIndex).IsUnique().HasFilter("kind = 'Order'");
+        // Spec 2026-11-21: la de la factura, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateInvoiceIndex).IsUnique().HasFilter("kind = 'Invoice'");
         // Soporte fase 2: la de «Aviso de respuesta», con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateSupportReplyIndex).IsUnique()
             .HasFilter("kind = 'SupportReply'");
@@ -857,6 +868,12 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Mayorista: el aviso de invitación de distribuidor, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateWholesaleInvitationNoticeIndex).IsUnique()
             .HasFilter("kind = 'WholesaleInvitationNotice'");
+        // Support task notices: the assignment notice, same rule.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateTaskNoticeIndex).IsUnique()
+            .HasFilter("kind = 'TaskNotice'");
+        // Agenda: el recordatorio de cita, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateAppointmentReminderIndex).IsUnique()
+            .HasFilter("kind = 'AppointmentReminder'");
         // Cobros recurrentes §5: una fila por tipo de aviso en cada conexión, como la de cotización (dos aprovisionamientos a la vez).
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Kind }, MessageTemplateBillingIndex).IsUnique()
             .HasFilter("kind IN ('BillingReminder','BillingOverdue')");

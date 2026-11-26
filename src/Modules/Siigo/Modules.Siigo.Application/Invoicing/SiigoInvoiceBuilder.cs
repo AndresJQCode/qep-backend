@@ -5,8 +5,8 @@ using Modules.Siigo.Domain;
 namespace Modules.Siigo.Application.Invoicing;
 
 /// <summary>Un pago de la factura armada, para que la vista previa lo muestre. <paramref name="ProofId"/> es el comprobante del que sale
-/// (<c>null</c> en el saldo, que va a la forma de pago de la cuenta de cobro); <paramref name="DueDate"/> sólo en el saldo, el día de la factura.</summary>
-public sealed record SiigoDraftPayment(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly? DueDate);
+/// (<c>null</c> en el saldo, que va a la forma de pago de la cuenta de cobro); <paramref name="DueDate"/> es el día de la factura.</summary>
+public sealed record SiigoDraftPayment(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly DueDate);
 
 /// <summary>Una factura armada: su tipo, el cuerpo ya serializado y el cliente que habría que crear si Siigo no lo tiene.
 /// <paramref name="Total"/> es lo que suman sus pagos (el neto, con las retenciones ya descontadas).</summary>
@@ -97,9 +97,10 @@ public static class SiigoInvoiceBuilder
         }
 
         // Los pagos tienen que sumar el total que Siigo calcula (IVA redondeado por línea desde la base ya redondeada), no el de QEP: la
-        // diferencia (hasta un peso, ya validada arriba) se reparte en los pagos y no se pide después con el total que proponga Siigo.
+        // diferencia (hasta un peso, ya validada arriba) se reparte en los pagos. Lo que este cálculo no prediga lo corrige el reenvío
+        // (SiigoPaymentRounding).
         var freightDelta = separateFreight ? freight!.Subtotal + freight.Tax - (input.FreightSubtotal + input.FreightTaxAmount) : 0m;
-        plan = PlanPayments(input, separateFreight, computedOrderTotal - qepOrderTotal, freightDelta);
+        plan = PlanPayments(input, separateFreight, computedOrderTotal - qepOrderTotal - RetentionRoundingDelta(input, lines), freightDelta);
 
         if (plan.Exceeds)
         {
@@ -117,6 +118,29 @@ public static class SiigoInvoiceBuilder
         }
 
         return new SiigoBuildResult.Ready(drafts);
+    }
+
+    /// <summary>
+    /// Lo que la retención por ítem de Siigo se aparta de la de QEP. ReteFuente viaja en los <c>taxes</c> de cada ítem y Siigo la redondea
+    /// ítem por ítem (<c>round(base × % / 100, 2)</c>); QEP la saca sobre la base entera, así que pueden diferir unos centavos y los pagos
+    /// rechazan con <c>invalid_total_payments</c>. Como con el IVA, sólo se corrige el redondeo (hasta <see cref="Tolerance"/>): una
+    /// diferencia mayor es otra base o un porcentaje distinto, y se deja a la vista en vez de taparla. Sin porcentaje (0) no se corrige.
+    /// </summary>
+    private static decimal RetentionRoundingDelta(SiigoInvoiceInput input, IReadOnlyList<ResolvedItem> lines)
+    {
+        var delta = 0m;
+        foreach (var withholding in input.Withholdings.Where(value =>
+                     SiigoWithholdingPlacement.For(value.Type) == SiigoWithholdingTarget.ItemTax && value.Percentage > 0m))
+        {
+            var perItem = lines.Sum(line => Math.Round(line.Subtotal * withholding.Percentage / 100m, 2, MidpointRounding.AwayFromZero));
+            var difference = perItem - withholding.Amount;
+            if (Math.Abs(difference) <= Tolerance)
+            {
+                delta += difference;
+            }
+        }
+
+        return delta;
     }
 
     private static SiigoInvoiceDraft Draft(
@@ -333,16 +357,19 @@ public static class SiigoInvoiceBuilder
     {
         var payments = new List<SiigoDraftPayment>();
         var proposed = ProposedPaymentType(input, settings);
+
+        // Todo pago vence el día de la factura: Siigo rechaza con `parameter_required` el que no lo trae si su forma de pago maneja
+        // vencimiento, y eso se configura en Siigo, así que un comprobante puede caer en una así.
         foreach (var part in plan.Proofs.Where(part => part.Kind == kind))
         {
             var chosen = overrides.FirstOrDefault(value => value.Kind == kind && value.ProofId == part.ProofId)?.SiigoPaymentTypeId;
-            payments.Add(new SiigoDraftPayment(part.ProofId, (chosen ?? proposed)!, part.Amount, null));
+            payments.Add(new SiigoDraftPayment(part.ProofId, (chosen ?? proposed)!, part.Amount, input.Today));
         }
 
         var balance = plan.Balances.Single(value => value.Kind == kind).Amount;
         if (balance > 0)
         {
-            // El saldo vence el día de la factura y va a la misma forma de pago que los comprobantes (spec 2026-11-20).
+            // El saldo va a la misma forma de pago que los comprobantes (spec 2026-11-20).
             payments.Add(new SiigoDraftPayment(null, proposed!, balance, input.Today));
         }
 
@@ -359,17 +386,45 @@ public static class SiigoInvoiceBuilder
         decimal Discount,
         string? TaxId,
         decimal Subtotal,
-        decimal Tax);
+        decimal Tax,
+        bool IsGift = false,
+        decimal? TaxBase = null);
+
+    // Siigo pide el tipo de contribuyente de un obsequio; siempre es la empresa (spec 2026-11-21).
+    private const string GiftTaxpayer = "Company";
 
     private static ResolvedItem Resolve(SiigoInvoiceLineInput line, SiigoSettings settings)
     {
         var quantity = Math.Round(line.Quantity, 2, MidpointRounding.AwayFromZero);
+        if (line.IsGift)
+        {
+            // Un obsequio va con precio 0 y no suma al total: Siigo calcula su IVA sobre `tax_base`, que es el precio de lista sin IVA
+            // (el de lista viene con IVA incluido). Siigo documenta `tax_base` con «máximo 11 enteros y 2 decimales» (`price` admite 6): con más
+            // decimales rechaza con `invalid_amount` en `items[n].tax_base` (observado el 2026-11-24 con 30168,067227).
+            var taxBase = Math.Round(line.ListUnitPrice * 100m / (100m + line.TaxPercentage), 2, MidpointRounding.AwayFromZero);
+            return new ResolvedItem(
+                VariantLink(settings, line.VariantId)!.SiigoProductCode,
+                line.Name,
+                quantity,
+                0m,
+                0m,
+                TaxId(settings, line.TaxPercentage),
+                0m,
+                0m,
+                IsGift: true,
+                TaxBase: taxBase);
+        }
+
         var factor = 1m - (line.DiscountPercentage / 100m);
 
-        // El precio es el de antes del descuento: el Subtotal del pedido ya lo trae aplicado, y Siigo lo vuelve a aplicar con `discount`.
-        var (price, discount) = quantity > 0 && factor > 0
-            ? (Math.Round(line.Subtotal / (quantity * factor), 6, MidpointRounding.AwayFromZero), line.DiscountPercentage)
-            : (0m, 0m);
+        // BaseWithDiscount: el precio es el de antes del descuento (el Subtotal del pedido ya lo trae aplicado y Siigo lo vuelve a aplicar
+        // con `discount`). DiscountedPrice: el Subtotal ya trae el descuento, así que el precio es Subtotal / cantidad y `discount` va en 0.
+        // El subtotal y el IVA de abajo salen igual en los dos modos, y por eso el total no cambia.
+        var (price, discount) = settings.PriceMode == SiigoPriceMode.DiscountedPrice
+            ? (quantity > 0 ? Math.Round(line.Subtotal / quantity, 6, MidpointRounding.AwayFromZero) : 0m, 0m)
+            : quantity > 0 && factor > 0
+                ? (Math.Round(line.Subtotal / (quantity * factor), 6, MidpointRounding.AwayFromZero), line.DiscountPercentage)
+                : (0m, 0m);
         var subtotal = Math.Round(quantity * price * (1m - (discount / 100m)), 2, MidpointRounding.AwayFromZero);
         var tax = Math.Round(subtotal * line.TaxPercentage / 100m, 2, MidpointRounding.AwayFromZero);
         return new ResolvedItem(
@@ -453,15 +508,11 @@ public static class SiigoInvoiceBuilder
         // Sin `additional_fields.purchase_order`: un comprobante sin la orden de compra configurada lo rechaza con `document_settings`
         // (prueba real, 2026-11-20), y el número de pedido ya va en las observaciones.
         body["items"] = items;
-        body["payments"] = payments.Select(payment =>
+        body["payments"] = payments.Select(payment => new Dictionary<string, object?>
         {
-            var json = new Dictionary<string, object?> { ["id"] = IdValue(payment.SiigoPaymentTypeId), ["value"] = payment.Value };
-            if (payment.DueDate is { } dueDate)
-            {
-                json["due_date"] = dueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            }
-
-            return json;
+            ["id"] = IdValue(payment.SiigoPaymentTypeId),
+            ["value"] = payment.Value,
+            ["due_date"] = payment.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         }).ToList();
         if (invoiceRetentions.Count > 0)
         {
@@ -492,10 +543,21 @@ public static class SiigoInvoiceBuilder
             taxes.Add(new Dictionary<string, object?> { ["id"] = IdValue(vat) });
         }
 
-        taxes.AddRange(withholdings.Select(id => new Dictionary<string, object?> { ["id"] = IdValue(id) }));
+        // Un regalo no tiene base de retenciones: no recibe ninguna.
+        if (!item.IsGift)
+        {
+            taxes.AddRange(withholdings.Select(id => new Dictionary<string, object?> { ["id"] = IdValue(id) }));
+        }
+
         if (taxes.Count > 0)
         {
             result["taxes"] = taxes;
+        }
+
+        if (item.IsGift)
+        {
+            result["tax_base"] = item.TaxBase;
+            result["taxpayer"] = GiftTaxpayer;
         }
 
         return result;

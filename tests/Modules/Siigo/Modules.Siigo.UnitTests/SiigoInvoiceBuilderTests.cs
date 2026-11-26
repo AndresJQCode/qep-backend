@@ -47,6 +47,105 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
+    public void BaseWithDiscountStaysAsBefore()
+    {
+        using var json = Json(Ready(Build(settings: Settings(priceMode: SiigoPriceMode.BaseWithDiscount))));
+        var items = json.RootElement.GetProperty("items");
+
+        Assert.Equal(50000m, items[0].GetProperty("price").GetDecimal());
+        Assert.Equal(33333.333333m, items[1].GetProperty("price").GetDecimal());
+        Assert.Equal(10m, items[1].GetProperty("discount").GetDecimal());
+    }
+
+    [Fact]
+    public void DiscountedPriceSendsThePriceAfterTheDiscount()
+    {
+        using var json = Json(Ready(Build(settings: Settings(priceMode: SiigoPriceMode.DiscountedPrice))));
+        var items = json.RootElement.GetProperty("items");
+
+        // 3 x 30.000 = 90.000, el Subtotal de la línea (que ya trae el 10 %).
+        Assert.Equal(30000m, items[1].GetProperty("price").GetDecimal());
+        Assert.Equal(0m, items[1].GetProperty("discount").GetDecimal());
+        Assert.Equal(50000m, items[0].GetProperty("price").GetDecimal());
+        Assert.Equal(0m, items[0].GetProperty("discount").GetDecimal());
+    }
+
+    [Fact]
+    public void BothModesProduceTheSameInvoiceTotals()
+    {
+        var input = Order() with { Lines = [.. Order().Lines.Select(line => line with { Quantity = 7m })] };
+        input = input with { Lines = [input.Lines[0] with { Subtotal = 350000m, TaxAmount = 66500m }, input.Lines[1] with { Subtotal = 189000m }] };
+        input = input with { ProductsTotal = 605500m, Total = 605500m, NetTotal = 605500m };
+
+        var baseDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.BaseWithDiscount)));
+        var discountedDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice)));
+        using var baseJson = Json(baseDraft);
+        using var discountedJson = Json(discountedDraft);
+
+        Assert.Equal(baseDraft.Total, discountedDraft.Total);
+        Assert.Equal(PaymentsOf(baseJson), PaymentsOf(discountedJson));
+        Assert.Equal(
+            baseJson.RootElement.GetProperty("items").EnumerateArray().Select(Net),
+            discountedJson.RootElement.GetProperty("items").EnumerateArray().Select(Net));
+    }
+
+    [Fact]
+    public void DiscountedPriceKeepsTheSameValuesWithAFractionalQuantity()
+    {
+        var input = Order();
+        input = input with { Lines = [input.Lines[0] with { Quantity = 1.5m, Subtotal = 100000m, TaxAmount = 19000m }, input.Lines[1]] };
+
+        var baseDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.BaseWithDiscount)));
+        var discountedDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice)));
+        using var baseJson = Json(baseDraft);
+        using var discountedJson = Json(discountedDraft);
+        var baseItem = baseJson.RootElement.GetProperty("items")[0];
+        var discountedItem = discountedJson.RootElement.GetProperty("items")[0];
+
+        Assert.Equal(Net(baseItem), Net(discountedItem));
+        Assert.Equal(100000m, Net(discountedItem));
+        Assert.Equal(
+            baseItem.GetProperty("taxes")[0].GetProperty("id").GetInt32(),
+            discountedItem.GetProperty("taxes")[0].GetProperty("id").GetInt32());
+        Assert.Equal(baseDraft.Total, discountedDraft.Total);
+        Assert.Equal(PaymentsOf(baseJson), PaymentsOf(discountedJson));
+    }
+
+    [Fact]
+    public void DiscountedPriceWithZeroQuantityDoesNotDivide()
+    {
+        var input = Order();
+        input = input with { Lines = [input.Lines[0], input.Lines[1] with { Quantity = 0m, Subtotal = 0m }], ProductsTotal = 119000m, Total = 119000m, NetTotal = 119000m };
+
+        using var json = Json(Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.Equal((0m, 0m), (item.GetProperty("price").GetDecimal(), item.GetProperty("discount").GetDecimal()));
+    }
+
+    [Fact]
+    public void AGiftIsTheSameInBothModes()
+    {
+        var input = Order();
+        input = input with { Lines = [input.Lines[0], input.Lines[1] with { IsGift = true, Subtotal = 0m, ListUnitPrice = 30000m }], ProductsTotal = 119000m, Total = 119000m, NetTotal = 119000m };
+
+        using var baseJson = Json(Ready(Build(input, Settings(priceMode: SiigoPriceMode.BaseWithDiscount))));
+        using var discountedJson = Json(Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice))));
+
+        Assert.Equal(
+            baseJson.RootElement.GetProperty("items")[1].GetRawText(),
+            discountedJson.RootElement.GetProperty("items")[1].GetRawText());
+        Assert.Equal(0m, discountedJson.RootElement.GetProperty("items")[1].GetProperty("price").GetDecimal());
+    }
+
+    private static decimal Net(System.Text.Json.JsonElement item) =>
+        Math.Round(
+            item.GetProperty("quantity").GetDecimal() * item.GetProperty("price").GetDecimal()
+                * (1m - (item.GetProperty("discount").GetDecimal() / 100m)),
+            2,
+            MidpointRounding.AwayFromZero);
+
+    [Fact]
     public void AZeroRateLineWithoutLinkHasNoTaxes()
     {
         using var json = Json(Ready(Build()));
@@ -217,8 +316,12 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19,
-            ProductsTotal = 209000m, Total = 220900m, NetTotal = 220900m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            ProductsTotal = 209000m,
+            Total = 220900m,
+            NetTotal = 220900m,
         };
 
         var drafts = Assert.IsType<SiigoBuildResult.Ready>(Build(input)).Drafts;
@@ -251,8 +354,12 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19,
-            Total = 220900m, RetentionAmount = 2500m, NetTotal = 218400m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            Total = 220900m,
+            RetentionAmount = 2500m,
+            NetTotal = 218400m,
             Withholdings = [ReteFuente(), ReteIca()],
         };
 
@@ -300,7 +407,8 @@ public sealed class SiigoInvoiceBuilderTests
         var balance = payments[1];
 
         // Spec 2026-11-20: el saldo usa la forma de pago de la cuenta de cobro, igual que los comprobantes, y vence el día de la factura.
-        Assert.False(payments[0].TryGetProperty("due_date", out _));
+        // El comprobante también lleva vencimiento: Siigo rechaza con `parameter_required` una forma de pago que lo maneja.
+        Assert.Equal("2026-11-18", payments[0].GetProperty("due_date").GetString());
         Assert.Equal(9001, balance.GetProperty("id").GetInt32());
         Assert.Equal(109000m, balance.GetProperty("value").GetDecimal());
         Assert.Equal("2026-11-18", balance.GetProperty("due_date").GetString());
@@ -369,7 +477,11 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19, Total = 220900m, NetTotal = 220900m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            Total = 220900m,
+            NetTotal = 220900m,
             PaymentProofs = [new SiigoPaymentProofInput(ProofA, 215000m)],
         };
 
@@ -391,7 +503,9 @@ public sealed class SiigoInvoiceBuilderTests
         Order() with
         {
             Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 102m, 7666285.71m, 35m, 19, 1456594.29m)],
-            ProductsTotal = 9122880.00m, Total = 9122880.00m, NetTotal = 9122880.00m,
+            ProductsTotal = 9122880.00m,
+            Total = 9122880.00m,
+            NetTotal = 9122880.00m,
             PaymentProofs = proofs,
         };
 
@@ -417,7 +531,44 @@ public sealed class SiigoInvoiceBuilderTests
         var payments = json.RootElement.GetProperty("payments");
         Assert.Equal(1, payments.GetArrayLength());
         Assert.Equal(9122879.99m, payments[0].GetProperty("value").GetDecimal());
-        Assert.False(payments[0].TryGetProperty("due_date", out _));
+        Assert.Equal("2026-11-18", payments[0].GetProperty("due_date").GetString());
+    }
+
+    // Siigo aplica ReteFuente por ítem y redondea cada una (2,5 % de 100,20 = 2,505 → 2,51; dos líneas: 5,02); QEP la saca sobre la base
+    // entera (2,5 % de 200,40 = 5,01). Caso real: pedido de 8 líneas, QEP 20.595.927,31 contra 20.595.927,33 de Siigo.
+    private static SiigoInvoiceInput PerLineRetentionOrder(decimal qepRetention, decimal proof) =>
+        Order() with
+        {
+            Lines =
+            [
+                new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 1m, 100.20m, 0m, 19, 19.04m),
+                new SiigoInvoiceLineInput(Line2Variant, "Producto dos", 1m, 100.20m, 0m, 19, 19.04m),
+            ],
+            ProductsTotal = 238.48m,
+            Total = 238.48m,
+            RetentionAmount = qepRetention,
+            NetTotal = 238.48m - qepRetention,
+            Withholdings = [new SiigoWithholdingInput(ReteFuenteRate, "Retefuente 2,5 %", TaxCountries.RetefuenteType, qepRetention, 2.5m)],
+            PaymentProofs = [new SiigoPaymentProofInput(ProofA, proof)],
+        };
+
+    [Fact]
+    public void ThePaymentsFollowTheRetentionSiigoRoundsPerItem()
+    {
+        // El comprobante es el neto de QEP (238,48 − 5,01 = 233,47); Siigo espera 238,48 − 5,02 = 233,46 y el pago se recorta a él.
+        using var json = Json(Ready(Build(PerLineRetentionOrder(5.01m, 233.47m))));
+
+        Assert.Equal([(9001, 233.46m)], PaymentsOf(json));
+    }
+
+    [Fact]
+    public void ARetentionThatDiffersByMoreThanRoundingIsNotAdjusted()
+    {
+        // 8,00 contra 5,02 son casi 3 pesos: no es redondeo (la retención aplica a otra base): no se maquilla, y el pago sigue siendo el
+        // neto de QEP (238,48 − 8,00).
+        using var json = Json(Ready(Build(PerLineRetentionOrder(8m, 230.48m))));
+
+        Assert.Equal([(9001, 230.48m)], PaymentsOf(json));
     }
 
     [Fact]
@@ -577,6 +728,113 @@ public sealed class SiigoInvoiceBuilderTests
     public void TheRequestNeverPrintsItsBody()
     {
         Assert.DoesNotContain("900123456", Ready(Build()).ToString(), StringComparison.Ordinal);
+    }
+
+    // ---- Regalos (spec 2026-11-21): un obsequio va con price 0, tax_base sin IVA y taxpayer "Company". ------------------------------
+
+    private static SiigoInvoiceLineInput Gift(Guid variantId, int taxPercentage = 19, decimal listUnitPrice = 1_000m) =>
+        new(variantId, "Regalo", 1m, 0m, 100m, taxPercentage, 0m, IsGift: true, ListUnitPrice: listUnitPrice);
+
+    // 10 u. pagas a 1.000 con IVA 19 incluido: base 8.403,36 + IVA 1.596,64 = 10.000.
+    private static SiigoInvoiceInput PaidTenPlus(SiigoInvoiceLineInput gift) =>
+        Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 10m, 8_403.36m, 0m, 19, 1_596.64m), gift],
+            ProductsTotal = 10_000m,
+            Total = 10_000m,
+            NetTotal = 10_000m,
+        };
+
+    [Fact]
+    public void AGiftItemIsSentWithZeroPriceTaxBaseAndCompanyTaxpayer()
+    {
+        using var json = Json(Ready(Build(PaidTenPlus(Gift(Line1Variant)))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.Equal("SKU-1", item.GetProperty("code").GetString());
+        Assert.Equal("Regalo", item.GetProperty("description").GetString());
+        Assert.Equal(1m, item.GetProperty("quantity").GetDecimal());
+        Assert.Equal(0m, item.GetProperty("price").GetDecimal());
+        Assert.Equal(0m, item.GetProperty("discount").GetDecimal());
+        // Siigo documenta `tax_base` con «máximo 11 enteros y 2 decimales» (a diferencia de `price`, que admite 6): 840,336134 → 840,34.
+        Assert.Equal(840.34m, item.GetProperty("tax_base").GetDecimal());
+        Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
+        var taxes = item.GetProperty("taxes");
+        Assert.Equal(1, taxes.GetArrayLength());
+        Assert.Equal(7001, taxes[0].GetProperty("id").GetInt32());
+    }
+
+    [Fact]
+    public void AGiftDoesNotChangeTheOrderTotal()
+    {
+        var result = Build(PaidTenPlus(Gift(Line1Variant)));
+        using var json = Json(Ready(result));
+
+        Assert.Equal(10_000m, PaymentsSum(json));
+        Assert.IsNotType<SiigoBuildResult.TotalsMismatch>(result);
+    }
+
+    [Fact]
+    public void AGiftWithoutVatHasNoTaxesAndTaxBaseEqualsTheListPrice()
+    {
+        using var json = Json(Ready(Build(PaidTenPlus(Gift(Line2Variant, taxPercentage: 0)))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.False(item.TryGetProperty("taxes", out _));
+        Assert.Equal(1_000m, item.GetProperty("tax_base").GetDecimal());
+        Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
+    }
+
+    [Fact]
+    public void AGiftGetsNoWithholdings()
+    {
+        var input = PaidTenPlus(Gift(Line1Variant)) with { Withholdings = [ReteFuente()] };
+
+        using var json = Json(Ready(Build(input)));
+        var items = json.RootElement.GetProperty("items");
+
+        Assert.Equal([7001, 8001], items[0].GetProperty("taxes").EnumerateArray().Select(tax => tax.GetProperty("id").GetInt32()));
+        Assert.Equal([7001], items[1].GetProperty("taxes").EnumerateArray().Select(tax => tax.GetProperty("id").GetInt32()));
+    }
+
+    [Fact]
+    public void AGiftOfAnUnlinkedVariantIsMissing()
+    {
+        var unlinked = Guid.NewGuid();
+
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(PaidTenPlus(Gift(unlinked)))).Missing);
+
+        Assert.Equal(new SiigoMissing("variant_unlinked", unlinked.ToString(), "Regalo"), missing);
+    }
+
+    [Fact]
+    public void AGiftWithAnUnlinkedTaxIsMissing()
+    {
+        var input = Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line2Variant, "Producto dos", 3m, 90000m, 10m, 0, 0m), Gift(Line1Variant)],
+            ProductsTotal = 90000m,
+            Total = 90000m,
+            NetTotal = 90000m,
+        };
+        var settings = Settings();
+        settings.ReplaceTaxLinks([]);
+
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(input, settings)).Missing);
+
+        Assert.Equal("tax_unlinked", missing.Code);
+        Assert.Equal("19", missing.Reference);
+    }
+
+    [Fact]
+    public void PaidItemsAreSerializedExactlyAsBefore()
+    {
+        var json = Ready(Build()).Request.Json;
+
+        // Literal capturado con el armador de antes de los regalos: una línea pagada no cambia ni un byte.
+        const string Expected =
+            """{"document":{"id":24446},"date":"2026-11-18","customer":{"identification":"900123456","branch_office":0},"cost_center":10,"seller":629,"stamp":{"send":false},"mail":{"send":false},"observations":"Pedido P-1042","items":[{"code":"SKU-1","description":"Producto uno","quantity":2,"price":50000,"discount":0,"warehouse":1,"taxes":[{"id":7001}]},{"code":"SKU-2","description":"Producto dos","quantity":3,"price":33333.333333,"discount":10,"warehouse":1}],"payments":[{"id":9001,"value":209000.00,"due_date":"2026-11-18"}]}""";
+        Assert.Equal(Expected, json);
     }
 
     private static decimal PaymentsSum(System.Text.Json.JsonDocument json) =>

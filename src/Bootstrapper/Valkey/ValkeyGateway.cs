@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
@@ -36,12 +37,14 @@ internal sealed partial class ValkeyGateway(
         }
 
         Task<T>? pending = null;
+        var started = Stopwatch.GetTimestamp();
         try
         {
             pending = operation(multiplexer.GetDatabase());
             var value = await pending
                 .WaitAsync(TimeSpan.FromMilliseconds(options.Value.OperationTimeoutMs), cancellationToken)
                 .ConfigureAwait(false);
+            metrics.RecordOperation(area, ValkeyOperationOutcome.Ok, Stopwatch.GetElapsedTime(started));
             return new ValkeyAttempt<T>(true, value);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -51,9 +54,37 @@ internal sealed partial class ValkeyGateway(
         }
         catch (Exception exception)
         {
-            Observe(pending);
+            MeasureFailed(area, pending, started);
             return Fallback<T>(area, exception.GetType().Name);
         }
+    }
+
+    // Una operación que sigue viva se soltó por tope: se mide cuando termine, en el mismo hilo que la completa para no sumar
+    // otra espera. La continuación además observa su excepción. Si ya terminó, la duración es la de ahora.
+    private void MeasureFailed(ValkeyArea area, Task? pending, long started)
+    {
+        if (pending is { IsCompleted: false })
+        {
+            _ = pending.ContinueWith(
+                task =>
+                {
+                    _ = task.Exception;
+                    metrics.RecordOperation(
+                        area,
+                        task.IsCompletedSuccessfully ? ValkeyOperationOutcome.Late : ValkeyOperationOutcome.LateError,
+                        Stopwatch.GetElapsedTime(started));
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            return;
+        }
+
+        // Terminó justo entre el tope y este punto: respondió, pero tarde.
+        var outcome = pending is { IsCompletedSuccessfully: true }
+            ? ValkeyOperationOutcome.Late
+            : ValkeyOperationOutcome.Error;
+        metrics.RecordOperation(area, outcome, Stopwatch.GetElapsedTime(started));
     }
 
     /// <summary>El multiplexer existe y está conectado ahora mismo.</summary>
@@ -147,7 +178,7 @@ internal sealed partial class ValkeyGateway(
 
     private void RecordFallback(ValkeyArea area, string reason)
     {
-        metrics.RecordFallback(area);
+        metrics.RecordFallback(area, reason);
         LogFallback(logger, area, reason);
     }
 

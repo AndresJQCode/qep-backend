@@ -1,5 +1,5 @@
-using BuildingBlocks.Domain.Pricing;
 using System.Globalization;
+using BuildingBlocks.Domain.Pricing;
 using Modules.Pos.Domain;
 using static Modules.Pos.UnitTests.PosFixtures;
 

@@ -371,6 +371,11 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("color_scheme");
 
+                    b.Property<string>("Language")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("language");
+
                     b.Property<bool>("MessageSound")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")

@@ -83,6 +83,10 @@ public sealed class CreateTicketTypeHandler(
             await settings.LockAsync(command.TenantId, cancellationToken);
             // Leída ya con el candado: en READ COMMITTED esta lectura ve el tipo que confirmó el alta que esperábamos.
             var existing = await types.ListAsync(command.TenantId, cancellationToken);
+            // ListAsync no trae el tipo interno: su posición cuenta igual, o el tipo nuevo empataría con ella (un tenant de ocho tipos
+            // tiene el interno en la 9).
+            var internalType = await types.FindInternalAsync(command.TenantId, cancellationToken);
+            var lastPosition = Math.Max(existing.Count == 0 ? 0 : existing.Max(item => item.Position), internalType?.Position ?? 0);
             type = SupportTicketType.Create(
                 SupportTicketTypeId.New(),
                 command.TenantId,
@@ -91,7 +95,7 @@ public sealed class CreateTicketTypeHandler(
                 command.TermIsLegal!.Value,
                 command.RequiresFormalResponse!.Value,
                 command.IsPublished!.Value,
-                existing.Count == 0 ? 1 : existing.Max(item => item.Position) + 1,
+                lastPosition + 1,
                 now,
                 command.FormalNextStep);
             types.Add(type);

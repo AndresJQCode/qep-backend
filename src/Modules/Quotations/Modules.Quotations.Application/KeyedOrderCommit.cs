@@ -1,4 +1,4 @@
-﻿using Modules.Quotations.Domain;
+using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;

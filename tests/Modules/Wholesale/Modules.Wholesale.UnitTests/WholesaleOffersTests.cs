@@ -15,7 +15,6 @@ public sealed class WholesaleOffersTests
     private readonly DistributorWorld _world = new();
     private readonly FakeTenancy _tenancy = new();
     private readonly FakeCatalogReader _catalog = new();
-    private readonly FakeTenantPriceRounding _rounding = new(new PriceRounding(0, PriceRoundingMode.Nearest));
     private readonly Guid _buyer = Guid.CreateVersion7();
 
     public WholesaleOffersTests()
@@ -36,15 +35,13 @@ public sealed class WholesaleOffersTests
     private static CancellationToken Ct => DistributorWorld.Ct;
 
     private WholesaleOffers Offers() =>
-        new(_world.Distributors, _world.PriceLists, new FakeTenantDefaultCurrency("COP"), _rounding, _catalog, _tenancy, _tenancy);
+        new(_world.Distributors, _world.PriceLists, new FakeTenantDefaultCurrency("COP"), _catalog, _tenancy, _tenancy);
 
     private Distributor SeedActive() => _world.SeedActive(distributorTenant: _buyer);
 
-    private PriceList UseCategories(Distributor distributor, decimal discount, params Guid[] categories)
+    private WholesalePriceList UseCategories(Distributor distributor, decimal discount, params Guid[] categories)
     {
-        var list = _world.PriceLists.Seed(PriceList.Create(
-            _world.Tenant, "Hogar " + Guid.CreateVersion7(), discount, PriceListVisibility.Categories, categories,
-            DistributorWorld.Now));
+        var list = _world.PriceLists.Seed(_world.Tenant, "Hogar " + Guid.CreateVersion7(), -discount, categories);
         distributor.ChangeTerms(list.Id, distributor.AdvisorMemberId, distributor.BillingCompanyId, DistributorWorld.Now);
         return list;
     }
@@ -199,8 +196,7 @@ public sealed class WholesaleOffersTests
         var first = _catalog.AddProduct("R-1", "Uno", null, cop: 10000m);
         var second = _catalog.AddProduct("R-2", "Dos", null, cop: 9999m);
         var distributor = SeedActive();
-        var list = _world.PriceLists.Seed(PriceList.Create(
-            _world.Tenant, "Doce y medio", 12.5m, PriceListVisibility.AllActive, [], DistributorWorld.Now));
+        var list = _world.PriceLists.Seed(_world.Tenant, "Doce y medio", -12.5m);
 
         var (_, fifteen) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [first], Ct);
         distributor.ChangeTerms(list.Id, distributor.AdvisorMemberId, distributor.BillingCompanyId, DistributorWorld.Now);
@@ -209,7 +205,6 @@ public sealed class WholesaleOffersTests
         Assert.Equal(8500m, fifteen[first].ListPrice);
         // 9999 × 0,875 = 8749,125 → 8749 con COP sin decimales.
         Assert.Equal(8749m, twelve[second].ListPrice);
-        Assert.All(_rounding.AskedCurrencies, currency => Assert.Equal("COP", currency));
     }
 
     [Fact]
@@ -281,14 +276,67 @@ public sealed class WholesaleOffersTests
         Assert.True(offers.ShowPrices);
     }
 
+    // Spec 2026-11-22 (D-2): el precio fijo de la lista gana, y «base y descuento» se deriva de él para que cierre.
+    [Fact]
+    public async Task AFixedPriceWinsAndTheDiscountIsDerivedFromIt()
+    {
+        var olla = _catalog.AddProduct("F-1", "Olla", null, cop: 10000m);
+        SeedActive();
+        _world.PriceLists.Fixed[(_world.PriceList.Id, olla, "COP")] = 9000m;
+
+        var (_, offers) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [olla], Ct);
+
+        Assert.Equal((10000m, 10m, 9000m), (offers[olla].BasePrice, offers[olla].DiscountPercent, offers[olla].ListPrice));
+    }
+
+    // Un recargo es un descuento negativo en lo que pinta la orden de compra.
+    [Fact]
+    public async Task ASurchargeIsANegativeDiscount()
+    {
+        var olla = _catalog.AddProduct("F-1", "Olla", null, cop: 10000m);
+        var distributor = SeedActive();
+        var list = _world.PriceLists.Seed(_world.Tenant, "Recargo", 10m);
+        distributor.ChangeTerms(list.Id, distributor.AdvisorMemberId, distributor.BillingCompanyId, DistributorWorld.Now);
+
+        var (terms, offers) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [olla], Ct);
+
+        Assert.Equal(-10m, terms.DiscountPercent);
+        Assert.Equal((10000m, -10m, 11000m), (offers[olla].BasePrice, offers[olla].DiscountPercent, offers[olla].ListPrice));
+    }
+
+    // Un descuento derivado que no cabe en numeric(5,2) se pinta sin descuento y con el fijo como base.
+    [Fact]
+    public async Task AFixedPriceWhoseDiscountDoesNotFitHasNoDiscount()
+    {
+        var clavo = _catalog.AddProduct("F-2", "Clavo", null, cop: 10m);
+        SeedActive();
+        _world.PriceLists.Fixed[(_world.PriceList.Id, clavo, "COP")] = 100000m;
+
+        var (_, offers) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [clavo], Ct);
+
+        Assert.Equal((100000m, 0m, 100000m), (offers[clavo].BasePrice, offers[clavo].DiscountPercent, offers[clavo].ListPrice));
+    }
+
+    // D-8: un distribuidor cuya lista ya no existe (o viene de antes de la unificación) no ve precios: el mismo 403 de siempre.
+    [Fact]
+    public async Task ADistributorWhoseListIsGoneIsRelationshipInactive()
+    {
+        SeedActive();
+        _world.PriceLists.Lists.Clear();
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct));
+
+        Assert.Equal(WholesaleErrorCodes.RelationshipInactive, error.Code);
+    }
+
     // Spec 2026-11-19, D-14: el reintento del envío lee el flag vivo de la lista; sin relación o sin lista, cierra (false).
     [Fact]
     public async Task OrderOffersCarryTheLiveShowPricesOfTheList()
     {
         var cocina = _catalog.AddProduct("C-1", "Olla", null, cop: 10000m);
         SeedActive();
-        _world.PriceLists.Lists.Values.Single().Update(
-            "Mayoristas", 15m, PriceListVisibility.AllActive, [], DistributorWorld.Now, false);
+        HidePrices();
 
         var offers = await Offers().OffersForOrderAsync(_world.Tenant, _buyer, "COP", [cocina], Ct);
 
@@ -316,8 +364,7 @@ public sealed class WholesaleOffersTests
 
         var visibleTerms = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
         var visiblePage = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
-        _world.PriceLists.Lists.Values.Single().Update(
-            "Mayoristas", 15m, PriceListVisibility.AllActive, [], DistributorWorld.Now, false);
+        HidePrices();
         var hiddenTerms = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
         var hiddenPage = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
 
@@ -484,17 +531,29 @@ public sealed class WholesaleOffersTests
     }
 
     // Spec 2026-11-20: exclusions per price list.
-    private PriceList Exclude(Distributor distributor, PriceListVisibility visibility, Guid[] scope, params PriceListExclusion[] exclusions)
+    private WholesalePriceList Exclude(Distributor distributor, bool allActive, Guid[] scope, params (bool Category, Guid Id)[] exclusions)
     {
-        var list = _world.PriceLists.Seed(PriceList.Create(
-            _world.Tenant, "Lista " + Guid.CreateVersion7(), 10m, visibility, scope, DistributorWorld.Now, exclusions: exclusions));
+        var list = _world.PriceLists.Seed(
+            _world.Tenant,
+            "Lista " + Guid.CreateVersion7(),
+            -10m,
+            allActive ? null : scope,
+            hiddenCategoryIds: exclusions.Where(item => item.Category).Select(item => item.Id).ToArray(),
+            hiddenProductIds: exclusions.Where(item => !item.Category).Select(item => item.Id).ToArray());
         distributor.ChangeTerms(list.Id, distributor.AdvisorMemberId, distributor.BillingCompanyId, DistributorWorld.Now);
         return list;
     }
 
-    private static PriceListExclusion HideCategory(Guid id) => new(PriceListExclusionKind.Category, id);
+    private static (bool, Guid) HideCategory(Guid id) => (true, id);
 
-    private static PriceListExclusion HideProduct(Guid id) => new(PriceListExclusionKind.Product, id);
+    private static (bool, Guid) HideProduct(Guid id) => (false, id);
+
+    /// <summary>«Mostrar precios» apagado en la lista del distribuidor (spec 2026-11-19), como lo deja un PUT en Catalog.</summary>
+    private void HidePrices()
+    {
+        var list = _world.PriceLists.Lists.Values.Single();
+        _world.PriceLists.Lists[list.Id] = list with { ShowPrices = false };
+    }
 
     [Fact]
     public async Task TermsCarryTheHiddenIdsAndEmptyWhenThereAreNone()
@@ -504,7 +563,7 @@ public sealed class WholesaleOffersTests
         var distributor = SeedActive();
 
         var plain = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
-        Exclude(distributor, PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(olla)));
+        Exclude(distributor, true, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(olla)));
         var hidden = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
 
         Assert.Empty(plain.HiddenCategoryIds);
@@ -517,7 +576,7 @@ public sealed class WholesaleOffersTests
     public async Task AnExcludedCategoryRemovesItsDescendantsFromTheTreeButNotItsParent()
     {
         var (raiz, hijo, nieto, otra) = SeedTree();
-        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo));
+        Exclude(SeedActive(), true, [], HideCategory(hijo));
 
         var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
 
@@ -529,7 +588,7 @@ public sealed class WholesaleOffersTests
     public async Task ExclusionsApplyInsideAListedCategoryScope()
     {
         var (raiz, hijo, nieto, _) = SeedTree();
-        Exclude(SeedActive(), PriceListVisibility.Categories, [raiz], HideCategory(nieto));
+        Exclude(SeedActive(), false, [raiz], HideCategory(nieto));
 
         var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
 
@@ -543,7 +602,7 @@ public sealed class WholesaleOffersTests
         _catalog.AddProduct("C-1", "Olla", nieto, cop: 10000m);
         _catalog.AddProduct("J-1", "Pala", otra, cop: 5000m);
         var rake = _catalog.AddProduct("J-2", "Rastrillo", otra, cop: 6000m);
-        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(rake)));
+        Exclude(SeedActive(), true, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(rake)));
 
         var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
 
@@ -558,7 +617,7 @@ public sealed class WholesaleOffersTests
     public async Task ACategoryIdThatIsExcludedOrBelowAnExcludedOneIs422NotVisible()
     {
         var (_, hijo, nieto, _) = SeedTree();
-        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo));
+        Exclude(SeedActive(), true, [], HideCategory(hijo));
 
         foreach (var chosen in new[] { hijo, nieto })
         {
@@ -577,7 +636,7 @@ public sealed class WholesaleOffersTests
         var loose = _catalog.AddProduct("S-1", "Suelto", categoryId: null, cop: 1000m);
         var fine = _catalog.AddProduct("J-2", "Rastrillo", otra, cop: 6000m);
         Exclude(
-            SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(shovel)),
+            SeedActive(), true, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(shovel)),
             HideProduct(_catalog.ProductIdOf(loose)));
 
         foreach (var (variant, code) in new[] { (pot, "C-1"), (shovel, "J-1"), (loose, "S-1") })
@@ -609,7 +668,7 @@ public sealed class WholesaleOffersTests
     {
         var (_, hijo, _, _) = SeedTree();
         var pot = _catalog.AddProduct("C-1", "Olla", hijo, cop: 10000m);
-        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(pot)));
+        Exclude(SeedActive(), true, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(pot)));
 
         var prices = await Offers().ListPricesForOrderAsync(_world.Tenant, _buyer, "COP", [pot], Ct);
 

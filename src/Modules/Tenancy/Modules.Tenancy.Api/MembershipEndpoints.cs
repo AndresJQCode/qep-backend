@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -81,7 +82,45 @@ public static class MembershipEndpoints
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // The caller's own membership. Session only (no permission): the number is personal data and these routes never
+        // reach another row. `me` cannot clash with `{membershipId:guid}`.
+        group.MapGet("/me", GetMineAsync)
+            .RequireAuthorization()
+            .Produces<MyMembershipResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        // No If-Match, like marking a notification read: nobody else edits this number from a stale screen.
+        group.MapPut("/me/phone", UpdateMyPhoneAsync)
+            .RequireAuthorization()
+            .Accepts<MyPhoneUpdateRequest>("application/json")
+            .Produces<MyMembershipResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> GetMineAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var mine = await dispatcher.QueryAsync(
+            new GetMyMembershipQuery(new TenantId(tenantId)), cancellationToken);
+        return Results.Ok(new MyMembershipResponse(mine.MembershipId, mine.Phone, mine.PhoneSource));
+    }
+
+    private static async Task<IResult> UpdateMyPhoneAsync(
+        Guid tenantId,
+        MyPhoneUpdateRequest request,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var mine = await dispatcher.SendAsync(
+            new UpdateMyPhoneCommand(new TenantId(tenantId), request.Phone, httpContext.TraceIdentifier),
+            cancellationToken);
+        return Results.Ok(new MyMembershipResponse(mine.MembershipId, mine.Phone, mine.PhoneSource));
     }
 
     private static async Task<IResult> UpdateRolesAsync(
@@ -132,6 +171,7 @@ public static class MembershipEndpoints
                 new MembershipId(membershipId),
                 request.DisplayName ?? string.Empty,
                 AdvisorCodeInput.ToCommandValue(request.AdvisorCode),
+                PhoneInput.ToChange(request.Phone),
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -265,7 +305,10 @@ public static class MembershipEndpoints
             membership.AcceptedAt,
             membership.ExpiresAt,
             membership.Version,
-            membership.IsOwner);
+            membership.IsOwner,
+            membership.Phone,
+            membership.PhoneSource);
+
     private static bool TryParseVersion(string? etag, out long version)
     {
         version = 0;
@@ -315,7 +358,38 @@ public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? R
 /// <c>AdvisorCode</c> nulo borra el código (D1); es <see cref="decimal"/> por lo que explica
 /// <see cref="AdvisorCodeInput"/>.
 /// </summary>
-public sealed record MembershipProfileUpdateRequest(string? DisplayName, decimal? AdvisorCode);
+/// <remarks>
+/// <c>Phone</c> has three states, which is why it is a <see cref="JsonElement"/>: absent keeps the stored number (an old client never
+/// sends it), <c>null</c> clears it, text sets it. <c>AdvisorCode</c> keeps its own rule: absent clears it.
+/// </remarks>
+public sealed record MembershipProfileUpdateRequest(
+    string? DisplayName,
+    decimal? AdvisorCode)
+{
+    // Propiedad y no parámetro del constructor, como UpdateTaxRateRequest.MinimumBase: con `JsonElement Phone = default` el esquema de
+    // OpenAPI (JsonSchemaExporter) intenta escribir ese valor por defecto y /openapi/v1.json entero responde 500. Ausente queda en default
+    // (ValueKind Undefined), igual que antes.
+    public JsonElement Phone { get; init; }
+}
+
+public sealed record MyPhoneUpdateRequest(string? Phone);
+
+public sealed record MyMembershipResponse(Guid MembershipId, string? Phone, string? PhoneSource);
+
+/// <summary>Reads the three-state phone of a profile update.</summary>
+public static class PhoneInput
+{
+    public static PhoneChange ToChange(JsonElement phone) =>
+        phone.ValueKind switch
+        {
+            JsonValueKind.Undefined => PhoneChange.Keep,
+            JsonValueKind.Null => PhoneChange.Set(null),
+            JsonValueKind.String => PhoneChange.Set(phone.GetString()),
+            // Any other JSON type (a number, an object) travels as its raw text: it can never be E.164, so the validator
+            // answers 422 on Phone instead of the binder throwing a 400 the form cannot place.
+            _ => PhoneChange.Set(phone.GetRawText()),
+        };
+}
 
 public sealed record MembershipResponse(
     Guid Id,
@@ -352,7 +426,9 @@ public sealed record MembershipListItemResponse(
     DateTimeOffset? AcceptedAt,
     DateTimeOffset ExpiresAt,
     long Version,
-    bool IsOwner);
+    bool IsOwner,
+    string? Phone = null,
+    string? PhoneSource = null);
 
 /// <summary>
 /// El listado y, al lado, cuántos hay de cada estado.

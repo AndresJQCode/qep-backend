@@ -101,7 +101,7 @@ public sealed class SupportAutoCloser(
             await SaveAsync(ticket, now, cancellationToken);
         }
 
-        await realtime.TicketChangedAsync(ticket.TenantId, ticket.Id.Value, CancellationToken.None);
+        await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
         return true;
     }
 

@@ -27,7 +27,9 @@ public sealed record SaveOrderEditsCommand(
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
-    DateOnly? OrderDate = null) : ICommand<OrderDetailDto>, IOrderEdits;
+    DateOnly? OrderDate = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null,
+    OrderDeliveryEditRequest? Delivery = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -60,7 +62,10 @@ public sealed class SaveOrderEditsHandler(
     ITenantClock tenantClock,
     IOrderVariantCostLookup costLookup,
     IQuotationGeographyLookup geographyLookup,
-    IWholesaleLinePricing wholesalePricing)
+    IWholesaleLinePricing wholesalePricing,
+    IQuotationCustomerLookup customerLookup,
+    IExternalOrderDeliveryCheck deliveryCheck,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -74,6 +79,12 @@ public sealed class SaveOrderEditsHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
+        // Con entrega en el cuerpo, el motivo exacto (facturado o preparado) gana a la guarda general de abajo.
+        if (command.Delivery is not null)
+        {
+            order.EnsureDeliveryEditable();
+        }
+
         if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
@@ -142,9 +153,14 @@ public sealed class SaveOrderEditsHandler(
         var copies = new PaymentProofCopies(paymentProofPublisher);
         try
         {
-            var itemEdits = await OrderItemEdits.ApplyAsync(
+            var paidItemEdits = await OrderItemEdits.ApplyAsync(
                 order, command.Items, pricingLookup, costLookup, wholesalePricing, command.TenantId, updatedBy, now, command.IsRetail,
                 cancellationToken);
+            // Spec 2026-11-23: los regalos van después de las pagadas y sólo si el cuerpo los trae (null no toca nada). Sus
+            // ediciones se suman a las de las líneas: «nada cambió», el historial y las fotos de producto las ven igual.
+            var giftEdits = await OrderGiftEdits.ApplyAsync(
+                order, command.Gifts, pricingLookup, costLookup, command.TenantId, updatedBy, now, cancellationToken);
+            IReadOnlyList<OrderItemEdit> itemEdits = [.. paidItemEdits, .. giftEdits];
 
             foreach (var proofId in removedProofIds)
             {
@@ -193,6 +209,17 @@ public sealed class SaveOrderEditsHandler(
                 order.SetGlobalScaleFloor(command.GlobalScaleFloor, updatedBy, now);
             }
 
+            // La entrega (spec 2026-11-24 §10), antes de la facturación, las retenciones, el envío y el estado de pago.
+            var deliveryBefore = OrderDeliveryState.Of(order);
+            var shippingBeforeDelivery = order.ShippingDetails;
+            var deliveryChanged = await OrderDeliveryEdits.ApplyAsync(
+                order, command.Delivery, strict: true, customerLookup, geographyLookup, deliveryCheck, command.TenantId,
+                updatedBy, now, cancellationToken);
+            var deliverySummary = deliveryChanged
+                ? await OrderDeliveryEdits.DescribeChangeAsync(
+                    geographyLookup, deliveryBefore, OrderDeliveryState.Of(order), cancellationToken)
+                : null;
+
             // La facturación, en la misma escritura que el envío y antes de recalcular el estado de pago: una
             // retención nueva baja el neto que los comprobantes cubren. La fila existente se modifica, no se
             // reemplaza (IX_order_parties_order_role).
@@ -201,6 +228,8 @@ public sealed class SaveOrderEditsHandler(
             {
                 var regional = await tenantDirectory.GetRegionalSettingsAsync(
                     new TenantId(command.TenantId), cancellationToken);
+                await PartyRegionRules.EnsureAsync(
+                    geographyLookup, command.Billing.Party.ToDomain(), "Parties.Billing", cancellationToken);
                 billingSummary = OrderBillingEdits.Apply(
                     order, command.Billing, regional?.Country, strict: true, updatedBy, now);
                 await BillingPersonTypeRequirement.EnsureForOrderAsync(
@@ -221,20 +250,26 @@ public sealed class SaveOrderEditsHandler(
                 geographyLookup, withholdingEdits, format, cancellationToken);
             var withholdingsChanged = withholdingEdits.Changed;
 
-            // El envío con la moneda y la recogida del pedido, que no cambian después de creado (P5). Antes de
-            // RecalculatePaymentStatus, más abajo: un envío cobrado sube el neto que los comprobantes cubren.
-            var shippingBefore = order.ShippingDetails;
+            // El envío con la moneda del pedido, que no cambia después de creado (P5), y con la recogida que dejó la
+            // entrega. Antes de RecalculatePaymentStatus, más abajo: un envío cobrado sube el neto que los comprobantes
+            // cubren.
+            // Pasar a recoger ya limpió el envío en SetDelivery: ese cambio se cuenta contra lo que había antes.
+            var clearedByPickup = deliveryChanged && order.IsStorePickup && shippingBeforeDelivery != ShippingDetails.None;
+            var shippingBefore = clearedByPickup ? shippingBeforeDelivery : order.ShippingDetails;
             var shipping = await shippingResolver.ResolveAsync(
-                command.TenantId, command.Shipping, shippingBefore, order.IsStorePickup, order.Currency,
+                command.TenantId, command.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
                 order.ChargesVat, "order.order", cancellationToken);
-            var shippingChanged = shipping is not null && shipping != shippingBefore;
-            string? shippingSummary = null;
-            if (shippingChanged)
+            var shippingResolved = shipping is not null && shipping != order.ShippingDetails;
+            if (shippingResolved)
             {
                 order.SetShipping(shipping!, updatedBy, now);
-                // Contra lo que quedó en el agregado (ya validado), no contra lo que trajo el resolver.
-                shippingSummary = OrderChangeSummary.ShippingChanged(shippingBefore, order.ShippingDetails, format);
             }
+
+            var shippingChanged = clearedByPickup || shippingResolved;
+            // Contra lo que quedó en el agregado (ya validado), no contra lo que trajo el resolver.
+            var shippingSummary = shippingChanged
+                ? OrderChangeSummary.ShippingChanged(shippingBefore, order.ShippingDetails, format)
+                : null;
 
             // Spec retenciones por UVT §5.4: la UVT vigente, después de las ediciones y antes de recalcular el estado de pago
             // (una retención que deja de aplicar sube el neto). Sin historial propio, pero se guarda aunque sea lo único que
@@ -245,7 +280,8 @@ public sealed class SaveOrderEditsHandler(
 
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
             if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !orderDateChanged && !floorChanged && !retailChanged
-                && !shippingChanged && !billingChanged && !accountChanged && !withholdingsChanged && !taxUnitsChanged)
+                && !deliveryChanged && !shippingChanged && !billingChanged && !accountChanged && !withholdingsChanged
+                && !taxUnitsChanged)
             {
                 // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
                 return await OrderDetails.LoadAsync(
@@ -279,10 +315,30 @@ public sealed class SaveOrderEditsHandler(
                     order.Id.ToString(), "success", now);
             }
 
+            // PartiesChanged: recoger o enviar y la dirección (spec 2026-11-24 §10.4). El envío, abajo, deja su propia
+            // fila: si en el mismo guardado cambian los dos, salen las dos.
+            if (deliverySummary is not null)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    deliverySummary, now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.delivery_changed",
+                    order.Id.ToString(), "success", now);
+            }
+
+            // Spec 2026-11-24 §11.1.1: la dirección nueva de un pedido de Shopify sale al outbox en la misma transacción que
+            // el pedido, y Shopify encola su envío. Recoger no publica: no hay dirección que mandar.
+            if (order.Source == OrderSource.Shopify
+                && OrderDeliveryEdits.OwnShippingPartyChanged(order, deliveryBefore.Shipping))
+            {
+                lifecycleEvents.PublishShippingPartyChanged(order, now);
+            }
+
             if (shippingChanged)
             {
-                // PartiesChanged: el envío es la entrega del pedido, y el pedido no edita sus partes (H5). Un
-                // cambio que sólo mueve la tasa no tiene texto y no deja fila, pero sí se audita.
+                // PartiesChanged: el envío es parte de la entrega del pedido. Un cambio que sólo mueve la tasa no
+                // tiene texto y no deja fila, pero sí se audita.
                 if (shippingSummary is not null)
                 {
                     orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
@@ -437,8 +493,9 @@ public sealed class SaveOrderEditsHandler(
     {
         // El nombre de un producto que se quitó se resuelve contra el catálogo: la línea ya no está
         // para decirlo.
+        // Los regalos quitados no se buscan: su edición ya trae el nombre de la foto de la línea.
         var removedVariantIds = edits
-            .Where(edit => edit.Kind == OrderItemEditKind.Removed)
+            .Where(edit => edit.Kind == OrderItemEditKind.Removed && !edit.IsGift)
             .Select(edit => edit.VariantId)
             .ToArray();
         var removedProducts = removedVariantIds.Length == 0
@@ -449,7 +506,23 @@ public sealed class SaveOrderEditsHandler(
         {
             string summary;
             string action;
-            if (edit.Kind == OrderItemEditKind.Added)
+            if (edit.IsGift)
+            {
+                (summary, action) = edit.Kind switch
+                {
+                    OrderItemEditKind.Added => (
+                        OrderChangeSummary.GiftAdded(edit.ProductName!, edit.Quantity!.Value, format),
+                        "quotation.order.gift_added"),
+                    OrderItemEditKind.QuantityChanged => (
+                        OrderChangeSummary.GiftQuantityChanged(
+                            edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value, format),
+                        "quotation.order.gift_updated"),
+                    _ => (
+                        OrderChangeSummary.GiftRemoved(edit.ProductName ?? "un producto"),
+                        "quotation.order.gift_removed"),
+                };
+            }
+            else if (edit.Kind == OrderItemEditKind.Added)
             {
                 summary = OrderChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value, format);
                 action = "quotation.order.item_added";

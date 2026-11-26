@@ -20,7 +20,9 @@ public sealed record UpdateCompanyCommand(
     string? Email,
     string? Address,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    bool? ChargesVat = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    bool? ChargesVat = null,
+    // Spec 2026-11-23: la región (provincia) del domicilio de un país con catálogo distinto de Colombia; null es «sin región».
+    Guid? RegionId = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CompanyWriteRules.
 public sealed class UpdateCompanyValidator : AbstractValidator<UpdateCompanyCommand>
@@ -71,6 +73,10 @@ public sealed class UpdateCompanyHandler(
                     "The city was not found.");
         }
 
+        // Spec 2026-11-23: la región existe y es del país de la empresa. Antes de tocar el agregado, como la ciudad.
+        var region = await CompanyRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country!, command.RegionId, cancellationToken);
+
         // Spec ReteICA por empresa §7.3: ausente o null conserva las guardadas, pero la lista resultante se valida igual
         // contra el país del cuerpo, que puede haber cambiado. Lo ya guardado e inactivo se tolera (A16).
         var withholdingTaxRateIds = command.WithholdingTaxRateIds ?? company.WithholdingTaxRateIds;
@@ -105,7 +111,9 @@ public sealed class UpdateCompanyHandler(
             now,
             // Ausente conserva (no «true»): un frontend que todavía no manda el campo no puede
             // prender el IVA que otro apagó. Mismo criterio que las tasas de retención.
-            command.ChargesVat ?? company.ChargesVat);
+            command.ChargesVat ?? company.ChargesVat,
+            // El PUT reemplaza: sin región en el cuerpo, la guardada se borra (igual que CityName).
+            command.RegionId);
         company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         auditPublisher.Publish(
@@ -126,6 +134,7 @@ public sealed class UpdateCompanyHandler(
         return company.ToDto(
             city,
             await CompanyMapping.ResolveWithholdingTaxRatesAsync(
-                company.WithholdingTaxRateIds, withholdingTaxRates, geographyLookup, cancellationToken));
+                company.WithholdingTaxRateIds, withholdingTaxRates, geographyLookup, cancellationToken),
+            region);
     }
 }

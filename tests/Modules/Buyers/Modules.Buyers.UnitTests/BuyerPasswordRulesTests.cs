@@ -1,4 +1,4 @@
-﻿using FluentValidation;
+using FluentValidation;
 using Modules.Buyers.Application;
 
 namespace Modules.Buyers.UnitTests;

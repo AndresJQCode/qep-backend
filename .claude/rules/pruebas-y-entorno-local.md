@@ -16,6 +16,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **El stub de desarrollo concede sólo los permisos de tenancy por defecto.** Una prueba que
   necesita un permiso de otro módulo tiene que pedirlo por `X-Permissions`, o su 403 va a
   venir del permiso faltante y no de lo que cree estar probando.
+- **Un tenant insertado directo después del arranque no tiene los cinco roles de fábrica** (spec 2026-11-25, roles por
+  tenant): sólo `admin` sale del código; los demás los siembran el alta y el arranque. Si la prueba invita o resuelve uno de
+  ellos, el helper que inserta el tenant llama `ITenantRoleSeeder.SeedAsync` (ejemplo: `SupportApiHarness.SeedTenantAsync`).
+  Sin eso, invitar responde `422 tenancy.membership.role_unknown` y quien ya nombra el rol no recibe ningún permiso, así que una
+  prueba negativa sigue verde por el motivo equivocado.
 - **Probar auth en local tiene dos trampas.** El interruptor y los dos modos están en
   [README § Activar y desactivar el modo de desarrollo](../../README.md#activar-y-desactivar-el-modo-de-desarrollo-auth).
   Lo que ahí no se dice: (1) `UseDevelopmentStub` es `true` por defecto en `Development`

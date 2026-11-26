@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Audit.Domain;
 using Modules.Quotations.Application;
 using Modules.Shopify.Application;
+using Modules.Shopify.Infrastructure.Workers;
 using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
 using Flow = Modules.Shopify.IntegrationTests.ShopifyEditSyncFlowTests.Flow;
 
@@ -89,6 +90,84 @@ public sealed class ShopifyOrderCorrectionApiTests
             "1",
             await flow.ScalarAsync("SELECT count(*)::text FROM quotations.order_history WHERE event_type = 'PartiesChanged' AND member_id IS NOT NULL"));
         Assert.Equal("1", await flow.ScalarAsync("SELECT count(*)::text FROM audit.entries WHERE action = 'shopify.order.corrected'"));
+    }
+
+    // Spec 2026-11-24 §5: la corrección del panel no recibe código postal, así que al reescribir la parte lo conserva; si no,
+    // cada corrección lo borraría. El código postal se siembra a mano: la fixture no trae zip.
+    [Fact]
+    public async Task ACorrectionKeepsThePostalCode()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        await flow.ScalarAsync(
+            "UPDATE quotations.order_parties SET postal_code = '055422' WHERE role = 'Shipping' RETURNING postal_code");
+
+        var response = await PutAsync(client, flow, await CorrectionBodyAsync(flow));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var (_, envigado) = await EnvigadoAsync(flow);
+        Assert.Equal(
+            $"{envigado}|055422",
+            await flow.ScalarAsync(
+                "SELECT city_id::text || '|' || coalesce(postal_code, '') FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
+    // El código postal es de la provincia: al cambiar de departamento, el que tenía el pedido sería el de otra dirección. Se
+    // borra, y el envío a Shopify no lleva ninguno (el zip del pedido de Shopify es de la provincia anterior).
+    [Fact]
+    public async Task ACorrectionToAnotherDepartmentDropsThePostalCode()
+    {
+        var shopify = new ShopifyOrderPushWorkerTests.RecordingUpdater();
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyOrderUpdater>();
+            services.AddSingleton<IShopifyOrderUpdater>(shopify);
+        });
+        var order = Fixture();
+        order["shipping_address"]!["zip"] = "050021";
+        await flow.DeliverAsync("orders/create", "wh-1", order);
+        Assert.Equal("050021", await flow.ScalarAsync("SELECT postal_code FROM quotations.order_parties WHERE role = 'Shipping'"));
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var bogota = (await flow.ScalarAsync("SELECT department_id::text || '|' || id::text FROM geography.cities WHERE divipola_code = '11001'"))
+            .Split('|');
+        var body = await CorrectionBodyAsync(flow);
+        body["shippingParty"]!["departmentId"] = bogota[0];
+        body["shippingParty"]!["cityId"] = bogota[1];
+
+        var response = await PutAsync(client, flow, body);
+        await ActivatorUtilities.CreateInstance<ShopifyOrderPushWorker>(flow.Factory.Services).DrainAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            $"{bogota[1]}|none",
+            await flow.ScalarAsync(
+                "SELECT city_id::text || '|' || coalesce(postal_code, 'none') FROM quotations.order_parties WHERE role = 'Shipping'"));
+        var address = Assert.Single(shopify.Updates).ShippingAddress!;
+        Assert.Equal(("DC", (string?)null), (address.ProvinceCode, address.Zip));
+    }
+
+    // El formulario de la corrección no tiene código postal: reenviar la misma parte de un pedido que lo guarda no es un cambio.
+    [Fact]
+    public async Task ResendingThePartyOfAnOrderWithPostalCodeSendsNothing()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        await flow.ScalarAsync(
+            "UPDATE quotations.order_parties SET postal_code = '055422' WHERE role = 'Shipping' RETURNING postal_code");
+        var body = await CorrectionBodyAsync(flow);
+        var stored = (await flow.ScalarAsync(
+            "SELECT department_id::text || '|' || city_id::text FROM quotations.order_parties WHERE role = 'Shipping'")).Split('|');
+        body["shippingParty"]!["departmentId"] = stored[0];
+        body["shippingParty"]!["cityId"] = stored[1];
+
+        var response = await PutAsync(client, flow, body);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("NothingToSend", dto!["shopifySync"]?.GetValue<string>());
+        Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_pushes"));
     }
 
     // Owner, 2026-11-14: con la conexión operativa, la respuesta dice que el cambio quedó encolado para Shopify.

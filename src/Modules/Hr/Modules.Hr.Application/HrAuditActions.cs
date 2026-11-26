@@ -23,6 +23,14 @@ public static class HrAuditActions
     public const string ContractTerminated = "hr.contract.terminated";
     public const string ContractDocumentUpdated = "hr.contract.document_updated";
 
+    // Spec 2026-11-23 §10: names of fields only, and only type, date and PDF: never restrictions, recommendations or provider.
+    public const string MedicalExamCreated = "hr.medical_exam.created";
+    public const string MedicalExamUpdated = "hr.medical_exam.updated";
+    public const string MedicalExamDeleted = "hr.medical_exam.deleted";
+    public const string MedicalExamDocumentUpdated = "hr.medical_exam.document_updated";
+    public const string MedicalExamImported = "hr.medical_exam.imported";
+    public const string MedicalExamExitNotAttended = "hr.medical_exam.exit_not_attended";
+
     public const string SettingsCreated = "hr.settings.created";
     public const string SettingsUpdated = "hr.settings.updated";
     public const string SettingsArchived = "hr.settings.archived";
@@ -37,5 +45,6 @@ public static class HrAuditActions
         public const string Workplace = "workplace";
         public const string Area = "area";
         public const string Position = "position";
+        public const string MedicalExam = "medical_exam";
     }
 }

@@ -7,10 +7,10 @@ namespace Modules.Wholesale.UnitTests;
 public sealed class WholesaleModuleSetsTests
 {
     [Fact]
-    public void InvitedDistributorModulesAreTheEightOfTheSpecWithoutShopify()
+    public void InvitedDistributorModulesAreCatalogSuppliersAndPurchasesOnly()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "suppliers", "purchases"],
+            ["catalog", "suppliers", "purchases"],
             WholesaleModuleSets.InvitedDistributor.Select(key => key.Value));
         Assert.DoesNotContain(TenantModuleKeys.Shopify, WholesaleModuleSets.InvitedDistributor);
         Assert.Equal(["catalog", "suppliers", "purchases"], WholesaleModuleSets.LinkedDistributorRequired.Select(key => key.Value));

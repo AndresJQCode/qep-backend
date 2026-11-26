@@ -49,7 +49,7 @@ public sealed class QuotationCustomerAddressRefTests
         var method = typeof(QuotationCustomerLookup).GetMethod(
             "ToAddressRef", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
-        return (QuotationCustomerAddressRef)method.Invoke(null, [address, cities])!;
+        return (QuotationCustomerAddressRef)method.Invoke(null, [address, cities, new Dictionary<Guid, CustomerRegionRef>()])!;
     }
 
     [Fact]
@@ -59,7 +59,11 @@ public sealed class QuotationCustomerAddressRefTests
         var address = customer.AddAddress(
             new CustomerAddressDetails
             {
-                Name = "Bodega Madrid", Address = "Calle Mayor 1", Country = "ES", CityName = "Madrid", Phone = "+34600111222"
+                Name = "Bodega Madrid",
+                Address = "Calle Mayor 1",
+                Country = "ES",
+                CityName = "Madrid",
+                Phone = "+34600111222"
             },
             false,
             Now);

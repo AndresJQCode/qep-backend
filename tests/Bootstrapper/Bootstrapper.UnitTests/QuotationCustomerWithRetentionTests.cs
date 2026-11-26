@@ -102,6 +102,10 @@ public sealed class QuotationCustomerWithRetentionTests
         public Task<CustomerCityRef?> FindCityAsync(Guid cityId, CancellationToken cancellationToken) =>
             Task.FromResult<CustomerCityRef?>(null);
 
+        public Task<IReadOnlyDictionary<Guid, CustomerRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, CustomerRegionRef>>(new Dictionary<Guid, CustomerRegionRef>());
+
         public Task<IReadOnlyDictionary<Guid, CustomerCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, CustomerCityRef>>(new Dictionary<Guid, CustomerCityRef>());

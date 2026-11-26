@@ -1,8 +1,8 @@
 using System.Diagnostics.Metrics;
 using System.Threading.RateLimiting;
-using BuildingBlocks.Observability;
 using Bootstrapper.Valkey;
 using Bootstrapper.Valkey.RateLimiting;
+using BuildingBlocks.Observability;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;

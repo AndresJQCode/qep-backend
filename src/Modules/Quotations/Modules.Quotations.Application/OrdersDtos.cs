@@ -114,10 +114,13 @@ public sealed record OrderDto(
     OrderWholesaleState? Wholesale = null,
     /// <summary>Quién emitió la factura: <c>siigo</c> si la creó la integración, <c>null</c> en una marca manual (spec 2026-11-18
     /// §5.5). BFF: la pantalla escribe «Facturado en Siigo FV-1-123» y esconde «Revertir facturación» sin conocer la integración;
-    /// con un proveedor, revertir es una nota crédito y la API responde 422. El id de la factura en el proveedor no viaja.</summary>
+    /// con un proveedor, esa acción responde 422: la marca se quita cuando la factura se anula allá y la integración lo verifica (spec
+    /// 2026-11-25). El id de la factura en el proveedor no viaja.</summary>
     string? InvoiceProvider = null,
     /// <summary>El número de la factura del proveedor (<c>FV-1-123</c>); <c>null</c> en una marca manual.</summary>
-    string? InvoiceNumber = null);
+    string? InvoiceNumber = null,
+    /// <summary>Ver <see cref="OrderResponse.DeliveryEditable"/>: <see cref="Order.IsEditable"/> del pedido.</summary>
+    bool DeliveryEditable = false);
 
 /// <summary>Los dos valores de la aprobación mayorista (D-1), por nombre en el JSON.</summary>
 public static class WholesaleApprovals
@@ -196,7 +199,17 @@ public record CreateOrderRequest(
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
     /// <c>CashOnDelivery</c> no puede llevar comprobantes (spec 2026-10-17 §6).</summary>
-    ShippingRequest? Shipping = null);
+    ShippingRequest? Shipping = null)
+{
+    /// <summary>Los regalos del pedido (spec 2026-11-23): lista aparte de <c>Items</c>, que sigue siendo sólo las
+    /// líneas pagadas. Ausente o null es «sin regalos». Una propiedad y no un parámetro posicional, para que
+    /// <see cref="PreviewOrderRequest"/> la herede sin tocar su constructor.</summary>
+    public IReadOnlyList<OrderGiftLineRequest>? Gifts { get; init; }
+}
+
+/// <summary>Un regalo del pedido (spec 2026-11-23): variante y cantidad; el precio es el de lista y el descuento el fijo
+/// del 100 %.</summary>
+public sealed record OrderGiftLineRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>
 /// The body of <c>POST /orders/preview</c>: the manual order body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
@@ -281,7 +294,8 @@ public record SaveOrderEditsRequest(
     int? GlobalScaleFloor = null,
     bool IsRetail = false,
     /// <summary>El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Ausente deja el guardado</b>: un
-    /// frontend viejo no lo borra. No cambia recoger o enviar, que el pedido no edita.</summary>
+    /// frontend viejo no lo borra. No cambia recoger o enviar: eso es <see cref="Delivery"/>, que se aplica antes,
+    /// así que el envío se resuelve contra la recogida ya actualizada.</summary>
     ShippingRequest? Shipping = null,
     /// <summary>A quién se le factura (spec 2026-10-26). <b>Ausente deja la facturación</b>: un frontend viejo
     /// no la borra (Desvío 6). Presente, reemplaza el bloque entero: sin <c>Party</c> ni consumidor final
@@ -312,7 +326,25 @@ public record SaveOrderEditsRequest(
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement OperationCityId { get; init; }
+
+    /// <summary>Los regalos del pedido pendiente (spec 2026-11-23). <b>Ausente o null conserva</b> los guardados: un
+    /// frontend viejo no los borra. Presente —también <c>[]</c>— es la lista <b>entera</b> deseada, por variante: agrega,
+    /// cambia la cantidad y quita. <c>Items</c> sigue siendo sólo las líneas pagadas.</summary>
+    public IReadOnlyList<OrderGiftLineRequest>? Gifts { get; init; }
+
+    /// <summary>Recoger o enviar y a dónde (owner 2026-11-24, revierte H5 para la entrega). <b>Ausente conserva</b> la
+    /// entrega guardada: un frontend viejo no la toca. Sólo con el pedido sin facturar y sin preparar. Es propiedad y no
+    /// parámetro para que el cálculo previo la herede sin tocar su constructor.</summary>
+    public OrderDeliveryEditRequest? Delivery { get; init; }
 }
+
+/// <summary>El bloque de entrega de «Editar pedido». BFF: es el mismo selector de «Nuevo pedido» —recoger en tienda o una
+/// dirección—, así que viaja junto y con el mismo significado que en <see cref="QuotationPartiesRequest"/>.</summary>
+/// <param name="IsStorePickup">Gana: a recoger se quita la dirección de envío y se limpia el envío, contraentrega incluida.</param>
+/// <param name="Shipping">La parte de envío con datos propios; null = la dirección del cliente. Con recogida debe venir
+/// null (<c>order.delivery.shipping_party_on_pickup</c>). La parte de envío no lleva documento: se ignora. Al guardar debe
+/// venir completa (<c>order.shipping.party_incomplete</c>); el cálculo previo la acepta a medias.</param>
+public sealed record OrderDeliveryEditRequest(bool IsStorePickup, QuotationPartyRequest? Shipping);
 
 /// <summary>
 /// The body of <c>POST /orders/{orderId}/preview</c>: the edit body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
@@ -469,7 +501,14 @@ public sealed record OrderResponse(
     /// <summary>Ver <see cref="OrderDto.InvoiceProvider"/>.</summary>
     string? InvoiceProvider = null,
     /// <summary>Ver <see cref="OrderDto.InvoiceNumber"/>.</summary>
-    string? InvoiceNumber = null);
+    string? InvoiceNumber = null,
+    /// <summary>Ver <see cref="QuotationResponse.PostalCodeSupported"/>. Viaja acá y no en la raíz de
+    /// <see cref="OrderDetailResponse"/>, para que también lo traigan /approve, /cancel…</summary>
+    bool PostalCodeSupported = true,
+    /// <summary>BFF: el frontend sólo abre la entrega con <c>true</c>; ausente en un backend viejo = sólo lectura; no
+    /// depende del origen (owner 2026-11-24). Es la guarda de edición del pedido, para que la pantalla no la deduzca de los
+    /// estados. Viaja acá, como <see cref="PostalCodeSupported"/>, para que también lo traigan /approve, /cancel…</summary>
+    bool DeliveryEditable = false);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y

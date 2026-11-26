@@ -47,9 +47,14 @@ public sealed record ExternalOrderResult(
     ExternalShippingParty? Shipping = null);
 
 /// <summary>La parte de envío de un pedido externo (spec 2026-10-26 §4.4). Sin documento: a quien se le entrega no
-/// se le factura. Los seis campos son los de <c>OrderParty</c>, tal como el consumidor los guarda en su huella.</summary>
+/// se le factura. Los campos son los de <c>OrderParty</c>, tal como el consumidor los guarda en su huella.
+/// <paramref name="PostalCode"/> (spec 2026-11-24) sale con la parte guardada; la corrección del asesor lo ignora y conserva el
+/// que tenga el pedido mientras no cambie el departamento. Fuera de Colombia (la entrega editable, spec 2026-11-24 §11) van <paramref name="Country"/>,
+/// <paramref name="CityName"/> y, si el país tiene regiones, <paramref name="RegionId"/>, sin ids de DIVIPOLA;
+/// <paramref name="Country"/> en <c>null</c> es Colombia, como en el dominio.</summary>
 public sealed record ExternalShippingParty(
-    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId);
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null,
+    string? Country = null, string? CityName = null, Guid? RegionId = null);
 
 /// <summary>
 /// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa necesita de un pedido para decidir si le falta la parte de
@@ -177,16 +182,30 @@ public interface IExternalOrderWriter
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-26 §4.4: pone la parte de envío que el pedido no tenía y quita de las notas las líneas
-    /// que empiezan por <paramref name="notesLinePrefix"/>. Las razones por las que no se puede viajan en el
-    /// resultado; la concurrencia (<c>concurrency.conflict</c>) se propaga y el trabajo reintenta.</summary>
+    /// que empiezan por <paramref name="notesLinePrefix"/>. <paramref name="requestedCityIds"/> son las ciudades que el consumidor
+    /// pidió hasta ahora, la de esta llamada incluida: la misma parte en una de ellas es su reintento
+    /// (<c>AlreadyApplied</c>); en otra la puso una persona (<c>ShippingPresent</c>). Las razones por las que no se puede viajan
+    /// en el resultado; la concurrencia (<c>concurrency.conflict</c>) se propaga y el trabajo reintenta.</summary>
     Task<ExternalShippingOutcome> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty shipping,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, si sigue siendo
-    /// <paramref name="expected"/> (la que guardó el consumidor). Mismos resultados y concurrencia que
-    /// <see cref="AttachShippingAsync"/>.</summary>
+    /// <paramref name="expected"/> (la que guardó el consumidor). Si ya sólo difiere en la ciudad y ésa está en
+    /// <paramref name="requestedCityIds"/>, es un reintento (<c>AlreadyApplied</c>); en otra la movió una persona
+    /// (<c>ShippingChanged</c>). Mismos demás resultados y concurrencia que <see cref="AttachShippingAsync"/>.</summary>
     Task<ExternalShippingOutcome> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-26 D-C12: el estado de envío del pedido, o <c>null</c> si no existe en ese tenant. Sólo lee y sólo ve
     /// el tenant pedido; no mira el origen (el recorrido llega por la fila del espejo, que ya es de una plataforma).</summary>
@@ -346,7 +365,11 @@ public sealed class ExternalOrderService(
             Shipping: ToExternal(order.Shipping));
 
     private static ExternalShippingParty? ToExternal(OrderParty? party) =>
-        party is null ? null : new(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId);
+        party is null
+            ? null
+            : new(
+                party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode,
+                party.Country, party.CityName, party.RegionId);
 
     private static QuotationPartyDetails ToDetails(ExternalShippingParty party) => new()
     {
@@ -356,23 +379,40 @@ public sealed class ExternalOrderService(
         Address = party.Address,
         DepartmentId = party.DepartmentId,
         CityId = party.CityId,
+        PostalCode = party.PostalCode,
+        Country = party.Country,
+        CityName = party.CityName,
+        RegionId = party.RegionId,
     };
 
     public Task<ExternalShippingOutcome> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty shipping,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(shipping);
         return ChangeShippingAsync(
-            tenantId, orderId, (order, now) => order.AttachExternalShipping(ToDetails(shipping), notesLinePrefix, now), cancellationToken);
+            tenantId, orderId,
+            (order, now) => order.AttachExternalShipping(ToDetails(shipping), notesLinePrefix, requestedCityIds, now),
+            cancellationToken);
     }
 
     public Task<ExternalShippingOutcome> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(expected);
         return ChangeShippingAsync(
             tenantId, orderId,
-            (order, now) => order.CorrectExternalShippingCity(ToDetails(expected), departmentId, cityId, now),
+            (order, now) => order.CorrectExternalShippingCity(ToDetails(expected), departmentId, cityId, requestedCityIds, now),
             cancellationToken);
     }
 
@@ -482,8 +522,19 @@ public sealed class ExternalOrderService(
             throw new RequestConcurrencyException("concurrency.conflict", "The order changed since it was loaded.");
         }
 
+        // La corrección no recibe código postal (spec 2026-11-24 §5): reescribir la parte conserva el que tenía, o cada
+        // corrección lo borraría. Sólo en el mismo departamento: el código es de la provincia, y en otra sería el de otra
+        // dirección, que además viajaría a Shopify por encima de su zip.
         var partyChanged = correction.ShippingParty is { } party
-            && order.EditExternalShippingParty(ToDetails(party), correction.NotesLinePrefix, correction.OccurredAt);
+            && order.EditExternalShippingParty(
+                ToDetails(party) with
+                {
+                    PostalCode = order.Shipping is { } current && current.DepartmentId == party.DepartmentId
+                        ? current.PostalCode
+                        : null,
+                },
+                correction.NotesLinePrefix,
+                correction.OccurredAt);
         var notesChanged = correction.ReplaceBuyerNotes
             && order.UpdateExternalBuyerNotes(correction.BuyerNotes, correction.OccurredAt);
         if (!partyChanged && !notesChanged)

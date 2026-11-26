@@ -66,11 +66,17 @@ public static class AgentHandoffCodes
     /// <summary>El tenant pausó el agente con la sesión viva (owner, 2026-11-18): deja de contestar y la conversación pasa a una persona.</summary>
     public const string AgentPaused = "agent_paused";
 
+    /// <summary>Spec 2026-11-23 D-3: cancelar o cambiar la hora fuera de las reglas (plazo, cita cerrada, servicio sin reserva por chat).</summary>
+    public const string AppointmentChangeBlocked = "appointment_change_blocked";
+
+    /// <summary>Spec 2026-11-23 D-6: no hay cliente al que agendarle (sin identidad en el canal, o inactivo).</summary>
+    public const string AppointmentCustomerUnavailable = "appointment_customer_unavailable";
+
     /// <summary>Todos los códigos que un traspaso de agente puede llevar, para la prueba de paridad.</summary>
     public static IReadOnlyList<string> All { get; } =
     [
         InvalidResponse, ModelCallsExceeded, ToolCallsExceeded, JobTimedOut, MaxRepliesWithoutHuman, SendFailed, QuotationDraftCreated, AgentPaused,
-        QuotationCustomerNotReady,
+        QuotationCustomerNotReady, AppointmentChangeBlocked, AppointmentCustomerUnavailable,
         AiModelErrorCodes.ProviderUnavailable, AiModelErrorCodes.RateLimited, AiModelErrorCodes.QuotaExhausted,
         AiModelErrorCodes.CredentialsRejected, AiModelErrorCodes.PermissionDenied, AiModelErrorCodes.ModelUnavailable,
         AiModelErrorCodes.RequestInvalid, AiModelErrorCodes.Refused, AiErrorCodes.ProviderNotConfigured,

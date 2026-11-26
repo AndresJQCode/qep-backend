@@ -11,7 +11,9 @@ public sealed class AgentEditorBuilder(
     IAiModelCatalog catalog,
     IAiQuotationAdvisors advisors,
     IAiProviderCredentials credentials,
-    IAiQuotationBillingAccounts billingAccountOptions)
+    IAiQuotationBillingAccounts billingAccountOptions,
+    IAiScheduling scheduling,
+    ISystemAgentTemplateCatalog templates)
 {
     private const string WhatsApp = "WhatsApp";
 
@@ -74,6 +76,9 @@ public sealed class AgentEditorBuilder(
             billingAccountEligible = billingAccounts.Any(option => option.Matches(account));
         }
 
+        // Spec 2026-11-23 §9.2: la disponibilidad de la Agenda se lee sólo con la herramienta prendida (el autoguardado valida seguido).
+        var schedulingReadiness = config.Tools.Scheduling ? await scheduling.GetReadinessAsync(agent.TenantId, cancellationToken) : null;
+
         return AgentConfigValidator.Validate(
             config,
             new AgentValidationContext(
@@ -82,7 +87,8 @@ public sealed class AgentEditorBuilder(
                 memberCanReply,
                 publishing,
                 advisorCanQuote,
-                billingAccountEligible));
+                billingAccountEligible,
+                schedulingReadiness));
     }
 
     private static List<Guid> LiveConnectionIds(Agent agent, IReadOnlySet<Guid> live) =>
@@ -116,7 +122,17 @@ public sealed class AgentEditorBuilder(
             [.. assignable.Select(member => new AiMemberDto(member.Id, member.Name))],
             ModelCatalog.ToDto(catalog, await credentials.DescribeAsync(agent.TenantId, cancellationToken)),
             [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))],
-            billingAccounts);
+            billingAccounts,
+            await SchedulingReadinessAsync(agent.TenantId, cancellationToken),
+            agent.SourceTemplateId,
+            agent.SourceTemplateId is { } sourceId ? templates.Find(sourceId)?.Name : null);
+    }
+
+    /// <summary>§9.3: siempre se lee, con la herramienta prendida o no, para que el editor sepa si ofrecer el interruptor.</summary>
+    private async Task<AgentSchedulingReadinessDto> SchedulingReadinessAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var readiness = await scheduling.GetReadinessAsync(tenantId, cancellationToken);
+        return new AgentSchedulingReadinessDto(readiness.ModuleEnabled, readiness.BookableServices, readiness.Ready);
     }
 
     /// <param name="usedByChatbots">Spec 2026-11-17 §7: los chatbots publicados que usan cada agente (<see cref="IAiChatbotUsage"/>).</param>

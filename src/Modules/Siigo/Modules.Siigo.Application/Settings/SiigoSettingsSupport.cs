@@ -22,6 +22,15 @@ internal static class SiigoSettingsSupport
 {
     private const string ConcurrencyConflict = "concurrency.conflict";
 
+    /// <summary>Si ninguna clave se repite entre los elementos de una lista del cuerpo (los textos, carácter por carácter). Un elemento
+    /// nulo no cuenta: falla aparte, en su propio campo.</summary>
+    public static bool HasNoRepeated<TItem, TKey>(IEnumerable<TItem?> items, Func<TItem, TKey> key)
+        where TItem : class
+    {
+        var keys = items.OfType<TItem>().Select(key).ToList();
+        return keys.Distinct().Count() == keys.Count;
+    }
+
     /// <summary>Tenant de la ruta, permiso <c>siigo.settings.manage</c> y módulo <c>siigo</c> (403, nunca 404).</summary>
     public static Task AuthorizeAsync(
         IExecutionContext executionContext, ITenantModules tenantModules, Guid tenantId, CancellationToken cancellationToken) =>
@@ -144,7 +153,8 @@ internal static class SiigoSettingsSupport
                 settings.SendToDian,
                 settings.SendMail,
                 settings.FreightSeparateInvoice,
-                settings.FreightProductCode),
+                settings.FreightProductCode,
+                settings.PriceMode.ToString()),
             new SiigoTaxesDto(vat, withholdingLinks),
             new SiigoPaymentsDto(
                 accountLinks,

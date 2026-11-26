@@ -8,6 +8,7 @@ namespace Modules.Quotations.Application;
 /// Spec 2026-11-18 §5.5: el pedido visto por un facturador externo. <see cref="GetForInvoicingAsync"/> repite las precondiciones de
 /// <see cref="InvoiceOrderHandler"/> —y lanza los mismos 422— antes de armar la foto; <see cref="MarkInvoicedAsync"/> marca con
 /// <see cref="Order.InvoiceExternally"/>, que no vuelve a exigir el pago: se validó una vez, al armar, y la factura ya existe afuera.
+/// <see cref="RevertExternalInvoicingAsync"/> quita esa marca cuando la factura se anuló afuera.
 /// </summary>
 public sealed class ExternalOrderInvoicingService(
     IOrderRepository orders,
@@ -64,7 +65,9 @@ public sealed class ExternalOrderInvoicingService(
                 item.Subtotal,
                 item.DiscountPercentage,
                 item.TaxPercentage,
-                item.TaxAmount))],
+                item.TaxAmount,
+                item.IsGift,
+                item.UnitPrice))],
             order.FreightSubtotal,
             order.FreightTaxAmount,
             order.FreightTaxPercentage,
@@ -73,7 +76,7 @@ public sealed class ExternalOrderInvoicingService(
             order.RetentionAmount,
             order.NetTotal,
             [.. order.AppliedWithholdings.Select(withholding => new ExternalInvoicingWithholding(
-                withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Amount))],
+                withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Amount, withholding.Percentage))],
             [.. order.PaymentProofs.OrderBy(proof => proof.UploadedAt).ThenBy(proof => proof.Id.Value)
                 .Select(proof => new ExternalInvoicingProof(proof.Id.Value, proof.Amount))],
             order.BillingAccount?.CompanyId,
@@ -135,6 +138,30 @@ public sealed class ExternalOrderInvoicingService(
     public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
         (await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken))?.Version;
 
+    public async Task<bool> IsMarkedAsync(
+        Guid tenantId, Guid orderId, string provider, string number, CancellationToken cancellationToken) =>
+        await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken) is { IsInvoiced: true } order
+        && string.Equals(order.InvoiceProvider, provider, StringComparison.Ordinal)
+        && string.Equals(order.InvoiceNumber, number, StringComparison.Ordinal);
+
+    public async Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
+    {
+        var rows = await orders.FindNumbersAndClientsAsync(
+            tenantId, [.. orderIds.Distinct().Select(id => new OrderId(id))], cancellationToken);
+        if (rows.Count == 0)
+        {
+            return new Dictionary<Guid, ExternalInvoicingOrderLabel>();
+        }
+
+        // El nombre, como en la lista de pedidos (OrderListing): una sola consulta para todos los clientes.
+        var names = await customerLookup.FindNamesAsync(
+            tenantId, [.. rows.Values.Select(row => row.ClientId).Distinct()], cancellationToken);
+        return rows.ToDictionary(
+            row => row.Key.Value,
+            row => new ExternalInvoicingOrderLabel(row.Value.OrderNumber, names.GetValueOrDefault(row.Value.ClientId)));
+    }
+
     public async Task MarkInvoicedAsync(
         Guid tenantId,
         Guid orderId,
@@ -189,7 +216,7 @@ public sealed class ExternalOrderInvoicingService(
         }
 
         orders.AddHistoryEntry(OrderHistoryEntry.Create(
-            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Invoiced, member, OrderChangeSummary.Invoiced(), now));
+            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Invoiced, member, OrderChangeSummary.InvoicedExternally(provider, number), now));
         auditPublisher.PublishWithDetails(
             tenantId,
             executionContext.SubjectId,
@@ -199,6 +226,68 @@ public sealed class ExternalOrderInvoicingService(
             now,
             new Dictionary<string, string?> { ["provider"] = provider });
         await unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> RevertExternalInvoicingAsync(
+        Guid tenantId,
+        Guid orderId,
+        string provider,
+        string number,
+        Guid memberId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RevertAndSaveAsync(tenantId, orderId, provider, number, memberId, cancellationToken);
+        }
+        catch (RequestConcurrencyException)
+        {
+            // La factura ya está anulada afuera: otra escritura del pedido que ganó no puede dejarlo marcado. Se relee y se decide de nuevo.
+            unitOfWork.DiscardPendingChanges();
+        }
+
+        try
+        {
+            return await RevertAndSaveAsync(tenantId, orderId, provider, number, memberId, cancellationToken);
+        }
+        catch (RequestConcurrencyException)
+        {
+            unitOfWork.DiscardPendingChanges();
+            throw;
+        }
+    }
+
+    private async Task<bool> RevertAndSaveAsync(
+        Guid tenantId,
+        Guid orderId,
+        string provider,
+        string number,
+        Guid memberId,
+        CancellationToken cancellationToken)
+    {
+        var order = await orders.FindByIdAsync(tenantId, new OrderId(orderId), cancellationToken)
+            ?? throw OrderNotFound.ById(orderId);
+        var now = clock.UtcNow;
+        var member = new MemberId(memberId);
+
+        if (!order.RevertExternalInvoicing(provider, number, member, now))
+        {
+            return false;
+        }
+
+        orders.AddHistoryEntry(OrderHistoryEntry.Create(
+            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.InvoicingReverted, member,
+            OrderChangeSummary.ExternalInvoiceAnnulled(provider, number), now));
+        auditPublisher.PublishWithDetails(
+            tenantId,
+            executionContext.SubjectId,
+            "quotation.order.invoice_reverted",
+            order.Id.ToString(),
+            "success",
+            now,
+            new Dictionary<string, string?> { ["provider"] = provider, ["number"] = number });
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return true;
     }
 
     // Spec §6.2: los datos salen de la parte facturada del pedido y, lo que falte, de la ficha del cliente.

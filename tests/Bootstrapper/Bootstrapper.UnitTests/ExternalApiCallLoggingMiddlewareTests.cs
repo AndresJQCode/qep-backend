@@ -1,4 +1,4 @@
-﻿using Bootstrapper.ApiKeys;
+using Bootstrapper.ApiKeys;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;

@@ -35,7 +35,6 @@ public sealed record EmployeeDto(
     string? PensionFund,
     string? SeveranceFund,
     string? OccupationalRiskProvider,
-    string? CompensationFund,
     string ContributorSubtype,
     bool ForeignPensionExempt,
     IReadOnlyList<string> RestDays,

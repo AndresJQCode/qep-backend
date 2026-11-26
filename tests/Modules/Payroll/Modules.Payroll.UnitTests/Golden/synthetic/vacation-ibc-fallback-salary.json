@@ -1,0 +1,154 @@
+{
+  "name": "vacation-ibc-fallback-salary",
+  "source": "synthetic",
+  "description": "Como el caso 1, pero sin IBC del mes anterior en QEP ni tecleado: se usa el salario (3 000 000), con la misma cuenta y la nota en el rastro del IBC.",
+  "legal": "legal/2026-11-01.json",
+  "covers": [
+    "WorkedDaysRule",
+    "SalaryRule",
+    "MonthIncomeRule",
+    "TransportAllowanceRule",
+    "IbcRule",
+    "EmployeeDeductionsRule",
+    "EmployerContributionsRule",
+    "ProvisionsRule",
+    "PayrollEngine",
+    "VacationDaysRule",
+    "VacationPayRule",
+    "VacationAdvanceRule"
+  ],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-12-01",
+      "end": "2026-12-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "vacations": [
+      {
+        "vacationId": "01900000-0000-7000-8000-000000000a05",
+        "origin": "Qep",
+        "startDate": "2026-12-14",
+        "endDate": "2027-01-05",
+        "businessDays": 15,
+        "paidHere": true,
+        "salaryAtStart": 3000000,
+        "salaryRecordDate": "2025-01-01",
+        "previousMonthIbc": 3000000,
+        "previousIbcSource": "Salary",
+        "monthVacationPay": null,
+        "monthAdvance": {
+          "health": 0,
+          "pension": 0,
+          "solidarityFund": 0
+        }
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 13,
+    "vacationDays": 2,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      {
+        "code": "salary",
+        "amount": 1300000
+      },
+      {
+        "code": "vacation_pay:01900000-0000-7000-8000-000000000a05",
+        "amount": 2200000
+      },
+      {
+        "code": "transport_allowance",
+        "amount": 107941
+      },
+      {
+        "code": "ibc",
+        "amount": 1500000
+      },
+      {
+        "code": "health_employee",
+        "amount": 60000
+      },
+      {
+        "code": "pension_employee",
+        "amount": 60000
+      },
+      {
+        "code": "health_employee_vacation_advance",
+        "amount": 80000
+      },
+      {
+        "code": "pension_employee_vacation_advance",
+        "amount": 80000
+      },
+      {
+        "code": "health_employer",
+        "amount": 0
+      },
+      {
+        "code": "pension_employer",
+        "amount": 180000
+      },
+      {
+        "code": "arl",
+        "amount": 6800
+      },
+      {
+        "code": "compensation_fund",
+        "amount": 60000
+      },
+      {
+        "code": "icbf",
+        "amount": 0
+      },
+      {
+        "code": "sena",
+        "amount": 0
+      },
+      {
+        "code": "severance",
+        "amount": 133941
+      },
+      {
+        "code": "severance_interest",
+        "amount": 16079
+      },
+      {
+        "code": "premium",
+        "amount": 133941
+      },
+      {
+        "code": "vacation",
+        "amount": 62550
+      }
+    ],
+    "net": 3327941,
+    "employerCost": 4201252
+  },
+  "notes": [
+    "IBC anterior = salario vigente el día anterior al inicio = 3 000 000 (fuente Salary): los montos son los del caso 1",
+    "la nota «Sin IBC del mes anterior en QEP: se usa el salario» la prueba IbcRuleTests.FallbackSalaryNote",
+    "net = 3 607 941 − 280 000 = 3 327 941; employerCost = 4 201 252 (ver el caso 1)"
+  ]
+}

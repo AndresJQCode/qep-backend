@@ -14,7 +14,10 @@ namespace Modules.Customers.Application;
 public sealed record ProvisionedCustomer(Guid Id, bool IsComplete, bool IsActive, bool Created, long Version = 0);
 
 /// <summary>Lo mismo que pide el <c>POST</c> de clientes, sin retención ni excedente de IVA: una venta externa no los
-/// sabe, y los dos nacen en <c>false</c> (spec de Shopify §6.2.1 paso 3).</summary>
+/// sabe, y los dos nacen en <c>false</c> (spec de Shopify §6.2.1 paso 3). <c>AddressLabel</c> es opcional: si viene, es el
+/// <c>Name</c> de la primera fila de la libreta en vez del nombre del cliente (Mayorista lo usa para el contacto del
+/// distribuidor, decisión del owner 2026-11-24). La fila sólo existe con ciudad colombiana (<c>CityId</c>); sin ella, la
+/// etiqueta no se guarda.</summary>
 public sealed record CompleteCustomerData(
     string Name,
     string IdentificationType,
@@ -25,7 +28,8 @@ public sealed record CompleteCustomerData(
     string Country,
     Guid? CityId,
     string? CityName,
-    Guid? ClassificationId);
+    Guid? ClassificationId,
+    string? AddressLabel = null);
 
 /// <summary>Qué hizo <see cref="ICustomerProvisioning.EnsureAddressesAsync"/> con una dirección: la libreta ya la tenía o la agregó.</summary>
 public enum EnsuredAddressKind
@@ -196,7 +200,7 @@ public sealed class CustomerProvisioning(
             throw new ValidationException([cityFailure]);
         }
 
-        var parts = await PrepareAsync(command, cancellationToken);
+        var parts = await PrepareAsync(command, cancellationToken, data.AddressLabel);
         var now = clock.UtcNow;
 
         var customer = Customer.Create(
@@ -414,6 +418,13 @@ public sealed class CustomerProvisioning(
         var cityName = colombian
             ? null
             : Keep(customer.CityName, sameCountry ? data.CityName : null);
+        // La region es dato del cliente, no de la ciudad: el dominio permite una region sin ciudad, asi que se conserva mientras el
+        // carril de ubicacion del cliente siga siendo el suyo (fuera de Colombia) y el pais no cambie (una region es de un solo
+        // pais). La ciudad de la tienda solo completa una que el cliente no tiene; nunca reemplaza la suya.
+        var regionId = !colombian
+            && string.Equals(customer.Country?.Trim(), country.Trim(), StringComparison.OrdinalIgnoreCase)
+                ? customer.RegionId
+                : null;
 
         return new CreateCustomerCommand(
             tenantId,
@@ -428,7 +439,8 @@ public sealed class CustomerProvisioning(
             cityId,
             cityName,
             data.ClassificationId,
-            customer.VatSurplus);
+            customer.VatSurplus,
+            RegionId: regionId);
     }
 
     private static string? Keep(string? existing, string? incoming) =>
@@ -571,7 +583,8 @@ public sealed class CustomerProvisioning(
 
     // Mismo orden que CreateCustomerHandler, y por lo mismo: clasificación y ciudad antes del CUC, para no quemar un
     // número del consecutivo por una referencia que no existe.
-    private async Task<CompletionParts> PrepareAsync(CreateCustomerCommand command, CancellationToken cancellationToken)
+    private async Task<CompletionParts> PrepareAsync(
+        CreateCustomerCommand command, CancellationToken cancellationToken, string? addressLabel = null)
     {
         var classification = await classificationRepository.ResolveForCustomerAsync(
             command.TenantId, command.ClassificationId, cancellationToken);
@@ -594,7 +607,7 @@ public sealed class CustomerProvisioning(
                 ? null
                 : new CustomerAddressDetails
                 {
-                    Name = command.Name,
+                    Name = string.IsNullOrWhiteSpace(addressLabel) ? command.Name : addressLabel.Trim(),
                     Address = command.Address ?? string.Empty,
                     CityId = city.CityId,
                     Phone = command.Phone
@@ -607,7 +620,8 @@ public sealed class CustomerProvisioning(
                 Address = command.Address ?? string.Empty,
                 Country = command.Country,
                 CityId = command.CityId,
-                CityName = command.CityName
+                CityName = command.CityName,
+                RegionId = command.RegionId
             },
             CustomerMapping.ToCommercialInfo(command.ClassificationId, command.VatSurplus));
     }

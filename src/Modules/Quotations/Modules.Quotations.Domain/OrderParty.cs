@@ -8,12 +8,13 @@ public sealed class OrderParty
     {
     }
 
-    private OrderParty(OrderPartyId id, OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details)
+    private OrderParty(
+        OrderPartyId id, OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details, string? fieldPrefix)
     {
         Id = id;
         OrderId = orderId;
         Role = role;
-        Apply(details);
+        Apply(details, fieldPrefix);
     }
 
     public OrderPartyId Id { get; private set; }
@@ -48,6 +49,12 @@ public sealed class OrderParty
     /// <summary>La ciudad como texto, sólo fuera de Colombia.</summary>
     public string? CityName { get; private set; }
 
+    /// <summary>The region of a party outside Colombia; see <see cref="QuotationPartyDetails.RegionId"/>.</summary>
+    public Guid? RegionId { get; private set; }
+
+    /// <summary>The postal code of the delivery party; see <see cref="QuotationPartyDetails.PostalCode"/>.</summary>
+    public string? PostalCode { get; private set; }
+
     public bool IsComplete =>
         !string.IsNullOrWhiteSpace(Name)
         && !string.IsNullOrWhiteSpace(Phone)
@@ -55,11 +62,17 @@ public sealed class OrderParty
         && !string.IsNullOrWhiteSpace(Address)
         && new QuotationPartyDetails
         {
-            Country = Country, DepartmentId = DepartmentId, CityId = CityId, CityName = CityName
+            Country = Country,
+            DepartmentId = DepartmentId,
+            CityId = CityId,
+            CityName = CityName
         }.HasCompleteCity;
 
-    public static OrderParty Create(OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details) =>
-        new(OrderPartyId.New(), orderId, role, details);
+    /// <param name="fieldPrefix">Con qué clave salen los errores de la parte en el mapa <c>errors</c>; null es
+    /// <c>Parties.{rol}</c>, la forma del cuerpo del alta. La entrega editable usa <c>Delivery.Shipping</c>.</param>
+    public static OrderParty Create(
+        OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details, string? fieldPrefix = null) =>
+        new(OrderPartyId.New(), orderId, role, details, fieldPrefix);
 
     public QuotationPartyDetails ToDetails() => new()
     {
@@ -74,13 +87,16 @@ public sealed class OrderParty
         CityId = CityId,
         Country = Country,
         CityName = CityName,
+        RegionId = RegionId,
+        PostalCode = PostalCode,
     };
 
-    public void Apply(QuotationPartyDetails details)
+    public void Apply(QuotationPartyDetails details, string? fieldPrefix = null)
     {
         var normalized = (Role == QuotationPartyRole.Billing
-            ? details
-            : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null }).Normalized($"Parties.{Role}");
+            ? details with { PostalCode = null }
+            : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null })
+            .Normalized(fieldPrefix ?? $"Parties.{Role}");
         Name = normalized.Name;
         IdentificationNumber = normalized.IdentificationNumber;
         PersonType = normalized.PersonType;
@@ -92,5 +108,7 @@ public sealed class OrderParty
         CityId = normalized.CityId;
         Country = normalized.Country;
         CityName = normalized.CityName;
+        RegionId = normalized.RegionId;
+        PostalCode = normalized.PostalCode;
     }
 }

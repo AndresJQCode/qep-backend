@@ -38,6 +38,9 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportUnclassifiedRepository, SupportUnclassifiedRepository>();
         services.AddScoped<ISupportReplyRepository, SupportReplyRepository>();
         services.AddScoped<ISupportAuditPublisher, SupportAuditPublisher>();
+        // Spec 2026-11-22 §12 (and the internal-tasks spec §6 D-3): the integration events go to the platform outbox in the same unit of
+        // work as the ticket change.
+        services.AddScoped<ISupportIntegrationEvents, SupportIntegrationEvents>();
 
         // Fase 3, formulario público (plan F7, F8, F14, F16, F17).
         services.AddScoped<ISupportTicketAccessRepository, SupportTicketAccessRepository>();
@@ -78,12 +81,17 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<SupportSurveySender>();
         services.AddScoped<SupportSurveyAnswers>();
         services.AddScoped<SupportAutoCloser>();
+        // Spec 2026-11-22 §7 and D-16: the unassigned-ticket alert reads and claims through this store.
+        services.AddScoped<SupportUnassignedAlertStore>();
+        // Task-notices spec 2026-11-22 §5.7 and D-7: what the notice escalation re-checks before sending; reached through a Bootstrapper port.
+        services.AddScoped<ISupportTaskNoticeReader, SupportTaskNoticeReader>();
         services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
         if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
         {
             services.AddHostedService<SupportThreadFollowWorker>();
             services.AddHostedService<SupportSurveyWorker>();
             services.AddHostedService<SupportAutoCloseWorker>();
+            services.AddHostedService<SupportUnassignedAlertWorker>();
         }
 
         return services;

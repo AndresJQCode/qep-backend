@@ -100,7 +100,7 @@ el log de la aplicación.
   `operation`, `method`, `path`, `status`, `reason`, `idempotencyKey`, `siigoInvoiceId`, `traceId`), orden descendente, `MaxPageSize` 100.
   **Sin curl ni cuerpo.**
 - `GET …/call-failures/{id}`: detalle con `requestCurl` y `responseBody`. Motivo BFF escrito en el DTO: la lista no puede pesar 25 × 38 KB.
-- Permiso nuevo `siigo.calls.read` (con `RequiredModules: [siigo]`; de fábrica `admin`) para los dos `GET`.
+- Permiso nuevo `siigo.calls.read` (con `RequiredModules: [siigo]`; de fábrica `admin` y `billing`) para los dos `GET`.
 
 ### Pruebas
 
@@ -123,6 +123,7 @@ el log de la aplicación.
 
 - `siigo.calls.read` solo para `admin` de fábrica. Quien deba ver la pantalla (soporte, por ejemplo) recibe un rol personalizado con ese permiso,
   que el owner asigna después (2026-11-21).
+- `billing` también lo lleva de fábrica (2026-11-25); reemplaza el «solo `admin`» de la viñeta anterior.
 
 ## Queda al implementador
 

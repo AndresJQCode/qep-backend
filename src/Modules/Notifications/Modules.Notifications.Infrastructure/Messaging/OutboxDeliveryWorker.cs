@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Localization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -84,7 +85,8 @@ internal abstract partial class OutboxDeliveryWorker(
             services.GetRequiredService<ITenantDirectory>(),
             services.GetRequiredService<ITenantClock>(),
             services.GetRequiredService<IClock>(),
-            dbContext);
+            dbContext,
+            services.GetRequiredService<IUserPreferenceService>());
 
         // Candidatos: sin fila en el inbox, o con una reclamada y sin terminar cuyo lease venció.
         var now = context.Clock.UtcNow;
@@ -189,6 +191,19 @@ internal abstract partial class OutboxDeliveryWorker(
         return EmailRegionalFormats.For(calendar.TimeZone, settings);
     }
 
+    /// <summary>
+    /// El idioma del correo para un miembro del tenant (spec 2026-11-22, i18n): el que eligió en ese
+    /// tenant y, si no eligió, el del tenant. Es la misma regla de <c>/auth/me</c>
+    /// (<see cref="SupportedLanguages.Effective"/>), así que el correo y la pantalla no discrepan.
+    /// </summary>
+    protected static async Task<string> ResolveLanguageAsync(
+        DeliveryContext context, Guid tenantId, Guid userId, CancellationToken stoppingToken)
+    {
+        var chosen = await context.Preferences.GetLanguagesAsync(userId, [tenantId], stoppingToken);
+        var settings = await context.TenantDirectory.GetRegionalSettingsAsync(new TenantId(tenantId), stoppingToken);
+        return SupportedLanguages.Effective(chosen.GetValueOrDefault(tenantId), settings?.Language);
+    }
+
     private async Task ProcessAsync(
         NotificationsDbContext dbContext,
         DeliveryContext context,
@@ -248,4 +263,5 @@ internal sealed record DeliveryContext(
     ITenantDirectory TenantDirectory,
     ITenantClock TenantClock,
     IClock Clock,
-    NotificationsDbContext Database);
+    NotificationsDbContext Database,
+    IUserPreferenceService Preferences);

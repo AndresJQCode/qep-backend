@@ -1,0 +1,86 @@
+{
+  "name": "month-income-loses-transport",
+  "source": "synthetic",
+  "description": "Con 501 811 de comisiones el ingreso (3 501 811) supera 2 SMMLV y se pierde el auxilio.",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "IncomeRule"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-01",
+      "end": "2026-11-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryAndSalaryIncome",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "incomes": [
+      {
+        "conceptId": "00000000-0000-0000-0002-000000000001",
+        "conceptName": "Comisiones",
+        "amount": 501811,
+        "salaryConstitutive": true
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 1500000 },
+      { "code": "transport_allowance", "amount": 0 },
+      { "code": "income:00000000-0000-0000-0002-000000000001:0", "amount": 501811 },
+      { "code": "ibc", "amount": 2001811 },
+      { "code": "health_employee", "amount": 80072 },
+      { "code": "pension_employee", "amount": 80072 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 240300 },
+      { "code": "arl", "amount": 10500 },
+      { "code": "compensation_fund", "amount": 80100 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 166751 },
+      { "code": "severance_interest", "amount": 20018 },
+      { "code": "premium", "amount": 166751 },
+      { "code": "vacation", "amount": 83476 }
+    ],
+    "net": 1841667,
+    "employerCost": 2769707
+  },
+  "notes": [
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 3 000 000 ÷ 30 × 15 = 1500000; salary = round(0 + 1500000) − 0 = 1 500 000",
+    "income:0 Comisiones = round(501811) = 501 811 (salarial)",
+    "transport_allowance = 0: ingreso para el tope 3 501 811 > 3 501 810 (2 × SMMLV)",
+    "SalDev_m = 0 + 1500000 + 0 + 501811 = 2001811; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(2001811) = 2 001 811",
+    "health_employee = al peso(2 001 811 × 0,04 = 80072.44) − 0 = 80 072",
+    "pension_employee = al peso(2 001 811 × 0,04) − 0 = 80 072",
+    "solidarity_fund: ≈1.7134 SMMLV < 4 y sin retención previa ⇒ sin línea",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 3 501 811 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(2 001 811 × 0.12) − 0 = 240 300",
+    "arl = techo100(2001811 × 0.00522 = 10449.45342) − 0 = 10 500",
+    "compensation_fund = techo100(2001811 × 0,04) − 0 = 80 100",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 1500000 + 0 + 0 + 501811 = 2001811; severance = round(166750.8563) = 166 751; severance_interest = round(20018.11) = 20 018; premium = 166 751; vacation = round((1500000 + 501811) × 0,0417 = 83475.5187) = 83 476",
+    "totalEarned = 1500000 + 0 + 0 + 501811 + 0 = 2001811; totalDeductions = 160200; net = 1841611; employerCost = 2001811 + aportes 330900 + provisiones 436996 = 2769707"
+  ]
+}

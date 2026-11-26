@@ -5,10 +5,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
-using TenantModuleKey = Modules.Tenancy.Domain.TenantModuleKey;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using static Modules.Store.IntegrationTests.StoreApiHarness;
+using TenantModuleKey = Modules.Tenancy.Domain.TenantModuleKey;
 
 namespace Modules.Store.IntegrationTests;
 
@@ -205,6 +205,8 @@ internal sealed class StoreSettingsFixture : IAsyncDisposable
 /// <summary>El bucket público en memoria: sólo responde que está configurado y arma URLs, porque no se sube nada de verdad.</summary>
 internal sealed class InMemoryPublicStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets.qep.test";
 
     public bool IsConfigured => true;

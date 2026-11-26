@@ -42,4 +42,12 @@ public interface IEmployeeRepository
         Guid tenantId, IReadOnlyCollection<string> documentNumbers, CancellationToken cancellationToken);
 
     Task<IReadOnlySet<Guid>> ListLinkedMemberIdsAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Para nómina: los empleados con <b>algún</b> contrato de <paramref name="companyId"/> que cubre un día de
+    /// [<paramref name="periodStart"/>, <paramref name="periodEnd"/>] (<c>start_date ≤ periodEnd</c> y <c>ended_on</c> nulo o
+    /// <c>≥ periodStart</c>). Sin seguimiento, con contratos, salarios y cargos. Orden: apellido, nombre, id.
+    /// </summary>
+    Task<IReadOnlyList<Employee>> ListForPayrollAsync(
+        Guid tenantId, Guid companyId, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken);
 }

@@ -37,7 +37,10 @@ internal static class WholesaleApiHarness
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static string PriceListsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/price-lists";
+    /// <summary>Spec 2026-11-22: las listas viven en Catalog; la vista previa del distribuidor sigue en Mayorista.</summary>
+    public static string PriceListsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/catalog/price-lists";
+
+    public static string PreviewUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/price-lists/preview";
 
     public static string DistributorsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/distributors";
 
@@ -166,14 +169,17 @@ internal static class WholesaleApiHarness
         QepApiFactory factory,
         string email = "ana@distri.co",
         string identificationNumber = "900123456",
-        string businessName = DefaultBusinessName)
+        string businessName = DefaultBusinessName,
+        string country = "CO",
+        string identificationType = "NIT")
     {
         var wholesaler = await NewTenantAsync(factory);
         using var manager = CreateManager(factory, wholesaler);
         var list = await CreatePriceListAsync(manager, wholesaler.TenantId, "Oro", 10m);
         var company = await CreateCompanyAsync(manager, wholesaler.TenantId, "Mayorista Central SAS");
         var (distributor, token) = await InviteAsync(
-            factory, manager, wholesaler, list.Id, company, email, identificationNumber, businessName);
+            factory, manager, wholesaler, list.Id, company, email, identificationNumber, businessName, country,
+            identificationType);
         return (wholesaler, distributor, token);
     }
 
@@ -353,7 +359,7 @@ internal static class WholesaleApiHarness
         HttpClient client, Guid tenantId, string name, decimal discountPercent, string visibility = "AllActive", params Guid[] categoryIds)
     {
         var response = await client.PostAsJsonAsync(
-            PriceListsUrl(tenantId), new { name, discountPercent, visibility, categoryIds }, Ct);
+            PriceListsUrl(tenantId), new { name, adjustmentPercent = -discountPercent, visibility, categoryIds }, Ct);
         await EnsureSuccessAsync(response);
         return (await response.Content.ReadFromJsonAsync<PriceListDetailDto>(Ct))!;
     }
@@ -367,7 +373,9 @@ internal static class WholesaleApiHarness
         Guid billingCompanyId,
         string email = "ana@distri.co",
         string identificationNumber = "900123456",
-        string businessName = DefaultBusinessName)
+        string businessName = DefaultBusinessName,
+        string country = "CO",
+        string identificationType = "NIT")
     {
         var response = await client.PostAsJsonAsync(
             DistributorsUrl(tenant.TenantId),
@@ -375,13 +383,17 @@ internal static class WholesaleApiHarness
             {
                 email,
                 businessName,
-                country = "CO",
-                identificationType = "NIT",
+                country,
+                identificationType,
                 identificationNumber,
                 contactName = "Ana Pérez",
                 priceListId,
                 advisorId = tenant.MemberId,
                 billingCompanyId,
+                // La ciudad que el país exige: el id de Geography en Colombia, el texto afuera.
+                cityId = country == "CO" ? await MedellinAsync(client) : (Guid?)null,
+                cityName = country == "CO" ? null : "Madrid",
+                address = "Calle 10 # 40-20",
             },
             Ct);
         await EnsureSuccessAsync(response);
@@ -392,6 +404,22 @@ internal static class WholesaleApiHarness
     /// <summary>El token del último evento de invitación de ese distribuidor (un reenvío publica otro).</summary>
     public static async Task<string> LatestTokenAsync(QepApiFactory factory, Guid distributorId)
     {
+        using var document = await LatestInvitationPayloadAsync(factory, distributorId);
+        return document.RootElement.GetProperty("token").GetString()!;
+    }
+
+    /// <summary>
+    /// La prueba de buzón del último evento de invitación (spec 2026-11-24), la que el correo manda como <c>?ev=</c>;
+    /// <c>null</c> si el evento no la trae.
+    /// </summary>
+    public static async Task<string?> LatestEmailProofAsync(QepApiFactory factory, Guid distributorId)
+    {
+        using var document = await LatestInvitationPayloadAsync(factory, distributorId);
+        return document.RootElement.TryGetProperty("emailProof", out var emailProof) ? emailProof.GetString() : null;
+    }
+
+    private static async Task<JsonDocument> LatestInvitationPayloadAsync(QepApiFactory factory, Guid distributorId)
+    {
         var payloads = await RowsAsync<string>(
             factory,
             $"""
@@ -399,8 +427,7 @@ internal static class WholesaleApiHarness
             WHERE event_name = {DistributorInvitedEvent} AND payload ->> 'distributorId' = {distributorId.ToString()}
             ORDER BY occurred_at DESC, id DESC
             """);
-        using var document = JsonDocument.Parse(payloads[0]);
-        return document.RootElement.GetProperty("token").GetString()!;
+        return JsonDocument.Parse(payloads[0]);
     }
 
     /// <summary>El <c>If-Match</c> de las escrituras sobre un recurso existente, con la forma fuerte <c>"7"</c>.</summary>
@@ -433,7 +460,7 @@ internal static class WholesaleApiHarness
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>
         await response.Content.ReadAsStringAsync(Ct);
 
-    private static async Task<Guid> MedellinAsync(HttpClient client)
+    public static async Task<Guid> MedellinAsync(HttpClient client)
     {
         Guid? first = null;
         var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];
@@ -449,6 +476,22 @@ internal static class WholesaleApiHarness
         }
 
         return first ?? throw new InvalidOperationException("No seeded DIVIPOLA city.");
+    }
+
+    /// <summary>Una ciudad sembrada distinta de <paramref name="excluded"/>.</summary>
+    public static async Task<Guid> OtherCityAsync(HttpClient client, Guid excluded)
+    {
+        var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<GeographyRow>>($"/api/v1/cities?departmentId={department.Id}", Ct) ?? [];
+            if (cities.FirstOrDefault(city => city.Id != excluded) is { } other)
+            {
+                return other.Id;
+            }
+        }
+
+        throw new InvalidOperationException("No second seeded DIVIPOLA city.");
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response)

@@ -190,4 +190,44 @@ public sealed class AgentConfigValidatorTests
 
         Assert.Null(AgentConfig.FromJson(json).QuotationDraft);
     }
+
+    // Spec 2026-11-23 §9.2: con la herramienta de la Agenda prendida, publicar exige el módulo y un servicio reservable.
+    private static AgentConfig WithScheduling(bool on = true) =>
+        Valid() with { Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: false, Scheduling: on) };
+
+    private static AgentValidationContext SchedulingContext(AgentSchedulingReadiness? readiness) =>
+        new(1, AgentModelAvailability.Available, null, false, Scheduling: readiness);
+
+    [Fact]
+    public void SchedulingWithTheModuleOffIsAnError()
+    {
+        var issues = AgentConfigValidator.Validate(WithScheduling(), SchedulingContext(new AgentSchedulingReadiness(false, 0)));
+
+        var issue = Assert.Single(issues);
+        Assert.Equal(("scheduling_module_disabled", "tools.scheduling", AgentIssueSeverity.Error), (issue.Code, issue.Path, issue.Severity));
+    }
+
+    [Fact]
+    public void SchedulingWithoutBookableServicesIsAnError()
+    {
+        var issues = AgentConfigValidator.Validate(WithScheduling(), SchedulingContext(new AgentSchedulingReadiness(true, 0)));
+
+        var issue = Assert.Single(issues);
+        Assert.Equal(("scheduling_no_bookable_service", "tools.scheduling", AgentIssueSeverity.Error), (issue.Code, issue.Path, issue.Severity));
+    }
+
+    [Fact]
+    public void SchedulingReadyHasNoIssue()
+    {
+        var readiness = new AgentSchedulingReadiness(true, 2);
+
+        Assert.True(readiness.Ready);
+        Assert.Empty(AgentConfigValidator.Validate(WithScheduling(), SchedulingContext(readiness)));
+    }
+
+    [Fact]
+    public void SchedulingOffIgnoresTheReadiness() =>
+        Assert.DoesNotContain(
+            AgentConfigValidator.Validate(WithScheduling(on: false), SchedulingContext(new AgentSchedulingReadiness(false, 0))),
+            issue => issue.Code.StartsWith("scheduling_", StringComparison.Ordinal));
 }

@@ -26,10 +26,7 @@ public static class WholesaleInfrastructureExtensions
                     "__ef_migrations_history",
                     WholesaleDbContext.Schema)));
 
-        services.AddScoped<IPriceListRepository, PriceListRepository>();
         services.AddScoped<IDistributorRepository, DistributorRepository>();
-        // Los conteos por lista los da el mismo repositorio, la misma instancia del request.
-        services.AddScoped<IDistributorUsage>(provider => provider.GetRequiredService<IDistributorRepository>());
         services.AddScoped<IWholesaleUnitOfWork, WholesaleUnitOfWork>();
         services.AddScoped<IWholesaleAuditPublisher, WholesaleAuditPublisher>();
         services.AddScoped<IWholesaleEventPublisher, WholesaleEventPublisher>();

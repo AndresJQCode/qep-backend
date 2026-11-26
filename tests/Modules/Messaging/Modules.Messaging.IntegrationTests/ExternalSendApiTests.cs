@@ -844,7 +844,10 @@ public sealed class ExternalSendApiTests
         ScriptMetaOk(f.Factory.MetaHandler);
         var parameters = new Dictionary<string, string>
         {
-            ["nombre_contacto"] = "Ana", ["numero_cotizacion"] = "COT-12", ["valor_total"] = "$ 1.500.000", ["vigencia"] = "30/11/2026",
+            ["nombre_contacto"] = "Ana",
+            ["numero_cotizacion"] = "COT-12",
+            ["valor_total"] = "$ 1.500.000",
+            ["vigencia"] = "30/11/2026",
         };
 
         var response = await PostAsync(

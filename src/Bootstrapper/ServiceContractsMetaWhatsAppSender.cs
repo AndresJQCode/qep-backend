@@ -1,11 +1,11 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
-using Modules.ServiceContracts.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 using Modules.Quotations.Application;
+using Modules.ServiceContracts.Application;
 using Modules.Tenancy.Application;
 
 namespace Bootstrapper;

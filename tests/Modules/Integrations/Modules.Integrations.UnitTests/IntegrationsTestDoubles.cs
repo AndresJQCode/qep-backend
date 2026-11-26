@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using BuildingBlocks.Application;
@@ -367,8 +367,10 @@ internal sealed partial class IntegrationsTestBed
     public void ShowEverything() =>
         Modules.Sets[TenantId] = TenantModuleSet.FromStored(TenantModuleKeys.All);
 
+    /// <summary>Sin los dos módulos que consumen a Zenvia: sólo quitar cotizaciones ya no lo oculta, porque los pedidos también lo usan.</summary>
     public void HideQuotations() =>
-        Modules.Sets[TenantId] = TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations]));
+        Modules.Sets[TenantId] = TenantModuleSet.FromStored(
+            TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders]));
 
     public FakeMetaAppSettings MetaApp { get; } = new();
 

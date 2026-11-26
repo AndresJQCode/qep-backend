@@ -79,7 +79,8 @@ internal static class OrderMapping
         order.RequiresShipping,
         WholesaleOf(order),
         order.InvoiceProvider,
-        order.InvoiceNumber);
+        order.InvoiceNumber,
+        order.IsEditable);
 
     /// <summary>Mayorista fase 3: el vínculo del pedido con la orden del distribuidor; null fuera de un pedido mayorista.</summary>
     public static OrderWholesaleState? WholesaleOf(Order order) =>
@@ -159,7 +160,9 @@ internal static class OrderMapping
         party.PersonType?.ToWireValue(),
         party.IdentificationType?.ToWireValue(),
         party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
-        party.CityName);
+        party.CityName,
+        party.RegionId,
+        party.PostalCode);
 
     private static QuotationItemDto ToDto(OrderItem item, PriceRounding rounding) => new(
         item.Id.Value,
@@ -179,7 +182,8 @@ internal static class OrderMapping
         item.ProductName,
         item.Kind.ToString(),
         item.SalesUnit.ToString(),
-        item.SourcePurchaseOrderLineId);
+        item.SourcePurchaseOrderLineId,
+        item.IsGift);
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(
         proof.Id.Value, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn);

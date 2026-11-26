@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Hr.Application;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 
@@ -10,7 +11,7 @@ namespace Bootstrapper;
 /// <see cref="LoansMemberDirectory"/> sin el permiso (cualquier miembro activo puede ser un empleado), más la búsqueda por el
 /// usuario de la membresía. Sin caché; toda lectura va acotada al tenant.
 /// </summary>
-internal sealed class HrMemberDirectory(TenancyDbContext tenancy) : IHrMemberDirectory
+internal sealed class HrMemberDirectory(TenancyDbContext tenancy, IRolePermissionChecker permissions) : IHrMemberDirectory
 {
     // El mismo rótulo de MembershipResponse.DisplayName nulo en el panel de Personas.
     private const string NoName = "Sin nombre";
@@ -41,6 +42,31 @@ internal sealed class HrMemberDirectory(TenancyDbContext tenancy) : IHrMemberDir
         // Orden estable: es la lista de GET /members-available.
         return active
             .Select(ToRef)
+            .OrderBy(member => member.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(member => member.MemberId)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<HrMemberRef>> ListWithPermissionAsync(
+        Guid tenantId, string permission, CancellationToken cancellationToken)
+    {
+        var tenant = new TenantId(tenantId);
+        var active = await tenancy.Memberships.AsNoTracking()
+            .Where(membership => membership.TenantId == tenant && membership.State == MembershipState.Active)
+            .ToListAsync(cancellationToken);
+
+        // Authorization is asked only for whoever is active: a suspended or removed membership manages nothing, even if its role
+        // grants the permission. Same pattern as ServiceContractsMemberDirectory.
+        var granted = new List<HrMemberRef>();
+        foreach (var membership in active)
+        {
+            if (await permissions.AnyGrantsAsync(tenant, membership.Roles, permission, cancellationToken))
+            {
+                granted.Add(ToRef(membership));
+            }
+        }
+
+        return granted
             .OrderBy(member => member.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(member => member.MemberId)
             .ToList();

@@ -106,6 +106,23 @@ internal sealed class EmployeeRepository(HrDbContext dbContext) : IEmployeeRepos
         return linked.ToHashSet();
     }
 
+    public async Task<IReadOnlyList<Employee>> ListForPayrollAsync(
+        Guid tenantId, Guid companyId, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken) =>
+        await dbContext.Employees
+            .AsNoTracking()
+            .Where(employee => employee.TenantId == tenantId
+                && employee.Contracts.Any(contract =>
+                    contract.CompanyId == companyId
+                    && contract.StartDate <= periodEnd
+                    && (contract.EndedOn == null || contract.EndedOn >= periodStart)))
+            .OrderBy(employee => employee.LastName)
+            .ThenBy(employee => employee.FirstName)
+            .ThenBy(employee => employee.Id)
+            .Include(employee => employee.Contracts).ThenInclude(contract => contract.Salaries)
+            .Include(employee => employee.Contracts).ThenInclude(contract => contract.Assignments)
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken);
+
     private static IQueryable<Employee> WithHistories(IQueryable<Employee> employees) => employees
         .Include(employee => employee.Contracts).ThenInclude(contract => contract.Salaries)
         .Include(employee => employee.Contracts).ThenInclude(contract => contract.Assignments)

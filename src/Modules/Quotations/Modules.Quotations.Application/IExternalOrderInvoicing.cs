@@ -2,7 +2,9 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>Una línea del pedido para facturar. <paramref name="Subtotal"/> es el de la línea con el descuento aplicado y sin IVA.</summary>
+/// <summary>Una línea del pedido para facturar. <paramref name="Subtotal"/> es el de la línea con el descuento aplicado y sin IVA.
+/// <paramref name="IsGift"/> marca un regalo (subtotal e IVA en 0); <paramref name="ListUnitPrice"/> es el precio de lista con IVA
+/// incluido (<c>OrderItem.UnitPrice</c>), con el que el facturador arma la base del obsequio.</summary>
 public sealed record ExternalInvoicingLine(
     Guid VariantId,
     string Name,
@@ -10,10 +12,12 @@ public sealed record ExternalInvoicingLine(
     decimal Subtotal,
     decimal DiscountPercentage,
     int TaxPercentage,
-    decimal TaxAmount);
+    decimal TaxAmount,
+    bool IsGift = false,
+    decimal ListUnitPrice = 0m);
 
 /// <summary>Una retención <b>aplicada</b> del pedido (las que no aplicaron no viajan).</summary>
-public sealed record ExternalInvoicingWithholding(Guid TaxRateId, string Name, string Type, decimal Amount);
+public sealed record ExternalInvoicingWithholding(Guid TaxRateId, string Name, string Type, decimal Amount, decimal Percentage = 0m);
 
 /// <summary>Un comprobante de pago: cada uno es un pago de la factura.</summary>
 public sealed record ExternalInvoicingProof(Guid ProofId, decimal Amount);
@@ -74,6 +78,10 @@ public sealed record ExternalInvoicingOrder(
     string? ShippingAddress = null,
     string? ShippingCity = null);
 
+/// <summary>Cómo se nombra un pedido en una lista del facturador: el número y el cliente que muestra <c>/orders</c>
+/// (<paramref name="CustomerName"/> es <c>null</c> si la ficha ya no resuelve).</summary>
+public sealed record ExternalInvoicingOrderLabel(string OrderNumber, string? CustomerName);
+
 /// <summary>
 /// El puerto que un facturador externo (Siigo) usa sobre los pedidos (spec 2026-11-18 §5.5). El adaptador vive en Bootstrapper; este
 /// puerto es de Quotations y lo implementa <see cref="ExternalOrderInvoicingService"/>.
@@ -91,6 +99,16 @@ public interface IExternalOrderInvoicing
     /// el facturador la compara con la que armó, después de crear la factura, para avisar que el pedido cambió.</summary>
     Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 
+    /// <summary>Si el pedido ya lleva la marca de esa factura (mismo proveedor y número, la misma regla con que
+    /// <see cref="MarkInvoicedAsync"/> no hace nada). Sólo lee. <c>false</c> también si no es del tenant, si está marcado a mano o con
+    /// otra factura.</summary>
+    Task<bool> IsMarkedAsync(Guid tenantId, Guid orderId, string provider, string number, CancellationToken cancellationToken);
+
+    /// <summary>El número y el nombre del cliente de estos pedidos, por id de pedido y en lote (spec 2026-11-24 §5). El nombre es el mismo
+    /// <c>ClientName</c> de la lista de pedidos. Un id que no es del tenant no aparece.</summary>
+    Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
+
     /// <summary>
     /// Marca el pedido como facturado por <paramref name="provider"/> (<see cref="Order.InvoiceExternally"/>), con historial
     /// <c>Invoiced</c> y la auditoría <c>quotation.order.invoiced</c> con <c>provider</c> en <c>changedFields</c>. Idempotente: con la
@@ -102,6 +120,20 @@ public interface IExternalOrderInvoicing
         string provider,
         string number,
         string externalId,
+        Guid memberId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Quita la marca de facturado de esa factura de <paramref name="provider"/> (<see cref="Order.RevertExternalInvoicing"/>), con
+    /// historial <c>InvoicingReverted</c> y la auditoría <c>quotation.order.invoice_reverted</c> con <c>provider</c> y <c>number</c>.
+    /// Sin marca o con otra no escribe nada. Reintenta una vez ante <c>RequestConcurrencyException</c>.
+    /// </summary>
+    /// <returns>Si el pedido perdió la marca.</returns>
+    Task<bool> RevertExternalInvoicingAsync(
+        Guid tenantId,
+        Guid orderId,
+        string provider,
+        string number,
         Guid memberId,
         CancellationToken cancellationToken);
 }

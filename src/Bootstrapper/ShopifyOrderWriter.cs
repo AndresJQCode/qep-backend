@@ -149,7 +149,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                         shipping.FreightTaxPercentage, shipping.CashOnDelivery),
             draft.ShippingParty is not { } party
                 ? null
-                : new ExternalShippingParty(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId),
+                : new ExternalShippingParty(
+                    party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode),
             draft.ReplaceBuyerNotes,
             draft.BuyerNotes,
             ShopifyOrderImporter.RawAddressLabel,
@@ -208,7 +209,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             ? null
             : new QuotationPartyRequest(
                 shippingParty.Name, null, shippingParty.Phone, shippingParty.Email, shippingParty.Address,
-                shippingParty.DepartmentId, shippingParty.CityId);
+                shippingParty.DepartmentId, shippingParty.CityId, PostalCode: shippingParty.PostalCode);
 
         return new ExternalOrderDraft(
             draft.TenantId,
@@ -241,18 +242,37 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             draft.BuyerNotes);
     }
 
-    // Spec 2026-10-26 D-C4: la parte de envío como la guardó Quotations. Una guardada está completa (OrderParty.IsComplete), así
-    // que departamento y ciudad vienen siempre; si no, es un error de programación y no una huella a medias.
-    internal static ShopifyShippingFingerprint? Fingerprint(ExternalShippingParty? party) =>
-        party is null
-            ? null
-            : new ShopifyShippingFingerprint(
-                party.Name,
-                party.Phone,
-                party.Email,
-                party.Address,
-                party.DepartmentId ?? throw new InvalidOperationException("A persisted shipping party always has a department."),
-                party.CityId ?? throw new InvalidOperationException("A persisted shipping party always has a city."));
+    // Spec 2026-10-26 D-C4: la parte de envío como la guardó Quotations. Una guardada está completa (OrderParty.IsComplete): en
+    // Colombia vienen siempre departamento y ciudad, y fuera, la ciudad escrita; si no, es un error de programación y no una huella
+    // a medias.
+    internal static ShopifyShippingFingerprint? Fingerprint(ExternalShippingParty? party)
+    {
+        if (party is null)
+        {
+            return null;
+        }
+
+        var colombian = party.Country is null
+            || string.Equals(party.Country, QuotationPartyDetails.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
+        if (colombian && party.DepartmentId is null)
+        {
+            throw new InvalidOperationException("A persisted Colombian shipping party always has a department.");
+        }
+
+        if (colombian && party.CityId is null)
+        {
+            throw new InvalidOperationException("A persisted Colombian shipping party always has a city.");
+        }
+
+        if (!colombian && string.IsNullOrWhiteSpace(party.CityName))
+        {
+            throw new InvalidOperationException("A persisted shipping party outside Colombia always has a city name.");
+        }
+
+        return new ShopifyShippingFingerprint(
+            party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode, party.Country,
+            party.CityName, party.RegionId);
+    }
 
     private static string Normalize(string? financialStatus) => financialStatus?.Trim().ToLowerInvariant() ?? string.Empty;
 

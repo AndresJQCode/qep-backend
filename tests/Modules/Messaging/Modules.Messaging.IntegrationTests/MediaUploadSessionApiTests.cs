@@ -108,15 +108,15 @@ public sealed class MediaUploadSessionApiTests
         var url = SessionUrl(f.Tenant.TenantId, f.ConversationId);
 
         var shape = await SendAsync(f.Client, HttpMethod.Post, url, new { fileName = "", mimeType = "image/jpeg", sizeBytes = 0 });
-        var webp = await SendAsync(f.Client, HttpMethod.Post, url, new { fileName = "a.webp", mimeType = "image/webp", sizeBytes = 1000 });
+        var unsupported = await SendAsync(f.Client, HttpMethod.Post, url, new { fileName = "a.zip", mimeType = "application/zip", sizeBytes = 1000 });
         var big = await SendAsync(f.Client, HttpMethod.Post, url, new { fileName = "a.jpg", mimeType = "image/jpeg", sizeBytes = 26L * 1024 * 1024 });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, shape.StatusCode);
         var problem = await ProblemAsync(shape);
         Assert.Equal("validation.failed", problem.Code);
         Assert.Equal(["fileName", "sizeBytes"], problem.ErrorKeys);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, webp.StatusCode);
-        Assert.Equal("messaging.media.unsupported_format", (await ProblemAsync(webp)).Code);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, unsupported.StatusCode);
+        Assert.Equal("messaging.media.unsupported_format", (await ProblemAsync(unsupported)).Code);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, big.StatusCode);
         Assert.Equal("messaging.media.too_large", (await ProblemAsync(big)).Code);
         Assert.Empty(f.Staging.Keys);

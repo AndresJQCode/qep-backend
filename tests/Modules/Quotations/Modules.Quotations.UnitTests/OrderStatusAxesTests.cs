@@ -299,7 +299,8 @@ public sealed class OrderStatusAxesTests
             "invoice" => o => o.Invoice(Advisor, requireFullPayment: false, Now),
             "markPaid" => o => o.MarkPaid(Advisor, requirePaymentProof: false, o.WithoutCosts(), Now),
             "archive" => o => o.Archive(Advisor, Now),
-            _ => _ => { },
+            _ => _ => { }
+            ,
         };
 
         apply(order);

@@ -149,4 +149,17 @@ public sealed class CompanyWriteRulesTests
         Assert.True(new CreateCompanyValidator()
             .Validate(Command(country: " es ", documentType: "NIF", withCity: false, cityName: "Madrid"))
             .IsValid);
+    // Region (provincia guardada, spec 2026-11-23): con Colombia la region se rechaza por campo.
+    [Fact]
+    public void ColombianCompanyWithRegionFailsOnRegionId() =>
+        Assert.True(Fails(Command() with { RegionId = Guid.NewGuid() }, "RegionId"));
+
+    [Fact]
+    public void ForeignCompanyWithRegionIsValid() =>
+        Assert.True(new CreateCompanyValidator()
+            .Validate(Command(country: "ES", documentType: "NIF", withCity: false, cityName: "Madrid") with
+            {
+                RegionId = Guid.NewGuid()
+            })
+            .IsValid);
 }

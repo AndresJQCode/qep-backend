@@ -9,8 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Ai.Application;
 using Modules.Ai.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
-using TenancyDomain = Modules.Tenancy.Domain;
 using static Modules.Ai.IntegrationTests.AiApiHarness;
+using TenancyDomain = Modules.Tenancy.Domain;
 
 namespace Modules.Ai.IntegrationTests;
 
@@ -139,7 +139,8 @@ internal static partial class CopilotHarness
                 businessName = name,
                 identificationType = "PASAPORTE",
                 identificationNumber = $"P{Random.Shared.Next(100000, 999999)}",
-                phone = (string?)null,
+                // El teléfono es obligatorio al crear un cliente (CustomerWriteRules).
+                phone = "+13055550123",
                 email = (string?)null,
                 address = (string?)null,
                 country = "US",
@@ -210,13 +211,22 @@ internal static partial class CopilotHarness
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    /// <summary>Cambia los roles de la membresía de quien pregunta (o su estado) a mitad de un trabajo, como lo haría un admin.</summary>
-    public static Task<int> UpdateMembershipAsync(string connectionString, string setClause) =>
-        ExecuteAsync(
+    /// <summary>Cambia los roles de la membresía de quien pregunta (o su estado) a mitad de un trabajo, como lo haría un admin. Por SQL
+    /// directo, así que sube la versión de acceso del tenant como lo hace todo camino que cambia permisos: sin eso la caché de permisos
+    /// (<c>MemoryPermissionCache</c>, prendida aunque Valkey esté apagado) sirve los de antes hasta 60 s.</summary>
+    public static async Task UpdateMembershipAsync(QepApiFactory factory, string connectionString, string setClause)
+    {
+        var tenantId = Guid.Parse(TenantId);
+        var accessVersion = factory.Services.GetRequiredService<Modules.Tenancy.Application.ITenantAccessVersion>();
+        await accessVersion.BumpAsync(tenantId, TestContext.Current.CancellationToken);
+        await ExecuteAsync(
             connectionString,
             $"UPDATE tenancy.memberships SET {setClause}, version = version + 1 WHERE tenant_id = @tenant AND user_id = @user",
-            ("tenant", Guid.Parse(TenantId)), ("user", Guid.Parse(SubjectId)));
+            ("tenant", tenantId), ("user", Guid.Parse(SubjectId)));
+        await accessVersion.BumpAsync(tenantId, TestContext.Current.CancellationToken);
+    }
 
-    [GeneratedRegex("""kind\\?"\s*:\s*\\?"customer\\?"\s*,\s*\\?"id\\?"\s*:\s*\\?"([0-9a-f-]{36})""")]
+    // La comilla del JSON anidado en el tool_result puede viajar como \" o como " (lo que escape el serializador).
+    [GeneratedRegex("""kind(?:\\u0022|\\?")\s*:\s*(?:\\u0022|\\?")customer(?:\\u0022|\\?")\s*,\s*(?:\\u0022|\\?")id(?:\\u0022|\\?")\s*:\s*(?:\\u0022|\\?")([0-9a-f-]{36})""")]
     private static partial Regex CustomerRef();
 }

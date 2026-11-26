@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Customers.Application;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
@@ -1359,5 +1360,118 @@ public sealed class CustomerWriteApiTests(SharedCustomersHost sharedHost) : ICla
             $"{CustomersUrl()}/{withCityId}", BodyWithoutDocument(null, classification.Id, name: "Con ciudad"), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, clearCity.StatusCode);
         Assert.Equal("customers.customer.city_required", await ProblemCodeAsync(clearCity));
+    }
+
+    // ---- Region (provincia guardada, spec 2026-11-23) -----------------------------------------
+    //
+    // Toda lectura de `region` sale del JSON de la respuesta HTTP, no del DTO: el Response mapea a mano y
+    // se come en silencio un campo nuevo.
+
+    private static object ForeignBodyWithRegion(Guid classificationId, Guid? regionId, string country = "ES", string identificationType = "NIF") =>
+        new
+        {
+            name = "Verde Esencial S.L.",
+            identificationType,
+            identificationNumber = "B-12345678",
+            phone = "+34 910 000 000",
+            email = "compras@verde.es",
+            address = "Calle Gran Via 28",
+            country,
+            cityName = "Madrid",
+            regionId,
+            classificationId,
+            vatSurplus = false
+        };
+
+    [Fact]
+    public async Task ForeignCustomerRoundTripsRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var created = await client.PostAsJsonAsync(
+            CustomersUrl(), ForeignBodyWithRegion(classification.Id, madrid), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var customerId = (await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken))!.Id;
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{CustomersUrl()}/{customerId}", TestContext.Current.CancellationToken);
+        var region = json.GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task UpdatingWithoutRegionClearsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+        var created = await client.PostAsJsonAsync(
+            CustomersUrl(), ForeignBodyWithRegion(classification.Id, madrid), TestContext.Current.CancellationToken);
+        var customerId = (await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken))!.Id;
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customerId}",
+            ForeignBodyWithRegion(classification.Id, regionId: null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{CustomersUrl()}/{customerId}", TestContext.Current.CancellationToken);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("region").ValueKind);
+    }
+
+    [Fact]
+    public async Task ColombianCustomerWithRegionIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Verde Esencial S.A.S.",
+                identificationType = "NIT",
+                identificationNumber = "900.123.456-1",
+                phone = "310 935 2187",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = city.CityId,
+                regionId = madrid,
+                classificationId = classification.Id
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("RegionId", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task RegionOfAnotherCountryIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(), ForeignBodyWithRegion(classification.Id, madrid, country: "FR", identificationType: "PASAPORTE"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.customer.region_invalid", body, StringComparison.Ordinal);
+        Assert.Contains("RegionId", body, StringComparison.Ordinal);
     }
 }

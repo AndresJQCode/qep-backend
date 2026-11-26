@@ -66,6 +66,8 @@ data:
   # con la contraseña del usuario ACL qep, está en prod-secret.yaml. Apagarlo ("false") es el rollback.
   Valkey__Enabled: "true"
   Valkey__Areas__Presence: "true"
+  Valkey__Areas__RateLimiting: "true"
+  Valkey__Areas__Sessions: "true"
   # Authentication__Authority queda sin definir: por defecto toma el emisor propio de
   # Google (https://accounts.google.com) en QepServiceCollectionExtensions.AddAuthentication.
   # Sólo la audiencia (el client id de OAuth de Google) debe proveerse por entorno.

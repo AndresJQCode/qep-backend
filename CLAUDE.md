@@ -20,6 +20,17 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
 `git -C ../qep-frontend branch --show-current`, y si el dato no aparece,
 `git -C ../qep-frontend log -S "<término>" --all` más `git branch -a --contains <sha>`.
 
+## Cada agente trabaja en su repo
+
+Decisión del owner, 2026-11-26. Los agentes de este repo **no hacen tareas de `qep-frontend`** (ni de otro repo): no
+escriben archivos, specs ni planes allá, no crean ramas ni worktrees, no commitean y no lanzan subagentes para hacerlo.
+**Leer** el otro repo para verificar un contrato sí se puede.
+
+Cuando un trabajo cruza repos, terminas la parte del backend y **le entregas al owner un prompt** para la sesión del otro
+repo. El prompt se entiende sin esta conversación: qué se pide y por qué, el contrato (rutas, campos, permisos y códigos
+de error verificados en el código), la ruta del spec del backend, la rama y el commit donde está, si ya se mergeó o
+desplegó, y las decisiones pendientes.
+
 ## Reglas duras
 
 - **Nunca imprimir el valor de un secreto.** `dotnet user-secrets list` y equivalentes se
@@ -59,7 +70,18 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
   el código. Lo que falte se registra explícitamente como decisión pendiente, no se asume.
 - **La autoridad es el código.** Ante discrepancia entre el código y un documento, gana el
   código y el documento se corrige.
-- **Commits:** conventional commits. **Sin atribución de IA.**
+- **Commits:** conventional commits. **Cada commit hecho por un agente declara sesión y
+  autoría** (decisión del owner, 2026-11-26; en este repo manda sobre la regla global «sin
+  atribución de IA»). El mensaje termina con estas dos líneas, juntas y tras una línea en blanco:
+
+  ```
+  Session: <nombre de la sesión>
+  Co-Authored-By: Claude <modelo que escribió el cambio> <noreply@anthropic.com>
+  ```
+
+  El nombre sale de la primera línea de `ListAgents` («This session is …»). Un subagente no lo
+  deduce: quien lo lanza le pasa las dos líneas en el encargo. El autor de Git no se cambia. Los
+  commits ya hechos no se reescriben.
 - **Antes de commitear se comprueba la rama, y si es la por defecto (`main`) se crea una
   primero.** La comprobación es `git branch --show-current` **en ese momento**, no lo que se
   haya leído al abrir la sesión: el 2026-09-05 el snapshot del arranque decía `main` mientras
@@ -70,6 +92,13 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
 - **Prohibido mergear a `main`** (decisión del owner, 2026-10-10). Los merges de un agente
   terminan en `develop`; llevar `develop` a `main` lo hace el owner, nunca un agente. Un pedido de
   "mergear" o "publicar" sin destino significa `develop`.
+- **Un cambio de arquitectura lo autoriza el owner antes del merge** (decisión del owner, 2026-11-25). Es cambio de
+  arquitectura cualquier aviso «Requiere autorización del owner» de `.\scripts\test-feature.ps1` (una prueba de
+  `tests/ArchitectureTests/` modificada o una referencia nueva entre módulos) y, aunque el script no lo vea, un contrato
+  HTTP que cambia (ruta, campo, código de error o permiso) sin un spec aprobado que lo diga. Se le muestra cada
+  desviación con su archivo y el motivo, y se espera su respuesta: una prueba en verde no es autorización, y aprobar
+  una no aprueba las demás. La revisión final de la rama la hace un subagente de solo lectura, sin el contexto de quien
+  implementó.
 - **[`docs/estado.md`](docs/estado.md) se actualiza en `develop`, al mergear.** Es el estado global
   del proyecto, y sin esta regla se queda viejo. El 2026-10-21, a un día de creado, decía «sin empezar» para
   variantes con el backend ya mergeado, y once specs construidos seguían en «Por verificar». Cada merge a
@@ -210,4 +239,10 @@ justo cuando alguien renombra una columna o toca el adaptador.
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
-[README § Verificación](README.md#verificación).
+[README § Verificación](README.md#verificación). Las pruebas van en dos niveles (decisión del owner, 2026-11-24):
+
+- **Para mergear a `develop`** basta `.\scripts\test-feature.ps1` en verde, **leyendo sus avisos**. No se corre el
+  proyecto de integración completo de cada módulo tocado.
+- **La suite completa** (`.\scripts\run-all-tests.ps1`) corre de noche o antes de llevar `develop` a `main`.
+- **`main` sólo recibe un commit con reporte completo en verde** y el árbol limpio, según el encabezado de
+  `TestResults\report.md`. `develop` puede quedar roto hasta esa corrida; lo que ahí falle se corrige antes de `main`.

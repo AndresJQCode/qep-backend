@@ -420,7 +420,7 @@ public static class OrderEndpoints
             new CreateOrderCommand(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping, ToGiftAdditions(request.Gifts)),
             cancellationToken);
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
@@ -438,10 +438,14 @@ public static class OrderEndpoints
             new PreviewOrderQuery(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentProofs, request.Shipping, request.BillingCompanyId),
+                request.PaymentProofs, request.Shipping, request.BillingCompanyId, ToGiftAdditions(request.Gifts)),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
+
+    // Spec 2026-11-23: los regalos son variante y cantidad. Se conserva el null: al editar es «no los toques», al crear «sin regalos».
+    private static OrderItemAddition[]? ToGiftAdditions(IReadOnlyList<OrderGiftLineRequest>? gifts) =>
+        gifts?.Select(gift => new OrderItemAddition(gift.VariantId, gift.Quantity)).ToArray();
 
     private static OrderItemAddition[] ToAdditions(IReadOnlyList<OrderEditItemRequest>? items) =>
         (items ?? [])
@@ -487,7 +491,7 @@ public static class OrderEndpoints
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
                 request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes, request.OrderDate),
+                request.ClearedWithholdingTypes, request.OrderDate, ToGiftAdditions(request.Gifts), request.Delivery),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
@@ -546,7 +550,8 @@ public static class OrderEndpoints
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
                 request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes, request.OrderDate, request.BillingCompanyId),
+                request.ClearedWithholdingTypes, request.OrderDate, request.BillingCompanyId,
+                ToGiftAdditions(request.Gifts), request.Delivery),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

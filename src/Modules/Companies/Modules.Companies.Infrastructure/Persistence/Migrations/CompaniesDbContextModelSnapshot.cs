@@ -84,6 +84,10 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
 
+                    b.Property<Guid?>("RegionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("region_id");
+
                     b.Property<string>("TaxId")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -119,7 +123,7 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
 
                     b.ToTable("companies", "companies", t =>
                         {
-                            t.HasCheckConstraint("CK_companies_city_lane", "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
+                            t.HasCheckConstraint("CK_companies_city_lane", "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_companies_document_type", "document_type IN ('NIT','CC','CE','PASAPORTE','NIF','NIE','TAX_ID')");
                         });

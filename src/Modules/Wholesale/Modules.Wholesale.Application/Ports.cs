@@ -3,35 +3,41 @@ using Modules.Wholesale.Domain;
 namespace Modules.Wholesale.Application;
 
 /// <summary>
-/// Las listas de precios del módulo. Toda lectura va acotada al tenant; <see cref="Add"/> y <see cref="Remove"/> no lo reciben
-/// porque el agregado ya lo lleva.
+/// Spec 2026-11-22 (listas de precios por canal, D-7/D-11): la lista de un distribuidor vive en Catalog y Mayorista la lee por
+/// este puerto (lo implementa Bootstrapper). <see cref="VisibleCategoryIds"/> <c>null</c> es «todo el catálogo activo»; si no,
+/// las categorías de la lista (sus descendientes también se ven).
 /// </summary>
-public interface IPriceListRepository
+public sealed record WholesalePriceList(
+    PriceListId Id,
+    string Name,
+    decimal AdjustmentPercent,
+    IReadOnlyCollection<Guid>? VisibleCategoryIds,
+    IReadOnlyCollection<Guid> HiddenCategoryIds,
+    IReadOnlyCollection<Guid> HiddenProductIds,
+    bool ShowPrices);
+
+/// <summary>El precio de una variante con la lista, y si salió de un precio fijo (D-2) o del ajuste.</summary>
+public readonly record struct WholesaleListedPrice(decimal Price, bool IsFixed);
+
+/// <summary>Las listas de precios de Catalog vistas desde Mayorista. Toda lectura va acotada al tenant.</summary>
+public interface IWholesalePriceLists
 {
-    /// <summary>La lista, o <c>null</c> si no es del tenant.</summary>
-    Task<PriceList?> GetAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken);
+    /// <summary>La lista, o <c>null</c> si no es del tenant o ya no existe.</summary>
+    Task<WholesalePriceList?> GetAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken);
 
-    /// <summary>Todas las del tenant (sin paginar, D-12); el orden lo pone el handler.</summary>
-    Task<IReadOnlyList<PriceList>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+    /// <summary>Todas las del tenant; el orden lo pone quien llama.</summary>
+    Task<IReadOnlyList<WholesalePriceList>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 
-    /// <summary>En lote: los ids que no son del tenant no vienen.</summary>
-    Task<IReadOnlyDictionary<PriceListId, PriceList>> FindManyAsync(
-        Guid tenantId, IReadOnlyCollection<PriceListId> ids, CancellationToken cancellationToken);
-
-    /// <summary>Si otra lista del tenant (distinta de <paramref name="except"/>) tiene ese nombre sin importar mayúsculas
-    /// (D-12). El índice único de la base es la red de una carrera.</summary>
-    Task<bool> NameExistsAsync(Guid tenantId, string name, PriceListId? except, CancellationToken cancellationToken);
-
-    void Add(PriceList list);
-
-    void Remove(PriceList list);
-}
-
-/// <summary>Cuántos distribuidores usan cada lista, en cualquier estado. Lo implementa el repositorio de distribuidores; una
-/// lista sin distribuidores no viene.</summary>
-public interface IDistributorUsage
-{
-    Task<IReadOnlyDictionary<PriceListId, int>> CountByPriceListAsync(Guid tenantId, CancellationToken cancellationToken);
+    /// <summary>
+    /// El precio de cada variante con la lista en <paramref name="currency"/>, a partir de su precio base (D-2: precio fijo o base
+    /// con el ajuste y la regla de redondeo del tenant para esa moneda).
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, WholesaleListedPrice>> PriceAsync(
+        Guid tenantId,
+        WholesalePriceList list,
+        string currency,
+        IReadOnlyDictionary<Guid, decimal> basePrices,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>Una categoría del catálogo del mayorista con su nombre.</summary>
@@ -161,16 +167,21 @@ public interface IWholesaleAuditPublisher
 /// Los distribuidores del mayorista. Toda lectura va acotada al tenant salvo <see cref="FindByTokenHashAsync"/>: el hash es la
 /// llave y quien abre el link no tiene tenant.
 /// </summary>
-public interface IDistributorRepository : IDistributorUsage
+public interface IDistributorRepository
 {
     Task<Distributor?> GetAsync(Guid tenantId, DistributorId id, CancellationToken cancellationToken);
 
     /// <summary>Por el SHA-256 del token (nunca el token plano). Un token rotado o un distribuidor borrado dan <c>null</c>.</summary>
     Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken);
 
-    /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13).</summary>
+    /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13). Al editar,
+    /// <paramref name="excluding"/> es el propio distribuidor; al invitar, <c>null</c>.</summary>
     Task<bool> IdentificationExistsAsync(
-        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken);
+        Guid tenantId,
+        string identificationType,
+        string identificationNumber,
+        DistributorId? excluding,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Fase 3: la relación entre los dos tenants, en cualquier estado, o <c>null</c>. Va acotada al mayorista: quien pregunta
@@ -206,8 +217,8 @@ public interface IDistributorRepository : IDistributorUsage
 
 /// <summary>
 /// El evento <c>wholesale.distributor-invited.v1</c> hacia el correo y los otros eventos del módulo. El token plano sólo viaja en
-/// el del correo y en el del aviso con link; el adaptador los escribe en el outbox del contexto del módulo, así que salen con el
-/// mismo commit que la invitación.
+/// el del correo y en el del aviso con link; la prueba de buzón (spec 2026-11-24), sólo en el del correo. El adaptador los
+/// escribe en el outbox del contexto del módulo, así que salen con el mismo commit que la invitación.
 /// </summary>
 public interface IWholesaleEventPublisher
 {
@@ -217,6 +228,7 @@ public interface IWholesaleEventPublisher
         string email,
         string businessName,
         string token,
+        string emailProof,
         DateTimeOffset expiresAt,
         string correlationId,
         DateTimeOffset occurredAt);
@@ -225,7 +237,8 @@ public interface IWholesaleEventPublisher
     /// Spec 2026-11-19 §2: <c>wholesale.distributor-invitation-link.v1</c>, el aviso por WhatsApp de la invitación con su link.
     /// Reemplaza a <c>wholesale.distributor-invitation-notice.v1</c> (sin link), que ya no se escribe y sólo se drena. Sale en el
     /// mismo commit que la invitación y lo procesa el worker del aviso. <paramref name="token"/> es el mismo del correo y sólo
-    /// vive en el payload del outbox; <paramref name="generation"/> es la de la invitación al encolarlo (D-4).
+    /// vive en el payload del outbox; <paramref name="generation"/> es la de la invitación al encolarlo (D-4). No lleva la prueba
+    /// de buzón: el link de WhatsApp no demuestra nada sobre el correo (spec 2026-11-24).
     /// </summary>
     void InvitationLinkRequested(
         Guid tenantId,
@@ -290,6 +303,17 @@ public interface IWholesaleCompanyLookup
     Task<IReadOnlyList<WholesaleCompanyRef>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>Una ciudad de Geography con su departamento: Wholesale la valida y la nombra, y el detalle necesita el
+/// departamento para que la edición preseleccione la cascada.</summary>
+public sealed record WholesaleCityRef(Guid Id, string Name, Guid DepartmentId, string? DepartmentName);
+
+/// <summary>Las ciudades de Colombia; adaptador en Bootstrapper sobre Geography. Sirve para rechazar al invitar una ciudad
+/// que después haría fallar cada aceptación y para nombrarla en el detalle.</summary>
+public interface IWholesaleCityLookup
+{
+    Task<WholesaleCityRef?> FindAsync(Guid cityId, CancellationToken cancellationToken);
+}
+
 /// <summary>Una membresía activa con su nombre visible.</summary>
 public sealed record WholesaleMember(Guid MemberId, string Name);
 
@@ -331,7 +355,9 @@ public interface IWholesaleSupplierLinker
 
 /// <summary>
 /// El cliente del distribuidor en el tenant del mayorista (D-7); adaptador sobre Customers. Idempotente por documento: si ya
-/// existe se reutiliza. Devuelve el id del cliente.
+/// existe se reutiliza, sin actualizarlo. Devuelve el id del cliente. Ciudad, dirección y nombre del contacto del distribuidor
+/// también van al cliente (decisión del owner, 2026-11-24): la ciudad y la dirección a la ficha, el contacto como etiqueta de la
+/// dirección principal de la libreta.
 /// </summary>
 public interface IWholesaleCustomerProvisioning
 {
@@ -343,5 +369,48 @@ public interface IWholesaleCustomerProvisioning
         string identificationType,
         string identificationNumber,
         string email,
+        string? phone,
+        Guid? cityId,
+        string? cityName,
+        string? address,
+        string contactName,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Los datos de la empresa del distribuidor tal como los escribió el mayorista al invitar. Wholesale no conoce
+/// <c>Companies</c>: el adaptador de Bootstrapper los traduce.
+/// </summary>
+public sealed record WholesaleCompanyDraft(
+    string Name,
+    string Country,
+    string DocumentType,
+    string TaxId,
+    Guid? CityId,
+    string? CityName,
+    string? Address,
+    string? Email,
+    string? Phone);
+
+/// <summary>
+/// La empresa del distribuidor en su tenant nuevo (spec 2026-11-23 §3); adaptador sobre Companies. Idempotente por tipo y
+/// número de documento exactos: un reintento devuelve la misma empresa. Las excepciones de Companies salen tal cual.
+/// </summary>
+public interface IWholesaleCompanyProvisioning
+{
+    Task<Guid> EnsureCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Para un tenant que ya existía (el distribuidor vinculó uno suyo): crea la empresa sólo si el tenant no tiene ninguna. Devuelve
+    /// <c>null</c> cuando ya tenía alguna y no se escribió nada.
+    /// </summary>
+    Task<Guid?> EnsureFirstCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
         CancellationToken cancellationToken);
 }

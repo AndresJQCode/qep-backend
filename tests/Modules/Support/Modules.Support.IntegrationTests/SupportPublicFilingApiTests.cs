@@ -510,4 +510,30 @@ public sealed class SupportPublicFilingApiTests(SupportPublicLoggedHost host) : 
     {
         public string TicketsUrl => PublicUrl(Slug, "/tickets");
     }
+
+    // Spec 2026-11-22 §5.3: nombrar el tipo interno en el formulario es lo mismo que nombrar uno que no se ofrece.
+    [Fact]
+    public async Task FilingWithTheInternalTypeIdIsTheUnpublishedError()
+    {
+        var rig = await RigAsync();
+        await SupportTicketSeed.SaveInternalTicketAsync(rig.Factory, rig.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7());
+        await MakeInternalTypeVisibleAsync(rig.Factory, rig.TenantId);
+        try
+        {
+            var internalTypeId = Guid.Parse((await TextAsync(
+                rig.Factory, "SELECT id::text FROM support.ticket_types WHERE tenant_id = @tenant AND is_internal",
+                ("tenant", rig.TenantId)))!);
+            var before = await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant");
+
+            var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(internalTypeId, rig.CityId, Email()));
+
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.ticket_type.unavailable", await CodeOfAsync(response));
+            Assert.Equal(before, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
+        }
+        finally
+        {
+            await RestoreInternalTypeConstraintAsync(rig.Factory);
+        }
+    }
 }

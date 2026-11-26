@@ -2,8 +2,9 @@ namespace Modules.Authorization.Application;
 
 /// <summary>Un rol tal como lo ve un tenant: los de sistema y los suyos.</summary>
 /// <param name="IsSystem">
-/// Si se versiona con el codigo. Un rol de sistema se muestra pero no se edita ni se borra,
-/// y el front necesita saberlo sin reimplementar la lista de claves reservadas.
+/// Si se versiona con el codigo (hoy sólo <c>admin</c>). Un rol de sistema se muestra pero no
+/// se edita ni se borra, y el front necesita saberlo sin reimplementar la lista de claves
+/// reservadas. Los que se siembran en cada tenant vienen en <c>false</c>.
 /// </param>
 /// <param name="Id">
 /// La fila de un rol custom, que es por donde se edita y se borra. Null en uno de sistema, que

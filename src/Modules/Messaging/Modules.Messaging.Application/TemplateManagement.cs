@@ -1,7 +1,7 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
 using FluentValidation;
-using System.Globalization;
 using FluentValidation.Results;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
@@ -80,6 +80,9 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
         var supportFormalReply = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.SupportFormalReply);
         var supportSurvey = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.SupportSurvey);
         var wholesaleNotice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.WholesaleInvitationNotice);
+        var invoice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.Invoice);
+        var taskNotice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.TaskNotice);
+        var appointmentReminder = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.AppointmentReminder);
         return new TemplateManagementDto(
             connection,
             quotation is null ? null : new QuotationTemplateStatusDto(quotation.Id, quotation.Status, quotation.StatusReason),
@@ -93,7 +96,12 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
             supportSurvey is null ? null : new SupportSurveyTemplateStatusDto(supportSurvey.Id, supportSurvey.Status, supportSurvey.StatusReason),
             wholesaleNotice is null
                 ? null
-                : new WholesaleInvitationNoticeTemplateStatusDto(wholesaleNotice.Id, wholesaleNotice.Status, wholesaleNotice.StatusReason));
+                : new WholesaleInvitationNoticeTemplateStatusDto(wholesaleNotice.Id, wholesaleNotice.Status, wholesaleNotice.StatusReason),
+            invoice is null ? null : new InvoiceTemplateStatusDto(invoice.Id, invoice.Status, invoice.StatusReason),
+            taskNotice is null ? null : new TaskNoticeTemplateStatusDto(taskNotice.Id, taskNotice.Status, taskNotice.StatusReason),
+            appointmentReminder is null
+                ? null
+                : new AppointmentReminderTemplateStatusDto(appointmentReminder.Id, appointmentReminder.Status, appointmentReminder.StatusReason));
     }
 }
 

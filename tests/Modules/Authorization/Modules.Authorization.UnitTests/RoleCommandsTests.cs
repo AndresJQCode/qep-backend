@@ -17,7 +17,7 @@ public sealed class RoleCommandsTests
                     SystemRoleKeys.Admin, "Administrador", "", "Tenancy", "high",
                     ["advisorship.manage", "advisorship.roles.manage", "catalog.product.read", "operator.tenants.read"]),
                 new RoleDefinition(
-                    SystemRoleKeys.Advisor, "Asesor", "", "Tenancy", "medium",
+                    "advisor", "Asesor", "", "Tenancy", "medium",
                     ["catalog.product.read"]),
             ],
             [
@@ -56,6 +56,15 @@ public sealed class RoleCommandsTests
 
     private sealed class Usage(params string[][] roleSets) : IMembershipRoleUsage
     {
+        /// <summary>Las claves que lleva alguna membresía invitada, activa o suspendida.</summary>
+        public string[] Held { get; init; } = [];
+
+        public Task<bool> AnyHoldsRoleAsync(
+            TenantId tenantId,
+            string role,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Held.Contains(role, StringComparer.Ordinal));
+
         public Task<IReadOnlyCollection<IReadOnlyCollection<string>>> ActiveRoleSetsAsync(
             TenantId tenantId,
             CancellationToken cancellationToken) =>
@@ -222,7 +231,7 @@ public sealed class RoleCommandsTests
         new(repo, uow, usage, new Context(Tenant, "advisorship.roles.manage"), new RecordingVersion(uow.Steps));
 
     [Fact]
-    public async Task DeleteRemovesARoleNobodyHas()
+    public async Task DeleteRemovesARoleNoLiveMemberHolds()
     {
         var role = CustomRole("ventas-junior", "catalog.product.read");
         var repo = new Repo(role);
@@ -234,6 +243,24 @@ public sealed class RoleCommandsTests
 
         Assert.Single(repo.Removed);
         Assert.Equal(1, uow.Saves);
+        Assert.Equal([$"bump:{Tenant.Value}", "save", $"bump:{Tenant.Value}"], uow.Steps);
+    }
+
+    // Spec 2026-11-25 (roles por tenant): una persona suspendida o invitada quedaría nombrando un rol que ya no existe, y
+    // guardar sus roles respondería `tenancy.membership.role_unknown` sin salida.
+    [Fact]
+    public async Task DeleteRefusesARoleHeldOnlyByASuspendedOrInvitedMember()
+    {
+        var role = CustomRole("ventas-junior", "catalog.product.read");
+        var repo = new Repo(role);
+
+        var error = await Assert.ThrowsAsync<AuthorizationDomainException>(() =>
+            DeleteHandler(repo, new Uow(), new Usage { Held = ["ventas-junior"] }).HandleAsync(
+                new DeleteRoleCommand(Tenant, role.Id),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("authorization.role.in_use", error.Code);
+        Assert.Empty(repo.Removed);
     }
 
     [Fact]
@@ -246,7 +273,7 @@ public sealed class RoleCommandsTests
         var repo = new Repo(role);
 
         var error = await Assert.ThrowsAsync<AuthorizationDomainException>(() =>
-            DeleteHandler(repo, new Uow(), new Usage(["ventas-junior"])).HandleAsync(
+            DeleteHandler(repo, new Uow(), new Usage(["ventas-junior"]) { Held = ["ventas-junior"] }).HandleAsync(
                 new DeleteRoleCommand(Tenant, role.Id),
                 TestContext.Current.CancellationToken));
 

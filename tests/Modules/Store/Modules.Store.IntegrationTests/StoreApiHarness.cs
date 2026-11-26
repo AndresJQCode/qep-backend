@@ -156,7 +156,7 @@ internal static class StoreApiHarness
     }
 
     /// <summary>
-    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> concede
+    /// Siembra una membresía del tenant (con su usuario) con un rol de fábrica: <c>admin</c> concede
     /// <c>store.settings.manage</c> y <c>quotations.order.manage</c>; <c>advisor</c> sólo la bandeja. <paramref name="removed"/> la deja quitada.
     /// </summary>
     public static async Task<Guid> SeedMemberAsync(

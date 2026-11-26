@@ -1,3 +1,5 @@
+using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
 
 namespace Modules.Siigo.UnitTests;
@@ -63,6 +65,87 @@ public sealed class SiigoInvoiceBatchTests
         Assert.Equal(Now.AddMinutes(1), batch.FinishedAt);
     }
 
+    // Dos réplicas resuelven a la vez los dos últimos pedidos y ninguna cierra la tanda: al leerla está terminada.
+    [Fact]
+    public void ABatchLeftOpenWithEveryItemSettledReadsAsFinishedAtTheLastSettlement()
+    {
+        var batch = Create(Guid.NewGuid(), Guid.NewGuid());
+        batch.Items[0].MarkInvoiced("FV-1-1", Now.AddMinutes(2));
+        Assert.Null(batch.ReadFinishedAt());
+
+        batch.Items[1].MarkFailed("siigo.invoice.rejected", Now.AddMinutes(1));
+
+        Assert.Equal(Now.AddMinutes(2), batch.ReadFinishedAt());
+        Assert.Null(batch.FinishedAt);
+        var summary = SiigoInvoiceBatchSummaryDto.From(batch, new Dictionary<Guid, SiigoInvoice>(), Now.AddMinutes(3));
+        Assert.Equal(("Finished", (DateTimeOffset?)Now.AddMinutes(2)), (summary.Status, summary.FinishedAt));
+        var detail = SiigoInvoiceBatchDto.From(
+            batch, new Dictionary<Guid, SiigoInvoice>(), new Dictionary<Guid, SiigoOrderLabel>(), [], Now.AddMinutes(3));
+        Assert.Equal(("Finished", (DateTimeOffset?)Now.AddMinutes(2)), (detail.Status, detail.FinishedAt));
+    }
+
+    [Fact]
+    public void AClosedBatchKeepsItsStoredFinishTime()
+    {
+        var batch = Create(Guid.NewGuid());
+        batch.Items[0].MarkInvoiced("FV-1-1", Now);
+        batch.CloseIfFinished(Now.AddMinutes(1));
+
+        Assert.Equal(Now.AddMinutes(1), batch.ReadFinishedAt());
+    }
+
+    [Fact]
+    public void AToConfirmItemIsSettledAndClosesTheBatch()
+    {
+        var batch = Create(Guid.NewGuid());
+        var invoiceId = Guid.NewGuid();
+
+        batch.Items[0].MarkToConfirm(invoiceId, "siigo.invoice.timeout", Now);
+
+        var item = batch.Items[0];
+        Assert.Equal(SiigoInvoiceBatchItemStatus.ToConfirm, item.Status);
+        Assert.Equal(invoiceId, item.InvoiceId);
+        Assert.Equal("siigo.invoice.timeout", item.ErrorCode);
+        Assert.True(item.IsSettled);
+        Assert.True(batch.CloseIfFinished(Now));
+
+        item.MarkFailed("siigo.invoice.rejected", Now);
+
+        Assert.Equal(SiigoInvoiceBatchItemStatus.ToConfirm, item.Status);
+    }
+
+    [Fact]
+    public void TheItemKeepsItsInvoiceAndTheOrderMarkWarning()
+    {
+        var items = Create(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()).Items;
+        var invoiced = Guid.NewGuid();
+        var failed = Guid.NewGuid();
+
+        items[0].MarkInvoiced("FV-1-1", Now, invoiced, true);
+        items[1].MarkFailed("siigo.invoice.rejected", Now, failed);
+        items[2].MarkInvoiced("FV-1-2", Now);
+
+        Assert.Equal(invoiced, items[0].InvoiceId);
+        Assert.True(items[0].OrderMarkFailed);
+        Assert.Equal(failed, items[1].InvoiceId);
+        Assert.False(items[1].OrderMarkFailed);
+        Assert.Null(items[2].InvoiceId);
+        Assert.False(items[2].OrderMarkFailed);
+    }
+
+    [Fact]
+    public void PaymentsTravelOnlyWithASingleOrder()
+    {
+        const string payments = """[{"kind":"Order"}]""";
+
+        var batch = SiigoInvoiceBatch.Create(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid()], Now, payments);
+
+        Assert.Equal(payments, batch.Items[0].PaymentsJson);
+        Assert.Null(Create(Guid.NewGuid()).Items[0].PaymentsJson);
+        Assert.Throws<ArgumentException>(() =>
+            SiigoInvoiceBatch.Create(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid(), Guid.NewGuid()], Now, payments));
+    }
+
     [Fact]
     public void ASkippedItemKeepsItsCodeAndMissingList()
     {
@@ -76,42 +159,12 @@ public sealed class SiigoInvoiceBatchTests
     }
 
     [Fact]
-    public void ARetryReturnsTheItemToPendingNotBeforeTheGivenTime()
-    {
-        var item = Create(Guid.NewGuid()).Items[0];
-        item.BeginSend(Now, TimeSpan.FromMinutes(2));
-
-        item.Retry("siigo.connection_unavailable", Now.AddMinutes(1), Now);
-
-        Assert.Equal(SiigoInvoiceBatchItemStatus.Pending, item.Status);
-        Assert.Equal(Now.AddMinutes(1), item.AvailableAt);
-        Assert.Null(item.LeaseUntil);
-        Assert.Equal("siigo.connection_unavailable", item.ErrorCode);
-    }
-
-    [Fact]
-    public void AfterTheLastAttemptARetryBecomesAFailure()
-    {
-        var item = Create(Guid.NewGuid()).Items[0];
-        for (var attempt = 0; attempt < SiigoInvoiceBatchItem.MaxAttempts; attempt++)
-        {
-            item.BeginSend(Now, TimeSpan.FromMinutes(2));
-        }
-
-        item.Retry("siigo.unavailable", Now.AddMinutes(1), Now);
-
-        Assert.Equal(SiigoInvoiceBatchItemStatus.Failed, item.Status);
-        Assert.Equal("siigo.unavailable", item.ErrorCode);
-    }
-
-    [Fact]
     public void ASettledItemDoesNotChangeAgain()
     {
         var item = Create(Guid.NewGuid()).Items[0];
         item.MarkInvoiced("FV-1-1", Now);
 
         item.MarkFailed("siigo.invoice.rejected", Now);
-        item.Retry("x", Now, Now);
 
         Assert.Equal(SiigoInvoiceBatchItemStatus.Invoiced, item.Status);
         Assert.Equal("FV-1-1", item.InvoiceNumber);

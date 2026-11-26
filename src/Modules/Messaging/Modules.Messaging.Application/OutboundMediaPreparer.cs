@@ -39,6 +39,15 @@ internal sealed class OutboundMediaPreparer(IWhatsAppCloudClient meta, IMessagin
             throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "The file content does not match its type.");
         }
 
+        // El tope de un sticker depende de si está animado, y eso sólo se sabe leyendo el contenido (500 KB animado, 100 KB estático).
+        if (format == OutboundMediaFormat.Webp
+            && !OutboundMediaSniffer.IsAnimatedWebp(header.AsSpan(0, read))
+            && sizeBytes > OutboundMediaPolicy.MaxStaticStickerBytes)
+        {
+            await discardSource();
+            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "A static sticker can weigh up to 100 KB.");
+        }
+
         await using var whole = new PrefixedHashingStream(header.AsMemory(0, read), source);
         if (!OutboundMediaPolicy.IsImage(format))
         {
@@ -92,6 +101,7 @@ internal sealed class OutboundMediaPreparer(IWhatsAppCloudClient meta, IMessagin
     {
         MessageKind.Video => "video",
         MessageKind.Audio => "audio",
+        MessageKind.Sticker => "sticker",
         _ => "document",
     };
 

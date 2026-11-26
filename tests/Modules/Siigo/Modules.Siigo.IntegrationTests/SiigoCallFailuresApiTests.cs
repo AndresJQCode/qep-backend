@@ -118,7 +118,8 @@ public sealed class SiigoCallFailuresApiTests
         // Hora local de Colombia (-05:00): Npgsql rechaza un offset distinto de cero en timestamptz, así que el repositorio convierte a UTC.
         var colombian = TimeSpan.FromHours(-5);
         Assert.Equal(1, await TotalAsync($"?to={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-25).ToOffset(colombian).ToString("O"))}"));
-        Assert.Equal(2, await TotalAsync($"?from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-15).ToOffset(colombian).ToString("O"))}"));
+        // Desde hace 25 minutos: las de hace 10 y 20, el complemento exacto del `to` de arriba (con -15 sólo entraba la de hace 10).
+        Assert.Equal(2, await TotalAsync($"?from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-25).ToOffset(colombian).ToString("O"))}"));
     }
 
     [Fact]
@@ -138,6 +139,22 @@ public sealed class SiigoCallFailuresApiTests
         Assert.Equal(3, first["total"]!.GetValue<int>());
         Assert.Equal([newest, middle], first["items"]!.AsArray().Select(item => item!["id"]!.GetValue<Guid>()));
         Assert.Equal([oldest], second["items"]!.AsArray().Select(item => item!["id"]!.GetValue<Guid>()));
+    }
+
+    // (page - 1) * pageSize no cabe en un int: la página se recorta en vez de mandar un desplazamiento negativo.
+    [Fact]
+    public async Task AHugePageIsClampedAndComesBackEmpty()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (factory, tenant, connectionString) = await ArrangeAsync(database);
+        using var _ = factory;
+        await SeedAsync(connectionString, tenant.TenantId);
+        using var client = Reader(factory, tenant);
+
+        var page = (await client.GetFromJsonAsync<JsonObject>(Route(tenant.TenantId) + $"?page={int.MaxValue}&pageSize=100", Ct))!;
+
+        Assert.Empty(page["items"]!.AsArray());
+        Assert.Equal((1, int.MaxValue / 100), (page["total"]!.GetValue<int>(), page["page"]!.GetValue<int>()));
     }
 
     [Theory]

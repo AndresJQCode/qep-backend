@@ -32,14 +32,52 @@ public static class ServiceContractsMapping
                 ? new PaymentDto(paidOn, charge.PaymentNote, paidBy, charge.PaidAt ?? default)
                 : null,
             last,
-            charge.Version);
+            charge.Version,
+            charge.PeriodDate,
+            charge.PriceUnreviewed);
+
+    /// <summary>
+    /// El reajuste de un contrato con la foto de su revisión. <paramref name="pending"/> es su cambio programado pendiente y
+    /// <paramref name="createdBy"/> quien lo programó. En un pausado la foto no dice a qué período aplicará, así que se calcula
+    /// desde el primer período sin generar, que es por donde retoma.
+    /// </summary>
+    public static PriceReviewInfoDto ToPriceReviewDto(
+        ServiceContract service,
+        ServicePriceSchedule? pending,
+        PriceReviewSnapshot review,
+        MemberRefDto? createdBy) => new(
+            service.AdjustmentMode.ToString(),
+            service.IpcExtraPoints,
+            service.NextReviewDate,
+            review.ReviewPeriodDate,
+            review.GenerationDate,
+            review.NoticeFrom,
+            review.State.ToString(),
+            service.HeldSince,
+            review.IpcYear,
+            pending is null
+                ? null
+                : new PriceScheduleDto(
+                    pending.Id,
+                    pending.EffectiveFrom,
+                    review.ScheduleAppliesTo ?? PriceReview.AppliesTo(service, pending.EffectiveFrom),
+                    pending.NewPrice,
+                    pending.Currency,
+                    pending.Source.ToString(),
+                    pending.IpcYear,
+                    pending.IpcRate,
+                    pending.ExtraPoints,
+                    pending.Reason,
+                    createdBy,
+                    pending.CreatedAt));
 
     public static ServiceDto ToServiceDto(
         ServiceContract service,
         CustomerRefDto customer,
         ChargeDto? nextCharge,
         int openCount,
-        IReadOnlyList<CurrencyAmountDto> openAmountByCurrency) => new(
+        IReadOnlyList<CurrencyAmountDto> openAmountByCurrency,
+        PriceReviewInfoDto priceReview) => new(
             service.Id.Value,
             customer,
             service.Name,
@@ -54,7 +92,8 @@ public static class ServiceContractsMapping
             openAmountByCurrency,
             service.Version,
             service.CreatedAt,
-            service.UpdatedAt);
+            service.UpdatedAt,
+            priceReview);
 
     /// <summary>
     /// Una membresía del equipo como la ve el cliente de la API. Un id que el directorio ya no resuelve (la fila se purgó) se
@@ -73,7 +112,16 @@ public static class ServiceContractsMapping
         change.NewCurrency,
         change.Reason,
         changedBy,
-        change.OccurredAt);
+        change.OccurredAt,
+        change.Origin.ToString());
+
+    public static IpcRateDto ToIpcRateDto(IpcRate rate, bool inUse, MemberRefDto? updatedBy) => new(
+        rate.Year,
+        rate.Rate,
+        inUse,
+        updatedBy,
+        rate.UpdatedAt,
+        rate.Version);
 
     public static ProfileDto ToProfileDto(CustomerBillingProfile profile, MemberRefDto assignee) => new(
         profile.CustomerId,

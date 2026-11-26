@@ -38,6 +38,15 @@ public static class SystemTemplateVariables
         new("valor_total", "Valor total", "2.450.000 COP"),
     ];
 
+    /// <summary>Spec 2026-11-21: la factura de Siigo. Lleva <c>numero_factura</c> (el número legal de la factura, no el del pedido) y el total
+    /// de esa factura; sin vigencia, como el pedido.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> Invoice { get; } =
+    [
+        .. Fixed,
+        new("numero_factura", "Número de factura", "FV-1-000123"),
+        new("valor_total", "Valor total", "2.450.000 COP"),
+    ];
+
     /// <summary>Soporte fase 2: la plantilla «Aviso de respuesta». <c>respuesta</c> es el texto del asesor, así que al enviar tiene que
     /// cumplir <c>TemplateParameterRules</c> (sin saltos de línea).</summary>
     public static IReadOnlyList<SystemTemplateVariable> SupportReply { get; } =
@@ -65,6 +74,26 @@ public static class SystemTemplateVariables
         .. Fixed,
         new("mayorista", "Nombre del mayorista", "Distribuciones Andinas"),
         new("correo", "Correo de la invitación", "compras@distribuidora.co"),
+    ];
+
+    /// <summary>Support task notices: the assignment notice. <c>numero</c> is the ticket number (SOP-0042); <c>asesor</c> is the fixed variable
+    /// filled with the name of whoever assigned. Neither the subject nor the description is a variable: they never travel by WhatsApp.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> TaskNotice { get; } =
+    [
+        .. Fixed,
+        new("numero", "Número del caso", "SOP-000127"),
+    ];
+
+    /// <summary>Agenda: el recordatorio de una cita. <c>fecha_hora</c> ya viene formateada en la zona del tenant por el emisor; <c>recurso</c> y
+    /// <c>sede</c> son los nombres vigentes al enviar. Las fijas van primero, como en toda plantilla del sistema.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> AppointmentReminder { get; } =
+    [
+        .. Fixed,
+        new("nombre_cliente", "Nombre del cliente", "María González"),
+        new("servicio", "Servicio", "Consulta general"),
+        new("fecha_hora", "Fecha y hora de la cita", "martes 24 de noviembre a las 15:00"),
+        new("recurso", "Recurso o profesional", "Dra. Paula Ruiz"),
+        new("sede", "Sede", "Sede Centro"),
     ];
 
     public static IReadOnlyList<SystemTemplateVariable> BillingReminder { get; } =

@@ -43,7 +43,17 @@ public sealed class ListEmployeeActivityHandler(
             ?? throw HrNotFound.Employee(query.EmployeeId);
 
         var canReadContract = executionContext.HasPermission(HrPermissions.ContractRead);
-        IReadOnlySet<HrActivityCategory> categories = canReadContract ? Enum.GetValues<HrActivityCategory>().ToHashSet() : Visible;
+        // Medical (spec 2026-11-23 §10) is not part of contract visibility: it needs hr.medical.read on its own.
+        var categories = canReadContract ? Enum.GetValues<HrActivityCategory>().ToHashSet() : [.. Visible];
+        if (!executionContext.HasPermission(HrPermissions.MedicalRead))
+        {
+            categories.Remove(HrActivityCategory.Medical);
+        }
+        else
+        {
+            categories.Add(HrActivityCategory.Medical);
+        }
+
         var (items, total) = await log.ListAsync(
             query.TenantId, new EmployeeId(query.EmployeeId), categories, query.Page, query.PageSize, cancellationToken);
 

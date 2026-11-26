@@ -5,10 +5,10 @@ namespace Modules.Wholesale.Infrastructure.Persistence;
 
 /// <summary>
 /// Acumula <c>wholesale.distributor-invited.v1</c> en la proyección de outbox de <see cref="WholesaleDbContext"/>, así sale con
-/// el mismo commit que la invitación. Es el único lugar donde se escribe el token plano: lo lee el worker de correo de
-/// Notifications por nombre con <c>JsonDocument</c>, sin referenciar Mayorista (D-18). El aviso por WhatsApp es otro evento, con
-/// el mismo token desde spec 2026-11-19 (<c>wholesale.distributor-invitation-link.v1</c>), que procesa el worker del aviso de
-/// este mismo módulo.
+/// el mismo commit que la invitación. Es el único lugar donde se escriben el token plano y la prueba de buzón: los lee el worker
+/// de correo de Notifications por nombre con <c>JsonDocument</c>, sin referenciar Mayorista (D-18). El aviso por WhatsApp es otro
+/// evento, con el mismo token desde spec 2026-11-19 (<c>wholesale.distributor-invitation-link.v1</c>) y sin la prueba (spec
+/// 2026-11-24), que procesa el worker del aviso de este mismo módulo.
 /// </summary>
 internal sealed class WholesaleEventPublisher(WholesaleDbContext dbContext) : IWholesaleEventPublisher
 {
@@ -29,6 +29,7 @@ internal sealed class WholesaleEventPublisher(WholesaleDbContext dbContext) : IW
         string email,
         string businessName,
         string token,
+        string emailProof,
         DateTimeOffset expiresAt,
         string correlationId,
         DateTimeOffset occurredAt) =>
@@ -37,7 +38,7 @@ internal sealed class WholesaleEventPublisher(WholesaleDbContext dbContext) : IW
             Id = Guid.CreateVersion7(),
             EventName = DistributorInvitedEvent,
             PayloadJson = JsonSerializer.Serialize(
-                new DistributorInvitedPayload(tenantId, distributorId, email, businessName, token, expiresAt)),
+                new DistributorInvitedPayload(tenantId, distributorId, email, businessName, token, emailProof, expiresAt)),
             CorrelationId = correlationId,
             OccurredAt = occurredAt,
         });
@@ -98,6 +99,7 @@ internal sealed class WholesaleEventPublisher(WholesaleDbContext dbContext) : IW
         string email,
         string businessName,
         string token,
+        string emailProof,
         DateTimeOffset expiresAt);
 
     // La forma del aviso viejo más el token (el mismo del correo): el procesador lee los dos con el mismo lector. Sin vencimiento

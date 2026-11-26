@@ -92,7 +92,7 @@ internal static class HrApiHarness
     }
 
     /// <summary>
-    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> concede los cinco
+    /// Siembra una membresía del tenant (con su usuario) con un rol de fábrica: <c>admin</c> concede los cinco
     /// permisos <c>hr.*</c>; <c>advisor</c> y <c>billing</c> no. <paramref name="removed"/> la deja quitada.
     /// </summary>
     public static async Task<Guid> SeedMemberAsync(
@@ -189,13 +189,13 @@ internal static class HrApiHarness
         return client;
     }
 
-    /// <summary>Los cinco permisos <c>hr.*</c>: el cliente que puede todo en el módulo.</summary>
+    /// <summary>Los siete permisos <c>hr.*</c>: el cliente que puede todo en el módulo.</summary>
     public static HttpClient CreateFullAccess(QepApiFactory factory) =>
         CreateClient(
             factory, SubjectId, TenantId,
             HrPermissions.EmployeeRead, HrPermissions.EmployeeManage,
             HrPermissions.ContractRead, HrPermissions.ContractManage,
-            HrPermissions.SettingsManage);
+            HrPermissions.SettingsManage, HrPermissions.MedicalRead, HrPermissions.MedicalManage);
 
     /// <summary>Abre base, fábrica y tenant sembrado: el arranque que repiten todas las pruebas.</summary>
     public static async Task<(PostgreSqlContainer Database, QepApiFactory Factory)> OpenAsync(
@@ -250,6 +250,30 @@ internal static class HrApiHarness
         return new CompanyRef(body.Id, name, taxId);
     }
 
+    /// <summary>Una empresa de Estados Unidos (documento <c>TAX_ID</c>, ciudad por nombre): país distinto de Colombia.</summary>
+    public static async Task<CompanyRef> CreateForeignCompanyAsync(
+        HttpClient client, Guid tenantId, string name = "Andes Inc.")
+    {
+        var taxId = $"{Random.Shared.Next(10, 99)}-{Random.Shared.Next(1000000, 9999999)}";
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name,
+                bankAccounts = new[] { new { bankName = "Chase", accountNumber = $"{Random.Shared.Next(100000000, 999999999)}", currency = "USD" } },
+                chargesVat = false,
+                taxId,
+                country = "US",
+                documentType = "TAX_ID",
+                cityName = "Miami",
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var body = await response.Content.ReadFromJsonAsync<IdDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return new CompanyRef(body.Id, name, taxId);
+    }
+
     /// <summary>Desactiva la empresa por <c>POST /companies/{id}/deactivate</c>.</summary>
     public static async Task DeactivateCompanyAsync(HttpClient client, Guid tenantId, Guid companyId)
     {
@@ -283,8 +307,11 @@ internal static class HrApiHarness
     /// <param name="configureServices">
     /// Sustituciones de servicios para la prueba; corre después del registro de la aplicación.
     /// </param>
+    /// <param name="operatorTenantId">
+    /// El tenant que hace de operador de la plataforma (<c>Platform:OperatorTenantId</c>); sin él ninguno lo es.
+    /// </param>
     public sealed class QepApiFactory(
-        string connectionString, Action<IServiceCollection>? configureServices = null)
+        string connectionString, Action<IServiceCollection>? configureServices = null, Guid? operatorTenantId = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -306,6 +333,10 @@ internal static class HrApiHarness
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos
             // en el tenant de pruebas. El harness no depende del entorno del shell.
             builder.UseSetting("Seed:Enabled", "false");
+            if (operatorTenantId is { } operatorTenant)
+            {
+                builder.UseSetting("Platform:OperatorTenantId", operatorTenant.ToString());
+            }
 
             if (configureServices is not null)
             {

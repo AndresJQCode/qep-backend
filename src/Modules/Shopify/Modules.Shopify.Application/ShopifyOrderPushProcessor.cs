@@ -31,9 +31,8 @@ public static class ShopifyPushFailureCodes
 /// <list type="bullet">
 /// <item>Sólo los grupos del envío (Review Focus 4): un envío de la dirección no pisa la nota de Shopify con un <c>BuyerNotes</c>
 /// vacío (los pedidos importados antes no lo tienen) ni los atributos.</item>
-/// <item>Dirección: la parte de QEP, con el nombre en <c>firstName</c> y la dirección en <c>address1</c>; la ciudad y el departamento
-/// con los nombres de QEP y su <c>provinceCode</c>; la empresa y el país del <b>último</b> snapshot, porque <c>orderUpdate</c>
-/// reemplaza la dirección entera (Review Focus 3).</item>
+/// <item>Dirección: la parte de QEP, como la arma <see cref="ShopifyPushAddress"/>, con la que el planificador de cambios
+/// reconoce el eco.</item>
 /// <item>Nota: <c>BuyerNotes</c> (vacía la borra en Shopify). Atributos: los de QEP o, sin corrección, los del último snapshot.</item>
 /// </list>
 /// Conexión ausente o no operativa → <c>Held</c> con <c>connection_missing</c>; token vencido (<c>AccessToken</c> nulo, lo refresca
@@ -51,8 +50,6 @@ public sealed class ShopifyOrderPushProcessor(
     IShopifyUnitOfWork unitOfWork,
     IClock clock)
 {
-    private const string Colombia = "CO";
-
     private static readonly ShopifyOrderUpdateResult RetryLater = new(ShopifyOrderUpdateKind.Retry, null, null);
 
     public async Task<ShopifyOrderUpdateResult> ProcessAsync(ShopifyOrderPush push, CancellationToken cancellationToken)
@@ -105,18 +102,8 @@ public sealed class ShopifyOrderPushProcessor(
         ShopifyAddressUpdate? address = null;
         if (push.Groups.Contains(ShopifyPushGroup.ShippingAddress) && order.ShippingParty is { } party)
         {
-            var names = await geography.DescribeCityAsync(party.DepartmentId, party.CityId, cancellationToken)
-                ?? throw new InvalidOperationException("The city of the shipping party is not in Geography.");
-            address = new ShopifyAddressUpdate(
-                party.Name ?? string.Empty,
-                string.Empty,
-                party.Address ?? string.Empty,
-                string.Empty,
-                names.City,
-                ColombiaProvinceCodes.CodeFor(names.Department),
-                Blank(latest.ShippingAddress?.CountryCode) ?? Colombia,
-                party.Phone ?? string.Empty,
-                Blank(latest.ShippingAddress?.Company));
+            address = await ShopifyPushAddress.BuildAsync(
+                geography, party, order.ShippingCountry, latest.ShippingAddress, cancellationToken);
         }
 
         var setNote = push.Groups.Contains(ShopifyPushGroup.Note);
@@ -139,11 +126,5 @@ public sealed class ShopifyOrderPushProcessor(
         push.MarkFailed(code, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return new ShopifyOrderUpdateResult(ShopifyOrderUpdateKind.Failed, code, null);
-    }
-
-    private static string? Blank(string? value)
-    {
-        var trimmed = value?.Trim();
-        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
     }
 }

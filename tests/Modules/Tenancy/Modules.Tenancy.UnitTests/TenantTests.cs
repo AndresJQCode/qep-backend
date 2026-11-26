@@ -433,6 +433,48 @@ public sealed class TenantTests
         Assert.Equal("tenancy.slug.reserved", exception.Code);
     }
 
+    // Spec 2026-11-22: el tenant de un distribuidor nace con el país de la invitación; sin país, el default CO.
+    [Fact]
+    public void CreateWithACountryNormalizesIt()
+    {
+        var tenant = Tenant.Create(
+            TenantId.New(), "distri-mx", "Distri MX", "es-CO", "America/Bogota", "yyyy-MM-dd", MembershipId.New(), CreatedAt,
+            country: " mx ");
+
+        Assert.Equal("MX", tenant.Country);
+    }
+
+    [Fact]
+    public void CreateWithoutACountryKeepsColombia()
+    {
+        var tenant = Tenant.Create(
+            TenantId.New(), "distri-co", "Distri CO", "es-CO", "America/Bogota", "yyyy-MM-dd", MembershipId.New(), CreatedAt);
+
+        Assert.Equal("CO", tenant.Country);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("MEX")]
+    [InlineData("M1")]
+    public void CreateWithAnInvalidCountryThrowsDomainException(string country)
+    {
+        var exception = Assert.Throws<TenantDomainException>(() => Tenant.Create(
+            TenantId.New(), "distri-mx", "Distri MX", "es-CO", "America/Bogota", "yyyy-MM-dd", MembershipId.New(), CreatedAt,
+            country: country));
+
+        Assert.Equal("tenancy.settings.country.invalid", exception.Code);
+    }
+
+    [Fact]
+    public void EnsureValidRegistrationRejectsAnInvalidCountry()
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Tenant.EnsureValidRegistration("distri-mx", "Distri MX", "es-CO", "America/Bogota", "yyyy-MM-dd", country: "MEX"));
+
+        Assert.Equal("tenancy.settings.country.invalid", exception.Code);
+    }
+
     [Fact]
     public void EnsureValidRegistrationRejectsAReservedSlug()
     {

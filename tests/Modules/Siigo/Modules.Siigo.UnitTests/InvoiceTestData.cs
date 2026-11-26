@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
 
@@ -25,11 +26,12 @@ internal static class InvoiceTestData
         bool sendMail = false,
         bool linkVariants = true,
         bool linkBank = true,
-        bool linkAdvisor = true)
+        bool linkAdvisor = true,
+        SiigoPriceMode priceMode = SiigoPriceMode.BaseWithDiscount)
     {
         var settings = SiigoSettings.Create(Guid.Parse("0193a1b2-0009-7000-8000-000000000009"), Guid.Parse("0193a1b2-000a-7000-8000-00000000000a"));
         settings.AssignCompany(Guid.Parse("0193a1b2-000b-7000-8000-00000000000b"));
-        settings.UpdateDocument(new SiigoDocumentSettings("24446", "10", "1", sendToDian, sendMail, freightSeparate, "FLETE"));
+        settings.UpdateDocument(new SiigoDocumentSettings("24446", "10", "1", sendToDian, sendMail, freightSeparate, "FLETE", priceMode));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "7001")]);
         settings.ReplaceWithholdingLinks(
             [new SiigoWithholdingLink(ReteFuenteRate, "8001"), new SiigoWithholdingLink(ReteIcaRate, "8002")]);
@@ -55,7 +57,8 @@ internal static class InvoiceTestData
     }
 
     public static SiigoBilledPartyInput Company() =>
-        new(false, SiigoPersonKind.Juridica, SiigoIdentificationKind.Nit, "900.123.456-7", "ACME SAS", "Calle 1 # 2-3", "11001", "11", "ana@acme.test", "3001234567");
+        new(false, SiigoPersonKind.Juridica, SiigoIdentificationKind.Nit, "900.123.456-7", "ACME SAS", "Calle 1 # 2-3", "11001", "11", "ana@acme.test",
+            new SiigoPhone("57", "3001234567"));
 
     /// <summary>Dos líneas: 2 × 50.000 con IVA 19 % y 3 × 33.333,333333 con 10 % de descuento y sin IVA. Productos: 209.000.</summary>
     public static SiigoInvoiceInput Order() =>

@@ -105,6 +105,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .HasColumnName("message_sound")
             .HasDefaultValue(true);
         preference.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Nullable a propósito: null es «el del tenant» (spec 2026-11-22, i18n).
+        preference.Property(value => value.Language).HasColumnName("language").HasMaxLength(10);
 
         preference.HasOne<User>()
             .WithMany()

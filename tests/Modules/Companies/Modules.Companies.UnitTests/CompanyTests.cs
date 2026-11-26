@@ -504,4 +504,57 @@ public sealed class CompanyTests
 
         Assert.Empty(company.WithholdingTaxRateIds);
     }
+    // ---- Region (provincia guardada, spec 2026-11-23) ----
+
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000e1");
+
+    [Fact]
+    public void ColombianCompanyWithRegionIsRejected()
+    {
+        var exception = Fails(() => Company.Create(
+            CompanyId.New(), TenantId, "Andes", Accounts(), "900-1", "CO",
+            CompanyDocumentType.Nit, CityId, null, CompanyContactInfo.Empty, Now, regionId: MadridRegionId));
+
+        Assert.Equal("companies.company.region_lane_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void ForeignCompanyKeepsRegion()
+    {
+        var company = Company.Create(
+            CompanyId.New(), TenantId, "Iberia", Accounts(), "B12345678", "ES",
+            CompanyDocumentType.Nif, null, "Madrid", CompanyContactInfo.Empty, Now, regionId: MadridRegionId);
+
+        Assert.Equal(MadridRegionId, company.RegionId);
+    }
+
+    [Fact]
+    public void UpdateWithoutRegionClearsItAndMovingToColombiaDropsIt()
+    {
+        var company = Company.Create(
+            CompanyId.New(), TenantId, "Iberia", Accounts(), "B12345678", "ES",
+            CompanyDocumentType.Nif, null, "Madrid", CompanyContactInfo.Empty, Now, regionId: MadridRegionId);
+
+        company.Update(
+            "Iberia", Accounts(), "B12345678", "ES", CompanyDocumentType.Nif, null, "Madrid",
+            CompanyContactInfo.Empty, Now.AddMinutes(1), chargesVat: true);
+
+        Assert.Null(company.RegionId);
+    }
+
+    [Fact]
+    public void ColombianUpdateWithRegionIsRejectedAndLeavesTheCompanyUntouched()
+    {
+        var company = Company.Create(
+            CompanyId.New(), TenantId, "Iberia", Accounts(), "B12345678", "ES",
+            CompanyDocumentType.Nif, null, "Madrid", CompanyContactInfo.Empty, Now, regionId: MadridRegionId);
+
+        var exception = Fails(() => company.Update(
+            "Iberia", Accounts(), "900-1", "CO", CompanyDocumentType.Nit, CityId, null,
+            CompanyContactInfo.Empty, Now.AddMinutes(1), chargesVat: true, regionId: MadridRegionId));
+
+        Assert.Equal("companies.company.region_lane_invalid", exception.Code);
+        Assert.Equal(MadridRegionId, company.RegionId);
+        Assert.Equal("ES", company.Country);
+    }
 }

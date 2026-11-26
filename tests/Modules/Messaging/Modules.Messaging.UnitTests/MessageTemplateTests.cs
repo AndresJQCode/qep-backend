@@ -196,6 +196,22 @@ public sealed class MessageTemplateTests
     [InlineData("qep_pedidos", false)]
     [InlineData("pedido", false)]
     public void TheOrderNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
+    // Spec 2026-11-21: qep_factura y sus versiones también son del sistema.
+    [Theory]
+    [InlineData("qep_factura", true)]
+    [InlineData("qep_factura_v2", true)]
+    [InlineData("qep_facturas", false)]
+    [InlineData("factura", false)]
+    public void TheInvoiceNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
+
+    [Fact]
+    public void AFreeTemplateCannotTakeTheInvoiceName()
+    {
+        var exception = Assert.Throws<MessagingDomainException>(() => Pending(MessageTemplateKind.Free, MessageTemplateName.InvoiceName));
+        Assert.Equal(MessagingErrorCodes.TemplateNameReserved, exception.Code);
+        Assert.Equal("qep_factura_", MessageTemplateName.InvoicePrefix);
+    }
+
     // Spec 2026-11-17: la imagen fija del encabezado es dato de QEP, no de Meta.
     private const string ImageUrl = "https://public.test/imagen.png";
 

@@ -136,6 +136,10 @@ public static class HrLabels
         [HrActivityAction.EmployeeDeactivated] = "Desactivación",
         [HrActivityAction.EmployeeReincorporated] = "Reincorporación",
         [HrActivityAction.DocumentAttached] = "Documento",
+        [HrActivityAction.MedicalExamRecorded] = "Examen médico registrado",
+        [HrActivityAction.MedicalExamUpdated] = "Examen médico editado",
+        [HrActivityAction.MedicalExamDeleted] = "Examen médico eliminado",
+        [HrActivityAction.ExitExamNotAttended] = "Egreso sin asistir al examen",
     };
 
     /// <summary>

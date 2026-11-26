@@ -15,6 +15,11 @@ public interface IWhatsAppSender
     /// <c>valid_until</c>, que un pedido no tiene.</summary>
     Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken);
+
+    /// <summary>Envía el PDF de una factura. Plantilla propia: en Zenvia <see cref="ZenviaWhatsAppChannel.InvoiceTemplateId"/>, en Meta
+    /// la fila <c>Invoice</c> aprobada de la conexión.</summary>
+    Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -47,7 +52,10 @@ public sealed record WhatsAppQuotationMessage(
     /// <summary>El cliente destinatario; <c>null</c> si el mensaje va a los datos de facturación, que no son un cliente.</summary>
     Guid? CustomerId = null,
     /// <summary>El tenant de la cotización: el envío por Meta pasa por Mensajería, que aísla por tenant, y el puerto no recibe más contexto.</summary>
-    Guid? TenantId = null);
+    Guid? TenantId = null,
+    /// <summary>El idioma del tenant (spec 2026-11-22, i18n): sólo decide el nombre del PDF adjunto («Presupuesto-…» en España).
+    /// El texto de la plantilla es de Meta, aprobado por idioma, y no cambia.</summary>
+    string? Language = null);
 
 /// <summary>
 /// Los campos de la plantilla del pedido: los de <see cref="WhatsAppQuotationMessage"/> menos la
@@ -73,6 +81,31 @@ public sealed record WhatsAppOrderMessage(
     /// <summary>El tenant del pedido: el envío por Meta pasa por Mensajería, que aísla por tenant (spec 2026-11-09 D9).</summary>
     Guid? TenantId = null);
 
+/// <summary>
+/// Los campos de la plantilla de la factura: nombre, número, total y el PDF. Zenvia lo manda por su copia pública
+/// (<see cref="DocumentUrl"/>); Meta recibe los bytes en <see cref="Document"/> y no toca el almacenamiento. El total
+/// viaja crudo y el formato es del adaptador, como en el pedido.
+/// </summary>
+public sealed record WhatsAppInvoiceMessage(
+    string? ToPhone,
+    string FullName,
+    string InvoiceNumber,
+    decimal Total,
+    /// <summary>ISO code; the sender prints its catalogue symbol and decimals.</summary>
+    string Currency,
+    /// <summary>Sólo Zenvia: la copia pública del PDF.</summary>
+    string? DocumentUrl,
+    /// <summary>La clave cruda del formato numérico del tenant; <c>null</c> si no tiene ajustes (el sender cae a colombiano).</summary>
+    string? NumberFormat = null,
+    /// <summary>Sólo Meta: los bytes del PDF, que Mensajería sube como encabezado de la plantilla.</summary>
+    byte[]? Document = null,
+    /// <summary>Quién envía.</summary>
+    Guid? SentByMemberId = null,
+    /// <summary>El cliente destinatario; <c>null</c> si va a los datos de facturación.</summary>
+    Guid? CustomerId = null,
+    /// <summary>El tenant de la factura: el envío por Meta pasa por Mensajería, que aísla por tenant.</summary>
+    Guid? TenantId = null);
+
 /// <summary>El puerto de Zenvia: la plantilla se manda por su API con el token del canal. La implementa la
 /// Infrastructure de este módulo (<c>ZenviaWhatsAppSender</c>).</summary>
 public interface IZenviaWhatsAppSender
@@ -82,6 +115,9 @@ public interface IZenviaWhatsAppSender
 
     Task SendOrderAsync(
         ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken);
+
+    Task SendInvoiceAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -96,4 +132,8 @@ public interface IMetaWhatsAppSender
     /// <summary>Spec 2026-11-09 D9: el pedido por la fila <c>Order</c> aprobada de la conexión, con el PDF privado como encabezado.</summary>
     Task SendOrderAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppOrderMessage message, CancellationToken cancellationToken);
+
+    /// <summary>La factura por la fila <c>Invoice</c> aprobada de la conexión, con los bytes del PDF como encabezado.</summary>
+    Task SendInvoiceAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppInvoiceMessage message, CancellationToken cancellationToken);
 }

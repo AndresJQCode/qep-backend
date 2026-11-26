@@ -67,6 +67,13 @@ internal sealed class HrUnitOfWork(HrDbContext dbContext) : IHrUnitOfWork
         {
             throw new ResourceConflictException(HrErrorCodes.MemberTaken, "Esa persona ya está vinculada a otro empleado.", exception);
         }
+        // Two writers recording the same exam at once: the use case checks first, the index decides. 422 like the pre-check, not 409
+        // (spec 2026-11-23 §7.3).
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, HrDbContext.MedicalExamUniqueIndex))
+        {
+            throw new HrDomainException(
+                HrErrorCodes.MedicalExamDuplicate, "Ya hay un examen de ese tipo registrado para ese empleado en esa fecha.");
+        }
     }
 
     private bool IsSettingStillReferenced(DbUpdateException exception) =>

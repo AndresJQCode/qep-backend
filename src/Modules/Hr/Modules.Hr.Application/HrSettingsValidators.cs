@@ -25,9 +25,7 @@ public sealed class SiteRequestValidator : HrValidator<SiteRequest>
         RuleFor(request => request.Address)
             .Must(address => address is null || address.Trim().Length <= 200)
             .WithMessage("La dirección no puede pasar de 200 caracteres.");
-        RuleFor(request => request.CompensationFund)
-            .Must(fund => fund is null || fund.Trim().Length <= 120)
-            .WithMessage("La caja de compensación no puede pasar de 120 caracteres.");
+        // La caja no se valida acá: depende del país de la empresa (HrSiteCompensationFund, en los handlers).
     }
 }
 

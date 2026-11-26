@@ -59,6 +59,7 @@ public sealed class PreviewServiceChargesHandler(
             ServiceContractId.New(), query.TenantId, Guid.Empty, "preview", 1m, "COP", cycle, query.FirstDueDate, now);
         var charges = ChargeGenerator.Generate(transient, today, now);
 
-        return new ChargesPreviewDto(charges.Count, charges.Count(charge => charge.IsOverdue(today)));
+        return new ChargesPreviewDto(
+            charges.Count, charges.Count(charge => charge.IsOverdue(today)), transient.DefaultNextReviewDate());
     }
 }

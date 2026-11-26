@@ -92,7 +92,7 @@ internal static class HrApiSeeds
     public static readonly string[] AllPermissions =
     [
         HrPermissions.EmployeeRead, HrPermissions.EmployeeManage, HrPermissions.ContractRead, HrPermissions.ContractManage,
-        HrPermissions.SettingsManage,
+        HrPermissions.SettingsManage, HrPermissions.MedicalRead, HrPermissions.MedicalManage,
     ];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

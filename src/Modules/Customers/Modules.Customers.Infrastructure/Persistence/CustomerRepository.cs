@@ -26,7 +26,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
     // Menos digitos que esto aparecen en casi cualquier numero: el telefono dejaria de filtrar y el
     // listado se llenaria de coincidencias que nadie busco.
-    private const int MinPhoneSearchDigits = 7;
+    private const int MinPhoneSearchDigits = 6;
 
     // El telefono se compara solo por sus digitos: quien busca pega el numero como lo ve en un chat
     // o una tarjeta (`+57 (300) 123-4567`), y `phone_e164` lo guarda sin formato (`+573001234567`).
@@ -353,9 +353,12 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             // el DTO la devuelve entera, y sin las filas viejas en el change tracker un borrado no
             // se veria. Mismo criterio que QuotationRepository con Items.
             .Include(customer => customer.Addresses)
-            // Tres colecciones (direcciones y las dos owned) en un solo viaje, a propósito: pocas filas por cliente, y
-            // con Postgres en otro nodo cada consulta extra cuesta más que las repeticiones del JOIN. Explícito para que
-            // EF no avise 20504 en cada /customers/{id}.
+            // Y con los perfiles de facturación (spec 2026-11-24), que se editan y se leen igual; sólo se cargan acá, no en
+            // el listado ni en las lecturas por lote.
+            .Include(customer => customer.BillingProfiles)
+            // Cuatro colecciones (direcciones, perfiles con sus tasas y las dos owned) en un solo viaje, a propósito: pocas
+            // filas por cliente, y con Postgres en otro nodo cada consulta extra cuesta más que las repeticiones del JOIN.
+            // Explícito para que EF no avise 20504 en cada /customers/{id}.
             .AsSingleQuery()
             .SingleOrDefaultAsync(
                 customer => customer.TenantId == tenantId && customer.Id == customerId,
@@ -373,9 +376,10 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     customer.ClassificationId == classificationId,
                 cancellationToken);
 
-    // La tabla de asignaciones tiene el índice (tenant_id, tax_rate_id) justo para esta pregunta. Un fusionado no cuenta:
-    // ya no se edita ni se cotiza, y la fusión no le quita sus tasas, así que contarlo dejaría la tasa «en uso» para siempre.
-    // Su ficha sigue pintándolas; si la tasa se borra, la lectura ya omite las que no encuentra.
+    // Las tablas de asignaciones tienen el índice (tenant_id, tax_rate_id) justo para esta pregunta. Cuentan las tasas del
+    // cliente y las de sus perfiles de facturación (owner, 2026-11-25). Un fusionado no cuenta: ya no se edita ni se cotiza,
+    // y la fusión no le quita sus tasas, así que contarlo dejaría la tasa «en uso» para siempre. Su ficha sigue pintándolas;
+    // si la tasa se borra, la lectura ya omite las que no encuentra.
     public Task<bool> AnyWithTaxRateAsync(
         Guid tenantId,
         Guid taxRateId,
@@ -386,8 +390,11 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 customer =>
                     customer.TenantId == tenantId &&
                     customer.MergedIntoId == null &&
-                    EF.Property<List<CustomerTaxRate>>(customer, "_withholdingTaxRates")
-                        .Any(rate => rate.TaxRateId == taxRateId),
+                    (EF.Property<List<CustomerTaxRate>>(customer, "_withholdingTaxRates")
+                            .Any(rate => rate.TaxRateId == taxRateId)
+                        || customer.BillingProfiles.Any(profile =>
+                            EF.Property<List<CustomerBillingProfileTaxRate>>(profile, "_withholdingTaxRates")
+                                .Any(rate => rate.TaxRateId == taxRateId))),
                 cancellationToken);
 
     public async Task<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>

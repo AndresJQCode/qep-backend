@@ -412,7 +412,8 @@ public sealed class OrderConvertApiTests(SharedQuotationsHost sharedHost) : Orde
         var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        var clientId = await CreateActiveCustomerAsync(client, tenantId, personType: "Juridica");
+        var clientId = await CreateActiveCustomerAsync(
+            client, tenantId, identificationNumber: "901234567", personType: "Juridica");
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var converted = await client.PostAsJsonAsync(
@@ -427,5 +428,38 @@ public sealed class OrderConvertApiTests(SharedQuotationsHost sharedHost) : Orde
         Assert.NotNull(detail?.Client);
         Assert.Equal(("CO", "Juridica", "NIT"),
             (detail.Client.Country, detail.Client.PersonType, detail.Client.IdentificationType));
+        Assert.Equal("901234567", detail.Client.IdentificationNumber);
+    }
+
+    // Review Focus 2 (provincia guardada, spec 2026-11-23): convertir copia la región de las partes junto con la ciudad
+    // escrita (Order.FromQuotation pasa por ToDetails). Se lee del JSON de la respuesta.
+    [Fact]
+    public async Task ConvertingCopiesPartyRegion()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var madrid = await MadridRegionIdAsync(client);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId,
+            parties: new QuotationPartiesRequest(
+                new QuotationPartyRequest(
+                    "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
+                    PersonType: "Natural", IdentificationType: "NIE", Country: "ES", CityName: "Madrid", RegionId: madrid),
+                null, BillingWithRetention: false, BillingVatSurplus: false));
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(null, []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var billing = json.GetProperty("order").GetProperty("parties").EnumerateArray()
+            .Single(party => party.GetProperty("role").GetString() == "Billing");
+        Assert.Equal(madrid, billing.GetProperty("region").GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", billing.GetProperty("region").GetProperty("name").GetString());
     }
 }

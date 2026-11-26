@@ -68,7 +68,7 @@ public sealed class OrderTests
         var order = NewOrder(lines: [Line(quantity: 3m, unitPrice: 11_900m, discount: 10m)]);
 
         var item = Assert.Single(order.Items);
-        Assert.Equal(3_570m, item.DiscountAmount);
+        Assert.Equal(3_000m, item.DiscountAmount); // sin IVA (spec 2026-11-23); con IVA eran 3.570
         Assert.Equal(27_000m, item.Subtotal);
         Assert.Equal(5_130m, item.TaxAmount);
         Assert.Equal(10_000m, item.UnitPriceWithoutTax);
@@ -181,7 +181,7 @@ public sealed class OrderTests
         });
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation,null,
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(PartyPersonType.Natural, order.Billing?.PersonType);
@@ -399,7 +399,7 @@ public sealed class OrderTests
         var quotation = ConvertedQuotation();
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation,"Pago verificado",
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, "Pago verificado",
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal((OrderSource.Quotation, (QuotationId?)quotation.Id), (order.Source, order.QuotationId));
@@ -413,10 +413,20 @@ public sealed class OrderTests
     }
 
     [Fact]
+    public void FromQuotationCopiesTheShippingPostalCode()
+    {
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), null,
+            ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+
+        Assert.Equal("050021", order.Shipping!.PostalCode);
+    }
+
+    [Fact]
     public void FromQuotationInheritsTheQuotationNotesWhenTheRequestOmitsThem()
     {
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(),null,
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), null,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal("Entregar en portería", order.Notes);
@@ -428,7 +438,7 @@ public sealed class OrderTests
     public void FromQuotationWithEmptyNotesLeavesTheOrderWithoutNotes(string notes)
     {
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(),notes,
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), notes,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Null(order.Notes);
@@ -447,6 +457,7 @@ public sealed class OrderTests
                 Address = "Cl 1",
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
+                PostalCode = "050021",
             }),
             Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
@@ -1518,7 +1529,7 @@ public sealed class OrderTests
         var order = NewShopifyOrder("Shopify #1001\nNota\nDirección de envío de Shopify: Cra 5, CALLI");
         var later = Now.AddHours(1);
 
-        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, later);
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, [CityA], later);
 
         Assert.True(changed);
         Assert.Equal("Shopify #1001\nNota", order.Notes);
@@ -1531,9 +1542,9 @@ public sealed class OrderTests
     public void AttachExternalShippingWithTheSamePartyIsANoOp()
     {
         var order = NewShopifyOrder();
-        order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1));
+        order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, [CityA], Now.AddHours(1));
 
-        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(2));
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, [CityA], Now.AddHours(2));
 
         Assert.False(changed);
         Assert.Equal(2, order.Version);
@@ -1545,25 +1556,39 @@ public sealed class OrderTests
         var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty() with { Phone = "3009998877" }));
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
+            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, [CityA], Now.AddHours(1)));
 
         Assert.Equal("order.order.shipping_party_present", error.Code);
     }
 
-    // Spec 2026-10-26 §4.4 y desvío S1 (un pedido no edita sus partes): la misma parte en otra ciudad la puso un intento anterior
-    // del mismo trabajo, con la ciudad que el sinónimo tenía entonces. Es la misma escritura: no la toca, y el consumidor guarda
-    // la ciudad que quedó (y la recorrige si el sinónimo ya apunta a otra).
+    // Spec 2026-10-26 §4.4 y desvío S1: la misma parte en otra ciudad que el trabajo pidió la puso un intento anterior, con la
+    // ciudad que el sinónimo tenía entonces. Es la misma escritura: no la toca, y el consumidor guarda la ciudad que quedó (y la
+    // recorrige si el sinónimo ya apunta a otra).
     [Fact]
-    public void AttachExternalShippingOverOurPartyInAnotherCityIsANoOp()
+    public void AttachExternalShippingOverOurPartyInARequestedCityIsANoOp()
     {
         var order = NewShopifyOrder();
-        order.AttachExternalShipping(ShippingParty(CityB), RawAddressPrefix, Now.AddHours(1));
+        order.AttachExternalShipping(ShippingParty(CityB), RawAddressPrefix, [CityB], Now.AddHours(1));
 
-        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(2));
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, [CityB, CityA], Now.AddHours(2));
 
         Assert.False(changed);
         Assert.Equal(2, order.Version);
         Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
+    }
+
+    // Una persona que sólo cambió la ciudad la llevó a una que el trabajo no pidió: no es un reintento, gana la persona.
+    [Fact]
+    public void AttachExternalShippingOverOurPartyInACityNobodyRequestedIsShippingPartyPresent()
+    {
+        var chosen = Guid.CreateVersion7();
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty(chosen)));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, [CityA], Now.AddHours(1)));
+
+        Assert.Equal("order.order.shipping_party_present", error.Code);
+        Assert.Equal((ShippingParty(chosen), 1), (order.Shipping!.ToDetails(), order.Version));
     }
 
     // Review Focus 3: sólo se agrega la parte mientras el pedido se puede editar.
@@ -1574,7 +1599,7 @@ public sealed class OrderTests
         order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
+            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, [CityA], Now.AddHours(1)));
 
         Assert.Equal("order.order.not_editable", error.Code);
         Assert.Null(order.Shipping);
@@ -1586,7 +1611,7 @@ public sealed class OrderTests
         var order = NewShopifyOrder("Nota");
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AttachExternalShipping(ShippingParty(email: null), RawAddressPrefix, Now.AddHours(1)));
+            order.AttachExternalShipping(ShippingParty(email: null), RawAddressPrefix, [CityA], Now.AddHours(1)));
 
         Assert.Equal("order.shipping.party_incomplete", error.Code);
         Assert.Null(order.Shipping);
@@ -1769,7 +1794,7 @@ public sealed class OrderTests
         var newDepartment = Guid.CreateVersion7();
         var later = Now.AddHours(1);
 
-        var changed = order.CorrectExternalShippingCity(ShippingParty(), newDepartment, CityB, later);
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), newDepartment, CityB, [CityB], later);
 
         Assert.True(changed);
         Assert.Equal(ShippingParty(CityB) with { DepartmentId = newDepartment }, order.Shipping!.ToDetails());
@@ -1783,7 +1808,7 @@ public sealed class OrderTests
         var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty() with { Phone = "3009998877" }));
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1)));
+            order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, [CityB], Now.AddHours(1)));
 
         Assert.Equal("order.order.shipping_party_changed", error.Code);
     }
@@ -1793,7 +1818,7 @@ public sealed class OrderTests
     {
         var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
 
-        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityA, Now.AddHours(1));
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityA, [CityA], Now.AddHours(1));
 
         Assert.False(changed);
         Assert.Equal(1, order.Version);
@@ -1802,28 +1827,42 @@ public sealed class OrderTests
     // Spec 2026-10-26 §4.6: el trabajo que recorrige puede caer después de que Quotations guardó y antes de que Shopify
     // actualizara su huella. Al reintentar manda la huella vieja y encuentra la parte ya en la ciudad nueva: es el mismo cambio,
     // no una edición de otra persona.
-    // Lo mismo con una ciudad que no es ni la esperada ni la de destino: un intento anterior la llevó a la que el sinónimo tenía
-    // entonces. No la toca; el consumidor guarda la que quedó y su paso 5 siembra la recorrección.
+    // Lo mismo con una ciudad que no es ni la esperada ni la de destino pero que el trabajo pidió: un intento anterior la llevó a
+    // la que el sinónimo tenía entonces. No la toca; el consumidor guarda la que quedó y su paso 5 siembra la recorrección.
     [Fact]
-    public void CorrectExternalShippingCityOfOurPartyInAThirdCityIsANoOp()
+    public void CorrectExternalShippingCityOfOurPartyInAnotherRequestedCityIsANoOp()
     {
         var cityC = Guid.CreateVersion7();
         var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty(cityC)));
 
-        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, [cityC, CityB], Now.AddHours(1));
 
         Assert.False(changed);
         Assert.Equal(1, order.Version);
         Assert.Equal(ShippingParty(cityC), order.Shipping!.ToDetails());
     }
 
+    // En una ciudad que el trabajo no pidió la puso una persona.
+    [Fact]
+    public void CorrectExternalShippingCityOfOurPartyInACityNobodyRequestedIsShippingPartyChanged()
+    {
+        var chosen = Guid.CreateVersion7();
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty(chosen)));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, [CityB], Now.AddHours(1)));
+
+        Assert.Equal("order.order.shipping_party_changed", error.Code);
+        Assert.Equal((ShippingParty(chosen), 1), (order.Shipping!.ToDetails(), order.Version));
+    }
+
     [Fact]
     public void CorrectExternalShippingCityRetriedAfterItWasAppliedIsANoOp()
     {
         var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
-        order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+        order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, [CityB], Now.AddHours(1));
 
-        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(2));
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, [CityB], Now.AddHours(2));
 
         Assert.False(changed);
         Assert.Equal(2, order.Version);

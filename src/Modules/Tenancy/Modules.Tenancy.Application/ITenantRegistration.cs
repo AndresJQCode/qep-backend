@@ -2,12 +2,19 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Tenancy.Application;
 
+/// <param name="Country">
+/// Spec 2026-11-22: el país ISO-3166-1 alpha-2 con que nace el tenant. <c>null</c> deja el default <c>CO</c> (signup). Sólo lo
+/// fija el alta invitada, con el país del distribuidor guardado: ningún cuerpo de request lo trae.
+/// </param>
+/// <param name="Language">Spec 2026-11-22 (i18n): <c>null</c> es el por defecto (es-419).</param>
 public sealed record TenantRegistrationData(
     string DisplayName,
     string Slug,
     string DefaultCulture,
     string TimeZone,
-    string DateFormat);
+    string DateFormat,
+    string? Country = null,
+    string? Language = null);
 
 /// <summary>
 /// Crea un tenant nuevo y su membresía de owner en una sola unidad de trabajo (ADR 0017).

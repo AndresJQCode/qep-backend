@@ -62,6 +62,27 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                 "catalog.product.code_taken",
                 "Another product in this tenant already uses that code.");
         }
+        // Spec 2026-11-22: el nombre de una lista de precios, sin mayúsculas. El handler pregunta antes; el índice cierra la carrera.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, CatalogDbContext.PriceListNameIndex, StringComparison.Ordinal))
+        {
+            throw new ResourceConflictException(
+                "catalog.price_list.name_taken", "Another price list already has that name.", exception);
+        }
+        // La FK RESTRICT de channel_price_lists con sus dos causas, como la de la tasa: borrar una lista que un canal acaba de tomar
+        // es «en uso»; asignar a un canal una lista que acaban de borrar es «no existe».
+        catch (DbUpdateException exception)
+            when (IsChannelPriceListViolation(exception) && IsDeletingAPriceList())
+        {
+            throw new ResourceConflictException(
+                "catalog.price_list.in_use", "A channel or a distributor uses this price list.", exception);
+        }
+        catch (DbUpdateException exception) when (IsChannelPriceListViolation(exception))
+        {
+            throw new ResourceNotFoundException("catalog.price_list.not_found", "The price list was not found.");
+        }
         // Rama propia, por la misma razón que la de abajo: cada índice único devuelve su código.
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&
@@ -248,6 +269,14 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
     private bool IsDeletingAnOptionOrValue() =>
         dbContext.ChangeTracker.Entries().Any(entry =>
             entry.Entity is OptionDefinition or OptionValue && entry.State == EntityState.Deleted);
+
+    private static bool IsChannelPriceListViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
+        string.Equals(postgres.ConstraintName, CatalogDbContext.ChannelPriceListForeignKey, StringComparison.Ordinal);
+
+    private bool IsDeletingAPriceList() =>
+        dbContext.ChangeTracker.Entries<PriceList>().Any(entry => entry.State == EntityState.Deleted);
 
     private static bool IsProductTaxRateViolation(DbUpdateException exception) =>
         exception.InnerException is PostgresException postgres &&

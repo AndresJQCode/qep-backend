@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Ai.Application;
+using Modules.Authorization.Application;
 using static Modules.Ai.IntegrationTests.AiApiHarness;
 
 namespace Modules.Ai.IntegrationTests;
@@ -47,10 +49,19 @@ public sealed class CopilotSecurityTests
         anthropic.Enqueue(_ => FakeAnthropicMessagesHandler.ToolUse("toolu_1", "search_customers", search));
         anthropic.Enqueue(_ => FakeAnthropicMessagesHandler.ToolUse("toolu_2", "search_customers", search));
         anthropic.Enqueue(_ => CopilotHarness.Answer("No puedo ver los clientes ahora."));
-        // Antes de la segunda llamada al modelo, un admin le deja al miembro sólo el rol de caja: sin clientes (D-C3, «como un request»).
-        anthropic.OnRequest = index => index == 1 ? CopilotHarness.UpdateMembershipAsync(connectionString, "roles = ARRAY['cashier']::text[]") : Task.CompletedTask;
         using var factory = CopilotHarness.Factory(connectionString, anthropic);
+        // Antes de la segunda llamada al modelo, un admin le deja al miembro sólo el rol de caja: sin clientes (D-C3, «como un request»).
+        anthropic.OnRequest = index => index == 1
+            ? CopilotHarness.UpdateMembershipAsync(factory, connectionString, "roles = ARRAY['cashier']::text[]")
+            : Task.CompletedTask;
         await CopilotHarness.EnableAsync(factory);
+        // El tenant se inserta directo: sin esta siembra el rol de caja no existiría y la prueba pasaría por un rol que no
+        // concede nada, no por uno de caja (spec 2026-11-25, roles por tenant).
+        await using (var seeding = factory.Services.CreateAsyncScope())
+        {
+            await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>().SeedAsync(Guid.Parse(TenantId), Ct);
+        }
+
         await CopilotHarness.CreateCustomerAsync(factory, TenantId, "Acme SAS");
 
         var thread = await CopilotHarness.AskAndWaitAsync(factory, "¿Qué clientes tengo?");
@@ -73,9 +84,11 @@ public sealed class CopilotSecurityTests
         var anthropic = new ScriptedAnthropicHandler();
         anthropic.Enqueue(_ => FakeAnthropicMessagesHandler.ToolUse(
             "toolu_1", "search_customers", """{"search":null,"identificationNumber":null,"phone":null,"page":null}"""));
-        // Mientras el modelo «piensa» la primera vez, el admin suspende al miembro: la herramienta siguiente ya no corre.
-        anthropic.OnRequest = index => index == 0 ? CopilotHarness.UpdateMembershipAsync(connectionString, "state = 'Suspended'") : Task.CompletedTask;
         using var factory = CopilotHarness.Factory(connectionString, anthropic);
+        // Mientras el modelo «piensa» la primera vez, el admin suspende al miembro: la herramienta siguiente ya no corre.
+        anthropic.OnRequest = index => index == 0
+            ? CopilotHarness.UpdateMembershipAsync(factory, connectionString, "state = 'Suspended'")
+            : Task.CompletedTask;
         await CopilotHarness.EnableAsync(factory);
         await CopilotHarness.CreateCustomerAsync(factory, TenantId, "Acme SAS");
 

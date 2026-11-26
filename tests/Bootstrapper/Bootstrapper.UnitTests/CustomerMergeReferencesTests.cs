@@ -282,6 +282,35 @@ public sealed class CustomerMergeReferencesTests
             (await ProfilesAsync(database, TenantId)).Order().ToArray());
     }
 
+    // Agenda (plan 2026-11-21, Tarea 11): las citas del fusionado pasan al que queda, en cualquier estado y sin subir la versión (F15:
+    // una cita abierta en otra pestaña no da 412 por la fusión). Las del otro cliente y las de otro tenant se quedan.
+    [Fact]
+    public async Task AMergeMovesTheAppointmentsOfTheLoser()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateReplicaTablesAsync(database);
+        var (survivor, merged, other) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        foreach (var status in new[] { "Pending", "Confirmed", "Cancelled", "Completed", "NoShow" })
+        {
+            await ExecuteAsync(
+                database,
+                "INSERT INTO scheduling.appointments (tenant_id, customer_id, status) VALUES (@tenant, @customer, @status)",
+                ("tenant", TenantId), ("customer", merged), ("status", status));
+        }
+
+        await AddRowAsync(database, "scheduling.appointments", "customer_id", TenantId, other);
+        await AddRowAsync(database, "scheduling.appointments", "customer_id", OtherTenantId, merged);
+
+        await using var customers = CustomersFor(database);
+        await new CustomerMergeReferences(customers).MoveAsync(
+            TenantId, survivor, [merged], TestContext.Current.CancellationToken);
+
+        Assert.Equal(5, (await CustomerIdsAsync(database, "scheduling.appointments", "customer_id", TenantId)).Count(id => id == survivor));
+        Assert.Equal([merged], await CustomerIdsAsync(database, "scheduling.appointments", "customer_id", OtherTenantId));
+        Assert.Single(await CustomerIdsAsync(database, "scheduling.appointments", "customer_id", TenantId), id => id == other);
+        Assert.All(await ScalarsAsync<long>(database, "SELECT version FROM scheduling.appointments"), version => Assert.Equal(1L, version));
+    }
+
     // Las columnas que la fusión mueve (§4), en el orden del adaptador, sin la audiencia de campañas, que va aparte.
     private static readonly (string Table, string Column)[] ReferenceColumns =
     [
@@ -299,6 +328,7 @@ public sealed class CustomerMergeReferencesTests
         ("loans.loans", "customer_id"),
         ("support.tickets", "customer_id"),
         ("ai.tests", "customer_id"),
+        ("scheduling.appointments", "customer_id"),
     ];
 
     private static CustomersDbContext CustomersFor(PostgreSqlContainer database, CommandCounter? commands = null)
@@ -323,6 +353,9 @@ public sealed class CustomerMergeReferencesTests
             CREATE SCHEMA loans;
             CREATE SCHEMA support;
             CREATE TABLE support.tickets (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid);
+            CREATE SCHEMA scheduling;
+            CREATE TABLE scheduling.appointments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL,
+                customer_id uuid NOT NULL, status varchar(16) NOT NULL DEFAULT 'Confirmed', version bigint NOT NULL DEFAULT 1);
             CREATE SCHEMA ai;
             CREATE TABLE ai.tests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid);
             CREATE TABLE loans.loans (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL);

@@ -1,7 +1,7 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Modules.ServiceContracts.Application;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
+using Modules.ServiceContracts.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using static Modules.ServiceContracts.IntegrationTests.ServiceContractsApiHarness;
@@ -95,7 +95,8 @@ public sealed class ServiceContractsDirectoriesTests
         var (database, factory) = await OpenAsync();
         await using var _ = database;
         using var __ = factory;
-        var customerId = await SeedCustomerAsync(factory, Tenant, "Panadería La Esquina", "+573001234567", "pan@example.com");
+        var customerId = await SeedCustomerAsync(
+            factory, Tenant, "Panadería La Esquina", "+573001234567", "pan@example.com", "La Esquina S.A.S.");
         var withoutContact = await SeedCustomerAsync(factory, Tenant, "Sin contacto");
 
         await using var scope = factory.Services.CreateAsyncScope();
@@ -103,13 +104,15 @@ public sealed class ServiceContractsDirectoriesTests
         var ct = TestContext.Current.CancellationToken;
 
         Assert.Equal(
-            new ServiceContractsCustomerRef(customerId, "Panadería La Esquina", "+573001234567", "pan@example.com", true),
+            new ServiceContractsCustomerRef(
+                customerId, "Panadería La Esquina", "+573001234567", "pan@example.com", true, "La Esquina S.A.S."),
             await lookup.FindAsync(Tenant, customerId, ct));
         var many = await lookup.FindManyAsync(Tenant, [customerId, withoutContact, Guid.CreateVersion7()], ct);
         Assert.Equal(2, many.Count);
         var bare = Assert.Single(many, customer => customer.Id == withoutContact);
         Assert.Null(bare.PhoneE164);
         Assert.Null(bare.Email);
+        Assert.Null(bare.BusinessName);
         // Otro tenant no ve al cliente.
         Assert.Null(await lookup.FindAsync(Guid.Parse(ServiceContractsApiHarness.OtherTenantId), customerId, ct));
     }

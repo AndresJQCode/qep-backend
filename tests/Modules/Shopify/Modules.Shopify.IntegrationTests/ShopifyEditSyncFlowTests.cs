@@ -361,6 +361,147 @@ public sealed class ShopifyEditSyncFlowTests
     }
 
     [Fact]
+    public async Task AnImportedColombianOrderKeepsTheZipOnItsParty()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture(order => order["shipping_address"]!["zip"] = "050021"));
+
+        Assert.Equal(
+            "050021|050021",
+            await flow.ScalarAsync(
+                """
+                SELECT coalesce(p.postal_code, 'none') || '|' || coalesce(m.applied_projection -> 'shippingParty' ->> 'postalCode', 'none')
+                FROM shopify.orders m
+                JOIN quotations.order_parties p ON p.order_id = m.qep_order_id AND p.role = 'Shipping'
+                """));
+    }
+
+    // Un pedido sin código postal (importado antes de que viajara) cuya corrección vuelve con el zip que Shopify conservaba: el zip
+    // no es una novedad y el eco sigue sin crear un cambio.
+    [Fact]
+    public async Task AnEchoWithTheZipShopifyAlreadyHadCreatesNoChange()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture(order => order["shipping_address"]!["zip"] = "050021"));
+        await ExecuteAsync(flow.ConnectionString, "UPDATE quotations.order_parties SET postal_code = NULL WHERE role = 'Shipping'");
+        await ExecuteAsync(
+            flow.ConnectionString,
+            "UPDATE shopify.orders SET applied_projection = jsonb_set(applied_projection, '{shippingParty,postalCode}', 'null')");
+        await ShopifyOrderPushWorkerTests.CorrectTheCityToEnvigadoAsync(flow);
+        var echo = EchoOfTheEnvigadoCorrection("2026-10-01T10:30:00-05:00");
+        echo["shipping_address"]!["zip"] = "050021";
+
+        await flow.DeliverAsync("orders/updated", "wh-2", echo);
+
+        Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_edits"));
+    }
+
+    /// <summary>Un pedido como quedó guardado antes de que el espejo leyera el zip: los payloads no tienen la clave (distinto de
+    /// <c>"zip": null</c>) y el pedido no tiene código postal.</summary>
+    private static async Task<Flow> StartWithPayloadsWithoutZipAsync()
+    {
+        var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await ExecuteAsync(
+            flow.ConnectionString,
+            """
+            UPDATE shopify.orders
+            SET payload = payload #- '{shippingAddress,zip}', applied_payload = applied_payload #- '{shippingAddress,zip}'
+            """);
+        Assert.Equal("false|false", await flow.ScalarAsync(
+            """
+            SELECT (payload -> 'shippingAddress' ? 'zip')::text || '|' || (applied_payload -> 'shippingAddress' ? 'zip')::text
+            FROM shopify.orders
+            """));
+        return flow;
+    }
+
+    // Sin la clave no se sabe qué zip tenía Shopify: el primero que llega no es un cambio.
+    [Fact]
+    public async Task AZipOverAPayloadWithoutTheKeyCreatesNoChange()
+    {
+        await using var flow = await StartWithPayloadsWithoutZipAsync();
+        await flow.SetEditSyncAsync("Automatic");
+
+        await flow.DeliverAsync("orders/updated", "wh-2", Fixture(order =>
+        {
+            order["updated_at"] = "2026-10-01T10:30:00-05:00";
+            order["shipping_address"]!["zip"] = "050021";
+        }));
+
+        Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_edits"));
+        Assert.Equal("050021", await flow.ScalarAsync("SELECT applied_payload -> 'shippingAddress' ->> 'zip' FROM shopify.orders"));
+        Assert.Equal("none", await flow.ScalarAsync(
+            "SELECT coalesce(postal_code, 'none') FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
+    // La dirección que sí cambió se muestra sin la fila del zip.
+    [Fact]
+    public async Task AnAddressEditOverAPayloadWithoutTheKeyShowsNoZipRow()
+    {
+        await using var flow = await StartWithPayloadsWithoutZipAsync();
+
+        await flow.DeliverAsync("orders/updated", "wh-2", Fixture(order =>
+        {
+            order["updated_at"] = "2026-10-01T10:30:00-05:00";
+            order["shipping_address"]!["address1"] = "Carrera 43A # 1-50";
+            order["shipping_address"]!["zip"] = "050021";
+        }));
+
+        Assert.Equal("address1", await flow.ScalarAsync(
+            """
+            SELECT string_agg(r ->> 'field', ',')
+            FROM shopify.order_edits e, jsonb_array_elements(e.groups) AS g, jsonb_array_elements(g -> 'rows') AS r
+            """));
+    }
+
+    // Un payload que sí guardó "zip": null: el zip que Shopify agrega después es un cambio de verdad.
+    [Fact]
+    public async Task AZipAddedOverARecordedNullIsAChange()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+
+        await flow.DeliverAsync("orders/updated", "wh-2", Fixture(order =>
+        {
+            order["updated_at"] = "2026-10-01T10:30:00-05:00";
+            order["shipping_address"]!["zip"] = "050021";
+        }));
+
+        Assert.Equal("Pending|zip", await flow.ScalarAsync(
+            """
+            SELECT e.status || '|' || (r ->> 'field')
+            FROM shopify.order_edits e, jsonb_array_elements(e.groups) AS g, jsonb_array_elements(g -> 'rows') AS r
+            """));
+    }
+
+    // «Editar pedido» puede dejar el pedido con una parte de fuera de Colombia: la sincronización lo sigue leyendo, y la edición
+    // siguiente de Shopify sobre la dirección es conflicto (gana QEP).
+    [Fact]
+    public async Task AShopifyEditOnAnOrderWithASpanishPartyIsAConflict()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var saved = await ShopifyOrderDelivery.PutAsync(
+            client, flow, isStorePickup: false,
+            ShopifyOrderDelivery.SpanishParty(await ShopifyOrderDelivery.RegionIdAsync(flow, "ES", "28")));
+        Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync(Ct));
+
+        await flow.DeliverAsync(
+            "orders/updated", "wh-2", EchoOfTheEnvigadoCorrection("2026-10-01T10:30:00-05:00", address1: "Carrera 43A # 1-50"));
+
+        Assert.Equal("Pending|ShippingAddress|Conflict|qep_changed", await flow.ScalarAsync(
+            """
+            SELECT coalesce(
+                (SELECT e.status || '|' || (g ->> 'kind') || '|' || (g ->> 'outcome') || '|' || (g ->> 'reason')
+                 FROM shopify.order_edits e, jsonb_array_elements(e.groups) AS g), 'none')
+            """));
+        Assert.Equal("Calle Mayor 1", await flow.ScalarAsync("SELECT address FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
+    [Fact]
     public async Task ListChangesAndSummaryCountPendingAndBlocked()
     {
         await using var flow = await Flow.StartAsync();

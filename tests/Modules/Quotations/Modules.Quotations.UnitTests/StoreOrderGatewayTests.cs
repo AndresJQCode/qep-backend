@@ -46,7 +46,8 @@ public sealed class StoreOrderGatewayTests
             new FixedTenantDefaultCurrency(),
             new StubTenantDirectory(),
             ThrowingProxy.Create<IQuotationWithholdingLookup>(),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
         // Todo lo que escribe o numera es un doble que explota: la cotización no puede tocarlo.
         return new StoreOrderGateway(
             drafts,

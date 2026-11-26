@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Modules.ServiceContracts.Application;
 using Modules.Notifications.Application;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper.UnitTests;
 
@@ -132,7 +132,7 @@ public sealed class ServiceContractsEmailSenderTests
         var sender = new ServiceContractsEmailSender(new RecordingChannel { Throw = true }, logger);
 
         var result = await sender.SendDigestAsync(
-            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [], [], [], Format), CancellationToken.None);
+            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [], [], [], Format, [], []), CancellationToken.None);
 
         Assert.Equal("send_failed", Assert.IsType<ServiceContractsSendResult.Failed>(result).Code);
         var entry = Assert.Single(logger.Entries);
@@ -152,7 +152,7 @@ public sealed class ServiceContractsEmailSenderTests
         var row = new ServiceContractsDigestRow("Ana", "Dominio", 20m, "USD", new DateOnly(2026, 3, 1), null);
 
         var result = await sender.SendDigestAsync(
-            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [row], [], [new CurrencyAmountDto("USD", 20m)], Format),
+            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [row], [], [new CurrencyAmountDto("USD", 20m)], Format, [], []),
             CancellationToken.None);
 
         Assert.IsType<ServiceContractsSendResult.Sent>(result);
@@ -160,6 +160,35 @@ public sealed class ServiceContractsEmailSenderTests
         Assert.Equal("luis@verde.co", sent.ToAddress);
         Assert.Contains("- Ana / Dominio: US$ 20,00, 01/03/2026\n", sent.TextBody, StringComparison.Ordinal);
         Assert.Contains("Total vencido: US$ 20,00", sent.TextBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheDigestCarriesThePriceReviewRows()
+    {
+        var channel = new RecordingChannel();
+        var sender = new ServiceContractsEmailSender(channel, NullLogger<ServiceContractsEmailSender>.Instance);
+        var due = new ServiceContractsPriceReviewRow(
+            "Ana", "Dominio", 20m, "USD", new DateOnly(2026, 3, 20), new DateOnly(2026, 3, 15), "Due", 2025, true, null);
+        var held = new ServiceContractsPriceReviewRow(
+            "Beto", "Hosting", 150000m, "COP", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 7), "Held", 2025, false,
+            new DateOnly(2026, 3, 10));
+
+        var result = await sender.SendDigestAsync(
+            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [], [], [], Format, [due], [held]),
+            CancellationToken.None);
+
+        Assert.IsType<ServiceContractsSendResult.Sent>(result);
+        var sent = Assert.Single(channel.Sent);
+        Assert.Equal(
+            "Cobros de hoy: 0 por vencer, 0 vencidos, 0 avisos fallidos, 1 precios por revisar, 1 cobros retenidos", sent.Subject);
+        Assert.Contains(
+            "- Ana / Dominio: US$ 20,00, revisión 20/03/2026, se genera 15/03/2026, IPC 2025 (falta cargarlo)\n",
+            sent.TextBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "- Beto / Hosting: $ 150.000, revisión 12/03/2026, se genera 07/03/2026, IPC 2025, retenido desde 10/03/2026\n",
+            sent.TextBody,
+            StringComparison.Ordinal);
     }
 
     private sealed class RecordingLogger : ILogger<ServiceContractsEmailSender>

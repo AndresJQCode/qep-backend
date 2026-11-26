@@ -23,7 +23,8 @@ public sealed partial class EngineEndToEndTests
               "objective": "Resuelve dudas de productos.", "context": "El cliente se llama {nombre_contacto}.", "firstTurn": "lastMessage",
               "idleMinutes": 60, "saveTo": "asesor",
               "outputs": { "done": "bye", "human": "desk", "noAnswer": "desk", "idle": "bye", "error": "desk" } },
-            { "id": "bye", "kind": "message", "title": "Despedida", "text": "Listo: {asesor.summary}", "outputs": { "next": null } },
+            { "id": "bye", "kind": "message", "title": "Despedida", "text": "Listo: {asesor.summary}", "outputs": { "next": "end" } },
+            { "id": "end", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null, "outputs": {} },
             { "id": "desk", "kind": "handoff", "title": "Asesor", "text": "Te paso con un asesor." }
           ]
         }
@@ -61,6 +62,18 @@ public sealed partial class EngineEndToEndTests
         return (new Fixture(factory, host, connectionString, tenant, connectionId, chatbotId, host.CreateClient(), notifier, new BotMeta(factory.MetaHandler)), agentId);
     }
 
+    /// <summary>Lo que hace Ai con sus filas del inbox (<c>bot_kind = 2</c>): la <c>Delegated</c> abre la sesión y la <c>ReleaseRun</c> de la toma
+    /// humana la cierra. Con los workers de Ai apagados quedan pendientes, y el inbox no deja pasar ninguna fila más nueva de la misma
+    /// conversación, de ningún bot (spec 2026-10-29 §6.1): sin esto el retorno y la toma humana nunca le llegan al motor de Automations.</summary>
+    private static Task<int> AiProcessesItsInboxAsync(Fixture f) =>
+        ExecuteAsync(f.ConnectionString,
+            """
+            UPDATE messaging.automation_inbox
+               SET processed_at = now(), outcome = CASE kind WHEN 'Delegated' THEN @started ELSE @interrupted END
+             WHERE bot_kind = 2 AND processed_at IS NULL
+            """,
+            ("started", AiInboxOutcomes.Started), ("interrupted", AiInboxOutcomes.Interrupted));
+
     /// <summary>Lo que hace Ai al terminar la sesión del bloque: devolver con el resultado (§6.3).</summary>
     private static async Task ReturnFromAgentAsync(Fixture f, string resultJson)
     {
@@ -92,11 +105,13 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal("Active|2", await ConversationAsync(f, "automation_status || '|' || automation_bot_kind"));
         Assert.Equal("Waiting|ai|delegated", await RunAsync(f, "status || '|' || current_node_id || '|' || (trace->-1->>'outcome')"));
 
+        await AiProcessesItsInboxAsync(f);
         await ReturnFromAgentAsync(f, """{"output":"done","reason":"objective_completed","summary":"Sí hay talla M"}""");
         await DrainAutomationsAsync(f.Host);
 
         Assert.Equal(["Listo: Sí hay talla M"], f.Meta.Sends());
-        Assert.Equal("Completed|Sí hay talla M", await RunAsync(f, "status || '|' || (variables->'asesor'->>'summary')"));
+        // El flujo termina en «Fin» (resolver): un mensaje no puede quedar con la salida «sigue» sin conectar y publicarse.
+        Assert.Equal("Resolved|Sí hay talla M", await RunAsync(f, "status || '|' || (variables->'asesor'->>'summary')"));
         Assert.Equal("None", await ConversationAsync(f, "automation_status"));
         Assert.Equal(1L, await CountAsync(f.ConnectionString,
             "SELECT count(*) FROM messaging.automation_inbox WHERE kind = 'AgentReturned' AND outcome = 'ended'"));
@@ -111,8 +126,10 @@ public sealed partial class EngineEndToEndTests
         using var fixture = f;
         await InboundAsync(f, "w1", "Hola");
         await DrainAutomationsAsync(f.Host);
+        await AiProcessesItsInboxAsync(f);
 
         Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "take")).StatusCode);
+        await AiProcessesItsInboxAsync(f);
         await DrainAutomationsAsync(f.Host);
 
         Assert.Equal("Interrupted", await RunAsync(f, "status"));
@@ -149,6 +166,7 @@ public sealed partial class EngineEndToEndTests
         using var fixture = f;
         await InboundAsync(f, "w1", "Hola");
         await DrainAutomationsAsync(f.Host);
+        await AiProcessesItsInboxAsync(f);
         await DisableModuleAsync(f.ConnectionString, f.Tenant.TenantId, "automations");
         f.Host.Services.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>()
             .Remove(Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus.CacheKey(f.Tenant.TenantId));

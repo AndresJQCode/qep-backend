@@ -21,6 +21,13 @@ public interface ICompanyGeographyLookup
     /// </summary>
     Task<IReadOnlyDictionary<Guid, CompanyCityRef>> FindCitiesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resuelve regiones (provincias) por id, en lote y con una sola consulta: pais al que
+    /// pertenecen y nombre. Los ids que no existen no salen. Sin ids no se consulta.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, CompanyRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -35,3 +42,6 @@ public sealed record CompanyCityRef(
     Guid DepartmentId,
     string DepartmentDivipolaCode,
     string DepartmentName);
+
+/// <summary>Una region de <c>Geography</c> en el vocabulario del modulo.</summary>
+public sealed record CompanyRegionRef(Guid Id, string CountryCode, string Name);

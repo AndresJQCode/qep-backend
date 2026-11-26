@@ -154,6 +154,8 @@ public sealed class ImportServiceContractsHandler(
             services.Add(service);
             var generated = ChargeGenerator.Generate(service, today, now);
             charges.AddRange(generated);
+            // La plantilla no trae columnas de reajuste (spec reajuste §6.8): Manual con la revisión por defecto, después de generar.
+            service.InitializePriceReview(AdjustmentMode.Manual, 0m, null);
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
             return (new ImportedRowDto(

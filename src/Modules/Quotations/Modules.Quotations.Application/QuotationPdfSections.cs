@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using BuildingBlocks.Application.RichText;
+using BuildingBlocks.Domain.Localization;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -78,7 +79,7 @@ public static class QuotationPdfSectionsBuilder
     /// (owner 2026-11-16: el despliegue no regenera ningún PDF); su cambio vence el caché al guardar
     /// (<c>InvalidateQuotationPdfsAsync</c>).
     /// </summary>
-    public static string Fingerprint(PdfContent content, QuotationPdfKind kind)
+    public static string Fingerprint(PdfContent content, QuotationPdfKind kind, string? language = null)
     {
         ArgumentNullException.ThrowIfNull(content);
 
@@ -88,6 +89,14 @@ public static class QuotationPdfSectionsBuilder
             content.All
                 .Where(section => section.PrintsOn(isOrder))
                 .Select(section => $"{section.Key}|{section.Title}|{section.ContentHtml}"));
+        // El idioma del tenant cambia lo que el PDF imprime, así que entra a la huella (spec 2026-11-22, i18n). Sólo cuando no es
+        // el por defecto: así la huella de los PDF ya guardados no cambia y el despliegue no regenera ninguno.
+        var resolved = SupportedLanguages.OrDefault(language);
+        if (resolved != SupportedLanguages.Default)
+        {
+            text += $"\nlanguage|{resolved}";
+        }
+
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
     }
 

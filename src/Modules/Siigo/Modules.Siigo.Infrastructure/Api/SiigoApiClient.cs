@@ -14,8 +14,9 @@ namespace Modules.Siigo.Infrastructure.Api;
 /// <summary>
 /// Spec 2026-11-18 §3 y §5.4: el cliente HTTP de Siigo. <c>Partner-Id</c> en toda llamada; token por conexión en
 /// <see cref="SiigoTokenCache"/>; <b>un 401 invalida el token, reautentica una vez y repite la misma petición</b> (con la misma
-/// <c>Idempotency-Key</c>), y un segundo 401 es <c>credentials_rejected</c>. Timeout de 30 s en el <c>HttpClient</c> (cubre también la
-/// lectura del cuerpo, que se hace con el contenido bufereado). <b>Sin reintentos propios</b>: 429, 5xx, timeout y red son
+/// <c>Idempotency-Key</c>), y un segundo 401 es <c>credentials_rejected</c>. <b>Cada llamada lleva su propio plazo</b>
+/// (<see cref="SiigoApiTimeouts"/>, spec 2026-11-24 §4), que cubre el envío y la lectura del cuerpo; el <c>HttpClient</c> no corta por
+/// tiempo. <b>Sin reintentos propios</b>: 429, 5xx, timeout y red son
 /// <c>Transient</c> y reintenta quien llama con la misma fila. Las listas se cachean 5 minutos por conexión (<c>siigo:{connectionId}:{lista}</c>);
 /// la creación de facturas y los clientes nunca. El cliente no tiene loggers (<c>RemoveAllLoggers</c>): ni la clave de acceso, ni el token,
 /// ni el cuerpo de una factura, ni la identificación de un cliente en una URL salen a un log.
@@ -26,9 +27,20 @@ internal sealed class SiigoApiClient(
     SiigoTokenCache tokens,
     IMemoryCache cache,
     ISiigoCallFailureLog? failures = null,
-    SiigoMetrics? metrics = null) : ISiigoApi
+    SiigoMetrics? metrics = null,
+    SiigoApiTimeouts? timeouts = null) : ISiigoApi
 {
     public const string HttpClientName = "siigo";
+
+    /// <summary>El plazo de toda llamada que no sea crear una factura. Junto con <see cref="InvoiceCreateTimeout"/> tiene que caber en
+    /// <see cref="SiigoInvoice.SendLease"/> (<c>SiigoTimeoutBudgetTests</c>).</summary>
+    internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>El plazo de <c>POST v1/invoices</c>: Siigo recomienda 120 s o más para crear documentos. Ningún request HTTP de QEP lo
+    /// espera: la factura la manda el worker de las tandas.</summary>
+    internal static readonly TimeSpan InvoiceCreateTimeout = TimeSpan.FromSeconds(120);
+
+    private readonly SiigoApiTimeouts _timeouts = timeouts ?? SiigoApiTimeouts.Production;
 
     /// <summary>Spec 2026-11-18 §3: alfanumérica, ASCII, sin espacios ni especiales, hasta 30 caracteres.</summary>
     public const int IdempotencyKeyMaxLength = 30;
@@ -49,10 +61,11 @@ internal sealed class SiigoApiClient(
     /// <summary>Sin redirecciones: la clave y el token no viajan a otro host.</summary>
     internal static SocketsHttpHandler CreatePrimaryHandler() => new() { AllowAutoRedirect = false };
 
-    /// <summary>30 s por llamada y <c>User-Agent: qep-siigo</c>.</summary>
+    /// <summary><c>User-Agent: qep-siigo</c> y sin plazo del <c>HttpClient</c>: es uno solo para todas las llamadas, y cada una pone el
+    /// suyo.</summary>
     internal static void ConfigureClient(HttpClient client)
     {
-        client.Timeout = TimeSpan.FromSeconds(30);
+        client.Timeout = Timeout.InfiniteTimeSpan;
         client.DefaultRequestHeaders.UserAgent.ParseAdd("qep-siigo");
     }
 
@@ -168,7 +181,8 @@ internal sealed class SiigoApiClient(
         SiigoCredentials credentials, SiigoCustomerRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var reply = await CallAsync(credentials, HttpMethod.Post, "v1/customers", SiigoJson.CustomerBody(request), null, cancellationToken);
+        var reply = await CallAsync(
+            credentials, HttpMethod.Post, "v1/customers", SiigoJson.CustomerBody(request), null, _timeouts.Default, cancellationToken);
         await ReportFailureAsync(credentials, SiigoCallOperation.CustomerCreate, reply, null, null, cancellationToken);
         ThrowUnlessSuccess(reply);
         using var document = SiigoJson.Parse(reply.Body);
@@ -195,7 +209,8 @@ internal sealed class SiigoApiClient(
                 $"The idempotency key must be 1 to {IdempotencyKeyMaxLength} ASCII letters or digits.", nameof(idempotencyKey));
         }
 
-        var reply = await CallAsync(credentials, HttpMethod.Post, "v1/invoices", request.Json, idempotencyKey, cancellationToken);
+        var reply = await CallAsync(
+            credentials, HttpMethod.Post, "v1/invoices", request.Json, idempotencyKey, _timeouts.InvoiceCreate, cancellationToken);
         await ReportFailureAsync(credentials, SiigoCallOperation.InvoiceCreate, reply, idempotencyKey, null, cancellationToken);
         if (reply.TransientReason is { } transient)
         {
@@ -239,7 +254,13 @@ internal sealed class SiigoApiClient(
         SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
     {
         var reply = await CallAsync(
-            credentials, HttpMethod.Post, $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/stamp", "{}", null, cancellationToken);
+            credentials,
+            HttpMethod.Post,
+            $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/stamp",
+            "{}",
+            null,
+            _timeouts.Default,
+            cancellationToken);
         await ReportFailureAsync(credentials, SiigoCallOperation.InvoiceStamp, reply, null, siigoInvoiceId, cancellationToken);
         if (reply.TransientReason is { } transient)
         {
@@ -258,6 +279,50 @@ internal sealed class SiigoApiClient(
 
         using var document = SiigoJson.Parse(reply.Body);
         return new SiigoStampOutcome.Stamped(document is null ? null : SiigoJson.Cufe(document.RootElement));
+    }
+
+    // Spec 2026-11-25, anulación §2: de esta lectura depende soltar un documento legal, así que lo que no se entiende no confirma nada.
+    // No usa GetAsync: un 4xx no es una excepción, es «no reconocida» y quien llama dice cuál factura.
+    public async Task<SiigoInvoiceLookup> GetInvoiceAsync(
+        SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
+    {
+        var reply = await CallAsync(
+            credentials,
+            HttpMethod.Get,
+            $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}",
+            null,
+            null,
+            _timeouts.Default,
+            cancellationToken);
+        await ReportFailureAsync(credentials, SiigoCallOperation.InvoiceRead, reply, null, siigoInvoiceId, cancellationToken);
+        ThrowIfUnanswered(reply);
+        if (!reply.Success)
+        {
+            var errors = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false);
+            if (SiigoApiErrors.IsServiceUnavailable(errors))
+            {
+                throw UnexpectedAnswer(reply, errors);
+            }
+
+            return reply.Status == HttpStatusCode.NotFound
+                && errors.Count > 0
+                && errors.All(error => SiigoApiErrors.InvoiceNotFoundCodes.Contains(error.Code))
+                    ? new SiigoInvoiceLookup.NotFound()
+                    : new SiigoInvoiceLookup.Unrecognized((int?)reply.Status);
+        }
+
+        using var document = SiigoJson.Parse(reply.Body);
+        if (document is { RootElement: var root }
+            && string.Equals(SiigoJson.Text(root, "id"), siigoInvoiceId, StringComparison.Ordinal)
+            && SiigoJson.Property(root, "annulled") is { ValueKind: JsonValueKind.True or JsonValueKind.False } annulled)
+        {
+            var stampStatus = SiigoJson.Property(root, "stamp") is { } stamp ? SiigoJson.Text(stamp, "status") : null;
+            return new SiigoInvoiceLookup.Found(annulled.GetBoolean(), stampStatus);
+        }
+
+        await ReportInvalidResponseAsync(
+            credentials, SiigoCallOperation.InvoiceRead, reply, null, cancellationToken, siigoInvoiceId);
+        return new SiigoInvoiceLookup.Unrecognized((int?)reply.Status);
     }
 
     public async Task<byte[]> GetInvoicePdfAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
@@ -356,7 +421,7 @@ internal sealed class SiigoApiClient(
     private async Task<Reply> GetAsync(
         SiigoCredentials credentials, SiigoCallOperation operation, string path, string? siigoInvoiceId, CancellationToken cancellationToken)
     {
-        var reply = await CallAsync(credentials, HttpMethod.Get, path, null, null, cancellationToken);
+        var reply = await CallAsync(credentials, HttpMethod.Get, path, null, null, _timeouts.Default, cancellationToken);
         await ReportFailureAsync(credentials, operation, reply, null, siigoInvoiceId, cancellationToken);
         ThrowUnlessSuccess(reply);
         return reply;
@@ -389,10 +454,16 @@ internal sealed class SiigoApiClient(
             cancellationToken);
     }
 
-    // Un 2xx que Siigo contestó sin lo que hacía falta (la factura o el cliente sin id): no se sabe qué se creó, y es el caso que más pide el curl.
+    // Un 2xx que Siigo contestó sin lo que hacía falta (la factura o el cliente sin id, o la lectura de una factura que no dice si está
+    // anulada): no se sabe qué pasó, y es el caso que más pide el curl.
     private Task ReportInvalidResponseAsync(
-        SiigoCredentials credentials, SiigoCallOperation operation, Reply reply, string? idempotencyKey, CancellationToken cancellationToken) =>
-        RecordAsync(credentials, operation, reply.Capture, "invalid_response", idempotencyKey, null, cancellationToken);
+        SiigoCredentials credentials,
+        SiigoCallOperation operation,
+        Reply reply,
+        string? idempotencyKey,
+        CancellationToken cancellationToken,
+        string? siigoInvoiceId = null) =>
+        RecordAsync(credentials, operation, reply.Capture, "invalid_response", idempotencyKey, siigoInvoiceId, cancellationToken);
 
     private async Task RecordAsync(
         SiigoCredentials credentials,
@@ -431,6 +502,17 @@ internal sealed class SiigoApiClient(
     // Las lecturas lanzan; la creación de facturas y el sellado no (ver ISiigoApi).
     private static void ThrowUnlessSuccess(Reply reply)
     {
+        ThrowIfUnanswered(reply);
+        if (!reply.Success)
+        {
+            // Sólo los códigos de Siigo, nunca sus mensajes: repiten los valores rechazados (documento, dirección, nombre).
+            throw UnexpectedAnswer(reply, SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false));
+        }
+    }
+
+    // Lo que ninguna lectura puede interpretar: Siigo no contestó, o rechazó las credenciales.
+    private static void ThrowIfUnanswered(Reply reply)
+    {
         if (reply.TransientReason is { } transient)
         {
             throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, $"Siigo did not answer in time or failed ({transient}).");
@@ -440,16 +522,15 @@ internal sealed class SiigoApiClient(
         {
             throw new ResourceConflictException(SiigoErrorCodes.ConnectionUnavailable, "Siigo rejected the credentials of this connection.");
         }
+    }
 
-        if (!reply.Success)
-        {
-            // Sólo los códigos de Siigo, nunca sus mensajes: repiten los valores rechazados (documento, dirección, nombre).
-            var codes = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false).Select(error => error.Code).Distinct().Take(5);
-            var detail = string.Join(", ", codes);
-            throw new UpstreamServiceException(
-                "siigo.unexpected_response",
-                $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}");
-        }
+    private static UpstreamServiceException UnexpectedAnswer(Reply reply, IReadOnlyList<SiigoError> errors)
+    {
+        var detail = string.Join(", ", errors.Select(error => error.Code).Distinct().Take(5));
+        // Un servicio de Siigo caído tiene su código, para que la pantalla diga que es de Siigo.
+        return new UpstreamServiceException(
+            SiigoApiErrors.IsServiceUnavailable(errors) ? SiigoErrorCodes.InvoiceSiigoService : "siigo.unexpected_response",
+            $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}");
     }
 
     private async Task<Reply> CallAsync(
@@ -458,6 +539,7 @@ internal sealed class SiigoApiClient(
         string path,
         string? body,
         string? idempotencyKey,
+        TimeSpan deadline,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(options.Value.PartnerId))
@@ -480,7 +562,7 @@ internal sealed class SiigoApiClient(
                 token = authentication.Token!;
             }
 
-            var reply = await SendAsync(method, path, body, idempotencyKey, token, cancellationToken);
+            var reply = await SendAsync(method, path, body, idempotencyKey, token, deadline, cancellationToken);
             if (reply.Status != HttpStatusCode.Unauthorized)
             {
                 return reply;
@@ -498,7 +580,8 @@ internal sealed class SiigoApiClient(
     private async Task<(string? Token, Reply? Failure)> AuthenticateAsync(SiigoCredentials credentials, CancellationToken cancellationToken)
     {
         var body = JsonSerializer.Serialize(new { username = credentials.Username, access_key = credentials.AccessKey });
-        var reply = await SendAsync(HttpMethod.Post, "auth", body, null, null, cancellationToken);
+        // Autenticar va con el plazo general aunque lo pida la creación de una factura.
+        var reply = await SendAsync(HttpMethod.Post, "auth", body, null, null, _timeouts.Default, cancellationToken);
         if (reply.TransientReason is not null)
         {
             return (null, reply);
@@ -523,9 +606,18 @@ internal sealed class SiigoApiClient(
     }
 
     private async Task<Reply> SendAsync(
-        HttpMethod method, string path, string? body, string? idempotencyKey, string? token, CancellationToken cancellationToken)
+        HttpMethod method,
+        string path,
+        string? body,
+        string? idempotencyKey,
+        string? token,
+        TimeSpan deadline,
+        CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, new Uri(BaseUri, path));
+        // El plazo de esta petición, enlazado al token de quien llama: cualquiera de los dos la corta.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(deadline);
         try
         {
             request.Headers.TryAddWithoutValidation("Partner-Id", options.Value.PartnerId!.Trim());
@@ -544,9 +636,9 @@ internal sealed class SiigoApiClient(
                 request.Content = new StringContent(body, Encoding.UTF8, "application/json");
             }
 
-            // Contenido bufereado (el default): el timeout del HttpClient cubre también la lectura del cuerpo.
-            using var response = await httpClient.SendAsync(request, cancellationToken);
-            var text = await response.Content.ReadAsStringAsync(cancellationToken);
+            // Contenido bufereado (el default): el cuerpo se lee dentro del mismo plazo.
+            using var response = await httpClient.SendAsync(request, timeout.Token);
+            var text = await response.Content.ReadAsStringAsync(timeout.Token);
             // La captura va con toda respuesta, pero sólo se guarda si el llamador la declara fallida. La respuesta buena de /auth trae el
             // token: su captura lleva el curl y nunca el cuerpo.
             var capture = new FailureCapture(
@@ -559,7 +651,7 @@ internal sealed class SiigoApiClient(
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // El timeout del HttpClient, no una cancelación de quien llama.
+            // Venció el plazo de la llamada, no es una cancelación de quien llama.
             return Reply.Transient("timeout", new FailureCapture(method.Method, path, null, SiigoCurl.Build(request, body), null));
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException)
@@ -603,4 +695,11 @@ internal sealed class SiigoApiClient(
     {
         public override string ToString() => "FailureCapture { }";
     }
+}
+
+/// <summary>Los plazos de <see cref="SiigoApiClient"/>. No se configuran: existe como tipo para que las pruebas pongan plazos cortos y no
+/// esperen de verdad. El contenedor no lo registra, así que el cliente usa <see cref="Production"/>.</summary>
+internal sealed record SiigoApiTimeouts(TimeSpan Default, TimeSpan InvoiceCreate)
+{
+    public static SiigoApiTimeouts Production => new(SiigoApiClient.DefaultTimeout, SiigoApiClient.InvoiceCreateTimeout);
 }

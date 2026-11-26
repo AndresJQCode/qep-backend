@@ -50,7 +50,7 @@ public sealed class MultiReplicaInventoryTests
 
     // Las propiedades de ValkeyAreaOptions (src/Bootstrapper/Valkey/ValkeyOptions.cs).
     private static readonly string[] ValkeyAreas =
-        ["Presence", "RateLimiting", "Sessions", "Permissions", "SendBudget", "Doorbells", "ApiKeyTouch"];
+        ["Presence", "RateLimiting", "Sessions", "Permissions", "SendBudget", "Doorbells", "ApiKeyTouch", "LegalParameters"];
 
     /// <summary>
     /// Los <c>builder.Services.X</c> de <c>Program.cs</c> que <see cref="ReplayProgramRegistrations"/> repite. Un registro
@@ -93,6 +93,21 @@ public sealed class MultiReplicaInventoryTests
         Assert.True(outside.Count == 0,
             "Estas llamadas de Program.cs corren fuera de RunUnderStartupLockAsync, así que dos pods las correrían a la vez "
             + "(spec 2026-10-29 D-2). Muévelas dentro de la lambda: " + string.Join(", ", outside));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-25 (roles por tenant): la siembra de roles corre bajo el candado de arranque y después de la semilla, que
+    /// crea tenants. Antes de ella, un tenant recién sembrado quedaría sin sus roles hasta el siguiente arranque.
+    /// </summary>
+    [Fact]
+    public void TheTenantRoleSeedRunsUnderTheLockAfterTheQepSeed()
+    {
+        var (inside, _) = StartupWorkAgainstTheLock(File.ReadAllText(RepositoryFile("src/Api/Program.cs")));
+
+        Assert.Contains("SeedTenantRolesAsync", inside);
+        Assert.True(inside.IndexOf("SeedTenantRolesAsync") > inside.IndexOf("RunQepSeedAsync"),
+            "SeedTenantRolesAsync tiene que correr después de RunQepSeedAsync dentro de RunUnderStartupLockAsync: "
+            + string.Join(", ", inside));
     }
 
     /// <summary>La detección de arriba, con un <c>Program.cs</c> de juguete: una migración fuera de la lambda se ve.</summary>
@@ -321,15 +336,16 @@ public sealed class MultiReplicaInventoryTests
     }
 
     /// <summary>
-    /// Las llamadas a <c>Initialize…DatabaseAsync</c> y <c>RunQepSeedAsync</c> de <paramref name="program"/>, separadas en
-    /// las que caen dentro del cuerpo de la lambda de <c>RunUnderStartupLockAsync(</c> y las que no.
+    /// Las llamadas a <c>Initialize…DatabaseAsync</c>, <c>RunQepSeedAsync</c> y <c>SeedTenantRolesAsync</c> de
+    /// <paramref name="program"/>, separadas en las que caen dentro del cuerpo de la lambda de
+    /// <c>RunUnderStartupLockAsync(</c> y las que no.
     /// </summary>
     private static (List<string> Inside, List<string> Outside) StartupWorkAgainstTheLock(string program)
     {
         var (start, end) = StartupLockLambdaBody(program);
         var inside = new List<string>();
         var outside = new List<string>();
-        foreach (Match call in Regex.Matches(program, @"\b(Initialize\w*DatabaseAsync|RunQepSeedAsync)\s*\("))
+        foreach (Match call in Regex.Matches(program, @"\b(Initialize\w*DatabaseAsync|RunQepSeedAsync|SeedTenantRolesAsync)\s*\("))
         {
             (call.Index > start && call.Index < end ? inside : outside).Add(call.Groups[1].Value);
         }

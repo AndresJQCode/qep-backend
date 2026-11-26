@@ -265,8 +265,11 @@ internal static class CustomerWriteDoubles
             Task.FromResult<IReadOnlyList<CustomerTaxRateRef>>([.. rates.Where(rate => rate.IsActive && rate.Withholds)]);
     }
 
-    public sealed class Geography(List<string> calls) : ICustomerGeographyLookup
+    public sealed class Geography(List<string> calls, params CustomerRegionRef[] regions) : ICustomerGeographyLookup
     {
+        /// <summary>Cada llamada a <c>FindRegionsAsync</c> con los ids que pidió: sirve para contar consultas.</summary>
+        public List<IReadOnlyCollection<Guid>> RegionCalls { get; } = [];
+
         public Task<CustomerCityRef?> FindCityAsync(Guid cityId, CancellationToken cancellationToken)
         {
             calls.Add("city");
@@ -278,8 +281,23 @@ internal static class CustomerWriteDoubles
                         : null);
         }
 
+        public Task<IReadOnlyDictionary<Guid, CustomerRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken)
+        {
+            RegionCalls.Add(regionIds);
+            return Task.FromResult<IReadOnlyDictionary<Guid, CustomerRegionRef>>(
+                regions.Where(region => regionIds.Contains(region.Id)).ToDictionary(region => region.Id));
+        }
+
+        // Sin ciudades que resolver (clientes de afuera) devuelve vacio; con una ciudad conocida, la de FindCityAsync.
         public Task<IReadOnlyDictionary<Guid, CustomerCityRef>> FindCitiesAsync(IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult<IReadOnlyDictionary<Guid, CustomerCityRef>>(
+                cityIds.Contains(CityId)
+                    ? new Dictionary<Guid, CustomerCityRef>
+                    {
+                        [CityId] = new(CityId, "08001", "Barranquilla", Guid.NewGuid(), "08", "Atlántico")
+                    }
+                    : new Dictionary<Guid, CustomerCityRef>());
 
         public Task<CustomerCityRef?> FindCityByNameAsync(string departmentName, string cityName, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -453,11 +471,11 @@ internal static class CustomerWriteDoubles
         public Task<IReadOnlyList<Customer>> ListByPhoneE164Async(Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
+                throw new NotSupportedException();
 
-public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
+                    throw new NotSupportedException();
 
         public Task<bool> TryAttachWhatsAppUserIdAsync(Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

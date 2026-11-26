@@ -11,6 +11,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 
     internal DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
 
+    internal DbSet<CustomerBillingProfile> CustomerBillingProfiles => Set<CustomerBillingProfile>();
+
     public DbSet<ClientClassification> ClientClassifications => Set<ClientClassification>();
 
     internal DbSet<CustomerNote> CustomerNotes => Set<CustomerNote>();
@@ -55,10 +57,17 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// <summary>La clave de <c>customer_tags</c>: dos <c>PUT</c> simultáneos que agregan la misma etiqueta chocan acá.</summary>
     public const string CustomerTagPrimaryKey = "PK_customer_tags";
 
+    // Los dos carriles de ciudad de las libretas (direcciones y perfiles de facturación): Colombia lleva el id DIVIPOLA y
+    // el resto del mundo el texto; la región sólo existe fuera de Colombia.
+    private const string CityLaneCheck =
+        "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) "
+        + "OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)";
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureCustomer(modelBuilder);
         ConfigureCustomerAddress(modelBuilder);
+        ConfigureCustomerBillingProfile(modelBuilder);
         ConfigureClientClassification(modelBuilder);
         ConfigureCucCounter(modelBuilder);
         ConfigureCustomerNote(modelBuilder);
@@ -152,6 +161,9 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.CityName)
             .HasColumnName("city_name")
             .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        // La region (provincia) del domicilio de afuera: referencia blanda a geography.regions, sin
+        // FK entre esquemas (igual que city_id antes de que se agregara a mano). Nula en Colombia.
+        customer.Property(value => value.RegionId).HasColumnName("region_id");
         // La clasificacion, FK compuesta (tenant_id, classification_id) a
         // customers.client_classifications(tenant_id, id) — compuesta y no simple sobre id, para
         // que un cliente no pueda referenciar la clasificacion de otro tenant. A diferencia de la
@@ -243,6 +255,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // La coleccion se lee por el campo de respaldo: el agregado la expone como
         // IReadOnlyCollection y EF no puede escribir en ella.
         customer.Navigation(value => value.Addresses)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+        customer.Navigation(value => value.BillingProfiles)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         // Las retenciones asignadas: sólo el id de la tasa, sin FK a catalog (Customers nunca referencia Catalog). El
@@ -352,9 +366,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     {
         var address = modelBuilder.Entity<CustomerAddress>();
         address.ToTable("customer_addresses", "customers", table => table.HasCheckConstraint(
-            "CK_customer_addresses_city_lane",
-            "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) " +
-            "OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)"));
+            "CK_customer_addresses_city_lane", CityLaneCheck));
         address.HasKey(value => value.Id);
         address.Property(value => value.Id)
             .HasColumnName("id")
@@ -387,6 +399,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         address.Property(value => value.CityName)
             .HasColumnName("city_name")
             .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        // Referencia blanda a geography.regions; solo fuera de Colombia (lo respalda el CHECK de arriba).
+        address.Property(value => value.RegionId).HasColumnName("region_id");
         address.Property(value => value.IsPrincipal).HasColumnName("is_principal");
         address.Property(value => value.CreatedAt).HasColumnName("created_at");
         address.Property(value => value.UpdatedAt).HasColumnName("updated_at");
@@ -406,6 +420,83 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .WithMany(customer => customer.Addresses)
             .HasForeignKey(value => value.CustomerId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // La libreta de perfiles de facturación (spec 2026-11-24 §4), gemela de la de direcciones.
+    private static void ConfigureCustomerBillingProfile(ModelBuilder modelBuilder)
+    {
+        var profile = modelBuilder.Entity<CustomerBillingProfile>();
+        profile.ToTable("customer_billing_profiles", "customers", table => table.HasCheckConstraint(
+            "CK_customer_billing_profiles_city_lane", CityLaneCheck));
+        profile.HasKey(value => value.Id);
+        // Clave asignada por el agregado: sin ValueGeneratedNever, EF toma un perfil nuevo de un cliente rastreado como
+        // Modified (UPDATE de 0 filas) en vez de Added.
+        profile.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new CustomerBillingProfileId(value))
+            .ValueGeneratedNever();
+        profile.Property(value => value.CustomerId)
+            .HasColumnName("customer_id")
+            .HasConversion(id => id.Value, value => new CustomerId(value));
+        profile.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(CustomerBillingProfile.NameMaxLength);
+        profile.Property(value => value.PersonType).HasColumnName("person_type").HasMaxLength(16);
+        profile.Property(value => value.IdentificationType).HasColumnName("identification_type").HasMaxLength(16);
+        profile.Property(value => value.IdentificationNumber)
+            .HasColumnName("identification_number")
+            .HasMaxLength(CustomerBillingProfile.IdentificationNumberMaxLength);
+        profile.Property(value => value.Phone)
+            .HasColumnName("phone")
+            .HasMaxLength(CustomerBillingProfile.PhoneMaxLength);
+        profile.Property(value => value.Email)
+            .HasColumnName("email")
+            .HasMaxLength(CustomerBillingProfile.EmailMaxLength);
+        profile.Property(value => value.Address)
+            .HasColumnName("address")
+            .HasMaxLength(CustomerBillingProfile.AddressMaxLength);
+        profile.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(CustomerContactInfo.CountryLength)
+            .HasDefaultValue(Customer.ColombiaCountryCode);
+        // FK real a geography.cities escrita a mano en la migración, como la de customer_addresses.
+        profile.Property(value => value.CityId).HasColumnName("city_id");
+        profile.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        profile.Property(value => value.RegionId).HasColumnName("region_id");
+        profile.Property(value => value.VatSurplus).HasColumnName("vat_surplus").HasDefaultValue(false);
+        profile.Property(value => value.IsPrincipal).HasColumnName("is_principal");
+        profile.Property(value => value.CreatedAt).HasColumnName("created_at");
+        profile.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        profile.HasIndex(value => value.CustomerId).HasDatabaseName("IX_customer_billing_profiles_customer");
+        profile.HasIndex(value => value.CityId).HasDatabaseName("IX_customer_billing_profiles_city");
+        // No único, por lo mismo que IX_customer_addresses_principal: el invariante vive en el agregado.
+        profile.HasIndex(value => new { value.CustomerId, value.IsPrincipal })
+            .HasDatabaseName("IX_customer_billing_profiles_principal");
+
+        profile.HasOne<Customer>()
+            .WithMany(customer => customer.BillingProfiles)
+            .HasForeignKey(value => value.CustomerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Como customer_tax_rates: sólo el id de la tasa, sin FK a catalog, con el índice «en uso».
+        profile.OwnsMany<CustomerBillingProfileTaxRate>("_withholdingTaxRates", rate =>
+        {
+            rate.ToTable("customer_billing_profile_tax_rates", "customers");
+            rate.WithOwner().HasForeignKey("BillingProfileId");
+            rate.Property<CustomerBillingProfileId>("BillingProfileId")
+                .HasColumnName("billing_profile_id")
+                .HasConversion(id => id.Value, value => new CustomerBillingProfileId(value))
+                .ValueGeneratedNever();
+            rate.Property(value => value.TenantId).HasColumnName("tenant_id");
+            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id").ValueGeneratedNever();
+            rate.HasKey("BillingProfileId", nameof(CustomerBillingProfileTaxRate.TaxRateId))
+                .HasName("PK_customer_billing_profile_tax_rates");
+            rate.HasIndex(value => new { value.TenantId, value.TaxRateId })
+                .HasDatabaseName("IX_customer_billing_profile_tax_rates_tenant_tax_rate");
+        });
     }
 
     // Spec 2026-10-11 §4.1. La nota es su propio agregado (no una colección de Customer): una nota no sube la versión

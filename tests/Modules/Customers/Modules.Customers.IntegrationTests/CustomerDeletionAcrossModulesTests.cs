@@ -315,7 +315,37 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         { "quotation+order", [CustomerDeletionBlockReasons.Quotations, CustomerDeletionBlockReasons.Orders] },
         { "supportTicket", [CustomerDeletionBlockReasons.SupportTickets] },
         { "loan+supportTicket", [CustomerDeletionBlockReasons.Loans, CustomerDeletionBlockReasons.SupportTickets] },
+        { "appointment", [CustomerDeletionBlockReasons.SchedulingAppointments] },
+        { "supportTicket+appointment", [CustomerDeletionBlockReasons.SupportTickets, CustomerDeletionBlockReasons.SchedulingAppointments] },
     };
+
+    // PD-6 (plan de la Agenda): una cita en cualquier estado bloquea el borrado, también la cancelada o la que ya pasó. Para limpiar
+    // duplicados está la fusión, que mueve las citas. Una cita a nombre del mismo id en otro tenant no bloquea.
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Confirmed")]
+    [InlineData("Cancelled")]
+    [InlineData("Completed")]
+    [InlineData("NoShow")]
+    public async Task ADeleteIsBlockedByAnAppointmentInAnyState(string status)
+    {
+        var tenant = Guid.CreateVersion7();
+        var customer = await InsertCustomerAsync(tenant, Name, Phone);
+        var free = await InsertCustomerAsync(tenant, "Libre", null);
+        await SeedAppointmentAsync(tenant, customer, status);
+        await SeedAppointmentAsync(Guid.CreateVersion7(), free, "Confirmed");
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var references = scope.ServiceProvider.GetRequiredService<ICustomerDeletionReferences>();
+        await using var transaction = await scope.ServiceProvider.GetRequiredService<ICustomersUnitOfWork>().BeginTransactionAsync(Ct);
+        await references.LockAsync(tenant, [customer, free], Ct);
+
+        var blockers = await references.FindBlockersAsync(tenant, [customer, free], Ct);
+
+        var only = Assert.Single(blockers);
+        Assert.Equal(customer, only.Key);
+        Assert.Equal([CustomerDeletionBlockReasons.SchedulingAppointments], only.Value);
+    }
 
     // §4.2: cada motivo, con el orden del contrato. El otro cliente del lote, con una conversación sin bloquear, no aparece.
     [Theory]
@@ -1068,8 +1098,9 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                 await SeedAsync(
                     """
                     INSERT INTO billing.services (id, tenant_id, customer_id, name, price, currency, cycle_months, first_due_date, status,
-                        version, created_at, status_changed_at, updated_at)
-                    VALUES (gen_random_uuid(), @tenant, @customer, 'Hosting', 100, 'COP', 1, DATE '2026-12-01', 'Cancelled', 1, now(), now(), now());
+                        adjustment_mode, next_review_date, version, created_at, status_changed_at, updated_at)
+                    VALUES (gen_random_uuid(), @tenant, @customer, 'Hosting', 100, 'COP', 1, DATE '2026-12-01', 'Cancelled',
+                        'Manual', DATE '2027-12-01', 1, now(), now(), now());
                     """,
                     ("tenant", tenant), ("customer", customer));
                 break;
@@ -1077,8 +1108,10 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                 // El cobro sin su servicio: lo que lo bloquea es la fila de billing.charges, no la del servicio.
                 await SeedAsync(
                     """
-                    INSERT INTO billing.charges (id, tenant_id, service_id, customer_id, amount, currency, due_date, status, version, created_at)
-                    VALUES (gen_random_uuid(), @tenant, gen_random_uuid(), @customer, 100, 'COP', DATE '2026-12-01', 'Paid', 1, now());
+                    INSERT INTO billing.charges (id, tenant_id, service_id, customer_id, amount, currency, period_date, due_date, status,
+                        version, created_at)
+                    VALUES (gen_random_uuid(), @tenant, gen_random_uuid(), @customer, 100, 'COP', DATE '2026-12-01', DATE '2026-12-01',
+                        'Paid', 1, now());
                     """,
                     ("tenant", tenant), ("customer", customer));
                 break;
@@ -1101,6 +1134,9 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                     """,
                     ("tenant", tenant), ("customer", customer));
                 break;
+            case "appointment":
+                await SeedAppointmentAsync(tenant, customer, "Cancelled");
+                break;
             case "blockedConversation":
                 await InsertConversationAsync(tenant, customer, blocked: true);
                 break;
@@ -1108,6 +1144,17 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                 throw new ArgumentOutOfRangeException(nameof(row), row, null);
         }
     }
+
+    // Una cita suelta: sin sede, recurso, servicio ni sesión (SeedAsync apaga las FK en esa conexión), sólo las columnas que el borrado mira.
+    private Task SeedAppointmentAsync(Guid tenant, Guid customer, string status) =>
+        SeedAsync(
+            """
+            INSERT INTO scheduling.appointments (id, tenant_id, location_id, resource_id, service_id, customer_id, session_id, starts_at,
+                ends_at, status, source, version, created_at, updated_at)
+            VALUES (gen_random_uuid(), @tenant, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), @customer, gen_random_uuid(),
+                now(), now() + interval '30 minutes', @status, 'BackOffice', 1, now(), now());
+            """,
+            ("tenant", tenant), ("customer", customer), ("status", status));
 
     private async Task<Guid> InsertConversationAsync(Guid tenant, Guid customer, bool blocked)
     {

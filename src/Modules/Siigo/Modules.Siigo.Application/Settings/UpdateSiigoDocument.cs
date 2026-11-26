@@ -17,6 +17,7 @@ public sealed record UpdateSiigoDocumentCommand(
     bool SendMail,
     bool FreightSeparateInvoice,
     string? FreightProductCode,
+    string? PriceMode,
     long ExpectedVersion) : ICommand<SiigoSettingsDto>;
 
 /// <summary>La forma del cuerpo (§5.2): el comprobante es requerido para facturar y los largos son los de las columnas. Cada
@@ -31,6 +32,10 @@ public sealed class UpdateSiigoDocumentValidator : AbstractValidator<UpdateSiigo
         RuleFor(command => command.FreightProductCode)
             .MaximumLength(SiigoSettings.FreightProductCodeMaxLength)
             .OverridePropertyName("freightProductCode");
+        // Ausente conserva el guardado; presente debe ser el nombre de un modo (sin distinguir mayúsculas).
+        RuleFor(command => command.PriceMode)
+            .Must(value => value is null || SiigoPriceModes.TryParse(value, out _))
+            .OverridePropertyName("priceMode");
         RuleFor(command => command.ExpectedVersion).GreaterThanOrEqualTo(0).OverridePropertyName("expectedVersion");
     }
 }
@@ -67,7 +72,8 @@ public sealed class UpdateSiigoDocumentHandler(
             command.SendToDian,
             command.SendMail,
             command.FreightSeparateInvoice,
-            command.FreightProductCode));
+            command.FreightProductCode,
+            SiigoPriceModes.TryParse(command.PriceMode, out var priceMode) ? priceMode : null));
         SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoSettingsSteps.Document, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, members, cancellationToken);
