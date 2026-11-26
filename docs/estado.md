@@ -31,6 +31,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
+| Shopify: parte de envío de pedidos de otros países | **Backend construido y mergeado en `develop`** (2026-11-26, merge `bef48e2b2`, ya en `origin/develop`; rama `feature/shopify-foreign-shipping` hasta `c4df3c93e`, rama y worktree borrados). Un pedido de fuera de Colombia nace con su parte de envío (país, ciudad escrita, código postal y, en España, región) y toma las ediciones de esa dirección; aviso nuevo `shipping_region_unresolved`. Sin migraciones ni backfill; el alta del cliente extranjero queda fuera. **Falta el frontend** | `ShopifyForeignAddress`, `ShopifyOrderImporter`, `ShopifyEditPlanner`; [plan](superpowers/plans/2026-11-26-shopify-parte-de-envio-otros-paises-backend.md), [handoff](superpowers/specs/2026-11-24-shopify-parte-de-envio-otros-paises-backend-handoff.md) |
 | Siigo: liberar el pedido cuando la factura se anuló en Siigo | **Backend construido y mergeado en `develop`** (2026-11-26, `--no-ff`, sin push; merge `70363e0d5`, rama `feature/siigo-anular-factura` borrada). **Sin `test-feature.ps1`** (orden del owner). Falta el frontend | `ConfirmSiigoAnnulmentHandler`, `POST …/orders/{orderId}/siigo-invoice/annulment`; spec y plan `2026-11-25-siigo-anular-factura` |
 | Roles por tenant: `admin` como único rol de sistema | **Backend construido y mergeado en `develop`** (2026-11-25, `--no-ff`, sin push; merge `5fdf11863`, rama `feature/roles-por-tenant` borrada). `advisor`, `billing`, `cashier`, `scheduling_manager` y `scheduling_provider` pasan a ser plantillas que se siembran en cada tenant (alta y arranque, marca en `authorization.role_seeds`), editables y borrables. **Mergeado sin `test-feature.ps1` ni integración** (orden del owner); el frontend no cambia | [spec](superpowers/specs/2026-11-25-roles-por-tenant-design.md), [plan](superpowers/plans/2026-11-25-roles-por-tenant.md) |
 | Teléfono con indicativo del país (formularios, cliente de Siigo y Excel de pedidos) | **Backend y frontend construidos y mergeados en `develop`** (2026-11-25, `--no-ff`, sin push; backend `da98b8e20`, rama `feature/telefono-pais` hasta `1c9c7c1c9`; frontend `494cbeed4`, hasta `aa50f7d2`). Los formularios del frontend que guardan el teléfono de una persona o empresa usan selector de país (el «Teléfono fijo» de soporte sigue como texto libre), el campo del número no admite «+» y el selector ofrece más países (**no todos todavía: pendiente**). El cliente que se crea en Siigo lleva `indicative` y `number`, `id_type` como texto y el documento sin separadores (el NIT sin dígito de verificación). WhatsApp de cotización y pedido usa tal cual los dígitos de un número con «+». El Excel de pedidos tiene por tenant el interruptor «Exportar el indicativo del país» (`includePhoneDialCode`, encendido por defecto; migración aditiva `20261125232432_AddOrdersExportLayoutPhoneDialCode`, **pendiente de desplegar**). **Mergeado sin correr ninguna prueba** (orden del owner), tampoco `test-feature.ps1`: sólo build del backend, `tsc -b` y lint del frontend. **Sin verificar contra Siigo real.** **Orden de salida:** backend primero; antes de publicar el cambio del WhatsApp de la tienda, revisar `qep-storefront` | [spec Siigo](superpowers/specs/2026-11-25-siigo-telefono-indicativo-design.md), [spec Excel](superpowers/specs/2026-11-25-excel-pedidos-indicativo-design.md), [plan](superpowers/plans/2026-11-25-siigo-telefono-indicativo.md); frontend `2026-11-25-telefono-selector-pais-design.md` en su repo |
@@ -534,6 +535,13 @@ ningún pod ni frontend viejo en producción. Nunca en la misma release que las 
 
 ## Defectos conocidos
 
+- **`develop` en rojo en `bef48e2b2`** (visto el 2026-11-26): el modelo de EF de Quotations no se construye (`No suitable
+  constructor was found for the type 'ProjectPhase'`) desde el merge del dominio de cotizaciones de proyecto
+  (`ab3b73cba`, `feature/cotizaciones-de-proyecto`). Fallan 28 pruebas de `QuotationsDbContextMappingTests` y
+  `CompositionRootTests.EveryDbContextThatMapsADoorbellTableHasTheInterceptor`. No llevar a `main` sin el mapeo.
+- `ValkeyGatewayTests.TheConnectedGaugeFollowsTheConnection` se cuelga una hora en la suite completa de
+  `Bootstrapper.UnitTests` y cae con `TimeoutException` en `ValkeyTestServer.StartAsync` (dos de dos corridas el
+  2026-11-26, sobre `c4df3c93e`); sola pasa. Causa sin identificar.
 - Pruebas en rojo en `develop` desde el merge de Soporte fase 3 (`ea9cbba0`), vistas el 2026-11-15:
   `SupportReplyParityTests.TheRejectionReasonsMatchMessaging` (Bootstrapper; índice 5: `recipient_invalid` contra
   `no_permission`) y `ConfigurationExampleTests.EveryBoundConfigurationKeyIsDocumentedInTheExample` (faltan en
@@ -622,6 +630,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`bef48e2b2`, en `origin/develop`) **Shopify: parte de envío de pedidos de otros
+  países** (`feature/shopify-foreign-shipping`, hasta `c4df3c93e`). Revisión final de solo lectura sin críticos; un
+  hallazgo importante corregido (`cca2e54fc`). `test-feature.ps1` en verde sobre `cca2e54fc` e integración de las clases
+  afectadas de Shopify 93/93. Con `develop` en `4dc94b00c` integrado (`c4df3c93e`) el script quedó en rojo sólo por la
+  prueba de Valkey de «Defectos conocidos» (`Bootstrapper.UnitTests` 1354/1355); el owner autorizó el merge. Sobre
+  `bef48e2b2`: build sin advertencias ni errores, `Modules.Shopify.UnitTests` 987/987, `ArchitectureTests` 353/354 y
+  `Modules.Quotations.UnitTests` 2516/2544, las fallas por el mapeo de cotizaciones de proyecto. Suite completa sin
+  correr. Rama y worktree borrados. Pendientes: frontend (texto de `shipping_region_unresolved` y de «corrige esta en
+  Shopify») y verificar contra una tienda real el eco de una dirección de España.
 - 2026-11-26 — Mergeado a `develop` (`fd475f77f`, `--no-ff`, sin push) **país de la parte facturada a Siigo**
   (`fix/siigo-billing-country`, `6536e97b7` y `a202f79bb`). Una facturación colombiana (país `null`) con ficha de cliente
   extranjera tomaba el país de la ficha y Siigo reportaba la ciudad como faltante; ahora, con ciudad propia, el país sale
