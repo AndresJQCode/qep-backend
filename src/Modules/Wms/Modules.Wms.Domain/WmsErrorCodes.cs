@@ -103,4 +103,17 @@ public static class WmsErrorCodes
     public const string ImportPreviewExpired = "wms.import.preview_expired";
     public const string ExportEmpty = "wms.export.empty";
     public const string ExportTooManyRows = "wms.export.too_many_rows";
+
+    // Tareas (spec 2026-11-26 §6.11).
+    public const string TaskNotFound = "wms.task.not_found";
+    public const string TaskInvalidTransition = "wms.task.invalid_transition";
+    public const string TaskLeaseLost = "wms.task.lease_lost";
+    public const string TaskMemberBusy = "wms.task.member_busy";
+    public const string TaskAssignedToOther = "wms.task.assigned_to_other";
+    public const string TaskAssigneeNotEligible = "wms.task.assignee_not_eligible";
+    public const string TaskLocationInvalid = "wms.task.location_invalid";
+    public const string TaskLocationMismatch = "wms.task.location_mismatch";
+    public const string TaskLotMismatch = "wms.task.lot_mismatch";
+    public const string TaskQuantityExceedsRemaining = "wms.task.quantity_exceeds_remaining";
+    public const string TaskLineInvalid = "wms.task.line_invalid";
 }

@@ -123,9 +123,10 @@ public sealed class WmsLayerTests
     [InlineData("Internal", new[] { "Inventory", "Warehousing" })]
     [InlineData("Control", new[] { "Inventory", "Warehousing" })]
     [InlineData("Outbound", new[] { "Inventory", "Warehousing" })]
+    [InlineData("Tasks", new[] { "Inventory", "Warehousing" })]
     public void DomainAreasOnlyDependDownwards(string area, string[] allowed)
     {
-        var areas = new[] { "Inventory", "Warehousing", "Inbound", "Internal", "Control", "Outbound" };
+        var areas = new[] { "Inventory", "Warehousing", "Inbound", "Internal", "Control", "Outbound", "Tasks" };
         var forbidden = areas
             .Where(other => other != area && !allowed.Contains(other))
             .Select(other => $"Modules.Wms.Domain.{other}")
@@ -136,6 +137,11 @@ public sealed class WmsLayerTests
             Assert.DoesNotContain(ReferencedTypesOf(type), referenced => forbidden.Contains(referenced.Namespace));
         }
     }
+
+    // Spec 2026-11-26 §4: el motor de tareas es un área al nivel de las de proceso. Sin tipos, la fila de arriba pasaría sin probar nada.
+    [Fact]
+    public void TheTasksAreaHasTypes() =>
+        Assert.Contains(Domain.GetTypes(), type => type.Namespace == "Modules.Wms.Domain.Tasks");
 
     private const BindingFlags AllDeclared =
         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
