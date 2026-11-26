@@ -144,6 +144,61 @@ public sealed class WarehouseTaskLeaseTests
         Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
     }
 
+    // DA-34: las confirmaciones que la app dejó en cola con ese token siguen valiendo.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReclaimingMyExpiredTaskOnTheSameDeviceKeepsTheToken(bool assigned)
+    {
+        var (task, token) = Claimed(assignTo: assigned ? Member : null);
+        task.ExpireLease(Expired);
+
+        task.Claim(Member, $" {Device} ", Expired);
+
+        Assert.Equal(token, task.LeaseToken);
+        Assert.Equal(LeaseCheck.Valid, task.CheckLease(Member, token));
+        Assert.Equal(Expired.AddMinutes(15), task.LeaseExpiresAt);
+        Assert.Equal(4, task.Version);
+        Assert.Equal(TaskEventKind.Claimed, task.Events[^1].Kind);
+    }
+
+    [Fact]
+    public void ReclaimingMyExpiredTaskOnAnotherDeviceChangesTheToken()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        task.Claim(Member, "zebra-02", Expired);
+
+        Assert.NotEqual(token, task.LeaseToken);
+        Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
+    }
+
+    [Fact]
+    public void ReclaimingAfterSomeoneElseHadItChangesTheTokenEvenOnTheSameDevice()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+        task.Claim(Other, "zebra-02", Expired);
+        task.ExpireLease(Expired.AddMinutes(16));
+
+        task.Claim(Member, Device, Expired.AddMinutes(17));
+
+        Assert.NotEqual(token, task.LeaseToken);
+    }
+
+    // Soltar limpia el reclamo: volver a tomarla es un reclamo nuevo.
+    [Fact]
+    public void ReclaimingAfterUnclaimingChangesTheToken()
+    {
+        var (task, token) = Claimed();
+        task.Unclaim(Member, token, TaskUnclaimReason.Other, Now);
+
+        task.Claim(Member, Device, Now);
+
+        Assert.NotEqual(token, task.LeaseToken);
+    }
+
     [Fact]
     public void ACancelledTaskIsLostForItsClaimer()
     {

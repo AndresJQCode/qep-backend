@@ -259,7 +259,9 @@ public sealed class WarehouseTask
         CloseIfFinished(by, now, detail);
     }
 
-    /// <summary>Toma la tarea con un lease nuevo: cualquiera si está en el pool, sólo el asignado si está asignada.</summary>
+    /// <summary>Toma la tarea: cualquiera si está en el pool, sólo el asignado si está asignada. El lease es nuevo, salvo que la misma
+    /// persona retome desde el mismo celular su reclamo vencido, que conserva el token para que las confirmaciones que dejó en cola
+    /// sigan valiendo (DA-34).</summary>
     public void Claim(Guid memberId, string deviceId, DateTimeOffset now)
     {
         if (Status == WarehouseTaskStatus.Assigned && AssignedMemberId != memberId)
@@ -269,10 +271,12 @@ public sealed class WarehouseTask
 
         EnsureStatus("claim", WarehouseTaskStatus.Ready, WarehouseTaskStatus.Assigned);
         var device = RequiredDevice(deviceId);
+        // Sólo un lease vencido deja un reclamo puesto en una tarea que se puede reclamar.
+        var resumesOwnClaim = ClaimedByMemberId == memberId && ClaimedDeviceId == device && LeaseToken is not null;
         Status = WarehouseTaskStatus.InProgress;
         ClaimedByMemberId = memberId;
         ClaimedDeviceId = device;
-        LeaseToken = Guid.NewGuid();
+        LeaseToken = resumesOwnClaim ? LeaseToken : Guid.NewGuid();
         Renew(now);
         Version++;
         Record(TaskEventKind.Claimed, memberId, now, deviceId: device);

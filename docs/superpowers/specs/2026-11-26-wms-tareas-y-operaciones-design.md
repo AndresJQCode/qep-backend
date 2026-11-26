@@ -315,7 +315,8 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
 ### 6.7 Reclamo, lease, latido y recuperación
 
 - **Reclamo** (`next` o `claim`): transición atómica a `InProgress` que fija `claimed_by_member_id`, `claimed_device_id`,
-  `lease_token` nuevo y `lease_expires_at = now + lease del tipo`.
+  `lease_token` nuevo y `lease_expires_at = now + lease del tipo`. Si la misma persona retoma desde el mismo celular su reclamo
+  vencido, el token se conserva (DA-34).
 - **Latido:** la app lo manda cada 2 minutos mientras la tarea está en pantalla, y toda confirmación lo renueva. El lease no es de
   segundos: el operario camina, busca y habla.
 - **Fencing:** toda acción del operario sobre la tarea lleva el `leaseToken`. Si no coincide con el vigente, 409
@@ -978,6 +979,7 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-29 | Número de tarea `TSK-yyyyMMdd-NNNN` por tenant, con el lock de numeración de los ajustes | Secuencia global | Otro formato en pantalla |
 | DA-30 | Recepción no ciega (la app muestra lo esperado), como el supuesto P-7 del spec de recepción | Ciega por tenant | Un parámetro |
 | DA-31 | Sin plantillas de rol nuevas («Operario de bodega», «Supervisor de bodega»); el tenant arma sus roles | Plantillas de fábrica | `RoleTemplate` nuevos (sólo llegan a tenants nuevos) |
+| DA-34 | La misma persona que retoma desde el mismo celular su reclamo vencido conserva el `leaseToken`: lo que dejó en cola sigue valiendo. Desde otro celular, o si otro la tuvo en medio, el token cambia | Token nuevo en cada reclamo | La cola offline se rechaza con `wms.task.lease_lost` |
 
 ## 14. Preguntas para el owner
 
