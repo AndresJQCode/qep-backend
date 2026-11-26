@@ -18,7 +18,7 @@ namespace Modules.Authorization.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -76,6 +76,22 @@ namespace Modules.Authorization.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_roles_tenant_key");
 
                     b.ToTable("roles", "authorization");
+                });
+
+            modelBuilder.Entity("Modules.Authorization.Infrastructure.Persistence.RoleSeed", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("SeededAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("seeded_at");
+
+                    b.HasKey("TenantId")
+                        .HasName("PK_role_seeds");
+
+                    b.ToTable("role_seeds", "authorization");
                 });
 #pragma warning restore 612, 618
         }

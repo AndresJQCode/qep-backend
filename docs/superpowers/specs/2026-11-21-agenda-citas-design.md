@@ -269,7 +269,7 @@ propio: responde 403 `authorization.denied`. El mapeo de status es por **tipo de
 | D-10 | Los festivos de Colombia entran por un puerto con adaptador en Bootstrapper (como Soporte); los tipos de rango se declaran en Scheduling. No se mueve nada de Mensajería | 2026-11-21 |
 | D-11 | Cualquier cita bloquea el borrado del cliente; la fusión mueve las citas | 2026-11-21 |
 | D-12 | Un bloqueo que cruza citas vigentes se rechaza hasta reprogramarlas; nada se mueve en silencio | 2026-11-21 |
-| D-13 | Dos roles de sistema, `scheduling_manager` y `scheduling_provider`, definidos en código; ninguno lleva `settings.manage` | 2026-11-21 |
+| D-13 | Dos roles de sistema, `scheduling_manager` y `scheduling_provider`, definidos en código; ninguno lleva `settings.manage`. Reemplazada por `2026-11-25-roles-por-tenant-design.md`: roles sembrados por tenant | 2026-11-21 |
 
 ## Lo que queda al implementador
 

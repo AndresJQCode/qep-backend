@@ -52,7 +52,7 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
     public async Task AnAdvisorReadsDistributors()
     {
         var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
-        var advisor = Factory.Services.GetServices<RoleDefinition>().Single(role => role.Role == "advisor");
+        var advisor = Factory.Services.GetServices<RoleTemplate>().Single(role => role.Key == RoleTemplateKeys.Advisor);
         using var client = WholesaleApiHarness.CreateClient(Factory, tenant.SubjectId, tenant.TenantId, [.. advisor.Permissions]);
 
         var distributors = await client.GetAsync(WholesaleApiHarness.DistributorsUrl(tenant.TenantId), Ct);

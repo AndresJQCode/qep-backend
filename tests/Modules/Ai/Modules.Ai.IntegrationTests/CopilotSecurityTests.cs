@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Ai.Application;
+using Modules.Authorization.Application;
 using static Modules.Ai.IntegrationTests.AiApiHarness;
 
 namespace Modules.Ai.IntegrationTests;
@@ -53,6 +55,13 @@ public sealed class CopilotSecurityTests
             ? CopilotHarness.UpdateMembershipAsync(factory, connectionString, "roles = ARRAY['cashier']::text[]")
             : Task.CompletedTask;
         await CopilotHarness.EnableAsync(factory);
+        // El tenant se inserta directo: sin esta siembra el rol de caja no existiría y la prueba pasaría por un rol que no
+        // concede nada, no por uno de caja (spec 2026-11-25, roles por tenant).
+        await using (var seeding = factory.Services.CreateAsyncScope())
+        {
+            await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>().SeedAsync(Guid.Parse(TenantId), Ct);
+        }
+
         await CopilotHarness.CreateCustomerAsync(factory, TenantId, "Acme SAS");
 
         var thread = await CopilotHarness.AskAndWaitAsync(factory, "¿Qué clientes tengo?");

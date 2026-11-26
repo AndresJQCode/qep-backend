@@ -116,5 +116,59 @@ Assert-Equal "hilos: sin fuentes" "-- xUnit.MaxParallelThreads=4" (Threads @() $
 
 Assert-Equal "sello" $true ((Get-GitStamp) -match '^Rama \S+ · commit [0-9a-f]{7,} · (árbol limpio|con cambios sin commitear)$')
 
+# Avisos que piden autorización del owner.
+function Approvals($p) { (@($p.Warnings) -like "Requiere autorización del owner*") -join ";" }
+
+$p = Plan @("tests/ArchitectureTests/ArchitectureTests/CatalogLayerTests.cs")
+Assert-Equal "prueba de arquitectura: aviso" "Requiere autorización del owner: cambió una prueba de arquitectura: tests/ArchitectureTests/ArchitectureTests/CatalogLayerTests.cs" (Approvals $p)
+
+$p = Plan @("tests/ArchitectureTests/ArchitectureTests/packages.lock.json")
+Assert-Equal "arquitectura, lock file: sin aviso" "" (Approvals $p)
+
+$app = "src/Modules/Pipeline/Modules.Pipeline.Application/Modules.Pipeline.Application.csproj"
+function Ref($sign, $module, $layer) { "$sign    <ProjectReference Include=`"..\..\$module\Modules.$module.$layer\Modules.$module.$layer.csproj`" />" }
+function DiffPlan([string]$file, [string[]]$lines) {
+    Get-TestPlan -ChangedFiles @($file) -Projects $projects -ProjectDiff (@("diff --git a/$file b/$file", "--- a/$file", "+++ b/$file", "@@ -3 +3 @@") + $lines)
+}
+
+$p = DiffPlan $app @((Ref "+" "Customers" "Application"))
+Assert-Equal "referencia nueva a otro modulo: aviso" "Requiere autorización del owner: referencia nueva entre módulos, Pipeline -> Customers: $app" (Approvals $p)
+
+$p = DiffPlan $app @((Ref "+" "Pipeline" "Domain"))
+Assert-Equal "referencia del mismo modulo: sin aviso" "" (Approvals $p)
+
+$p = DiffPlan $app @("+    <ProjectReference Include=`"..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj`" />")
+Assert-Equal "referencia a BuildingBlocks: sin aviso" "" (Approvals $p)
+
+$p = DiffPlan $app @((Ref "-" "Customers" "Application"))
+Assert-Equal "referencia quitada: sin aviso" "" (Approvals $p)
+
+$p = DiffPlan $app @((Ref "-" "Customers" "Application"), (Ref "+" "Customers" "Application"))
+Assert-Equal "referencia movida: sin aviso" "" (Approvals $p)
+
+# Renombrar un proyecto llega como un borrado y un archivo nuevo (--no-renames).
+function RenamePlan([string]$old, [string]$new) {
+    Get-TestPlan -ChangedFiles @($old, $new) -Projects $projects -ProjectDiff @(
+        "diff --git a/$old b/$old", (Ref "-" "Customers" "Application"),
+        "diff --git a/$new b/$new", (Ref "+" "Customers" "Application"))
+}
+
+$p = RenamePlan $app "src/Modules/Pipeline/Pipeline.App/Modules.Pipeline.Core.Application.csproj"
+Assert-Equal "proyecto renombrado: sin aviso" "" (Approvals $p)
+
+$domain = "src/Modules/Pipeline/Modules.Pipeline.Domain/Modules.Pipeline.Domain.csproj"
+$p = RenamePlan $app $domain
+Assert-Equal "referencia pasada a otra capa: aviso" "Requiere autorización del owner: referencia nueva entre módulos, Pipeline -> Customers: $domain" (Approvals $p)
+
+$other = "src/Modules/Catalog/Modules.Catalog.Application/Modules.Catalog.Application.csproj"
+$p = RenamePlan $app $other
+Assert-Equal "referencia pasada a otro modulo: aviso" "Requiere autorización del owner: referencia nueva entre módulos, Catalog -> Customers: $other" (Approvals $p)
+
+$p = DiffPlan "src/Bootstrapper/Bootstrapper.csproj" @((Ref "+" "Customers" "Application"))
+Assert-Equal "Bootstrapper compone modulos: sin aviso" "" (Approvals $p)
+
+$p = DiffPlan $unit @((Ref "+" "Customers" "Application"))
+Assert-Equal "proyecto de pruebas: sin aviso" "" (Approvals $p)
+
 if ($script:failed) { Write-Host "$($script:failed) fallas"; exit 1 }
 Write-Host "OK" -ForegroundColor Green

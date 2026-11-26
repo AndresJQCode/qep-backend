@@ -2506,7 +2506,8 @@ vuelve a subir.
 
 Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.
 
-- **Rutas** (`customers.customer.merge`, riesgo `high`; lo tienen por defecto los roles de sistema `admin` y `advisor`, en código):
+- **Rutas** (`customers.customer.merge`, riesgo `high`; de fábrica lo tienen `admin`, el rol de sistema, y `advisor`, el rol
+  sembrado en cada tenant):
   `GET /customers/{survivorId}/merge-preview?mergedCustomerIds=…` (1 a 10 ids distintos, sin el que queda) y
   `POST /customers/{survivorId}/merge` con `If-Match: "<survivor.version>"` y `{ "mergedCustomerIds": [...] }`. Sin `If-Match`
   responde 428; con una versión vieja, 412 `concurrency.conflict` (la pantalla pide de nuevo la vista previa).
@@ -2939,9 +2940,17 @@ El tenant se resuelve del claim JWT (no de header ni subdominio en runtime).
 `IExecutionContext.TenantId` lo expone vía `HttpExecutionContext`, que lee el
 `ClaimsPrincipal` actual. La autorización es por claims de permiso
 (`RequireClaim(QepClaimTypes.Permission, permiso)`), con policies armadas
-dinámicamente por módulo. Los roles no están hardcodeados: `RoleDefinition` /
-`RoleCatalog` mapean un rol (p. ej. `admin`, `advisor`) a un
-conjunto de permisos.
+dinámicamente por módulo. El único rol de sistema es `admin` (`RoleDefinition` /
+`RoleCatalog`, en código); los demás son filas de `authorization.roles` de cada
+tenant, que él edita o borra desde `/authorization/roles`.
+
+Cinco de esas filas (`advisor`, `billing`, `cashier`, `scheduling_manager` y
+`scheduling_provider`) nacen de plantillas (`RoleTemplate`) que se siembran una sola
+vez por tenant, con marca en `authorization.role_seeds`: en el alta (si falla, queda
+un log `Error` y el alta sigue) y al arrancar, después de la semilla y bajo el candado
+de arranque (si falla, el arranque falla). Un permiso nuevo en una plantilla sólo
+llega a los tenants nuevos. Un rol no se puede borrar mientras lo tenga una membresía
+`Invited`, `Active` o `Suspended` (`422 authorization.role.in_use`).
 
 ### Acceso cruzado entre módulos, controlado
 
@@ -5732,7 +5741,7 @@ Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana 
 como estaban, porque ya estaban desplegados.
 
 **Permisos y roles.** `billing.service.read` (toda lectura de la lista de servicios, cobros y perfil) y `billing.service.manage` (todo
-lo que escribe, y también la configuración). Los llevan `admin` y el rol de sistema `billing` («Facturación»); ningún otro. Ambos
+lo que escribe, y también la configuración). De fábrica los llevan `admin` y el rol sembrado `billing` («Facturación»); ningún otro. Ambos
 declaran `RequiredModules: [billing]`: con el módulo apagado el editor de roles no los ofrece y la API responde un `403` pelado, sin
 el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca se muestran opciones que el tenant no tiene).
 
@@ -5853,7 +5862,7 @@ Soporte](#formulario-público-de-soporte-fase-3)); la encuesta llega después. S
 entran por puertos con adaptador en Bootstrapper (`SupportBusinessCalendarSource`, `SupportCustomerLookup`, `SupportMemberDirectory`).
 
 **Permisos y roles.** `support.ticket.read`, `support.ticket.manage` y `support.settings.manage` (`SupportPermissions`, categoría
-«Soporte», los tres exigen el módulo `support`). `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
+«Soporte», los tres exigen el módulo `support`). De fábrica, `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
 Las lecturas usan dos políticas que aceptan más de un permiso (`SupportPolicies`): `support.ticket.view` (`read` o `manage`) y
 `support.settings.view` (`read`, `manage` o `settings.manage`). Quien ve tickets ve **todos** los del tenant: no hay «sólo los míos».
 Con el módulo apagado, toda ruta responde 403.
@@ -6801,8 +6810,9 @@ El nivel rápido toma lo cambiado desde el punto en que la rama se separó de la
 compilación (con `--no-restore`: restaura antes en un worktree nuevo), `ArchitectureTests`, las unitarias de cada módulo
 tocado, `Bootstrapper.UnitTests` si tocaste `Bootstrapper` o `Api`, y **sólo las clases de integración nuevas o
 modificadas**. No corre las demás clases de integración que tu cambio pueda romper; esas aparecen en la corrida
-completa. Lee los avisos: dicen qué quedó sin probar. El reporte queda en `TestResults\feature\report.md`, y sale con 1
-si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
+completa. Lee los avisos: dicen qué quedó sin probar y qué «Requiere autorización del owner» antes del merge (una
+prueba de `ArchitectureTests` modificada o una referencia nueva entre módulos). El reporte queda en
+`TestResults\feature\report.md`, y sale con 1 si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
 
 Un reporte completo en verde vale para el commit que dice su encabezado, con el árbol limpio. Para programarlo todas las
 noches (se registra una vez, desde la raíz del checkout que quieras probar):

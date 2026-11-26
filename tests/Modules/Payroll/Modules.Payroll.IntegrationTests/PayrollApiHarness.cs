@@ -97,7 +97,7 @@ internal static class PayrollApiHarness
     }
 
     /// <summary>
-    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> concede los permisos
+    /// Siembra una membresía del tenant (con su usuario) con un rol de fábrica: <c>admin</c> concede los permisos
     /// <c>hr.*</c> y <c>payroll.*</c>; <c>advisor</c> y <c>billing</c> no. <paramref name="removed"/> la deja quitada.
     /// </summary>
     public static async Task<Guid> SeedMemberAsync(
