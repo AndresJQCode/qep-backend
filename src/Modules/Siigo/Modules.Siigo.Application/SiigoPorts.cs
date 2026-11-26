@@ -112,6 +112,10 @@ public interface ISiigoInvoiceRepository
     Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken);
 
+    /// <summary>Las facturas de flete <c>Pending</c> de esos pedidos del tenant. Sin pedidos, ninguna.</summary>
+    Task<IReadOnlyList<SiigoInvoice>> ListPendingFreightAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
+
     void Add(SiigoInvoice invoice);
 }
 

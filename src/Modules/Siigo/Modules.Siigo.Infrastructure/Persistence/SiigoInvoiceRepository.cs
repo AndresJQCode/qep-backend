@@ -27,5 +27,19 @@ internal sealed class SiigoInvoiceRepository(SiigoDbContext dbContext) : ISiigoI
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<SiigoInvoice>> ListPendingFreightAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.Invoices
+            .Where(invoice => invoice.TenantId == tenantId && orderIds.Contains(invoice.OrderId)
+                && invoice.Kind == SiigoInvoiceKind.Freight && invoice.Status == SiigoInvoiceStatus.Pending)
+            .ToListAsync(cancellationToken);
+    }
+
     public void Add(SiigoInvoice invoice) => dbContext.Invoices.Add(invoice);
 }

@@ -224,7 +224,10 @@ public sealed class SiigoInvoiceBatchItem
     /// código es el del ítem si la fila no cambió después de que se cerró (dice por qué no salió un reenvío que no tocó la fila) y el de
     /// la fila si cambió después; si el que manda viene vacío, el otro.</summary>
     /// <param name="invoice">La fila enlazada (<see cref="InvoiceId"/>); otra, o ninguna, deja lo guardado.</param>
-    public SiigoBatchItemState Effective(SiigoInvoice? invoice, DateTimeOffset now)
+    /// <param name="freight">La de flete <c>Pending</c> del mismo pedido, si hay. Con la del pedido ya en Siigo, el pedido no se lee
+    /// facturado: <c>Sending</c> mientras se manda y <c>Failed</c> con <c>siigo.invoice.freight_pending</c> si no (decidido el
+    /// 2026-11-25). Una lectura que no la pase la daría por facturada.</param>
+    public SiigoBatchItemState Effective(SiigoInvoice? invoice, DateTimeOffset now, SiigoInvoice? freight = null)
     {
         if (Status != SiigoInvoiceBatchItemStatus.ToConfirm || invoice is null || invoice.Id != InvoiceId)
         {
@@ -245,7 +248,7 @@ public sealed class SiigoInvoiceBatchItem
                 invoice.OffersResolution(now),
                 invoice.OffersResolution(now) ? invoice.MissingAvailableAt(now) : null),
             SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected =>
-                new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, invoice.Number, false, false, null),
+                WithItsOrderInvoiceInSiigo(invoice.Number, freight, now),
             SiigoInvoiceStatus.Failed => new SiigoBatchItemState(
                 SiigoInvoiceBatchItemStatus.Failed, SiigoErrorCodes.InvoiceResolvedMissing, null, false, false, null),
             SiigoInvoiceStatus.Rejected =>
@@ -253,6 +256,14 @@ public sealed class SiigoInvoiceBatchItem
             _ => throw new InvalidOperationException($"Unknown invoice status '{invoice.Status}'."),
         };
     }
+
+    private static SiigoBatchItemState WithItsOrderInvoiceInSiigo(string? number, SiigoInvoice? freight, DateTimeOffset now) =>
+        freight is not { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }
+            ? new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, number, false, false, null)
+            : freight.IsBeingSent(now)
+                ? new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Sending, null, null, false, false, null)
+                : new SiigoBatchItemState(
+                    SiigoInvoiceBatchItemStatus.Failed, SiigoErrorCodes.InvoiceFreightPending, null, false, false, null);
 
     private void Settle(string? errorCode, IReadOnlyList<string> missingCodes, DateTimeOffset now)
     {

@@ -19,9 +19,10 @@ namespace Modules.Siigo.Infrastructure.Batches;
 /// Ninguna transacción queda abierta mientras se llama a Siigo: el reclamo es una sentencia sola, la factura la crea el handler de siempre
 /// (con su candado por pedido y su clave de idempotencia) y el resultado se guarda aparte.
 /// Cada pedido se manda una sola vez (<see cref="SiigoInvoiceBatchItem.MaxAttempts"/>): no se programan reintentos. Uno que quedó sin
-/// resultado (el lease venció con el proceso muerto, o el apagado cortó el envío) toma el estado de su fila en <c>siigo.invoices</c> sin
-/// llamar a Siigo: por confirmar, facturado o, si no alcanzó a quedar una fila, fallido por interrupción. Lo que pasa con un pedido es un
-/// resultado (<see cref="SiigoBatchItemOutcome"/>), nunca una excepción que frene la tanda.
+/// resultado (el lease venció con el proceso muerto, o el apagado cortó el envío) toma el estado de sus filas en <c>siigo.invoices</c> sin
+/// llamar a Siigo: por confirmar, facturado o, si no alcanzó a quedar una fila o la de flete de una factura que ya existe sigue
+/// <c>Pending</c>, fallido. Lo que pasa con un pedido es un resultado (<see cref="SiigoBatchItemOutcome"/>), nunca una excepción que
+/// frene la tanda.
 /// </summary>
 internal sealed partial class SiigoInvoiceBatchWorker(
     IQueueDoorbell doorbell,
@@ -211,14 +212,22 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     }
 
     // El resultado de un pedido cuyo envío no dejó ninguno: lo dice la fila viva más nueva del pedido en siigo.invoices. Nunca llama a
-    // Siigo (spec 2026-11-24 §4).
-    private async Task<SiigoBatchItemOutcome> RecoverAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    // Siigo (spec 2026-11-24 §4). Internal para las pruebas.
+    internal async Task<SiigoBatchItemOutcome> RecoverAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var rows = await scope.ServiceProvider.GetRequiredService<ISiigoInvoiceRepository>()
             .ListByOrderAsync(tenantId, orderId, cancellationToken);
         // Vienen de la más vieja a la más nueva.
         var row = rows.LastOrDefault(value => value.Kind == SiigoInvoiceKind.Order && value.IsLive);
+        // Con la del pedido en Siigo y la de flete todavía Pending, «facturado» la dejaría sin mandar a la vista de nadie (la misma regla
+        // del ejecutor; decidido el 2026-11-25). No se lee la marca: las filas del pedido la avisan al leerse y el reintento la repite.
+        if (row is { IsOpen: false }
+            && rows.Any(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
+        {
+            return new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceFreightPending);
+        }
+
         return row switch
         {
             null => new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceInterrupted),
