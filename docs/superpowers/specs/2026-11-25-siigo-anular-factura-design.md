@@ -71,7 +71,11 @@ anular.
   - `SiigoInvoiceBatchItem.Effective` hoy lanza `InvalidOperationException` ante un estado desconocido. Un ítem `ToConfirm` cuya fila
     se resolvió como existente y después se anuló llegaría ahí: leer la tanda daría 500. **[asistente]** `Annulled` → ítem `Failed`
     con el `ErrorCode` de la fila (`siigo.invoice.annulled_in_siigo` o `siigo.invoice.deleted_in_siigo`): el pedido ya no está
-    facturado por esa tanda.
+    facturado por esa tanda. Vale igual para un ítem guardado `Invoiced` (si no, uno que se leía `Failed` por la de flete volvería a
+    leerse facturado) y para el ítem viejo de un pedido que se volvió a facturar, que sigue enlazado a su fila anulada. Va sin número
+    ni acciones, y con `orderMarkFailed` en `false` aunque lo hubiera guardado. Una de flete `Annulled` cuenta como `Rejected` o
+    `Failed` (`siigo.invoice.freight_not_created`); como la anulación suelta todas las del pedido a la vez, no se espera con la del
+    pedido viva.
   - `SiigoBatchItemInvoker.Map`: inalcanzable (una emisión nunca devuelve como vigente una `Annulled`), pero se agrega al brazo de
     `Rejected`/`Failed` para no caer en `ToConfirm`.
   - `SiigoOrderMark.IsMissingAsync` y `SiigoInvoice.HasPdf`/`CanStamp`/`IsOpen`/`CanResend` ya listan estados concretos: `Annulled`
@@ -218,6 +222,13 @@ calcularlos.
   de ese pedido). Nada se corrompe y se corrige solo al terminar el rollout. **[asistente]** Se evita por orden de publicación: el
   botón vive en `qep-frontend` y se publica después de que el backend terminó su rollout, así que nadie escribe `Annulled` mientras
   hay pods viejos. No hace falta corte (`Recreate`).
+- **Lo mismo pasa con `call_failures`:** un pod viejo no conoce la operación `InvoiceRead`, así que leer una fila que la tenga le hace
+  fallar la lista de llamadas fallidas del tenant (500 en la página que la trae, que por venir de la más nueva a la más vieja suele ser
+  la primera) y su detalle. Esa fila sólo la escribe la anulación, así que el orden de publicación también lo evita.
+- **Devolver el backend no es gratis:** con alguna fila `Annulled` escrita, volver a la versión anterior deja en 500 las pantallas de
+  Siigo de esos pedidos y las lecturas de las tandas que los traen, hasta volver a desplegar la versión nueva (su worker falla con
+  esos pedidos y `SiigoOpenInvoiceCheck` los vuelve a contar como vivos). Las filas `InvoiceRead` de `call_failures` rompen la lista
+  igual mientras existan (se borran pasados 7 días, con la siguiente escritura). Se corrige adelante; no se tocan filas a mano.
 
 ## Contratos de la API (resumen)
 
@@ -294,7 +305,8 @@ Lo que el spec de `qep-frontend` necesita:
 - Errores a traducir: `siigo.invoice.not_annulled`, `siigo.invoice.annulment_unclear` y `siigo.invoice.annulment_unverifiable` (con
   `details.kind`: `Order` o `Freight`, y `details.number` cuando lo hay), más los que ya traduce (`order_in_progress`,
   `connection_unavailable`, `unavailable`, `siigo_service`, `state_invalid`, `not_found`).
-- Un ítem de tanda puede salir `Failed` con `siigo.invoice.annulled_in_siigo` / `deleted_in_siigo`.
+- Un ítem de tanda, también uno que se veía facturado, puede salir `Failed` con `siigo.invoice.annulled_in_siigo` /
+  `deleted_in_siigo`, sin `invoiceNumber`, sin acciones y con `orderMarkFailed` en `false`; conserva su `invoiceId`.
 - `call_failures`: operación nueva `InvoiceRead`. Auditoría: acción nueva `siigo.invoice.annulled`.
 - Se publica **después** de que el backend terminó su rollout (sección 7).
 
@@ -314,7 +326,8 @@ Lo que el spec de `qep-frontend` necesita:
 10. El 404 reconocido de una borrada se guarda en `call_failures` como evidencia.
 11. El historial reutiliza `InvoicingReverted` con un resumen propio y la auditoría reutiliza `quotation.order.invoice_reverted`.
 12. Rollout sin corte: el frontend se publica después del backend.
-13. Ítem de tanda `ToConfirm` cuya fila terminó `Annulled` → `Failed` con el código de la fila.
+13. Ítem de tanda `ToConfirm` o `Invoiced` cuya fila terminó `Annulled` → `Failed` con el código de la fila, sin número, acciones ni
+    aviso de marca.
 
 ## Decisiones pendientes del owner
 
