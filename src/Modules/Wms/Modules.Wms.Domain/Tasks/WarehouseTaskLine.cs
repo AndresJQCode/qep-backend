@@ -65,6 +65,16 @@ public sealed class WarehouseTaskLine
 
     internal void Place(int position) => Position = position;
 
+    /// <summary>La tarea ya validó que la línea está abierta y que la cantidad no supera lo pendiente.</summary>
+    internal void Confirm(decimal quantity)
+    {
+        QuantityConfirmed += quantity;
+        if (Remaining == 0)
+        {
+            Status = TaskLineStatus.Done;
+        }
+    }
+
     internal void Cancel(string reason)
     {
         Status = TaskLineStatus.Cancelled;

@@ -176,12 +176,20 @@ public sealed class WarehouseTask
         Record(TaskEventKind.Held, by, now, detail: detail);
     }
 
+    /// <summary>Reasignar una tarea en curso exige motivo y revoca el lease de quien la tiene. Asignársela a otra persona también
+    /// revoca el reclamo que haya quedado de un lease vencido: su confirmación tardía ya no la reanuda.</summary>
     public void Assign(Guid memberId, Guid by, string? reason, DateTimeOffset now)
     {
-        EnsureStatus("assign", WarehouseTaskStatus.Planned, WarehouseTaskStatus.Ready, WarehouseTaskStatus.Assigned);
-        var detail = OptionalReason(reason);
+        EnsureOpen("assign");
+        var inProgress = Status == WarehouseTaskStatus.InProgress;
+        var detail = inProgress ? RequiredReason(reason) : OptionalReason(reason);
+        if (inProgress || ClaimedByMemberId != memberId)
+        {
+            ClearClaim();
+        }
+
         AssignedMemberId = memberId;
-        if (Status == WarehouseTaskStatus.Ready)
+        if (Status != WarehouseTaskStatus.Planned)
         {
             Status = WarehouseTaskStatus.Assigned;
         }
@@ -248,7 +256,124 @@ public sealed class WarehouseTask
         line.Cancel(detail);
         Version++;
         Record(TaskEventKind.LineCancelled, by, now, lineId: lineId, detail: detail);
-        CloseIfFinished(detail, by, now);
+        CloseIfFinished(by, now, detail);
+    }
+
+    /// <summary>Toma la tarea con un lease nuevo: cualquiera si está en el pool, sólo el asignado si está asignada.</summary>
+    public void Claim(Guid memberId, string deviceId, DateTimeOffset now)
+    {
+        if (Status == WarehouseTaskStatus.Assigned && AssignedMemberId != memberId)
+        {
+            throw new WmsDomainException(WmsErrorCodes.TaskAssignedToOther, "Esta tarea está asignada a otra persona.");
+        }
+
+        EnsureStatus("claim", WarehouseTaskStatus.Ready, WarehouseTaskStatus.Assigned);
+        var device = RequiredDevice(deviceId);
+        Status = WarehouseTaskStatus.InProgress;
+        ClaimedByMemberId = memberId;
+        ClaimedDeviceId = device;
+        LeaseToken = Guid.NewGuid();
+        Renew(now);
+        Version++;
+        Record(TaskEventKind.Claimed, memberId, now, deviceId: device);
+    }
+
+    public LeaseCheck CheckLease(Guid memberId, Guid leaseToken)
+    {
+        if (LeaseToken != leaseToken || ClaimedByMemberId != memberId)
+        {
+            return LeaseCheck.Lost;
+        }
+
+        return Status switch
+        {
+            WarehouseTaskStatus.InProgress => LeaseCheck.Valid,
+            WarehouseTaskStatus.Ready => LeaseCheck.Resumable,
+            WarehouseTaskStatus.Assigned when AssignedMemberId == memberId => LeaseCheck.Resumable,
+            _ => LeaseCheck.Lost,
+        };
+    }
+
+    /// <summary>Sólo extiende el lease: sin evento ni versión, para no invalidar la que el supervisor tiene en pantalla. No reanuda un
+    /// lease vencido.</summary>
+    public void Heartbeat(Guid memberId, Guid leaseToken, DateTimeOffset now)
+    {
+        EnsureValidLease(memberId, leaseToken);
+        Renew(now);
+    }
+
+    /// <summary>El operario devuelve la tarea al pool; deja de estar asignada si lo estaba a él. Conserva su antigüedad.</summary>
+    public void Unclaim(Guid memberId, Guid leaseToken, TaskUnclaimReason reason, DateTimeOffset now)
+    {
+        EnsureValidLease(memberId, leaseToken);
+        var device = ClaimedDeviceId;
+        Status = WarehouseTaskStatus.Ready;
+        AssignedMemberId = null;
+        ClearClaim();
+        LastActivityAt = now;
+        Version++;
+        Record(TaskEventKind.Unclaimed, memberId, now, deviceId: device, detail: reason.ToString());
+    }
+
+    /// <summary>Devuelve la tarea al pool (o a su asignado) si el lease venció. Conserva quién la reclamó y su token: es lo que deja
+    /// reanudar una confirmación tardía. Devuelve <c>true</c> si cambió algo.</summary>
+    public bool ExpireLease(DateTimeOffset now)
+    {
+        if (Status != WarehouseTaskStatus.InProgress || LeaseExpiresAt is not { } expiresAt || expiresAt >= now)
+        {
+            return false;
+        }
+
+        Status = AssignedMemberId is null ? WarehouseTaskStatus.Ready : WarehouseTaskStatus.Assigned;
+        LeaseExpiresAt = null;
+        Version++;
+        Record(TaskEventKind.LeaseExpired, null, now);
+        return true;
+    }
+
+    /// <summary>Confirma parte o todo de una línea. Con un lease reanudable, reanuda la tarea antes: la mercancía ya se movió en el
+    /// piso. El llamador responde antes el lease perdido (<see cref="CheckLease"/>) y la línea inexistente
+    /// (<see cref="FindLine"/>).</summary>
+    public WarehouseTaskLine ConfirmLine(
+        Guid memberId, Guid leaseToken, string deviceId, Guid lineId, decimal quantity, DateTimeOffset now)
+    {
+        var lease = CheckLease(memberId, leaseToken);
+        if (lease == LeaseCheck.Lost)
+        {
+            throw new InvalidOperationException($"Task {Id} cannot be confirmed with a lost lease.");
+        }
+
+        var device = RequiredDevice(deviceId);
+        var line = LineOf(lineId);
+        if (line.Status != TaskLineStatus.Open)
+        {
+            throw new TaskTransitionException(line.Status.ToString(), "confirm-line");
+        }
+
+        if (quantity <= 0)
+        {
+            throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, "La cantidad confirmada tiene que ser mayor que cero.");
+        }
+
+        if (quantity > line.Remaining)
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.TaskQuantityExceedsRemaining, "La cantidad confirmada supera lo que falta de la línea.");
+        }
+
+        // Después de validar: una confirmación rechazada no reanuda nada.
+        if (lease == LeaseCheck.Resumable)
+        {
+            Status = WarehouseTaskStatus.InProgress;
+            Record(TaskEventKind.LeaseResumed, memberId, now, deviceId: device);
+        }
+
+        line.Confirm(quantity);
+        Renew(now);
+        Version++;
+        Record(TaskEventKind.LineConfirmed, memberId, now, deviceId: device, lineId: lineId, quantity: quantity);
+        CloseIfFinished(memberId, now);
+        return line;
     }
 
     private void Release(Guid by, DateTimeOffset now)
@@ -258,14 +383,26 @@ public sealed class WarehouseTask
         Record(TaskEventKind.Published, by, now);
     }
 
-    private void CloseIfFinished(string reason, Guid by, DateTimeOffset now)
+    /// <summary>Sin líneas abiertas la tarea se cierra: <c>Done</c> si alguna quedó <c>Done</c>, <c>Cancelled</c> si se cancelaron
+    /// todas. <paramref name="cancelReason"/> sólo falta al confirmar, donde siempre queda al menos una <c>Done</c> si no hay abiertas.
+    /// </summary>
+    private void CloseIfFinished(Guid by, DateTimeOffset now, string? cancelReason = null)
     {
         if (_lines.Exists(line => line.Status == TaskLineStatus.Open))
         {
             return;
         }
 
-        MarkCancelled(reason, by, now);
+        if (_lines.Exists(line => line.Status == TaskLineStatus.Done))
+        {
+            Status = WarehouseTaskStatus.Done;
+            CompletedAt = now;
+            ClearClaim();
+            Record(TaskEventKind.Completed, by, now);
+            return;
+        }
+
+        MarkCancelled(cancelReason ?? throw new InvalidOperationException($"Task {Id} has no confirmed line."), by, now);
     }
 
     private void MarkCancelled(string reason, Guid by, DateTimeOffset now)
@@ -273,7 +410,39 @@ public sealed class WarehouseTask
         Status = WarehouseTaskStatus.Cancelled;
         CancelledAt = now;
         CancelReason = reason;
+        ClearClaim();
         Record(TaskEventKind.Cancelled, by, now, detail: reason);
+    }
+
+    /// <summary>Extiende el lease desde <paramref name="now"/> y marca la actividad.</summary>
+    private void Renew(DateTimeOffset now)
+    {
+        LeaseExpiresAt = now + TaskTypePolicy.LeaseDuration(Type);
+        LastActivityAt = now;
+    }
+
+    private void ClearClaim()
+    {
+        ClaimedByMemberId = null;
+        ClaimedDeviceId = null;
+        LeaseToken = null;
+        LeaseExpiresAt = null;
+    }
+
+    private void EnsureValidLease(Guid memberId, Guid leaseToken)
+    {
+        if (CheckLease(memberId, leaseToken) != LeaseCheck.Valid)
+        {
+            throw new InvalidOperationException($"Task {Id} has no valid lease for this member and token.");
+        }
+    }
+
+    private static string RequiredDevice(string deviceId)
+    {
+        var trimmed = (deviceId ?? string.Empty).Trim();
+        return trimmed.Length is 0 or > DeviceIdMaxLength
+            ? throw new ArgumentException($"The device id has between 1 and {DeviceIdMaxLength} characters.", nameof(deviceId))
+            : trimmed;
     }
 
     /// <summary>El llamador comprueba antes con <see cref="FindLine"/> y responde 404: llegar acá con otra línea es un error de
@@ -307,7 +476,7 @@ public sealed class WarehouseTask
         }
     }
 
-    private static string RequiredReason(string reason) =>
+    private static string RequiredReason(string? reason) =>
         OptionalReason(reason)
         ?? throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, "Escribe el motivo.");
 
