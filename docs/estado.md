@@ -336,6 +336,9 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
   - **Por verificar contra una tienda de Shopify:** que el eco de una dirección de España vuelva como se envió, y si
     `orderUpdate` borra el código postal cuando no se envía (pedidos cuyo último webhook es anterior al despliegue del
     código postal). Los códigos de provincia de España coinciden con `Shopify/worldwide`, no probados contra la API.
+- **Siigo, flete pendiente en las tandas (`6d0e93c63`): el frontend (`94989785`) sale antes o junto con el backend.**
+  Sin el mensaje de `siigo.invoice.freight_pending`, la fila muestra un error genérico bajo «No se facturó» aunque la
+  factura del pedido exista, y alguien podría crearla otra vez en Siigo. Sin migraciones.
 - **Siigo, facturación en segundo plano: desplegada (2026-11-25, según el owner), sin pasos pendientes.** Backend
   `main` `6f56c7265` (etapas *expand* y *contract* y los menores) y frontend `main` `472eda35` (factura por tandas)
   salieron juntos. El owner corrió después la consulta de las filas que el relleno de
@@ -593,6 +596,16 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`6d0e93c63`, `--no-ff`, sin push) **flete pendiente en las tandas de Siigo**
+  (`fix/siigo-flete-pendiente-en-tanda`, `7b2e1fb6c` y `ff542b6a8`; frontend `94989785`). Con la factura del pedido en
+  Siigo y la de flete `Pending`, ningún ítem sale «Facturado», tampoco al leer uno que había quedado por confirmar:
+  sale `Failed` con `siigo.invoice.freight_pending` (o `Sending` mientras la de flete se manda). El detalle de la tanda
+  calcula `orderMarkFailed` al leer para un ítem por confirmar cuya factura ya existe. Cierra dos de los tres menores
+  del 2026-11-25; sigue sin corregir «No existe» ofrecido con el pedido en una tanda (responde 409; recomendación:
+  dejarlo). Sin cambios: una de flete `Rejected` o `Unknown` sigue saliendo «Facturado». Pruebas sobre el árbol
+  mergeado: build sin avisos, Siigo unitarias 533, `Bootstrapper.UnitTests` filtrado a Siigo 59, `ArchitectureTests`
+  filtrado 94; frontend, antes de integrar: `tsc` y las pruebas de Siigo 401. **La integración no corrió** (una prueba
+  nueva y dos ajustadas sólo compilan) y no se corrió `scripts/test-feature.ps1` (decisión del owner).
 - 2026-11-25 — Mergeado a `develop` (`c424a6534`, `--no-ff`, sin push) **duración de cada operación contra Valkey** (`feature/valkey-operation-duration`, `1a5663d10`; owner). Histograma `qep.valkey.operation.duration` (`qep_valkey_operation_duration_seconds`) con `area` y `outcome` (`ok`, `error`, `late`, `late_error`); una operación que pasa el tope se mide cuando termina. No cambia el tope ni el comportamiento. **Medido en producción ese día** (07:23–16:17, dos pods, `Sessions` recién desplegada): todos los respaldos con motivo son `TimeoutException` (`sessions` 189, `presence` 23, `rate_limiting` 9), `qep_valkey_connected` siempre 1, Valkey promedia 0,1 ms y está en el mismo nodo que el backend (`worker-02`), así que se descarta la causa «Valkey en otro nodo» sospechada el 2026-11-24. **Causa sin confirmar:** throttling de CPU y pausas de GC suben en los minutos con respaldo, pero el tráfico también, y en 30 de 177 de esos minutos el throttling estuvo bajo el 1 %. **Pendiente:** desplegar, medir un día y mirar los buckets `outcome=~"late.*"` antes de tocar `OperationTimeoutMs` o el límite de CPU; `Permissions` y la segunda réplica esperan. Pruebas: `.\scripts\test-feature.ps1` en verde (ArchitectureTests 325/325, `Bootstrapper.UnitTests` 1289/1289); no se corrió la suite completa.
 
 - 2026-11-25 — Mergeado a `develop` (`f2734f280`, `--no-ff`, sin push) **todo pago de la factura de Siigo lleva `due_date`**
