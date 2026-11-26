@@ -88,7 +88,7 @@ public sealed class AppHubTaskTopicsTests(SupportHostWithoutWorkers host) : ICla
         }
     }
 
-    /// <summary>A participant works the task, so her presence is allowed; whoever only reads it listens but does not write. No system role
+    /// <summary>A participant works the task, so her presence is allowed; whoever only reads it listens but does not write. No factory role
     /// grants read without manage, so this host answers <c>Read</c> yes and nothing else for one member.</summary>
     [Fact]
     public async Task PresenceOnATaskIsForParticipantsNotForReaders()

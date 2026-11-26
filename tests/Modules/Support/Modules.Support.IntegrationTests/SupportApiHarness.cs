@@ -158,7 +158,7 @@ internal static class SupportApiHarness
     }
 
     /// <summary>
-    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> y <c>advisor</c> conceden
+    /// Siembra una membresía del tenant (con su usuario) con un rol de fábrica: <c>admin</c> y <c>advisor</c> conceden
     /// <c>support.ticket.manage</c>, <c>billing</c> no. <paramref name="removed"/> la deja quitada.
     /// </summary>
     public static async Task<Guid> SeedMemberAsync(

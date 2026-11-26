@@ -9,7 +9,7 @@ namespace Modules.Authorization.Domain;
 /// Convive con el rol de sistema, que se versiona con el codigo y no vive aca. La
 /// diferencia no es cosmetica: un rol de sistema no se edita ni se borra, y su clave esta
 /// reservada — <see cref="SystemRoleKeys"/>. Los roles que se siembran en cada tenant
-/// (spec 2026-11-25) si son filas de este agregado: se editan y se borran como cualquiera.
+/// (spec 2026-11-25) sí son filas de este agregado: se editan y se borran como cualquiera.
 ///
 /// El agregado no valida que un permiso exista en el catalogo. No puede: el catalogo se
 /// arma en composicion y el dominio no lo conoce. Esa comprobacion es del handler, contra

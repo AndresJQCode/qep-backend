@@ -132,7 +132,7 @@ public sealed class AppHubPresenceTests(SupportHostWithoutWorkers host) : IClass
         Assert.DoesNotContain("support.realtime", unknownState.Message, StringComparison.Ordinal);
     }
 
-    /// <summary>No system role grants read without manage, so this host answers <c>Read</c> yes and <c>Manage</c> no for one member.</summary>
+    /// <summary>No factory role grants read without manage, so this host answers <c>Read</c> yes and <c>Manage</c> no for one member.</summary>
     [Fact]
     public async Task SetPresenceNeedsManage()
     {

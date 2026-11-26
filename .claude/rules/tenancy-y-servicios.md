@@ -19,6 +19,17 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   deja el usuario en `identity.users` **sin membresía**. `RegistrationEndpoints.cs:89-104`
   aprovisiona antes de crear el tenant, en módulos con unidades de trabajo distintas y sin
   compensación.
+- **Sólo `admin` es rol de sistema** (spec 2026-11-25, roles por tenant). `advisor`, `billing`, `cashier`,
+  `scheduling_manager` y `scheduling_provider` son plantillas (`RoleTemplate`, en `QepServiceCollectionExtensions`) con las
+  que `TenantRoleSeeder` crea filas de `authorization.roles` en cada tenant: en el alta (`TenantRolesProvisioning`; si falla,
+  queda un log `Error` y el alta sigue) y al arrancar (`SeedTenantRolesAsync`; si falla, el arranque falla). La marca de
+  `authorization.role_seeds` hace que se siembre una sola vez: no revive un rol borrado ni pisa uno editado. **Un permiso nuevo
+  en una plantilla sólo llega a los tenants nuevos** (decisión 2 del owner): en los existentes lo marca el administrador. **Renombrar
+  o partir un permiso exige una migración de datos sobre `authorization.roles`** (precedente: `RenamePermissionsToOrders`); sin ella
+  los roles guardados siguen nombrando el código viejo. Toda plantilla es un subconjunto de `admin`
+  (`CompositionRootTests.EveryRoleTemplateIsASubsetOfAdmin`): lo que `admin` no lleva no se puede marcar ni guardar. **Un rol no se
+  borra si lo tiene una membresía `Invited`, `Active` o `Suspended`** (`422 authorization.role.in_use`); `Removed` y `Expired` no
+  cuentan.
 - **Un rol que no concede ningún permiso ofrecido en el tenant no se agrega ni se invita** (spec 2026-11-15): `422
 tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false`. Cajero sin `pos` es el caso típico,
   pero vale también para un rol custom de sólo permisos de un módulo apagado. Quien ya tiene el rol lo conserva: el `PUT`
@@ -35,8 +46,8 @@ tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false
   de la migración `20261029180546_InitialBilling`. Conservan «Billing» a propósito porque nombran el cobro y no el módulo, o son de
   otro módulo: `BillingCycle`, `BillingChannel`, `CustomerBillingProfile`; `MessageTemplateKind.BillingReminder|BillingOverdue`
   (persistidos como texto), `IBillingTemplateOutbound` y `BillingTemplateDefinitions` (Messaging), las plantillas `Billing*Email*`
-  (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol de sistema `billing`
-  (`SystemRoleKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
+  (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol sembrado `billing`
+  (`RoleTemplateKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
 - **«Admin» para vincular un tenant a un mayorista es el rol de sistema `admin` en una membresía activa** (spec 2026-11-19,
   `ITenantOwnership.ListAdministeredActiveTenantsAsync`), además del owner (`owner_membership_id`). Un rol custom con permisos
   parecidos no cuenta, y una membresía suspendida o pendiente tampoco. Es una consulta de Tenancy, no un cruce con

@@ -3106,7 +3106,7 @@ public static class QepServiceCollectionExtensions
                 PayrollPermissions.PeriodManage,
                 PayrollPermissions.PeriodApprove,
                 PayrollPermissions.SettingsManage,
-                // Spec 2026-11-21 (Agenda): admin lleva los cinco; los dos roles de sistema de la Agenda llevan los operativos y ninguno
+                // Spec 2026-11-21 (Agenda): admin lleva los cinco; las dos plantillas de la Agenda llevan los operativos y ninguna
                 // la configuración (servicios, reglas y estructura son del administrador).
                 SchedulingPermissions.AppointmentRead,
                 SchedulingPermissions.AppointmentManage,
