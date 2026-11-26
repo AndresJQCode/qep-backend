@@ -1,7 +1,8 @@
 # Siigo: teléfono del cliente con indicativo — diseño (backend, entrega 1)
 
 Fecha: 2026-11-25 · Repo: `qep-backend` · Rama: `feature/telefono-pais` · Estado: **aprobado** (owner, 2026-11-25). Está
-implementado en la rama `feature/telefono-pais`, sin mergear todavía; las pruebas quedaron escritas, pero no se han corrido.
+implementado y mergeado en `develop` el 2026-11-25 (merge `da98b8e20`), pendiente de despliegue; las pruebas quedaron escritas,
+pero no se han corrido.
 Plan: `docs/superpowers/plans/2026-11-25-siigo-telefono-indicativo.md`. Hechos reverificados contra `develop` en
 `8a9bfd50d` (después de los cambios de Siigo del 2026-11-24 y 25, incluida la etapa contract): archivos, firmas y criterios siguen
 como se describen. `IssueSiigoInvoice.EnsureCustomerAsync` es privado y hoy lo corre sólo el worker de las tandas.

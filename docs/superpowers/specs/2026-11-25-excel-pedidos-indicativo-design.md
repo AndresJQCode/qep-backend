@@ -1,7 +1,8 @@
 # Excel de pedidos: indicativo del teléfono — diseño (backend)
 
 Fecha: 2026-11-25 · Repo: `qep-backend` · Rama: `feature/telefono-pais` · Estado: **aprobado** (owner, 2026-11-25). Está
-implementado en la rama, sin mergear todavía; las pruebas quedaron escritas, pero no se han corrido.
+implementado y mergeado en `develop` el 2026-11-25 (merge `da98b8e20`), pendiente de despliegue; las pruebas quedaron escritas,
+pero no se han corrido.
 
 ## Decisión
 
