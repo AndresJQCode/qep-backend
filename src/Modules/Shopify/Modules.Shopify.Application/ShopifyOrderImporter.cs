@@ -304,12 +304,13 @@ public sealed class ShopifyOrderImporter(
     }
 
     /// <summary>La parte de envío de una dirección de fuera de Colombia: los campos de <see cref="ShippingPartyFields"/> (con
-    /// correo) más el destino de <see cref="ShopifyForeignAddress"/>; sin alguno de los dos, no hay parte. Sin los campos no se
-    /// consulta Geography.</summary>
+    /// correo), que quepan en el pedido, más el destino de <see cref="ShopifyForeignAddress"/>; sin alguno, no hay parte y el
+    /// pedido entra igual (uno más largo lo dejaría <c>order_rejected</c>). Sin los campos no se consulta Geography.</summary>
     private async Task<(ShopifyPartyDraft? Party, bool RegionUnresolved)> ForeignShippingPartyAsync(
         ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
     {
         if (ShippingPartyFields(snapshot) is not { } fields
+            || !FitsTheOrder(fields)
             || await ShopifyForeignAddress.ResolveAsync(geography, snapshot.ShippingAddress!, cancellationToken) is not { } destination)
         {
             return (null, false);
@@ -320,6 +321,13 @@ public sealed class ShopifyOrderImporter(
             destination.CityName, destination.RegionId);
         return (party, destination.RegionUnresolved);
     }
+
+    // Los anchos de la parte en Quotations (ShopifyCityCorrectionParityTests).
+    private static bool FitsTheOrder((string Name, string Phone, string Address, string Email) fields) =>
+        fields.Name.Length <= ShopifyCityCorrection.PartyNameMaxLength
+        && fields.Phone.Length <= ShopifyCityCorrection.PartyPhoneMaxLength
+        && fields.Address.Length <= ShopifyCityCorrection.PartyAddressMaxLength
+        && fields.Email.Length <= ShopifyCityCorrection.PartyEmailMaxLength;
 
     /// <summary>
     /// El código postal de la parte de envío: el zip de la dirección de Shopify, recortado. <c>null</c> sin zip, y también con uno

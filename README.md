@@ -5240,7 +5240,8 @@ prendido, al importador:
 - **Dirección de envío de fuera de Colombia.** El pedido nace con su parte de envío: el país del snapshot, la ciudad escrita
   (`cityName`, máx. 120), el `zip` como `postalCode` y, en España, la región (`regionId`) traducida del `province_code` (ISO →
   INE). Sin región traducible la parte entra sin ella, con `shipping_region_unresolved`; se elige en «Editar pedido». Sin
-  nombre, teléfono, dirección, correo del comprador o ciudad, o con una ciudad de más de 120 caracteres, no hay parte:
+  nombre, teléfono, dirección, correo del comprador o ciudad, o con alguno más largo que lo que guarda el pedido (ciudad 120,
+  nombre y dirección 255, correo 254, teléfono 32), no hay parte:
   `shipping_address_unresolved` y la dirección cruda en las notas, como en Colombia. El cliente no cambia (el alta completa
   sigue siendo sólo de Colombia) y los pedidos ya importados no se reescriben.
 - Después de importado, el resto de las ediciones de Shopify (líneas, envío, dirección, nota, atributos) llegan como

@@ -744,4 +744,35 @@ public sealed class ShopifyImportResultTests
         Assert.Contains("shipping_address_unresolved", row.Warnings ?? string.Empty, StringComparison.Ordinal);
         Assert.Empty(world.Geography.RegionRequests);
     }
+
+    // Un campo más largo que lo que guarda el pedido: antes de armar la parte, esos pedidos entraban; no pueden quedar
+    // order_rejected por ella.
+    [Theory]
+    [InlineData("name")]
+    [InlineData("phone")]
+    [InlineData("address")]
+    [InlineData("email")]
+    public async Task AForeignFieldThatDoesNotFitLeavesNoParty(string field)
+    {
+        var world = WorldWithMadrid();
+        var longText = new string('1', 256);
+        var snapshot = Order(
+            address: field switch
+            {
+                "name" => Madrid with { Name = longText },
+                "phone" => Madrid with { Phone = new string('1', ShopifyCityCorrection.PartyPhoneMaxLength + 1) },
+                "address" => Madrid with { Address1 = longText },
+                _ => Madrid,
+            },
+            buyer: new ShopifyBuyer("Lucía", "Fernández", field == "email" ? longText : "laura@verde.co", "+34600111222"));
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var draft = Assert.Single(world.Writer.Creates).Draft;
+        Assert.Null(draft.ShippingParty);
+        Assert.Contains(ShopifyOrderImporter.RawAddressLabel, draft.Notes, StringComparison.Ordinal);
+        Assert.Contains("shipping_address_unresolved", row.Warnings ?? string.Empty, StringComparison.Ordinal);
+        Assert.Empty(world.Geography.RegionRequests);
+    }
 }
