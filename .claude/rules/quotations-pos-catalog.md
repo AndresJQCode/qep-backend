@@ -58,6 +58,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   Una columna nueva cuyo encabezado choca con una visible del layout guardado nace oculta en silencio, sin
   error: la regla de choque está en
   [README § Columnas del Excel de pedidos](../../README.md#columnas-del-excel-de-pedidos-por-tenant-homologación).
+- **Un `bool` con default `true` en la base lleva `ValueGeneratedNever`** (`OrdersExportLayout.IncludePhoneDialCode`, spec
+  2026-11-25). Con sólo `HasDefaultValue(true)`, EF puede omitir un `false` al insertar y la base guarda `true`, sin error. Y una
+  columna de teléfono nueva del Excel de pedidos pasa por `phoneText` en `OrdersExportProcessor.RowsFor`, o ignora el
+  interruptor del indicativo.
 - **La variante por defecto lleva el id del producto, y el relleno de `variant_id` depende de eso** (spec 2026-10-20 §8).
   `Product.Create` le da a la primera variante el id del producto —también al crear con opciones—, y `AddProductVariants`
   hizo lo mismo con cada producto que existía. Por eso `AddVariantToLines` (Quotations) y `AddVariantToSaleLines` (Pos)

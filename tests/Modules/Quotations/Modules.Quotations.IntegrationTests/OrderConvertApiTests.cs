@@ -412,7 +412,8 @@ public sealed class OrderConvertApiTests(SharedQuotationsHost sharedHost) : Orde
         var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        var clientId = await CreateActiveCustomerAsync(client, tenantId, personType: "Juridica");
+        var clientId = await CreateActiveCustomerAsync(
+            client, tenantId, identificationNumber: "901234567", personType: "Juridica");
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var converted = await client.PostAsJsonAsync(
@@ -427,6 +428,7 @@ public sealed class OrderConvertApiTests(SharedQuotationsHost sharedHost) : Orde
         Assert.NotNull(detail?.Client);
         Assert.Equal(("CO", "Juridica", "NIT"),
             (detail.Client.Country, detail.Client.PersonType, detail.Client.IdentificationType));
+        Assert.Equal("901234567", detail.Client.IdentificationNumber);
     }
 
     // Review Focus 2 (provincia guardada, spec 2026-11-23): convertir copia la región de las partes junto con la ciudad

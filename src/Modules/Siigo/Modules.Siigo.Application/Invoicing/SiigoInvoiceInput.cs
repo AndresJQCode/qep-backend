@@ -57,7 +57,7 @@ public sealed record SiigoBilledPartyInput(
     string? CityCode,
     string? StateCode,
     string? Email,
-    string? Phone)
+    SiigoPhone? Phone)
 {
     public override string ToString() => "SiigoBilledPartyInput { }";
 }

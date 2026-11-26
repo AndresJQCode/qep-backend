@@ -249,6 +249,30 @@ public sealed class IssueSiigoInvoiceHandlerTests
         Assert.Equal([SiigoAuditActions.InvoiceUnanswered], harness.Audit.Actions);
     }
 
+    // El reintento de un ítem que salió fallido por la de flete (decidido el 2026-11-25): otra tanda del pedido manda sólo la de flete,
+    // con su clave, nunca una segunda factura del pedido, y vuelve a marcar el pedido por si la marca se había perdido.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResendingAnInvoicedOrderSendsOnlyItsPendingFreightAndMarksTheOrderAgain(bool unanswered)
+    {
+        var order = PendingRow();
+        order.BeginSend(Now.AddMinutes(-11));
+        order.MarkCreated("siigo-1", "FV-1-123", 100m, null, Now.AddMinutes(-11));
+        var freight = unanswered
+            ? Unanswered(SiigoInvoiceKind.Freight, Now.AddMinutes(-11))
+            : PendingRow(SiigoInvoiceKind.Freight);
+        var orderKey = order.IdempotencyKey;
+        var harness = new Harness([order, freight], Created());
+
+        await harness.Issue();
+
+        Assert.Equal([freight.IdempotencyKey], harness.Api.Keys);
+        Assert.Equal(SiigoInvoiceStatus.Created, freight.Status);
+        Assert.Equal((1, orderKey), (order.Attempts, order.IdempotencyKey));
+        Assert.Equal(["FV-1-123"], harness.Orders.Marks);
+    }
+
     // Si se declara que la del pedido no existe, la de flete nunca salió, tenga lo que tenga anotado (por ejemplo, el relleno de la
     // migración sobre un reclamo viejo). Viva, dejaría el pedido bloqueado.
     [Theory]
@@ -669,9 +693,15 @@ public sealed class IssueSiigoInvoiceHandlerTests
         public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<long?>(7);
 
+        /// <summary>Los números con que se pidió marcar el pedido.</summary>
+        public List<string> Marks { get; } = [];
+
         public Task MarkInvoicedAsync(
-            Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+            Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken)
+        {
+            Marks.Add(number);
+            return Task.CompletedTask;
+        }
 
         public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken) =>
             Task.FromResult(Marked);
@@ -704,6 +734,10 @@ public sealed class IssueSiigoInvoiceHandlerTests
     {
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && row.OrderId == orderId)]);
+
+        public Task<IReadOnlyList<SiigoInvoice>> ListFreightAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken) =>

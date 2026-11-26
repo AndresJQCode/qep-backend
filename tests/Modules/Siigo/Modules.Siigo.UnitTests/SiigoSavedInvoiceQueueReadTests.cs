@@ -331,6 +331,10 @@ public sealed class SiigoSavedInvoiceQueueReadTests
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([row]);
 
+        public Task<IReadOnlyList<SiigoInvoice>> ListFreightAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

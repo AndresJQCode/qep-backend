@@ -2869,6 +2869,8 @@ public static class QepServiceCollectionExtensions
         // cuando existen (cotizaciones y pedidos).
         services.AddScoped<ExportJobRunner>();
         services.AddScoped<IExportJobProcessor, QuotationsExportProcessor>();
+        // El Excel de pedidos sin indicativo (spec 2026-11-25): el partidor es de Customers.
+        services.AddScoped<IQuotationPhoneNumbers, QuotationPhoneNumbers>();
         services.AddScoped<IExportJobProcessor, OrdersExportProcessor>();
 
         // Reporting es el caso extremo del mismo patron (CAT-05): el modulo no tiene tablas

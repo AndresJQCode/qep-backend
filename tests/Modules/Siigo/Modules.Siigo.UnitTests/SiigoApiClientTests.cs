@@ -787,7 +787,8 @@ public sealed class SiigoApiClientTests : IDisposable
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
         _api.On("/v1/customers", HttpStatusCode.Created, Fixture.Read("customer-created.json"));
         var request = new SiigoCustomerRequest(
-            "Company", "31", "900123456", ["ACME SAS"], "Calle 1 # 2-3", "Co", "11", "11001", "3001234567", "Ana", "Gomez", "ana@acme.test");
+            "Company", "31", "900123456", ["ACME SAS"], "Calle 1 # 2-3", "Co", "11", "11001", new SiigoPhone("57", "3001234567"),
+            "Ana", "Gomez", "ana@acme.test");
 
         var created = await _client.CreateCustomerAsync(Credentials, request, TestContext.Current.CancellationToken);
 
@@ -798,7 +799,8 @@ public sealed class SiigoApiClientTests : IDisposable
         var root = body.RootElement;
         Assert.Equal("Customer", root.GetProperty("type").GetString());
         Assert.Equal("Company", root.GetProperty("person_type").GetString());
-        Assert.Equal("31", root.GetProperty("id_type").GetProperty("code").GetString());
+        // En la petición id_type es texto; el objeto {code, name} sólo aparece en las respuestas de Siigo (con él responde invalid_type).
+        Assert.Equal("31", root.GetProperty("id_type").GetString());
         Assert.Equal("900123456", root.GetProperty("identification").GetString());
         Assert.True(root.GetProperty("active").GetBoolean());
         Assert.Equal("ACME SAS", root.GetProperty("name")[0].GetString());
@@ -806,8 +808,32 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.Equal("Co", city.GetProperty("country_code").GetString());
         Assert.Equal("11", city.GetProperty("state_code").GetString());
         Assert.Equal("11001", city.GetProperty("city_code").GetString());
-        Assert.Equal("3001234567", root.GetProperty("phones")[0].GetProperty("number").GetString());
+        var phone = root.GetProperty("phones")[0];
+        Assert.Equal("57", phone.GetProperty("indicative").GetString());
+        Assert.Equal("3001234567", phone.GetProperty("number").GetString());
         Assert.Equal("ana@acme.test", root.GetProperty("contacts")[0].GetProperty("email").GetString());
+    }
+
+    [Fact]
+    public void APhoneWithoutIndicativeHasNoIndicativeProperty()
+    {
+        var phone = Body(CustomerRequest(new SiigoPhone(null, "12345"))).GetProperty("phones")[0];
+
+        Assert.False(phone.TryGetProperty("indicative", out _));
+        Assert.Equal("12345", phone.GetProperty("number").GetString());
+    }
+
+    [Fact]
+    public void NoPhoneMeansNoPhonesProperty() =>
+        Assert.False(Body(CustomerRequest(null)).TryGetProperty("phones", out _));
+
+    private static SiigoCustomerRequest CustomerRequest(SiigoPhone? phone) =>
+        new("Person", "13", "123", ["Ana", "Gomez"], null, "Co", "11", "11001", phone, "Ana", "Gomez", null);
+
+    private static System.Text.Json.JsonElement Body(SiigoCustomerRequest request)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(SiigoJson.CustomerBody(request));
+        return document.RootElement.Clone();
     }
 
     [Fact]
