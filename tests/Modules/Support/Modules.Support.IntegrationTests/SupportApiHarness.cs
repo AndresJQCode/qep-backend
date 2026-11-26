@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Modules.Authorization.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Support.Application;
@@ -47,7 +48,7 @@ internal static class SupportApiHarness
     }
 
     /// <summary>
-    /// Siembra la fila del tenant y sus módulos. Inserta únicamente las claves que faltan, por lo
+    /// Siembra la fila del tenant, sus roles de fábrica y sus módulos. Inserta únicamente las claves que faltan, por lo
     /// que se puede llamar dos veces sobre el mismo tenant.
     /// </summary>
     public static async Task SeedTenantAsync(
@@ -75,6 +76,11 @@ internal static class SupportApiHarness
                 now));
             await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
+
+        // El tenant se inserta directo y después del arranque, así que nace sin los roles que el alta le sembraría.
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(id.Value, TestContext.Current.CancellationToken);
 
         foreach (var key in modules ?? TenantModuleKeys.All)
         {
