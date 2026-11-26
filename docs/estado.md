@@ -31,6 +31,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
+| Roles por tenant: `admin` como único rol de sistema | **Backend construido y mergeado en `develop`** (2026-11-25, `--no-ff`, sin push; merge `5fdf11863`, rama `feature/roles-por-tenant` borrada). `advisor`, `billing`, `cashier`, `scheduling_manager` y `scheduling_provider` pasan a ser plantillas que se siembran en cada tenant (alta y arranque, marca en `authorization.role_seeds`), editables y borrables. **Mergeado sin `test-feature.ps1` ni integración** (orden del owner); el frontend no cambia | [spec](superpowers/specs/2026-11-25-roles-por-tenant-design.md), [plan](superpowers/plans/2026-11-25-roles-por-tenant.md) |
 | Teléfono con indicativo del país (formularios, cliente de Siigo y Excel de pedidos) | **Backend y frontend construidos y mergeados en `develop`** (2026-11-25, `--no-ff`, sin push; backend `da98b8e20`, rama `feature/telefono-pais` hasta `1c9c7c1c9`; frontend `494cbeed4`, hasta `aa50f7d2`). Los formularios del frontend que guardan el teléfono de una persona o empresa usan selector de país (el «Teléfono fijo» de soporte sigue como texto libre), el campo del número no admite «+» y el selector ofrece más países (**no todos todavía: pendiente**). El cliente que se crea en Siigo lleva `indicative` y `number`, `id_type` como texto y el documento sin separadores (el NIT sin dígito de verificación). WhatsApp de cotización y pedido usa tal cual los dígitos de un número con «+». El Excel de pedidos tiene por tenant el interruptor «Exportar el indicativo del país» (`includePhoneDialCode`, encendido por defecto; migración aditiva `20261125232432_AddOrdersExportLayoutPhoneDialCode`, **pendiente de desplegar**). **Mergeado sin correr ninguna prueba** (orden del owner), tampoco `test-feature.ps1`: sólo build del backend, `tsc -b` y lint del frontend. **Sin verificar contra Siigo real.** **Orden de salida:** backend primero; antes de publicar el cambio del WhatsApp de la tienda, revisar `qep-storefront` | [spec Siigo](superpowers/specs/2026-11-25-siigo-telefono-indicativo-design.md), [spec Excel](superpowers/specs/2026-11-25-excel-pedidos-indicativo-design.md), [plan](superpowers/plans/2026-11-25-siigo-telefono-indicativo.md); frontend `2026-11-25-telefono-selector-pais-design.md` en su repo |
 | Perfiles de facturación del cliente y entrega editable en el pedido (con Shopify fuera de Colombia) | **Backend construido y mergeado en `develop`** (2026-11-25, `--no-ff`; `d65658756`, rama `feature/billing-profiles` hasta `589783868`). Los perfiles y la entrega editable (`8c41506e5`) ya están en `origin/main`; **la parte de Shopify (`d65658756`) está sólo en `develop`, sin push**. Directorio de hasta 50 perfiles por cliente, con retenciones y excedente de IVA, en los bloques `client` de cotización y pedido; `PUT /orders/{id}` y su preview cambian recoger/enviar y la dirección de envío; en pedidos de Shopify el cambio se valida y se empuja a Shopify, también fuera de Colombia. **Falta el frontend.** Pruebas unitarias escritas y **nunca ejecutadas**; `test-feature.ps1` no se corrió (owner) | [spec](superpowers/specs/2026-11-24-perfiles-de-facturacion-backend-handoff.md), [plan](superpowers/plans/2026-11-25-perfiles-de-facturacion-backend.md) |
 | Invitación de distribuidor: el link del correo prueba el buzón | **Backend y frontend construidos y mergeados en `develop`** (2026-11-25, `--no-ff`, ya en `origin/develop`; backend `01111d90f` y `34fbb20c5`, rama `feature/distributor-email-proof` hasta `b8aa5929b`; frontend `25e78cde`). El link del correo lleva `?ev=`; con él y el correo invitado, `session-with-password` crea la cuenta sin el código de 6 dígitos. «Copiar» y WhatsApp siguen pidiendo código. Una columna nueva y nula (`distributor_invitations.email_proof_hash`), sin *contract*. 77 pruebas de integración filtradas en verde el 2026-11-25; `test-feature.ps1` y la suite completa sin correr. | `docs/superpowers/specs/` y `plans/2026-11-24-invitacion-distribuidor-prueba-de-correo*` (ambos repos) |
@@ -325,6 +326,13 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **Roles por tenant (`5fdf11863`): correr las pruebas antes.** Se mergeó **sin ejecutar** nada que toque PostgreSQL ni las
+  pruebas escritas o modificadas después de la orden del owner. Prioridad: `TenantRoleSeedingTests`,
+  `TenantRoleSeedStoreTests`, `MembershipRoleUsageTests`, `RoleApiTests`, `MembershipApiTests`, `ArchitectureTests` y las
+  integraciones de ServiceContracts, Support, Loans, Audit, Notifications, Wholesale, Ai y Hr. Al desplegar: migración
+  aditiva `AddRoleSeeds` (Authorization); **si la siembra falla al arrancar, el arranque falla**; un tenant registrado en
+  un pod viejo después de la siembra queda sin los cinco roles hasta el siguiente arranque (aceptado en el spec). Los cinco
+  roles llegan con `isSystem: false`, categoría `Custom` y riesgo calculado; `CatalogVersion` cambia.
 - **Teléfono con indicativo (`da98b8e20`, frontend `494cbeed4`): desplegar el backend primero.** Trae la migración
   aditiva de Quotations `20261125232432_AddOrdersExportLayoutPhoneDialCode` (una columna con default `true`), pendiente de
   desplegar. **Se mergeó sin correr ninguna prueba** (orden del owner), tampoco `test-feature.ps1`, y la creación del
@@ -606,6 +614,12 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`5fdf11863`, `--no-ff`, sin push) **roles por tenant** (`feature/roles-por-tenant`,
+  hasta `934146db6`): `admin` queda como único rol de sistema; los otros cinco se siembran por tenant; un rol no se borra si
+  lo tiene una membresía `Invited`, `Active` o `Suspended`; una función nueva no agrega permisos a los roles de tenants
+  existentes (decisión del owner). Cambia `CompositionRootTests` y `MultiReplicaInventoryTests`. Build del commit de merge
+  con 0 advertencias y 0 errores; revisión final sin críticos ni importantes. **Pruebas sin correr** salvo la línea base y
+  las unitarias de la primera tarea (orden del owner), tampoco `test-feature.ps1`. Rama y worktree borrados.
 - 2026-11-25 — Mergeado a `develop` (`2b8bd0637`, `--no-ff`, sin push) **los dos menores del aviso de autorización**
   (`fix/architecture-warning-minors`, `e1010a865`). El diff de los `.csproj` fija su formato, así que la configuración
   de git ya no oculta referencias nuevas, y renombrar un proyecto dentro del mismo módulo y capa no pide autorización.
