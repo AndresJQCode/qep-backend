@@ -189,6 +189,31 @@ public sealed class StockProbeTests
         Assert.Empty(fromAnotherTenant);
     }
 
+    // DA-37: una tarea abierta todavía va a escribir en el ledger. La cancelada no escribe nada.
+    [Fact]
+    public async Task TheRealCheckerSeesAnOpenTaskLineAgainstTheMigratedSchema()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await Tasks.TaskTestSupport.CreateDestinationAsync(s);
+        var openVariant = await CreateVariantAsync(factory, "V-OPEN-TASK", null, [12]);
+        var cancelledVariant = await CreateVariantAsync(factory, "V-CANCELLED-TASK", null, [12]);
+        var open = Tasks.TaskTestSupport.NewMove(s with { VariantId = openVariant }, s.BinA, destination, publish: false);
+        var cancelled = Tasks.TaskTestSupport.NewMove(s with { VariantId = cancelledVariant }, s.BinA, destination);
+        cancelled.Cancel("ya no", Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        await Tasks.TaskTestSupport.SaveAsync(factory, open, cancelled);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var checker = scope.ServiceProvider.GetRequiredService<Modules.Catalog.Application.IVariantUsageChecker>();
+        var used = await checker.FindUsedAsync(s.TenantId, [openVariant, cancelledVariant], Ct);
+        var fromAnotherTenant = await checker.FindUsedAsync(Guid.CreateVersion7(), [openVariant], Ct);
+
+        Assert.Equal(new HashSet<Guid> { openVariant }, used.ToHashSet());
+        Assert.Empty(fromAnotherTenant);
+    }
+
     private static object UpdateBody(string name, bool isActive) =>
         new { name, identification = "900123", contactEmail = "acme@example.com", isActive, version = 1 };
 

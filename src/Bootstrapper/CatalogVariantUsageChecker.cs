@@ -40,6 +40,11 @@ namespace Bootstrapper;
 /// como texto) y los lotes (<c>wms.lots</c>). Un ajuste propuesto sobre una variante sin movimientos no la protegía: Catalog la borraba y
 /// el posteo escribía después un movimiento inmutable sobre una variante inexistente. <c>Posted</c> ya lo cubre su movimiento y
 /// <c>Rejected</c> no escribe nada. Amarra el esquema migrado <c>StockProbeTests.TheRealCheckerSeesAnOpenAdjustmentLineAndALotAgainstTheMigratedSchema</c>.
+///
+/// Por lo mismo cuentan las líneas abiertas de las tareas de bodega sin terminar (spec 2026-11-26, DA-37):
+/// <c>wms.task_lines.variant_id</c> con <c>line_status = 'Open'</c>, unida a <c>wms.tasks</c> por el tenant, con estado
+/// <c>Planned</c>, <c>Ready</c>, <c>Assigned</c> o <c>InProgress</c> (como texto). Un estado de tarea nuevo que todavía pueda
+/// confirmar entra aquí. Amarra el esquema migrado <c>StockProbeTests.TheRealCheckerSeesAnOpenTaskLineAgainstTheMigratedSchema</c>.
 /// </summary>
 internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVariantUsageChecker
 {
@@ -56,7 +61,7 @@ internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVa
 
         var ids = variantIds.Distinct().ToArray();
 
-        // UNION ya deduplica: es el SELECT DISTINCT de las ocho tablas en una sola ida.
+        // UNION ya deduplica: es el SELECT DISTINCT de todas las tablas en una sola ida.
         var used = await catalog.Database.SqlQuery<Guid>($"""
             SELECT qi.variant_id AS "Value"
             FROM quotations.quotation_items qi
@@ -89,6 +94,12 @@ internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVa
             SELECT l.variant_id
             FROM wms.lots l
             WHERE l.tenant_id = {tenantId} AND l.variant_id = ANY({ids})
+            UNION
+            SELECT tl.variant_id
+            FROM wms.task_lines tl
+            JOIN wms.tasks t ON t.id = tl.task_id
+            WHERE t.tenant_id = {tenantId} AND t.status IN ('Planned', 'Ready', 'Assigned', 'InProgress')
+              AND tl.line_status = 'Open' AND tl.variant_id = ANY({ids})
             """).ToListAsync(cancellationToken);
 
         return used.ToHashSet();

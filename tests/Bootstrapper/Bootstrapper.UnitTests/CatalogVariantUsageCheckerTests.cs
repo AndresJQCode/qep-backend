@@ -111,6 +111,41 @@ public sealed class CatalogVariantUsageCheckerTests
         Assert.Equal(new HashSet<Guid> { proposed, approved, lotted }, used.ToHashSet());
     }
 
+    // Una línea abierta de una tarea sin terminar todavía va a escribir en el ledger (spec 2026-11-26, DA-37). Una línea cerrada ya
+    // dejó su movimiento o no escribirá ninguno, y una tarea terminada no tiene líneas abiertas.
+    [Fact]
+    public async Task CheckerFindsVariantUsedOnlyByAnOpenTaskLine()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var planned = Guid.CreateVersion7();
+        var ready = Guid.CreateVersion7();
+        var assigned = Guid.CreateVersion7();
+        var inProgress = Guid.CreateVersion7();
+        var done = Guid.CreateVersion7();
+        var cancelled = Guid.CreateVersion7();
+        var closedLine = Guid.CreateVersion7();
+        var otherTenant = Guid.CreateVersion7();
+
+        await AddTaskLineAsync(database, TenantId, "Planned", "Open", planned);
+        await AddTaskLineAsync(database, TenantId, "Ready", "Open", ready);
+        await AddTaskLineAsync(database, TenantId, "Assigned", "Open", assigned);
+        await AddTaskLineAsync(database, TenantId, "InProgress", "Open", inProgress);
+        await AddTaskLineAsync(database, TenantId, "Done", "Done", done);
+        await AddTaskLineAsync(database, TenantId, "Cancelled", "Cancelled", cancelled);
+        await AddTaskLineAsync(database, TenantId, "InProgress", "Cancelled", closedLine);
+        await AddTaskLineAsync(database, OtherTenantId, "Ready", "Open", otherTenant);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId,
+            [planned, ready, assigned, inProgress, done, cancelled, closedLine, otherTenant],
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HashSet<Guid> { planned, ready, assigned, inProgress }, used.ToHashSet());
+    }
+
     // Sin ids no consulta: ni siquiera hacen falta las tablas.
     [Fact]
     public async Task NoVariantsGiveNothingWithoutQuerying()
@@ -171,7 +206,19 @@ public sealed class CatalogVariantUsageCheckerTests
             CREATE TABLE wms.lots (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
             CREATE TABLE wms.adjustments (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, status text NOT NULL);
             CREATE TABLE wms.adjustment_lines (adjustment_id uuid NOT NULL REFERENCES wms.adjustments (id), variant_id uuid NOT NULL);
+            CREATE TABLE wms.tasks (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, status text NOT NULL);
+            CREATE TABLE wms.task_lines (task_id uuid NOT NULL REFERENCES wms.tasks (id), variant_id uuid NOT NULL, line_status text NOT NULL);
             """);
+
+    private static async Task AddTaskLineAsync(
+        PostgreSqlContainer database, Guid tenantId, string status, string lineStatus, Guid variantId)
+    {
+        var task = Guid.CreateVersion7();
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.tasks (id, tenant_id, status) VALUES ('{task}', '{tenantId}', '{status}');
+            INSERT INTO wms.task_lines (task_id, variant_id, line_status) VALUES ('{task}', '{variantId}', '{lineStatus}');
+            """);
+    }
 
     private static Task AddQuotationLineAsync(PostgreSqlContainer database, Guid tenantId, Guid variantId) =>
         AddLineAsync(database, "quotations.quotations", "quotations.quotation_items", "quotation_id", tenantId, variantId);
