@@ -296,6 +296,18 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
+    // Spec 2026-11-26, «PDF del registro eliminado»: se purga el PDF que Hr soltó y que ninguna tabla de Hr nombra ya. Lo llama
+    // HrDocumentPurge bajo el candado de fila, después de la segunda pregunta a IHrDocumentReferences y de borrar los objetos de R2.
+    // Sólo un HrDocument Available: cualquier otro dueño o estado se rechaza, para que un aviso equivocado no purgue nada ajeno.
+    public void PurgeReleasedHrDocument(DateTimeOffset occurredAt)
+    {
+        RequireHrDocument();
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
     // Soporte fase 3 (plan F36): el adjunto del formulario público que ningún ticket reclamó a tiempo se purga. Lo llama el barrido de
     // staging después de preguntar a las sondas; quien llama borra antes los objetos (el final y sus variantes).
     public void PurgeUnclaimedSupportAttachment(DateTimeOffset occurredAt)
@@ -460,6 +472,16 @@ public sealed class FileResource
             throw new StorageDomainException(
                 "storage.file.invalid_state",
                 $"Expected a {FileOwnerType.Product} resource but it was {OwnerType}.");
+        }
+    }
+
+    private void RequireHrDocument()
+    {
+        if (OwnerType is not FileOwnerType.HrDocument)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                $"Expected a {FileOwnerType.HrDocument} resource but it was {OwnerType}.");
         }
     }
 

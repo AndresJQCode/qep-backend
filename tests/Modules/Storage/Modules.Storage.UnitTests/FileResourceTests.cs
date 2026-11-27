@@ -286,4 +286,57 @@ public sealed class FileResourceTests
         Assert.Equal("storage.file.invalid_state", ex.Code);
         Assert.Equal(FileResourceStatus.Available, resource.Status);
     }
+
+    private static FileResource NewHrDocument(bool available = true)
+    {
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.HrDocument,
+            "contrato.pdf", "application/pdf", 1024, "staging/contrato", DateTimeOffset.UtcNow);
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        if (available)
+        {
+            resource.MarkClean(DateTimeOffset.UtcNow);
+        }
+
+        return resource;
+    }
+
+    [Fact]
+    public void PurgeReleasedHrDocumentMarksAnAvailableHrDocumentPurged()
+    {
+        var resource = NewHrDocument();
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        resource.PurgeReleasedHrDocument(now);
+
+        Assert.Equal(FileResourceStatus.Purged, resource.Status);
+        Assert.Equal(now, resource.DeletedAt);
+        Assert.Equal(now, resource.UpdatedAt);
+    }
+
+    [Fact]
+    public void PurgeReleasedHrDocumentRequiresAvailable()
+    {
+        var resource = NewHrDocument(available: false);
+        Assert.Equal(FileResourceStatus.PendingScan, resource.Status);
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedHrDocument(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+        Assert.Equal(FileResourceStatus.PendingScan, resource.Status);
+    }
+
+    [Fact]
+    public void PurgeReleasedHrDocumentRequiresAnHrDocument()
+    {
+        var resource = NewProductImage();
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedHrDocument(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+        Assert.Equal(FileResourceStatus.Available, resource.Status);
+        Assert.Null(resource.DeletedAt);
+    }
 }
