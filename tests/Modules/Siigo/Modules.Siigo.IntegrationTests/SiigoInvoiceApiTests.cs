@@ -185,9 +185,13 @@ public sealed class SiigoInvoiceApiTests
         await IssueRowsThroughBatchAsync(world);
         await ExecuteAsync(world.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
 
-        var item = await IssueThroughBatchAsync(world);
+        // El 503 dejó la factura Pending por confirmar: Siigo pudo haberla creado. El reintento no sale, y el ítem termina ToConfirm con
+        // esa fila y el motivo del fallo, no Failed: «fallido» invitaría a crearla otra vez (spec 2026-11-24, decidido el 2026-11-25;
+        // SiigoBatchItemInvoker.KeepWhatMayExistAsync).
+        var item = await RunBatchOfOneAsync(world);
 
-        Assert.Equal(("Failed", "siigo.connection_unavailable"), Outcome(item));
+        Assert.Equal(("ToConfirm", "siigo.connection_unavailable"), Outcome(item));
+        Assert.Equal(await InvoiceIdAsync(world), item.GetProperty("invoiceId").GetGuid());
         Assert.Equal("Pending", await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoices"));
         Assert.Single(InvoiceCalls(world.Siigo));
     }

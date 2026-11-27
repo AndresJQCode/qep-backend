@@ -160,7 +160,8 @@ public sealed class SupervisorTaskActionsTests
         claimed.Heartbeat(TaskWorld.Member, claimed.LeaseToken!.Value, TaskWorld.Start.AddMinutes(9));
         world.AddTask();
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members(),
+            world.Clock());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
@@ -175,6 +176,50 @@ public sealed class SupervisorTaskActionsTests
         Assert.Empty(board.StaleAssignments);
     }
 
+    // B4 (owner, 2026-11-27): sin tope automático; el tablero marca «sin avance» y el supervisor decide. El latido renueva
+    // LastActivityAt, así que no cuenta como avance.
+    [Fact]
+    public async Task TheBoardMarksATaskWithoutProgressEvenWhileTheHeartbeatKeepsTheLease()
+    {
+        var world = new TaskWorld();
+        var claimed = world.AddTask();
+        claimed.Claim(TaskWorld.Member, TaskWorld.Device, TaskWorld.Start.AddMinutes(1));
+        claimed.Heartbeat(TaskWorld.Member, claimed.LeaseToken!.Value, TaskWorld.Start.AddMinutes(25));
+        world.Now = TaskWorld.Start.AddMinutes(30);
+
+        var worker = Assert.Single((await BoardAsync(world)).Operators);
+
+        Assert.Equal(TaskWorld.Start.AddMinutes(1), worker.LastProgressAt);
+        Assert.Equal(TaskWorld.Start.AddMinutes(25), worker.LastActivityAt);
+        Assert.True(worker.Stalled);
+    }
+
+    [Fact]
+    public async Task AConfirmedLineIsProgressAndFifteenMinutesWithoutItIsStalled()
+    {
+        var world = new TaskWorld();
+        var claimed = world.AddTask(lines: [world.Line(5), world.Line(5)]);
+        claimed.Claim(TaskWorld.Member, TaskWorld.Device, TaskWorld.Start);
+        claimed.ConfirmLine(
+            TaskWorld.Member, claimed.LeaseToken!.Value, TaskWorld.Device, claimed.Lines[0].Id, 5, TaskWorld.Start.AddMinutes(20));
+
+        world.Now = TaskWorld.Start.AddMinutes(34);
+        var fresh = Assert.Single((await BoardAsync(world)).Operators);
+        world.Now = TaskWorld.Start.AddMinutes(35);
+        var stalled = Assert.Single((await BoardAsync(world)).Operators);
+
+        Assert.Equal(2, world.ProgressReads);
+        Assert.Equal(TaskWorld.Start.AddMinutes(20), fresh.LastProgressAt);
+        Assert.False(fresh.Stalled);
+        Assert.True(stalled.Stalled);
+    }
+
+    private static Task<TaskBoardDto> BoardAsync(TaskWorld world) =>
+        new GetTaskBoardHandler(
+                world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members(),
+                world.Clock())
+            .HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
+
     // M1: una asignada a quien ya no puede hacerla no la reclama nadie; el tablero la muestra completa y con nombre.
     [Fact]
     public async Task TheBoardListsAssignmentsTheAssigneeCanNoLongerPerform()
@@ -186,7 +231,8 @@ public sealed class SupervisorTaskActionsTests
         world.AddTask(assignTo: TaskWorld.Member);
         world.AddTask();
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members(),
+            world.Clock());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
@@ -209,7 +255,8 @@ public sealed class SupervisorTaskActionsTests
         var lost = world.AddTask(assignTo: TaskWorld.OtherMember);
         world.AddTask(assignTo: TaskWorld.Member);
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members(),
+            world.Clock());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 

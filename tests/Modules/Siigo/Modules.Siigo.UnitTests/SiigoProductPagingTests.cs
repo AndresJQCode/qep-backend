@@ -75,6 +75,10 @@ public sealed class SiigoProductPagingTests
             Guid tenantId, Guid connectionId, bool withVariantLinks, CancellationToken cancellationToken) =>
             Task.FromResult<SiigoSettings?>(SiigoSettings.Create(connectionId, tenantId));
 
+        public Task<SiigoSettings?> FindAsync(
+            Guid tenantId, Guid connectionId, bool withVariantLinks, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<SiigoSettings?> FindByCompanyAsync(
             Guid tenantId, Guid companyId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

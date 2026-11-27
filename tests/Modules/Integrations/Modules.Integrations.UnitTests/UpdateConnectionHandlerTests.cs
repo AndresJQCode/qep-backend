@@ -333,4 +333,88 @@ public sealed class UpdateConnectionHandlerTests
         Assert.Equal("+57 300 123 4567", response.Fields[WhatsAppCloudFieldKeys.DisplayPhoneNumber]);
         Assert.Equal(1, response.Version);
     }
+
+    // --- Cambio de cuenta del proveedor (tarjeta 0pQhlDt5) ---
+
+    [Fact]
+    public async Task ANewSecretAsksTheGuardWithTheMergedCredentialsAndTheConfirmationFlag()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+
+        await bed.UpdateHandler().HandleAsync(
+            Update(bed, connection, secrets: new Dictionary<string, string?> { [ZenviaFieldKeys.ApiToken] = "token-nuevo" }) with
+            {
+                ConfirmSiigoAccountChange = true,
+            },
+            Ct);
+
+        var check = Assert.Single(bed.CredentialGuard.Checks);
+        Assert.Equal(connection.ProviderKey, check.ProviderKey);
+        Assert.Equal(connection.Id, check.ConnectionId);
+        Assert.Equal("token-nuevo", check.Secrets[ZenviaFieldKeys.ApiToken]);
+        Assert.Equal(IntegrationsTestBed.FromNumber, check.Fields[ZenviaFieldKeys.FromNumber]);
+        Assert.True(check.Confirmed);
+        Assert.Empty(bed.CredentialGuard.Resets);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+        Assert.Equal(0, bed.UnitOfWork.Transactions);
+    }
+
+    [Fact]
+    public async Task RenamingOnlyNeverAsksTheGuard()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+
+        await bed.UpdateHandler().HandleAsync(Update(bed, connection, name: "Sede sur"), Ct);
+
+        Assert.Empty(bed.CredentialGuard.Checks);
+    }
+
+    [Fact]
+    public async Task AGuardConflictSavesNothing()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        bed.CredentialGuard.FailWith = new ResourceConflictException("siigo.connection.account_changed", "Another account.");
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => bed.UpdateHandler().HandleAsync(
+            Update(bed, connection, secrets: new Dictionary<string, string?> { [ZenviaFieldKeys.ApiToken] = "token-nuevo" }), Ct));
+
+        Assert.Equal("siigo.connection.account_changed", error.Code);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+        Assert.Empty(bed.Audit.Entries);
+        Assert.Empty(bed.CredentialGuard.Resets);
+    }
+
+    [Fact]
+    public async Task AConfirmedAccountChangeResetsTheConfigurationInTheSameTransactionAsTheSave()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        bed.CredentialGuard.MustReset = true;
+
+        await bed.UpdateHandler().HandleAsync(
+            Update(bed, connection, secrets: new Dictionary<string, string?> { [ZenviaFieldKeys.ApiToken] = "token-nuevo" }), Ct);
+
+        Assert.Equal(connection.Id, Assert.Single(bed.CredentialGuard.Resets));
+        Assert.True(bed.CredentialGuard.InTransactionAtReset);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+        Assert.True(bed.UnitOfWork.SavedInsideTransaction);
+        Assert.Equal("token-nuevo", StoredToken(connection));
+    }
+
+    [Fact]
+    public async Task AFailedSaveAfterTheResetLeavesTheTransactionToRollBack()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        bed.CredentialGuard.MustReset = true;
+        bed.UnitOfWork.FailWith = new RequestConcurrencyException("concurrency.conflict", "Changed meanwhile.");
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => bed.UpdateHandler().HandleAsync(
+            Update(bed, connection, secrets: new Dictionary<string, string?> { [ZenviaFieldKeys.ApiToken] = "token-nuevo" }), Ct));
+
+        Assert.False(bed.UnitOfWork.InTransaction);
+    }
 }

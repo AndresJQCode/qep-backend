@@ -45,6 +45,43 @@ public sealed class HrRequestValidatorsTests
 
     private static string[] FailedHire(CreateEmployeeRequest request) => Failed(new CreateEmployeeRequestValidator(), request);
 
+    [Theory]
+    [InlineData("CC", "PEREZ")]
+    [InlineData("CE", "12A45")]
+    [InlineData("PEP", "12 345")]
+    [InlineData("PPT", "abc")]
+    public void ALetteredOrSpacedNumberForANumericTypeFailsOnTheDocumentNumber(string type, string number)
+    {
+        var request = Hire() with { DocumentType = type, DocumentNumber = number };
+
+        Assert.Contains("documentNumber", FailedHire(request));
+    }
+
+    [Theory]
+    [InlineData("PEP", "12.345-6")]
+    [InlineData("PA", "AB123")]
+    [InlineData("CD", "X-12")]
+    [InlineData("SC", "S12")]
+    public void ANumberTheTypeAllowsPasses(string type, string number)
+    {
+        var request = Hire() with { DocumentType = type, DocumentNumber = number };
+
+        Assert.Empty(FailedHire(request));
+    }
+
+    [Fact]
+    public void TheNumericMessageNamesTheHrTypes()
+    {
+        var validator = new EmployeeRequestValidator();
+
+        var error = Assert.Throws<ValidationException>(() =>
+            validator.ValidateAndThrow(Hire() with { DocumentType = "CC", DocumentNumber = "PEREZ" }));
+
+        Assert.Contains(error.Errors, e => e.PropertyName == "documentNumber"
+            && e.ErrorMessage == HrDocumentNumberRules.NumericTypesMessage);
+        Assert.Equal("El número de documento solo puede tener números para CC, CE, PEP y PPT.", HrDocumentNumberRules.NumericTypesMessage);
+    }
+
     [Fact]
     public void AValidHirePasses() => Assert.Empty(FailedHire(Hire()));
 

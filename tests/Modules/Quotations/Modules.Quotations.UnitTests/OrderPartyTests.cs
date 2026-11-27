@@ -29,6 +29,28 @@ public sealed class OrderPartyTests
         Assert.Contains("Parties.Billing.IdentificationType", error.FieldErrors.Keys);
     }
 
+    [Theory]
+    [InlineData(PartyIdentificationType.Nit, "ACME SAS")]
+    [InlineData(PartyIdentificationType.Cc, "12A45")]
+    [InlineData(PartyIdentificationType.Ce, "abc")]
+    public void ABillingPartyWithALetteredNumberForANumericTypeIsRejected(PartyIdentificationType type, string number)
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => Party(
+            Contact() with { IdentificationType = type, IdentificationNumber = number },
+            QuotationPartyRole.Billing));
+
+        Assert.Equal("quotations.party.identification_number_not_numeric", error.Code);
+        Assert.Contains("Parties.Billing.IdentificationNumber", error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void ABillingPartyKeepsAPassportNumberWithLetters() =>
+        Assert.Equal(
+            "AB123",
+            Party(
+                Contact() with { IdentificationType = PartyIdentificationType.Pasaporte, IdentificationNumber = "AB123" },
+                QuotationPartyRole.Billing).IdentificationNumber);
+
     [Fact]
     public void ABlankCountryIsColombiaForTheDocument()
     {

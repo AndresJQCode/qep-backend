@@ -407,6 +407,41 @@ public sealed class CompanyTests
         Assert.Equal("companies.company.document_type_not_allowed", exception.Code);
     }
 
+    [Theory]
+    [InlineData(CompanyDocumentType.Nit)]
+    [InlineData(CompanyDocumentType.Cc)]
+    [InlineData(CompanyDocumentType.Ce)]
+    public void ANumericTypeWithLettersInTheTaxIdIsRejected(CompanyDocumentType type)
+    {
+        var exception = Fails(() => Create(taxId: "9001112A-3", documentType: type));
+
+        Assert.Equal("companies.company.tax_id_not_numeric", exception.Code);
+    }
+
+    [Fact]
+    public void UpdateAlsoRejectsLettersInANumericTaxId()
+    {
+        var company = Create();
+
+        var exception = Fails(() => company.Update(
+            "Andes", Accounts(), "ABC-123", "CO", CompanyDocumentType.Nit, CityId, null,
+            CompanyContactInfo.Empty, Now.AddMinutes(5), chargesVat: true));
+
+        Assert.Equal("companies.company.tax_id_not_numeric", exception.Code);
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Equal(
+            "AB123456",
+            Create(taxId: "AB123456", documentType: CompanyDocumentType.Pasaporte, cityName: "X").TaxId);
+
+    [Fact]
+    public void ANieWithLettersIsAccepted() =>
+        Assert.Equal(
+            "X1234567L",
+            Create(country: "ES", taxId: "X1234567L", documentType: CompanyDocumentType.Nie, cityName: "Madrid").TaxId);
+
     [Fact]
     public void UpdateColombiaToUsClearsCityId()
     {

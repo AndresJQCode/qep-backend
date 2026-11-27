@@ -111,8 +111,7 @@ public sealed class SaveQuotationHandler(
         // mientras la persona escribe. El guardado sí: nada se persiste si esto lanza. El
         // validador ya lo frena antes con el campo en `errors`; esto es el respaldo del dominio.
         quotation.EnsureBillingIdentified();
-        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken);
-        BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails(), regional?.Country);
+        BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails());
         await BillingPersonTypeRequirement.EnsureForQuotationAsync(
             tenantDirectory, command.TenantId, quotation, cancellationToken);
 

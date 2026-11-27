@@ -61,6 +61,19 @@ public sealed class CreateTicketValidatorTests
         Assert.Empty(Errors(Command(requester: Ana with { DocumentType = "NIE" }, tenantCountry: "ES")));
     }
 
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void ANumericTypeWithLettersFailsOnTheNumber(string type) =>
+        Assert.Equal(
+            ["Requester.DocumentNumber"],
+            Errors(Command(requester: Ana with { DocumentType = type, DocumentNumber = "10203A4050" })));
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Empty(Errors(Command(requester: Ana with { DocumentType = "PASAPORTE", DocumentNumber = "AB123456" })));
+
     [Fact]
     public void ADocumentNumberWithoutTypeFails()
     {

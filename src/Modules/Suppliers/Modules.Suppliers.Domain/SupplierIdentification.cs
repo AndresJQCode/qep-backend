@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Suppliers.Domain;
 
 /// <summary>
@@ -24,10 +26,23 @@ public sealed record SupplierIdentification(IdentificationType Type, string Numb
         // Sólo se recorta: los puntos y guiones de un NIT ("900.123.456-7") son como la persona
         // lo escribe y como lo va a buscar.
         var trimmed = number.Trim();
-        return trimmed.Length > NumberMaxLength
-            ? throw new SuppliersDomainException(
+        if (trimmed.Length > NumberMaxLength)
+        {
+            throw new SuppliersDomainException(
                 "suppliers.supplier.identification_number_too_long",
-                $"The supplier identification number cannot exceed {NumberMaxLength} characters.")
-            : new SupplierIdentification(type, trimmed);
+                $"The supplier identification number cannot exceed {NumberMaxLength} characters.");
+        }
+
+        // NIT, CC y CE solo llevan dígitos (con punto, guion y espacio). Se bloquea siempre, también un
+        // número viejo que se reenvía sin cambios: vive solo en el alta y la edición, nunca al leer del
+        // repositorio, así que un proveedor ya guardado con letras se sigue leyendo.
+        if (!DocumentNumberFormat.IsValidFor(type.ToWire(), trimmed))
+        {
+            throw new SuppliersDomainException(
+                "suppliers.supplier.identification_number_not_numeric",
+                DocumentNumberFormat.NumericTypesMessage);
+        }
+
+        return new SupplierIdentification(type, trimmed);
     }
 }

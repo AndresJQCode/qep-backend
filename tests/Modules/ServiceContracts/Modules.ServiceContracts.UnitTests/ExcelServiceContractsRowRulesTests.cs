@@ -42,6 +42,7 @@ public sealed class ExcelServiceContractsRowRulesTests
     [InlineData("billing.import.row.identification_incomplete", nameof(ExcelServiceContractsRow.IdentificationNumber), null)]
     [InlineData("billing.import.row.identification_incomplete", nameof(ExcelServiceContractsRow.IdentificationType), null)]
     [InlineData("billing.import.row.identification_type_invalid", nameof(ExcelServiceContractsRow.IdentificationType), "RUT")]
+    [InlineData("billing.import.row.identification_number_not_numeric", nameof(ExcelServiceContractsRow.IdentificationNumber), "ACME SAS")]
     [InlineData("billing.import.row.phone_invalid", nameof(ExcelServiceContractsRow.Phone), "12")]
     [InlineData("billing.import.row.phone_required", nameof(ExcelServiceContractsRow.Phone), null)]
     [InlineData("billing.import.row.email_invalid", nameof(ExcelServiceContractsRow.Email), "not-an-email")]
@@ -68,6 +69,10 @@ public sealed class ExcelServiceContractsRowRulesTests
 
         Assert.Contains(code, CodesOf(With(field, cell)));
     }
+
+    [Fact]
+    public void ALetteredPassportNumberIsAccepted() =>
+        Assert.Empty(CodesOf(ValidRow() with { IdentificationType = "PASAPORTE", IdentificationNumber = "AB1" }));
 
     [Fact]
     public void TheEmailChannelRequiresAnEmail()

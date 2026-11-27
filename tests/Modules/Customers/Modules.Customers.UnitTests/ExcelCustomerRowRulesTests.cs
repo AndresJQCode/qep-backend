@@ -57,6 +57,20 @@ public sealed class ExcelCustomerRowRulesTests
     }
 
     [Fact]
+    public void ACcRowWithLettersFailsWithTheNotNumericCode()
+    {
+        var result = validator.Validate(ValidRow(identificationType: "CC", identificationNumber: "JUAN PEREZ"));
+
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.identification_number_not_numeric" &&
+            error.PropertyName == nameof(ExcelCustomerRow.IdentificationNumber));
+    }
+
+    [Fact]
+    public void APassportRowWithLettersIsValid() =>
+        Assert.True(validator.Validate(ValidRow(identificationType: "PASAPORTE", identificationNumber: "AB123")).IsValid);
+
+    [Fact]
     public void ARowWithOnlyANumberIsIncomplete()
     {
         var result = new ExcelCustomerRowRules(Relaxed).Validate(

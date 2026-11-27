@@ -2362,6 +2362,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ISiigoVariantCatalog, SiigoVariantCatalog>();
         services.AddValidatorsFromAssemblyContaining<UpdateSiigoDocumentValidator>();
         services.AddScoped<ISiigoConnectionDirectory, SiigoConnectionDirectory>();
+        // Tarjeta 0pQhlDt5: editar la conexión con las credenciales de otra cuenta de Siigo. Siigo compara y borra su configuración;
+        // el adaptador de Bootstrapper une las dos bases en una transacción (Integrations no ve Siigo).
+        services.AddScoped<ISiigoAccountChange, SiigoAccountChange>();
+        services.AddScoped<IConnectionCredentialChangeGuard, SiigoCredentialChangeGuard>();
         services.AddScoped<ISiigoCompanyDirectory, SiigoCompanyDirectory>();
         services.AddScoped<ISiigoTaxRateDirectory, SiigoTaxRateDirectory>();
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
@@ -2556,6 +2560,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeWhatsApp, TaskNoticeWhatsAppSender>();
         // HR birthday notices spec 2026-11-26 §5.3: the WhatsApp digest, through the approved HrBirthdayNotice template of Messaging.
         services.AddScoped<Modules.Notifications.Application.IHrBirthdayWhatsApp, HrBirthdayWhatsAppSender>();
+        // The digest names employees: the worker re-checks the manager still holds hr.employee.read right before sending.
+        services.AddScoped<Modules.Notifications.Application.IHrBirthdayAccess, HrBirthdayAccess>();
         services.AddScoped<
             IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
             Modules.Notifications.Application.ListInAppNotificationsHandler>();

@@ -79,6 +79,40 @@ public sealed class DistributorTests
         Assert.Equal(expected, distributor.HasCompanyCity);
     }
 
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void InviteRejectsLettersInANumericNumber(string type)
+    {
+        var exception = Assert.Throws<WholesaleDomainException>(() => Distributor.Invite(
+            Tenant, "ana@distri.co", "Distribuciones Norte SAS", "CO", type, "9001234A5", "Ana Pérez", PriceListId.New(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Hash1, Guid.CreateVersion7(), null, null, Now));
+
+        Assert.Equal("wholesale.distributor.identification_number_not_numeric", exception.Code);
+    }
+
+    [Fact]
+    public void ChangeProfileRejectsLettersInANumericNumber()
+    {
+        var distributor = Invite();
+
+        var exception = Assert.Throws<WholesaleDomainException>(
+            () => distributor.ChangeProfile("ana@distri.co", "Norte", "CO", "NIT", "ABC123", "Ana", null, null, null));
+
+        Assert.Equal("wholesale.distributor.identification_number_not_numeric", exception.Code);
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAccepted()
+    {
+        var distributor = Distributor.Invite(
+            Tenant, "ana@distri.co", "Distribuciones Norte SAS", "CO", "PASAPORTE", "AB123456", "Ana Pérez", PriceListId.New(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Hash1, Guid.CreateVersion7(), null, null, Now);
+
+        Assert.Equal("AB123456", distributor.IdentificationNumber);
+    }
+
     private static Distributor InviteAt(string country, Guid? cityId, string? cityName, string? address) =>
         Distributor.Invite(
             Tenant, "ana@distri.co", "Distribuciones Norte SAS", country, "NIT", "900123456", "Ana Pérez", PriceListId.New(),

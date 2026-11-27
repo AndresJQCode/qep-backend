@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using Modules.Customers.Application;
 
 namespace Modules.Customers.UnitTests;
@@ -8,7 +9,7 @@ public sealed class CustomerDocumentCountryRulesTests
     private static readonly CreateCustomerValidator Validator = new();
 
     private static CreateCustomerCommand Command(string type, string country) =>
-        new(CustomerWriteDoubles.Tenant, "Laura Pérez", null, type, "X1234567", "310 935 2187", "laura@verde.co",
+        new(CustomerWriteDoubles.Tenant, "Laura Pérez", null, type, "1234567", "310 935 2187", "laura@verde.co",
             "Calle 10", country,
             country.Trim().Equals("CO", StringComparison.OrdinalIgnoreCase) ? CustomerWriteDoubles.CityId : null,
             country.Trim().Equals("CO", StringComparison.OrdinalIgnoreCase) ? null : "Madrid", null, false);
@@ -35,6 +36,24 @@ public sealed class CustomerDocumentCountryRulesTests
         Assert.Equal(["IdentificationType"], errors.Select(error => error.PropertyName).Distinct());
         Assert.Equal("The identification type is not allowed for the country.", Assert.Single(errors).ErrorMessage);
     }
+
+    [Fact]
+    public void ANitWithLettersIsRejectedOnTheNumber()
+    {
+        var error = Assert.Single(
+            Validator.Validate(Command("NIT", "CO") with { IdentificationNumber = "ACME SAS" }).Errors);
+
+        Assert.Equal("IdentificationNumber", error.PropertyName);
+        Assert.Equal(DocumentNumberFormat.NumericTypesMessage, error.ErrorMessage);
+    }
+
+    [Fact]
+    public void ANitWithDotsAndHyphenIsAccepted() =>
+        Assert.True(Validator.Validate(Command("NIT", "CO") with { IdentificationNumber = "900.123.456-7" }).IsValid);
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.True(Validator.Validate(Command("PASAPORTE", "CO") with { IdentificationNumber = "AB123456" }).IsValid);
 
     [Fact]
     public void AMalformedCountryIsReportedOnTheCountryAlone()

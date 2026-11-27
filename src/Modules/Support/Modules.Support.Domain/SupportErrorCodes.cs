@@ -12,6 +12,9 @@ public static class SupportErrorCodes
 
     public const string RequesterRequired = "support.ticket.requester_required";
 
+    /// <summary>NIT, CC and CE document numbers only admit digits, dots, dashes and spaces (422). It marks the requester's document number.</summary>
+    public const string DocumentNumberNotNumeric = "support.ticket.document_number_not_numeric";
+
     /// <summary>R9 [owner 2026-11-15]: un ticket resuelto o cerrado no se reasigna, no cambia de tipo ni de cliente; cerrado, tampoco
     /// fija ni suelta mensajes ni cambia «Seguir el hilo» (R9 extendida).</summary>
     public const string NotEditable = "support.ticket.not_editable";

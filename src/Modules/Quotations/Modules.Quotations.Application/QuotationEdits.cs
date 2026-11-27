@@ -159,6 +159,14 @@ internal sealed class QuotationPartiesRequestValidator : AbstractValidator<Quota
             .WithMessage("The person type must be one of Natural or Juridica.")
             .When(parties => !string.IsNullOrWhiteSpace(parties.Billing?.PersonType));
 
+        // (Nombre completo: Application ya tiene un DocumentNumberFormat de numeración.)
+        // NIT, CC y CE solo admiten dígitos y separadores. Aparte de la regla del tipo: un tipo desconocido no
+        // tiene regla de número. También en el cálculo previo, y también para un número viejo reenviado igual.
+        RuleFor(parties => parties.Billing!.IdentificationNumber)
+            .Must((parties, number) => BuildingBlocks.Domain.Identification.DocumentNumberFormat.IsValidFor(parties.Billing!.IdentificationType, number))
+            .WithMessage(BuildingBlocks.Domain.Identification.DocumentNumberFormat.NumericTypesMessage)
+            .When(parties => !string.IsNullOrWhiteSpace(parties.Billing?.IdentificationNumber));
+
         // Contra el valor recortado, que es lo que el dominio guarda y compara.
         RuleFor(parties => parties.Billing!.IdentificationNumber)
             .Must(number => number!.Trim().Length <= QuotationPartyDetails.IdentificationNumberMaxLength)

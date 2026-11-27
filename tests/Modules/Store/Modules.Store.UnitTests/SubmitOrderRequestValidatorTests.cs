@@ -43,6 +43,19 @@ public sealed class SubmitOrderRequestValidatorTests
     [InlineData(" nif ", " es ")]
     public void AnAllowedForeignPairIsValid(string type, string country) => Assert.Empty(Errors(Body(Abroad(type, country))));
 
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void ANumericTypeWithLettersFailsOnTheNumber(string type) =>
+        Assert.Equal(
+            ["Billing.IdentificationNumber"],
+            Errors(Body(Billing() with { IdentificationType = type, IdentificationNumber = "12345A" })));
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Empty(Errors(Body(Billing() with { IdentificationType = "PASAPORTE", IdentificationNumber = "AB123456" })));
+
     [Fact]
     public void AColombianCcIsValid() => Assert.Empty(Errors(Body()));
 

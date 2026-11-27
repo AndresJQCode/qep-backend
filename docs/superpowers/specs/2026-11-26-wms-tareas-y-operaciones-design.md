@@ -16,6 +16,10 @@
 - **Lo que este documento reemplaza del spec de arquitectura:** la orden de compra propia del WMS (§9.1 «documento origen», corte
   WMS-C) por la de `Purchases` (§9.1); `putaway-tasks` de §24.4 por el motor de tareas (§6); el agregado `Discrepancy` de §9.3 por la
   novedad unificada `Incident` (§8), que conserva sus cinco resoluciones y la regla de los dos momentos. Lo demás sigue vigente.
+- **Vocabulario (decisión del owner, 2026-11-26):** la unidad logística identificada con etiqueta propia (LPN, `HandlingUnit`, la
+  «unidad» de D-12: caja o palet) se llama **Placa** en todo texto que vea una persona: pantallas de la web y de la app, etiquetas,
+  mensajes de error, reportes y correos. El código y el contrato no cambian: el agregado sigue siendo `HandlingUnit` y los campos
+  `handlingUnitId`. Donde este documento dice «unidad», «caja / palet» o LPN refiriéndose a ella, en la interfaz es «Placa».
 
 ---
 
@@ -1079,18 +1083,24 @@ ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que
   `version + 1` y un evento `Claimed` con el celular nuevo (sin un `TaskEventKind` nuevo). El primer celular recibe 409
   `wms.task.lease_lost` con `resumable: false` al confirmar, reportar faltante, contar, latir o soltar. Desde el mismo celular
   nada cambia (mismo token, sin evento ni versión). Reemplaza el comportamiento provisional de T1.
+- **B4. Decidido e implementado.** No hay tope automático de edad del reclamo. El tablero (`GET /tasks/summary`, `operators[]`) trae
+  `lastProgressAt` (la hora de guardado del último evento `Claimed`, `LeaseResumed`, `LineConfirmed`, `LineShort` o `LineCancelled`
+  de la tarea, en una sola consulta para todas las que están en curso) y `stalled` (el servidor lo calcula: `ahora - lastProgressAt
+  >= 15 minutos`). `lastActivityAt` no basta: el latido lo renueva. El umbral de 15 minutos lo aprobó el owner (2026-11-27).
+  El supervisor decide si suelta o reasigna.
 - **B5. Decidido e implementado.** El día de `TSK-yyyyMMdd-NNNN` es el del huso del tenant (`ITenantClock`), no el de UTC, para el
-  mismo instante `now` que usa el handler (`WmsNumberingDay`). Los números ya emitidos no cambian. Decisión del agente, por confirmar:
+  mismo instante `now` que usa el handler (`WmsNumberingDay`). Los números ya emitidos no cambian. Aprobado por el owner (2026-11-27):
   `ADJ-` e `INC-` también cortan el día en el huso del tenant (la tarjeta decía «como los ajustes», pero en el código ajustes y
   novedades cortaban en UTC). El contador diario sigue siendo por prefijo `TSK-yyyyMMdd-`: el día local cambia de prefijo a las 00:00 locales.
 
-**Pendientes del owner** (no se implementan sin respuesta):
+- **Tolerancia de reloj de 5 minutos. Aprobada** (B2): ya estaba implementada en T1, no se cambió código.
 
-- **B4.** ¿Un reclamo tiene una edad máxima, aunque siga latiendo? Hoy un operario que deja la app abierta la conserva sin límite.
+**Pendientes del owner:** ninguno de T1. Por confirmar, decisiones del agente: ADJ-/INC- en el huso del tenant y el umbral de 15 minutos de «sin avance».
 
 ## 14. Preguntas para el owner
 
-O-1 a O-7 se contestaron el 2026-11-26: ver §13.1. M3 y B5 se decidieron el 2026-11-27 (§13.1); sigue abierta B4.
+O-1 a O-7 se contestaron el 2026-11-26: ver §13.1. M3, B4, B5 y la regla de dos celulares se decidieron el 2026-11-27 (§13.1); la
+tolerancia de reloj de 5 minutos se aprobó y ya estaba implementada (`LedgerEntryRules.ClockToleranceMinutes`).
 
 ## 15. Riesgos
 

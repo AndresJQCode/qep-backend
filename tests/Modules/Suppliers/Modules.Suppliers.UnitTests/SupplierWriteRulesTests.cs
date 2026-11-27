@@ -47,6 +47,14 @@ public sealed class SupplierWriteRulesTests
         Assert.Empty(ErrorKeys(Command()));
 
     [Fact]
+    public void ANitWithLettersIsRejectedOnTheNumber() =>
+        Assert.Contains("IdentificationNumber", ErrorKeys(Command() with { IdentificationNumber = "9001234A-7" }));
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Empty(ErrorKeys(Command() with { IdentificationType = "PASAPORTE", IdentificationNumber = "AB123456" }));
+
+    [Fact]
     public void AValidForeignCommandPasses() =>
         Assert.Empty(ErrorKeys(Command(country: "US", cityName: "Miami")));
 

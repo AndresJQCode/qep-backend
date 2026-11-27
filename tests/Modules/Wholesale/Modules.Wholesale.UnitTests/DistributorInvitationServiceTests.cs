@@ -76,12 +76,12 @@ public sealed class DistributorInvitationServiceTests
     public async Task AcceptCreatesTheCustomerWithTheDistributorType()
     {
         var token = InvitationTokens.Generate();
-        _world.SeedInvited("X-123", tokenHash: InvitationTokens.HashOf(token), identificationType: "CE");
+        _world.SeedInvited("123", tokenHash: InvitationTokens.HashOf(token), identificationType: "CE");
 
         await Service().AcceptAsync(token, _user, "ana@distri.co", new NewTenantChoice(NewTenantData), "trace-accept", Ct);
 
         var customer = Assert.Single(_customers.Calls);
-        Assert.Equal(("CO", "CE", "X-123"), (customer.Country, customer.IdentificationType, customer.Identification));
+        Assert.Equal(("CO", "CE", "123"), (customer.Country, customer.IdentificationType, customer.Identification));
     }
 
     [Fact]

@@ -135,6 +135,12 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
                 .WithMessage("El tipo de documento no es válido para el país.")
                 .When(b => DocumentTypesByCountry.IsKnown(b.IdentificationType) && !string.IsNullOrWhiteSpace(b.Country) && CountryShape(b.Country));
             RuleFor(b => b.IdentificationNumber).NotEmpty().MaximumLength(StoreRequestBilling.IdentificationNumberMaxLength);
+            // NIT, CC y CE solo llevan dígitos. Corre con un tipo conocido y un número no vacío (que falte lo dice la regla de
+            // arriba); marca IdentificationNumber para que el 422 lleve el mapa errors con la clave del input.
+            RuleFor(b => b.IdentificationNumber)
+                .Must((b, number) => DocumentNumberFormat.IsValidFor(b.IdentificationType, number))
+                .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+                .When(b => DocumentTypesByCountry.IsKnown(b.IdentificationType) && !string.IsNullOrWhiteSpace(b.IdentificationNumber));
             RuleFor(b => b.Phone).NotEmpty().MaximumLength(PhoneMaxLength);
             RuleFor(b => b.Email).NotEmpty().MaximumLength(StoreRequestBilling.EmailMaxLength).EmailAddress();
             RuleFor(b => b.Address).NotEmpty().MaximumLength(AddressMaxLength);

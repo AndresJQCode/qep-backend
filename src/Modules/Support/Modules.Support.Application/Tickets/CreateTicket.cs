@@ -130,6 +130,13 @@ public sealed class CreateTicketValidator : AbstractValidator<CreateTicketComman
                 .When(command => !string.IsNullOrWhiteSpace(command.Requester!.DocumentType))
                 .WithMessage("The document number is required with a document type.");
             RuleFor(command => command.Requester!.DocumentNumber).MustFit(0, TicketRequester.DocumentNumberMaxLength);
+            // NIT, CC y CE solo llevan dígitos. Corre con un tipo conocido y un número no vacío (que falte lo dice la regla de
+            // arriba); marca Requester.DocumentNumber para que el 422 lleve el mapa errors con la clave del input.
+            RuleFor(command => command.Requester!.DocumentNumber)
+                .Must((command, number) => DocumentNumberFormat.IsValidFor(command.Requester!.DocumentType, number))
+                .When(command => DocumentTypesByCountry.IsKnown(command.Requester!.DocumentType)
+                    && !string.IsNullOrWhiteSpace(command.Requester!.DocumentNumber))
+                .WithMessage(DocumentNumberFormat.NumericTypesMessage);
             RuleFor(command => command.Requester!.Email).MustFit(0, TicketRequester.EmailMaxLength);
             RuleFor(command => command.Requester!.Email)
                 .EmailAddress()

@@ -68,5 +68,12 @@ public sealed class BuyerProfile
         {
             throw new BuyerDomainException(BuyerErrorCodes.DocumentTypeNotAllowed, "El tipo de documento no es válido para el país.");
         }
+
+        // NIT, CC y CE solo llevan dígitos (con punto, guion y espacio). Se bloquea siempre y solo aquí, en el alta y el
+        // reemplazo; el record BuyerBillingData no lo comprueba, para que un jsonb viejo con letras siga leyéndose.
+        if (!DocumentNumberFormat.IsValidFor(data.Billing.IdentificationType, data.Billing.IdentificationNumber))
+        {
+            throw new BuyerDomainException(BuyerErrorCodes.IdentificationNumberNotNumeric, DocumentNumberFormat.NumericTypesMessage);
+        }
     }
 }

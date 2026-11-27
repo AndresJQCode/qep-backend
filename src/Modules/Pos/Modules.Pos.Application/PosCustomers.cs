@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -62,6 +63,13 @@ public sealed class CreatePosCustomerValidator : AbstractValidator<CreatePosCust
             .WithMessage("The identification type must be one of: " + string.Join(", ", PosCustomerRules.IdentificationTypes) + ".")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
         RuleFor(command => command.IdentificationNumber).MaximumLength(PosCustomerRules.IdentificationNumberMaxLength);
+        // NIT, CC y CE solo llevan dígitos. La regla vive en el catálogo compartido para que la caja y el módulo de
+        // clientes no discrepen; el número vacío lo decide el handler, que conoce la política del tenant.
+        RuleFor(command => command.IdentificationNumber)
+            .Must((command, number) => DocumentNumberFormat.IsValidFor(command.IdentificationType, number))
+            .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+            .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType)
+                && !string.IsNullOrWhiteSpace(command.IdentificationNumber));
         RuleFor(command => command.Phone).MaximumLength(PosCustomerRules.PhoneMaxLength);
     }
 }

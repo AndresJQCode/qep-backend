@@ -3,26 +3,23 @@ namespace Modules.Quotations.Domain;
 /// <summary>
 /// La regla NIT de la parte de facturación (spec 2026-10-26): en Colombia una persona jurídica se
 /// identifica con NIT. Fuera de Colombia no existe esa distinción, así que no aplica.
+/// <para>
+/// El país que decide es el de la parte de facturación, no el del tenant: un tenant colombiano puede facturarle a una
+/// jurídica de Costa Rica, que se identifica con <c>TAX_ID</c> (Costa Rica no admite <c>NIT</c>, <see cref="PartyFiscalTypes"/>).
+/// Con el país del tenant esa parte no se podía guardar con ningún documento. Es la misma regla que
+/// <c>Customer.EnsurePersonTypeMatches</c> aplica con el país del cliente.
+/// </para>
 /// </summary>
 public static class BillingPartyFiscalRules
 {
-    // Comparación del país: ordinal, sin distinguir mayúsculas. El tipo de persona se exige en
-    // todos los países, pero esta regla NIT sigue siendo sólo colombiana.
-    private const string ColombiaCountryCode = "CO";
-
     public const string BillingIdentificationTypeKey = "Parties.Billing.IdentificationType";
 
-    /// <summary>Rechaza una jurídica con un documento que no es NIT, sólo si <paramref name="tenantCountry"/>
-    /// es colombiano. Una jurídica sin tipo de documento no es un conflicto: eso lo cubre la
-    /// exigencia de identificación (<c>identification_required</c>).</summary>
-    public static void EnsureConsistent(QuotationPartyDetails? billing, string? tenantCountry)
+    /// <summary>Rechaza una jurídica con un documento que no es NIT, sólo si la parte es colombiana (país en blanco = Colombia,
+    /// como <see cref="QuotationPartyDetails.IsColombian"/>). Una jurídica sin tipo de documento no es un conflicto: eso lo
+    /// cubre la exigencia de identificación (<c>identification_required</c>).</summary>
+    public static void EnsureConsistent(QuotationPartyDetails? billing)
     {
-        if (!string.Equals(tenantCountry, ColombiaCountryCode, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        if (billing is { PersonType: PartyPersonType.Juridica, IdentificationType: { } type }
+        if (billing is { IsColombian: true, PersonType: PartyPersonType.Juridica, IdentificationType: { } type }
             && type != PartyIdentificationType.Nit)
         {
             throw new QuotationsDomainException(

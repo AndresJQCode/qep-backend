@@ -336,6 +336,11 @@ internal static class SiigoApiHarness
                 builder.ConfigureTestServices(services => services
                     .AddHttpClient("siigo")
                     .ConfigurePrimaryHttpMessageHandler(() => siigo.CreateHandler()));
+                // El probador de credenciales de Integrations (editar una conexión) usa su propio cliente: otro doble, que siempre
+                // acepta, para que la prueba de credenciales pase y lo que se ejerza sea el cliente real de Siigo.
+                builder.ConfigureTestServices(services => services
+                    .AddHttpClient("integrations.siigo")
+                    .ConfigurePrimaryHttpMessageHandler(() => new FakeSiigoApi().CreateHandler()));
             }
 
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);

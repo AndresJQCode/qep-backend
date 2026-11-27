@@ -73,6 +73,13 @@ internal sealed class DistributorProfileValidator : AbstractValidator<IDistribut
             .When(command => IsCountryCode(command.Country) && !string.IsNullOrWhiteSpace(command.IdentificationType))
             .WithMessage("The identification type is not valid for the country.");
         RuleFor(command => command.IdentificationNumber).TrimmedText(DistributorTextLimits.IdentificationNumber);
+        // NIT, CC y CE solo llevan dígitos. Corre con un tipo y un número presentes (que falten lo dicen las reglas de
+        // arriba); marca IdentificationNumber para que el 422 lleve el mapa errors con la clave del input.
+        RuleFor(command => command.IdentificationNumber)
+            .Must((command, number) => DocumentNumberFormat.IsValidFor(command.IdentificationType, number))
+            .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+            .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType)
+                && !string.IsNullOrWhiteSpace(command.IdentificationNumber));
         RuleFor(command => command.ContactName).TrimmedText(DistributorTextLimits.ContactName);
 
         // La ciudad se exige con las mismas reglas y los mismos nombres de propiedad que CompanyWriteRules (Companies): de ahí

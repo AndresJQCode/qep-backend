@@ -15,6 +15,9 @@ public static class HrBirthdayWhatsAppText
     /// <summary>What the date variable carries when there is no lead (<c>upcomingDate</c> null): Meta rejects an empty value.</summary>
     public const string NoDate = "—";
 
+    /// <summary>What the upcoming variable carries when there is no lead: the template still prints it after «Próximos (—):».</summary>
+    public const string NoLead = "sin aviso anticipado";
+
     private const string Nobody = "nadie";
 
     private static readonly string[] Days = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
@@ -59,6 +62,11 @@ public static class HrBirthdayWhatsAppText
         // A single person whose name alone is too long: the name, cut to fit, is better than «1 persona».
         return total == 1 ? Truncate(names[0], maxLength) : Count(total);
     }
+
+    /// <summary>The upcoming list of the template: <see cref="NoLead"/> when the setting has no lead (<paramref name="upcomingDate"/> null),
+    /// otherwise <see cref="Names"/>.</summary>
+    public static string Upcoming(IReadOnlyList<string> names, int total, DateOnly? upcomingDate, int maxLength) =>
+        upcomingDate is null ? NoLead : Names(names, total, maxLength);
 
     /// <summary>«viernes 4 de diciembre», or <see cref="NoDate"/> when there is none. Written by hand: the host may run without ICU.</summary>
     public static string Date(DateOnly? date) =>

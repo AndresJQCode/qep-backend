@@ -166,6 +166,34 @@ public sealed class TaskSupervisorActionsApiTests
         var working = Assert.Single(board.Operators);
         Assert.Equal((worker, claimed.Id), (working.MemberId, working.TaskId));
         Assert.NotNull(working.Since);
+        Assert.NotNull(working.LastProgressAt);
+        Assert.False(working.Stalled);
+    }
+
+    // B4 (owner, 2026-11-27): sin tope automático; el tablero marca «sin avance» desde el último reclamo o línea, una sola consulta.
+    [Fact]
+    public async Task TheBoardMarksATaskClaimedTwentyMinutesAgoWithoutProgressAsStalled()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var (worker, client) = await SeedOperatorAsync(factory);
+        using var _w = client;
+        var claimed = NewMove(s, s.BinA, destination);
+        var at = DateTimeOffset.UtcNow.AddMinutes(-20);
+        claimed.Claim(worker, "zebra-01", at);
+        claimed.Heartbeat(worker, claimed.LeaseToken!.Value, DateTimeOffset.UtcNow);
+        await SaveAsync(factory, claimed);
+
+        var board = await s.Manager.GetFromJsonAsync<TaskBoardDto>(
+            $"{TasksUrl()}/summary?warehouseId={s.WarehouseId}", Ct);
+
+        var working = Assert.Single(board!.Operators);
+        Assert.True(working.Stalled);
+        Assert.True(working.LastProgressAt <= at.AddSeconds(1));
+        Assert.True(working.LastActivityAt > at.AddMinutes(10));
     }
 
     [Fact]

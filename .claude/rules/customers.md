@@ -33,6 +33,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   propia, atada por `DocumentTypesByCountryTests`; Customers (`IdentificationTypeParser`) y Quotations (`PartyFiscalTypesParser`) las atan sus pruebas de paridad. Customers y las
   partes de facturación comparan el tipo con **su propio** país en cada escritura (una fila guardada que no cumple se lee, pero no se puede volver a guardar igual); un país vacío
   en una parte es `CO`.
+- **El formato del número de documento vive una sola vez, en `DocumentNumberFormat` (`BuildingBlocks.Domain`, carpeta `Identification`).** `NIT`, `CC` y `CE` solo admiten
+  dígitos, punto, guion y espacio (con al menos un dígito); los demás tipos son alfanuméricos y no se tocan. Hr tiene su propia versión, `HrDocumentNumberRules` (CC, CE, PEP y PPT, sin
+  espacios), porque sus tipos son otros. Un camino nuevo que escriba un número usa las dos capas: el validador (error de campo `IdentificationNumber`) y el dominio (código
+  `<módulo>.…_not_numeric`). La regla bloquea **siempre al escribir**, también un número viejo reenviado sin cambios; al leer no se comprueba (una fila vieja con letras se lee
+  igual). No toques `CustomerIdentificationNumbers.Normalize` ni su gemela en SQL: la clave de duplicados sigue igual.
 - **La importación por Excel crea etiquetas en tipo oración y nunca las quita** (spec 2026-11-17). La celda «Etiquetas» se lee
   una sola vez con `ExcelTagCell.Parse` (validador y handler), la etiqueta nueva se bautiza con `TagNameFormat.SentenceCase` y la
   que ya existe conserva su nombre aunque el archivo la traiga con otras mayúsculas. Un camino nuevo que escriba etiquetas desde

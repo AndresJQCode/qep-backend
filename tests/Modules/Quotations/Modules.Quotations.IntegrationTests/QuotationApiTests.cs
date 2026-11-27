@@ -158,6 +158,31 @@ public sealed class QuotationApiTests(SharedQuotationsHost sharedHost) : IClassF
         Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.IdentificationType", out var field));
     }
 
+    // La regla NIT mira el país de la parte, no el del tenant: con el tenant colombiano de la prueba, una jurídica de Costa
+    // Rica se factura con TAX_ID (Costa Rica no admite NIT). Con el país del tenant no se podía guardar con ningún documento.
+    [Fact]
+    public async Task AForeignJuridicaBillsWithATaxIdOnAColombianTenant()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            QuotationsUrl(tenantId),
+            new CreateQuotationRequest(
+                clientId, TodayInBogota().AddDays(30), null, null,
+                new QuotationPartiesRequest(
+                    new QuotationPartyRequest(
+                        "Distribuidora Tica S.A.", "3101123456", null, null, null, null, null,
+                        PersonType: "Juridica", IdentificationType: "TAX_ID", Country: "CR", CityName: "San José"),
+                    null),
+                null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     // Spec 2026-10-26: con OnCustomerSave una fila de facturación sin tipo de persona no se envía. La cotización se
     // crea con el ajuste en Never (si no, crear ya la frenaría) y el ajuste se prende después.
     [Fact]

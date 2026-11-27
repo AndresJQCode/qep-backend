@@ -48,9 +48,9 @@ internal sealed class SiigoTokenCache(TimeProvider clock)
         }
     }
 
-    // SHA-256 del usuario y la clave: la clave en claro no se guarda aquí. El largo del usuario va delante para que pasar caracteres
+    // SHA-256 del usuario y la clave: la clave en claro no se guarda aquí. La reutiliza la caché de listas de SiigoApiClient. El largo del usuario va delante para que pasar caracteres
     // del usuario a la clave ("ab" + "c" contra "a" + "bc") no dé la misma huella.
-    private static string Fingerprint(SiigoCredentials credentials) =>
+    internal static string Fingerprint(SiigoCredentials credentials) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"{credentials.Username.Length}:{credentials.Username}{credentials.AccessKey}")));
 

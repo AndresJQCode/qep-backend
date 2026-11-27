@@ -51,6 +51,14 @@ public sealed partial class EmployeeRequestValidator : HrValidator<EmployeeReque
             .Must(number => number is null || number.Trim().Length <= 30).WithMessage("El número de documento no puede pasar de 30 caracteres.")
             .Must(number => number is null || !number.Trim().Any(char.IsWhiteSpace))
             .WithMessage("El número de documento no puede tener espacios.");
+        // Con el tipo ya válido y el número escrito; los espacios ya tienen su propio mensaje. Bloquea también un número
+        // viejo reenviado sin cambios.
+        RuleFor(request => request.DocumentNumber)
+            .Must((request, number) => !HrEnums.TryParse<HrDocumentType>(request.DocumentType, out var type)
+                || HrDocumentNumberRules.IsValidFor(type, number))
+            .WithMessage(HrDocumentNumberRules.NumericTypesMessage)
+            .When(request => !string.IsNullOrWhiteSpace(request.DocumentNumber)
+                && !request.DocumentNumber.Trim().Any(char.IsWhiteSpace));
         RuleFor(request => request.Country)
             .Must(country => country is null || CountryShape().IsMatch(country.Trim()))
             .WithMessage("El país es un código de dos letras, por ejemplo CO.");

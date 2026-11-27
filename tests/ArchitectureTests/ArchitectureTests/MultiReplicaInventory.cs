@@ -138,6 +138,8 @@ public static class MultiReplicaInventory
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
         new("Modules.Notifications.Infrastructure.TaskNotices.TaskNoticeEscalationWorker", WorkerClassification.Claimed,
             "Modules/Notifications/Modules.Notifications.Infrastructure/TaskNotices/TaskNoticeEscalationProcessor.cs:89-92 — FOR UPDATE SKIP LOCKED + claimed_until de 2 min; el WhatsApp es idempotente por ClientId (el id de la escalada)"),
+        new("Modules.Notifications.Infrastructure.HrBirthdays.HrBirthdayDeliveryWorker", WorkerClassification.Claimed,
+            "Modules/Notifications/Modules.Notifications.Infrastructure/HrBirthdays/HrBirthdayDeliveryProcessor.cs:88-92 — FOR UPDATE SKIP LOCKED + claimed_until de 2 min; el WhatsApp es idempotente por ClientId (el id de la entrega)"),
 
         // --- AdvisoryLock. ---
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyTokenRefreshWorker", WorkerClassification.AdvisoryLock,

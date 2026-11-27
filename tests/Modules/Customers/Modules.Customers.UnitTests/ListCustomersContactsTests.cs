@@ -68,7 +68,7 @@ public sealed class ListCustomersContactsTests
     private static Customer Complete(string name, string? businessName = null) =>
         Customer.Create(
             CustomerId.New(), CustomerWriteDoubles.Tenant, "CLI08000001", name, businessName, null,
-            new CustomerIdentification { Type = IdentificationType.Nit, Number = "900" + Guid.NewGuid().ToString("N")[..6] },
+            new CustomerIdentification { Type = IdentificationType.Nit, Number = "900" + Random.Shared.Next(100000, 999999) },
             null,
             new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
             new CustomerCommercialInfo { ClassificationId = Classification.Id },

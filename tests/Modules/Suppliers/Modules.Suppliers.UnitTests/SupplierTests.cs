@@ -355,6 +355,31 @@ public sealed class SupplierTests
     }
 
     [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void ANumericTypeWithLettersInTheNumberIsRejectedByTheDomain(string type) =>
+        Assert.Equal(
+            "suppliers.supplier.identification_number_not_numeric",
+            CodeOf(() => Create(Data(identificationType: type, identificationNumber: "9001234A"))));
+
+    [Fact]
+    public void UpdateAlsoRejectsLettersInANumericNumber()
+    {
+        var supplier = Create();
+
+        Assert.Equal(
+            "suppliers.supplier.identification_number_not_numeric",
+            CodeOf(() => supplier.Update(Data(identificationNumber: "ABC-123"), Phones, Later)));
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Equal(
+            "AB123456",
+            Create(Data(identificationType: "PASAPORTE", identificationNumber: "AB123456")).Identification.Number);
+
+    [Theory]
     [InlineData("C")]
     [InlineData("COL")]
     [InlineData("C1")]

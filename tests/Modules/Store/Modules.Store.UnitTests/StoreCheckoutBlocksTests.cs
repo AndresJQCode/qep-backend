@@ -66,6 +66,21 @@ public sealed class StoreCheckoutBlocksTests
             CodeOf(() => _ = new StoreRequestBilling("Ana", "CC", "1", "300", "+57300", "a@b.co", "", Colombia())));
     }
 
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void ABillingNumericDocumentWithLettersIsRejected(string type) =>
+        Assert.Equal(
+            "store.order_request.identification_number_not_numeric",
+            CodeOf(() => _ = new StoreRequestBilling("Ana", type, "12345A", "300", "+57300", "a@b.co", "Calle 1", Colombia())));
+
+    [Fact]
+    public void ABillingPassportWithLettersIsAccepted() =>
+        Assert.Equal(
+            "AB123456",
+            new StoreRequestBilling("Ana", "PASAPORTE", "AB123456", "300", "+57300", "a@b.co", "Calle 1", Colombia()).IdentificationNumber);
+
     private static StorePlace Spain() => new("ES", null, null, null, "Madrid");
 
     [Fact]

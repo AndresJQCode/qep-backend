@@ -107,7 +107,6 @@ public sealed class StoreOrderGateway(
     IQuotationLifecycleEventPublisher lifecycleEvents,
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
-    ITenantDirectory tenantDirectory,
     ITenantClock tenantClock,
     IQuotationWithholdingLookup withholdingLookup)
     : IStoreOrderGateway
@@ -200,8 +199,7 @@ public sealed class StoreOrderGateway(
                 BillsToFinalConsumer: false,
                 BillingVatSurplus: draft.BillingVatSurplus)
             .ToDomain();
-        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(draft.TenantId), cancellationToken);
-        BillingPartyFiscalRules.EnsureConsistent(parties.Billing, regional?.Country);
+        BillingPartyFiscalRules.EnsureConsistent(parties.Billing);
 
         var committed = await KeyedOrderCommit.CommitAsync(
             orderRepository, unitOfWork, numberGenerator, numberingFormats, tenantClock, draft.TenantId, externalKey,

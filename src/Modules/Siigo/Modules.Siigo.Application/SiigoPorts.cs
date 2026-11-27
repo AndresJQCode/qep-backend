@@ -87,6 +87,10 @@ public interface ISiigoSettingsRepository
     /// </summary>
     Task<SiigoSettings?> FindOrCreateAsync(Guid tenantId, Guid connectionId, bool withVariantLinks, CancellationToken cancellationToken);
 
+    /// <summary>Como <see cref="FindOrCreateAsync"/>, pero sin crear: <c>null</c> si la conexión todavía no tiene fila (o es de otro
+    /// tenant). Para quien sólo necesita saber qué hay guardado.</summary>
+    Task<SiigoSettings?> FindAsync(Guid tenantId, Guid connectionId, bool withVariantLinks, CancellationToken cancellationToken);
+
     /// <summary>
     /// La configuración de la conexión que factura con esa empresa (<c>IX_settings_tenant_company</c>: una por tenant), o <c>null</c> si
     /// ninguna la eligió. Trae los vínculos de impuestos, retenciones y cuentas, y los de productos <b>sólo de

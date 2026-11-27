@@ -163,7 +163,7 @@ public sealed class HrBirthdayDeliveryTests
     }
 
     [Fact]
-    public async Task AWhatsAppThatThrowsIsFailedWithItsCodeAndTheEmailGoesOn()
+    public async Task AWhatsAppThatThrowsStaysPendingAndTheEmailGoesOn()
     {
         await using var rig = await Rig.StartAsync();
         rig.WhatsApp.Throws = true;
@@ -173,8 +173,59 @@ public sealed class HrBirthdayDeliveryTests
         await rig.RunAsync(T0);
 
         var rows = await DeliveriesAsync(rig.ConnectionString, rig.TenantId);
-        Assert.Equal(("Failed", "send_failed:exception"), (rows.Single(row => row.Channel == "whatsapp").Status, rows.Single(row => row.Channel == "whatsapp").ResultCode));
+        var whatsapp = rows.Single(row => row.Channel == "whatsapp");
+        // A throw is transient: the row stays Pending with its lease dropped, so the next pass retries it.
+        Assert.Equal(("Pending", null, 1), (whatsapp.Status, whatsapp.ResultCode, whatsapp.Attempts));
+        Assert.Null(whatsapp.ClaimedUntil);
         Assert.Equal("Sent", rows.Single(row => row.Channel == "email").Status);
+    }
+
+    [Fact]
+    public async Task ATransientFailureIsRetriedUntilTheLastAttemptAndThenFails()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.WhatsApp.Throws = true;
+        await rig.SeedAsync(HrBirthdayDeliveryChannels.WhatsApp);
+
+        for (var pass = 1; pass <= HrBirthdayDeliveryProcessor.MaxAttempts; pass++)
+        {
+            await rig.RunAsync(T0.AddMinutes(pass));
+        }
+
+        var state = Assert.Single(await DeliveriesAsync(rig.ConnectionString, rig.TenantId));
+        Assert.Equal(("Failed", "send_failed:exception", HrBirthdayDeliveryProcessor.MaxAttempts), (state.Status, state.ResultCode, state.Attempts));
+        Assert.Equal(HrBirthdayDeliveryProcessor.MaxAttempts, rig.WhatsApp.Sends.Count);
+    }
+
+    [Fact]
+    public async Task ATransientFailureThatRecoversEndsSent()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.WhatsApp.Throws = true;
+        await rig.SeedAsync(HrBirthdayDeliveryChannels.WhatsApp);
+        await rig.RunAsync(T0.AddMinutes(1));
+
+        rig.WhatsApp.Throws = false;
+        await rig.RunAsync(T0.AddMinutes(2));
+
+        var state = Assert.Single(await DeliveriesAsync(rig.ConnectionString, rig.TenantId));
+        Assert.Equal(("Sent", 2), (state.Status, state.Attempts));
+    }
+
+    [Fact]
+    public async Task AManagerWithoutHrAccessIsSkippedAndNothingIsSent()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Access.Allowed = false;
+        await rig.SeedAsync(HrBirthdayDeliveryChannels.WhatsApp);
+        await rig.SeedAsync(HrBirthdayDeliveryChannels.Email);
+
+        await rig.RunAsync(T0);
+
+        var rows = await DeliveriesAsync(rig.ConnectionString, rig.TenantId);
+        Assert.All(rows, row => Assert.Equal(("Skipped", "access_revoked"), (row.Status, row.ResultCode)));
+        Assert.Empty(rig.WhatsApp.Sends);
+        Assert.Empty(rig.Email.Sent);
     }
 
     [Fact]
@@ -223,11 +274,19 @@ public sealed class HrBirthdayDeliveryTests
         }
     }
 
+    private sealed class FakeAccess : IHrBirthdayAccess
+    {
+        public bool Allowed { get; set; } = true;
+
+        public Task<bool> CanReadEmployeesAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) =>
+            Task.FromResult(Allowed);
+    }
+
     private sealed class FakeHrWhatsApp : IHrBirthdayWhatsApp
     {
         private readonly ConcurrentQueue<HrBirthdayWhatsAppSend> _sends = new();
 
-        public IReadOnlyCollection<HrBirthdayWhatsAppSend> Sends => _sends;
+        public ConcurrentQueue<HrBirthdayWhatsAppSend> Sends => _sends;
 
         public TaskNoticeWhatsAppResult Next { get; set; } = new TaskNoticeWhatsAppResult.Sent();
 
@@ -245,7 +304,7 @@ public sealed class HrBirthdayDeliveryTests
         private readonly PostgreSqlContainer _database;
         private readonly NotificationsApiFactory _factory;
 
-        private Rig(PostgreSqlContainer database, NotificationsApiFactory factory, Guid tenantId, FakeRecipients recipients, FakeHrWhatsApp whatsApp, RecordingEmailChannel email)
+        private Rig(PostgreSqlContainer database, NotificationsApiFactory factory, Guid tenantId, FakeRecipients recipients, FakeHrWhatsApp whatsApp, RecordingEmailChannel email, FakeAccess access)
         {
             _database = database;
             _factory = factory;
@@ -253,6 +312,7 @@ public sealed class HrBirthdayDeliveryTests
             Recipients = recipients;
             WhatsApp = whatsApp;
             Email = email;
+            Access = access;
         }
 
         public Guid TenantId { get; }
@@ -262,6 +322,8 @@ public sealed class HrBirthdayDeliveryTests
         public FakeHrWhatsApp WhatsApp { get; }
 
         public RecordingEmailChannel Email { get; }
+
+        public FakeAccess Access { get; }
 
         public Guid ConnectionId { get; } = Guid.CreateVersion7();
 
@@ -277,6 +339,7 @@ public sealed class HrBirthdayDeliveryTests
             var recipients = new FakeRecipients();
             var whatsApp = new FakeHrWhatsApp();
             var email = new RecordingEmailChannel();
+            var access = new FakeAccess();
             var factory = new NotificationsApiFactory(
                 database.GetConnectionString(),
                 email,
@@ -286,6 +349,8 @@ public sealed class HrBirthdayDeliveryTests
                     services.AddSingleton<IRealtimeMemberPublisher>(new RecordingMemberPublisher());
                     services.RemoveAll<ITaskNoticeRecipients>();
                     services.AddSingleton<ITaskNoticeRecipients>(recipients);
+                    services.RemoveAll<IHrBirthdayAccess>();
+                    services.AddSingleton<IHrBirthdayAccess>(access);
                     services.RemoveAll<IHrBirthdayWhatsApp>();
                     services.AddSingleton<IHrBirthdayWhatsApp>(whatsApp);
                     // The hosted worker would claim the rows on its own; the tests drive the processor with their own clock.
@@ -297,7 +362,7 @@ public sealed class HrBirthdayDeliveryTests
                     }
                 });
             var (tenantId, _, _) = await RegisterOwnerAsync(factory);
-            return new Rig(database, factory, tenantId, recipients, whatsApp, email);
+            return new Rig(database, factory, tenantId, recipients, whatsApp, email, access);
         }
 
         public async Task<Seeded> SeedAsync(

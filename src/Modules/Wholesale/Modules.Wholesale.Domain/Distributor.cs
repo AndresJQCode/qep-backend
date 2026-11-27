@@ -158,6 +158,8 @@ public sealed class Distributor
             throw new ArgumentException("The reserved tenant id cannot be empty.", nameof(reservedTenantId));
         }
 
+        EnsureIdentificationNumberIsNumeric(identificationType, identificationNumber);
+
         var (noticePhone, noticeConnection) = NoticeTarget(phone, whatsAppConnectionId);
 
         return new Distributor
@@ -266,6 +268,8 @@ public sealed class Distributor
             throw new ArgumentException("The identification type is not valid for the country.", nameof(identificationType));
         }
 
+        EnsureIdentificationNumberIsNumeric(normalizedType, identificationNumber);
+
         var normalizedEmail = NormalizeEmail(email);
         if (normalizedEmail != Email)
         {
@@ -282,6 +286,19 @@ public sealed class Distributor
         CityName = NullIfBlank(cityName);
         Address = NullIfBlank(address);
         return true;
+    }
+
+    // NIT, CC y CE solo llevan dígitos (con punto, guion y espacio). Se bloquea siempre, también un número viejo
+    // que se reenvía sin cambios: vive solo en la invitación y la edición, nunca al leer del repositorio, así que
+    // un distribuidor ya guardado con letras se sigue leyendo.
+    private static void EnsureIdentificationNumberIsNumeric(string identificationType, string identificationNumber)
+    {
+        if (!DocumentNumberFormat.IsValidFor(identificationType, identificationNumber))
+        {
+            throw new WholesaleDomainException(
+                WholesaleErrorCodes.DistributorIdentificationNumberNotNumeric,
+                DocumentNumberFormat.NumericTypesMessage);
+        }
     }
 
     /// <summary>Lista, asesor y empresa facturadora; en cualquier estado.</summary>

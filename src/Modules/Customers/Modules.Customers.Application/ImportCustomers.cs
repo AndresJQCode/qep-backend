@@ -118,6 +118,16 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                     "The identification number cannot exceed " +
                     $"{CustomerIdentification.NumberMaxLength} characters.");
 
+        // NIT, CC y CE solo llevan digitos (con punto, guion y espacio). Regla aparte de las anteriores, por lo mismo
+        // que arriba: corre solo con el tipo reconocido y el numero presente, y no tapa la causa de otro rechazo.
+        RuleFor(row => row.IdentificationNumber)
+            .Must(_ => false)
+                .WithErrorCode("customers.import.row.identification_number_not_numeric")
+                .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+            .When(row => IsSupportedIdentificationType(row.IdentificationType)
+                && !IsBlank(row.IdentificationNumber)
+                && !DocumentNumberFormat.IsValidFor(row.IdentificationType, row.IdentificationNumber));
+
         // El telefono es obligatorio (CustomerContactInfo). Se rechaza como fila, con su codigo,
         // por la misma razon que la direccion: si llegara vacio al dominio, la
         // CustomersDomainException reventaria a mitad del archivo y se llevaria el lote entero.
@@ -769,6 +779,22 @@ public sealed class ImportCustomersHandler(
                     "customers.import.row.customer_inactive",
                     "The customer with that Cuc is inactive and cannot be edited.",
                     nameof(ExcelCustomerRow.Cuc),
+                    ToRowData(candidate.SourceRow)));
+                continue;
+            }
+
+            // Documento vacío en la fila = conserva el guardado, y Update lo vuelve a validar. Un NIT/CC/CE con letras guardado
+            // antes de la regla numérica lo rechazaría y, sin try/catch por fila, tumbaría el archivo entero sin decir qué fila.
+            // Se adelanta para reportar sólo esa fila: la persona no envió el número, así que el error nombra la fila.
+            if (ToIdentification(candidate) is null
+                && customer is { IdentificationType: { } storedType, IdentificationNumber: { } storedNumber }
+                && !DocumentNumberFormat.IsValidFor(storedType.ToWireValue(), storedNumber))
+            {
+                errors.Add(new ImportRowError(
+                    candidate.RowNumber,
+                    "customers.import.row.identification_number_not_numeric",
+                    DocumentNumberFormat.NumericTypesMessage,
+                    nameof(ExcelCustomerRow.IdentificationNumber),
                     ToRowData(candidate.SourceRow)));
                 continue;
             }
