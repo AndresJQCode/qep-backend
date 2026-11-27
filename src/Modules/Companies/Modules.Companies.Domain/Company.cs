@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Companies.Domain;
 
 /// <summary>
@@ -185,6 +187,8 @@ public sealed class Company
     {
         var normalizedCountry = NormalizeCountry(country);
         EnsureDocumentTypeAllowed(normalizedCountry, documentType);
+        var normalizedTaxId = NormalizeTaxId(taxId);
+        EnsureTaxIdIsNumeric(documentType, normalizedTaxId);
         var location = EnsureValidLocation(normalizedCountry, cityId, cityName, regionId);
 
         return new Company(
@@ -192,7 +196,7 @@ public sealed class Company
             tenantId,
             NormalizeName(name),
             NormalizeBankAccounts(bankAccounts),
-            NormalizeTaxId(taxId),
+            normalizedTaxId,
             normalizedCountry,
             documentType,
             location.CityId,
@@ -234,6 +238,7 @@ public sealed class Company
         var normalizedTaxId = NormalizeTaxId(taxId);
         var normalizedCountry = NormalizeCountry(country);
         EnsureDocumentTypeAllowed(normalizedCountry, documentType);
+        EnsureTaxIdIsNumeric(documentType, normalizedTaxId);
         var location = EnsureValidLocation(normalizedCountry, cityId, cityName, regionId);
         var normalizedContact = contact.Normalized();
 
@@ -399,6 +404,19 @@ public sealed class Company
             "The company tax id is required.",
             "companies.company.tax_id_too_long",
             $"The company tax id cannot exceed {TaxIdMaxLength} characters.");
+
+    // NIT, CC y CE solo llevan dígitos (con punto, guion y espacio); un NIE, un pasaporte o un TAX_ID pueden
+    // llevar letras. Se bloquea siempre, también un número viejo que se reenvía sin cambios: vive solo en el
+    // alta y la edición, nunca al leer del repositorio, así que una empresa ya guardada con letras se sigue leyendo.
+    private static void EnsureTaxIdIsNumeric(CompanyDocumentType documentType, string taxId)
+    {
+        if (!DocumentNumberFormat.IsValidFor(documentType.ToWire(), taxId))
+        {
+            throw new CompaniesDomainException(
+                "companies.company.tax_id_not_numeric",
+                DocumentNumberFormat.NumericTypesMessage);
+        }
+    }
 
     // Dos letras ASCII, en mayúsculas. No se valida contra la lista ISO: el catálogo de países es
     // del frontend y el backend solo necesita que el código tenga la forma de uno.
