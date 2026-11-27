@@ -8,6 +8,8 @@
   `develop` local de qep-frontend; en adelante, «diseño compartido»). Este documento no lo reabre: lo baja al backend, resuelve los tres
   choques con el WMS completo que encontró la revisión del motor de tareas y toma las decisiones que el diseño dejó al constructor.
 - **Verificado contra el código:** `develop` `8ad0c5627`. Las citas van por símbolo.
+- **Revisiones:** una lectura de constructor (preguntas resueltas en el texto) y una revisión adversarial con Fable (15 hallazgos, todos
+  incorporados; §10 dice dónde).
 - **Estado:** borrador para aprobar. Lo marcado **«Decisión del agente»** no lo eligió el owner: corrígelo si no te sirve.
 
 ---
@@ -47,31 +49,38 @@ navegador. Ningún cambio de este corte obliga a T3, T5 o T7 a cambiar el contra
 
 - **Sólo productos físicos** (`ProductKind.Physical`); una línea de servicio no produce nada.
 - **Camino A, por eventos** (2026-11-26): Purchases, Quotations y POS publican al outbox; el WMS consume con su inbox.
-- **Anulación desde la plataforma (2026-11-27, nueva):** `Order.CancelFromPlatform` (Shopify) pasa por encima de «preparado» y
-  «archivado». Si el pedido ya descontó, **el stock no vuelve solo**: si el paquete regresa, alguien lo registra con un ajuste. La
-  anulación sólo libera la reserva que siga abierta.
+- **Anulación desde la plataforma (2026-11-27):** `Order.CancelFromPlatform` (Shopify) pasa por encima de «preparado» y «archivado». Si el
+  pedido ya descontó, **el stock no vuelve solo**: si el paquete regresa, alguien lo registra con un ajuste. La anulación sólo libera la
+  reserva que siga abierta.
 
 ## 3. Lo que existe hoy (verificado)
 
 - **Outbox único:** todos los módulos escriben en `platform.outbox_messages` y cada `DbContext` lo proyecta con
   `ExcludeFromMigrations()`; `WmsDbContext` ya lo proyecta. El consumidor que se copia es `WholesaleOrderEventsProcessor` +
-  `ClaimedOutboxConsumer` de Purchases (inbox propio por consumidor, reclamo con lease, efecto e inbox en la misma transacción).
-- **Purchases:** `PurchaseOrder.Receive` es un cambio de estado sin datos; las cantidades son `ConfirmedQuantity` por línea (0 = línea
-  rechazada). `Received` es final. `PurchaseOrderLine.VariantId` es `Guid?`: nulo en líneas vinculadas al mayorista hasta enlazarlas. Sólo
-  hay acción de auditoría (`PurchasesAuditActions.Received`), ningún evento.
-- **Quotations:** `QuotationLifecycleEventPublisher` publica `quotations.order.created.v1`, `…cancelled.v1`, `…wholesale-approved.v1`,
-  `…wholesale-cancelled.v1` y `…shipping-party-changed.v1`. Sólo `wholesale-approved` lleva líneas. No hay eventos de preparado, deshecho,
-  editado, archivado ni desarchivado. `OrderItem` congela `VariantId`, `Quantity`, `Kind` (`ProductKind`) y `SalesUnit`. `Order.Version`
-  sube en cada cambio. `Order.ArchiveIfSettled` sólo archiva pedidos ya preparados.
+  `ClaimedOutboxConsumer` de Purchases (inbox propio por consumidor, reclamo con lease, efecto e inbox en la misma transacción), que hoy
+  ordena el lote por `OccurredAt`.
+- **Purchases:** `PurchaseOrder.Receive` es un cambio de estado sin datos, y el único camino es `TransitionPurchaseOrder`. Las cantidades
+  son `ConfirmedQuantity` por línea (`numeric(10,2)`; 0 = línea rechazada). `Received` es final. `PurchaseOrderLine.VariantId` es `Guid?`:
+  nulo en líneas vinculadas al mayorista hasta enlazarlas. Sólo hay acción de auditoría (`PurchasesAuditActions.Received`).
+- **Quotations:** `QuotationLifecycleEventPublisher` publica `quotations.order.created.v1`, `…cancelled.v1`, `…wholesale-approved.v1`
+  (con `approvedAt`, sin `occurredAt`), `…wholesale-cancelled.v1` y `…shipping-party-changed.v1`. Sólo `wholesale-approved` lleva líneas.
+  `OrderItem` congela `VariantId`, `Quantity`, `Kind` (`ProductKind`) y `SalesUnit`. `Order.Version` sube en cada mutación, también en las
+  que no tocan stock. `Order.Archive` acepta pedidos preparados y sin preparar; `Order.Unarchive` sólo mira `Status`; `Prepare` y
+  `UndoPreparation` exigen pedido abierto, así que un archivado no cambia de preparado.
 - **POS:** `PosSale` nace `Completed`, `Void(reason)` la pasa a `Voided`; sin `Version`, sin devoluciones, sin eventos. `PosSaleLine`
-  tiene `VariantId`, `ProductId` y `Quantity`, pero no el tipo de producto.
-- **WMS:** `IInventoryLedger.PostAsync(LedgerBatch)` exige la transacción de la unidad de trabajo. Un débito a una ubicación física pasa
-  por `DebitAsync`, que exige `on_hand + delta >= reserved` y si no lanza `StockInsufficientException` o `wms.stock.reserved`; sólo las
-  ubicaciones con `Location.AllowsNegative` (`Supplier`, `Customer`, `Adjustment`) aceptan negativos, y el saldo copia esa marca
-  (`allows_negative`) para el CHECK de la base. Un variante sin perfil recibe uno por defecto (`CreateDefaultProfileAsync`).
-  `Reservation` y `StockBalance.Reserved` existen sólo como forma persistida; nadie los escribe. `Warehouse.Create` crea `SUPPLIER`,
-  `CUSTOMER`, `ADJUSTMENT`, `TRANSIT`, la zona `RECEIVING` y el muelle `REC-01`. Hay un dueño `Self` por tenant (`Owner.CreateSelf`).
-  No hay consumidor de inbox en Wms.
+  tiene `VariantId`, `ProductId` y `Quantity`, sin tipo de producto.
+- **WMS:** `IInventoryLedger.PostAsync(LedgerBatch)` exige la transacción de la unidad de trabajo y valida el lote entero
+  (`LedgerEntryRules.Validate`): la primera entrada mala tumba todo el lote. Un débito a una ubicación física pasa por `DebitAsync`, que
+  exige `on_hand + delta >= reserved`; sólo `Supplier`, `Customer` y `Adjustment` aceptan negativos, y el saldo copia esa marca
+  (`allows_negative`) para dos CHECK: `CK_stock_balances_non_negative` y `CK_stock_balances_reserved`
+  (`reserved >= 0 AND (allows_negative OR reserved <= on_hand)`). Una variante sin perfil recibe uno por defecto
+  (`VariantLogisticsProfile.CreateDefault`: unidad `UND`, precisión 0); si Catalog no conoce la variante, lanza
+  `WmsErrorCodes.ProfileVariantUnknown`. El puerto `IWmsCatalogReader` (Bootstrapper `WmsCatalogReader`) ya lee Catalog por variante
+  (`WmsVariantSnapshot`). `Reservation` existe sólo como forma persistida (`location_id` no nulo, `FK_reservations_location`,
+  `IX_reservations_open_key` no único). `v_stock_summary` sale sólo de `stock_balances`. `ReverseMovementHandler` deja revertir a mano
+  cualquier movimiento que no sea `Reversal`. `Warehouse.Create` crea `SUPPLIER`, `CUSTOMER`, `ADJUSTMENT`, `TRANSIT`, la zona `RECEIVING`
+  y el muelle `REC-01`. Hay un dueño `Self` por tenant. No hay consumidor de inbox en Wms. La API de Wms lleva la versión en el cuerpo
+  (`WmsVersions.Ensure`), no en `If-Match`.
 
 ## 4. Enfoques
 
@@ -85,117 +94,134 @@ navegador. Ningún cambio de este corte obliga a T3, T5 o T7 a cambiar el contra
 
 ### 5.1 Eventos (contrato)
 
-Todos al outbox en la misma transacción que el cambio, como ya hace cada módulo. Campos en camelCase, leídos por nombre. **Toda línea
-lleva** `lineId`, `variantId` y `quantity` (en la unidad del documento). **Todo evento lleva**
-`tenantId`, el id del documento, su `version` y `occurredAt`.
+Todos al outbox en la misma transacción que el cambio. Campos en camelCase, leídos por nombre. **Toda línea lleva** `lineId`,
+`variantId` y `quantity` (en la unidad del documento); las de pedido llevan además `productKind`, que ya está congelado en `OrderItem.Kind`.
+**Todo evento lleva** `tenantId`, el id del documento, su `version` y `occurredAt`.
 
 | Evento | Módulo | Nuevo o ampliado | Datos además de lo común |
 |---|---|---|---|
 | `purchases.order.received.v1` | Purchases | Nuevo | `origin`, líneas con la cantidad **confirmada** (las de 0 no viajan); `variantId` puede ser nulo |
 | `quotations.order.created.v1` | Quotations | Ampliado (campos nuevos al final) | `source`, `awaitingWholesaleApproval`, líneas |
-| `quotations.order.wholesale-approved.v1` | Quotations | Ampliado | `version`, `lineId` por línea (las líneas ya viajan) |
+| `quotations.order.wholesale-approved.v1` | Quotations | Ampliado | `version`, `occurredAt`, `lineId` y `productKind` por línea |
 | `quotations.order.edited.v1` | Quotations | Nuevo | Todas las líneas después de la edición |
 | `quotations.order.prepared.v1` | Quotations | Nuevo | `origin`, líneas |
 | `quotations.order.unprepared.v1` | Quotations | Nuevo | — |
 | `quotations.order.cancelled.v1` | Quotations | Ampliado | `version`, `fromPlatform` |
-| `quotations.order.archived.v1` | Quotations | Nuevo | `wasPrepared`, líneas |
-| `quotations.order.unarchived.v1` | Quotations | Nuevo | — |
+| `quotations.order.archived.v1` | Quotations | Nuevo | `isPrepared`, líneas |
+| `quotations.order.unarchived.v1` | Quotations | Nuevo | `isPrepared` |
 | `pos.sale.created.v1` | Pos | Nuevo | líneas |
 | `pos.sale.voided.v1` | Pos | Nuevo | — |
 
 - **Ampliar sin romper:** Pipeline, Compras y Shopify leen `created`, `cancelled` y `wholesale-approved` por nombre de campo. Agregar
   campos no los rompe; no se renombra ni se quita ninguno. Una prueba de contrato por evento ampliado fija los campos viejos.
 - **`origin` (choque 3):** `purchases.order.received.v1` lleva `origin` = `Manual` (el «Recibir» de la consola, el único que existe hoy)
-  o `WmsReceipt` (lo pondrá T3 cuando la recepción del WMS marque la orden). `quotations.order.prepared.v1` lleva `Manual` o `WmsPacking`
-  (T7). **El consumidor del inventario básico ignora `WmsReceipt` y `WmsPacking`:** ese stock ya lo movió la recepción o el empaque del
-  propio WMS. Así T3 y T7 no cambian este contrato.
-- **Versión del POS:** `PosSale` no tiene `Version`. **Decisión del agente:** `created` viaja con `version = 1` y `voided` con `2`.
-- **Tipo de producto — decisión del agente:** POS y Purchases no lo tienen (`PosProductRef` y los puertos de Purchases no exponen
-  `ProductKind`). En vez de abrir dos contratos con Catalog, **lo decide el WMS:** un puerto `IWmsCatalogKinds.FindKindsAsync(tenantId,
-  variantIds)` en `Modules.Wms.Application`, implementado en Bootstrapper sobre Catalog (como `ShopifyProductLookup`). Por eso las líneas
-  **no** llevan `productKind`. Una variante que Catalog ya no encuentra cuenta como `Physical` (más vale un movimiento de más, que se
-  ajusta, que una venta física que no descuenta).
-- **Todos los caminos publican:** toda ruta que cambia las líneas de un pedido publica `edited` (consola `SaveOrderEdits`, edición de
-  Shopify `Order.ApplyExternalEdit` vía `IExternalOrderWriter`, y las pasarelas del mayorista y del comprador). Toda ruta que archiva o
-  desarchiva publica `archived` / `unarchived` (manual y `ArchiveIfSettled`). Toda ruta que anula publica `cancelled`, que ya sale en
-  todas; `wholesale-cancelled` lo ignora el consumidor del inventario, para no liberar dos veces.
-- **La versión se toma después del cambio:** el publicador lee `Order.Version` (o `PurchaseOrder.Version`) ya incrementada, en la misma
-  transacción.
+  o `WmsReceipt` (T3). `quotations.order.prepared.v1` lleva `Manual` o `WmsPacking` (T7). El consumidor ignora `WmsReceipt` y
+  `WmsPacking`. Esto solo no basta para T3: ver §5.7.
+- **`isPrepared` en el archivo (hallazgo 1):** un pedido archivado no puede prepararse ni deshacerse, así que el `isPrepared` de
+  `unarchived` es el mismo de su `archived`. Con él el consumidor sabe si el desarchivo devuelve algo.
+- **La versión se toma después de cada mutación, no al final del caso de uso.** Si un caso de uso hace dos mutaciones con evento (por
+  ejemplo `PrepareOrder`, que prepara y puede archivar con `OrderAutoArchive.Apply`), cada evento lleva la versión que dejó su mutación.
+  El POS no tiene `Version`: `created` viaja con `1` y `voided` con `2` (decisión del agente).
+- **Todos los caminos publican** (hallazgo 10, verificado):
+  - `edited`: `SaveOrderEdits`, `AddOrderItems` (`order.AddItem`), la edición de Shopify (`Order.ApplyExternalEdit` vía
+    `IExternalOrderWriter`), `ExternalOrderWriter.CorrectByMemberAsync` si cambia líneas, y las pasarelas del mayorista y del comprador.
+  - `archived` / `unarchived`: `ArchiveOrder`, `UnarchiveOrder`, `OrderAutoArchive.Apply` (desde `PrepareOrder` y `MarkOrderPaid`) y
+    `Order.SyncExternalPaymentStatus` (desde `ExternalOrderWriter.SyncPaymentStatusAsync`).
+  - `cancelled`: ya sale en todos (`CancelOrder`, `CancelByBuyer`, `CancelByWholesaleBuyer`, `CancelFromPlatform`).
+    `wholesale-cancelled` lo ignora el consumidor, para no liberar dos veces.
+  - POS: `CreatePosSale` y `VoidPosSale`. Purchases: `TransitionPurchaseOrder`.
+  - Una prueba por camino verifica que su evento sale en la misma transacción.
 
 ### 5.2 Consumidor en Wms
 
 `WmsInventoryEventsProcessor` + su copia de `ClaimedOutboxConsumer` (consumidor `wms.inventory-events`), con inbox propio
-(`wms.inbox_messages`), worker con despertador y red de seguridad como el de Purchases.
+(`wms.inbox_messages`) y worker que escucha `DoorbellQueues.Outbox` con red de seguridad, como el de Purchases. Se clasifica en
+`tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs` y, si su inbox cuenta como cola, va en `QueueDoorbellInterceptor` y
+`QueueMetricsSource` (`.claude/rules/infra-valkey-sesiones.md`).
 
-- **Idempotente por mensaje** (inbox) **y por orden** (versión). Por documento se guarda `wms.document_stock_states`
-  (`tenant_id`, `document_type`, `document_id`, `last_version`, `state`, `warehouse_id`, `location_id`). Un evento con versión menor o
-  igual a `last_version` se marca procesado sin efecto. Las versiones pueden saltar (el pedido sube versión por pagos e historial); sólo
-  importa que crecen.
-- **En orden por documento — decisión del agente:** el lote sólo toma un mensaje si no hay otro **más viejo del mismo documento**
-  (misma `correlationId`) sin procesar. Un reintento o un lease vencido no puede invertir `prepared` y `edited`. Documentos distintos
-  avanzan en paralelo.
-- **Mensaje que no se puede aplicar — decisión del agente:** se reintenta con la curva de Purchases (5 s, 30 s, 5 min, y luego cada
-  5 min) y, pasado el umbral, deja un log de error y una métrica. **No se descarta**, porque saltarlo dejaría mal el estado del documento;
-  sólo frena a ese documento, no a la cola.
-- **Mayorista en espera:** `created` con `awaitingWholesaleApproval = true` no crea estado; un `cancelled` antes de la aprobación no hace
-  nada.
-- **Sólo tenants con el módulo `wms`:** con `TenantModuleGuard`. Un evento de un tenant sin el módulo se marca procesado sin efecto y no
-  provisiona nada. **Arranque en limpio:** nada se rellena hacia atrás; un pedido que nunca reservó no tiene estado, y su `unprepare`,
-  anulación o edición no produce nada.
-- **Efecto e inbox en la misma transacción** del `WmsDbContext`, con `PostAsync` del ledger. Payload malformado: procesado sin efecto y
-  registrado. Una falla (ubicación bloqueada o en conteo, perfil incompatible) vuelve a intentarse con la curva de Purchases y, pasado el
-  umbral, deja un log de error y una métrica; **nunca toca al módulo que vendió**.
-- **Una reversa vuelve a donde fue el original:** cada estado de documento y cada reserva guardan su bodega y ubicación. Anular,
-  deshacer, liberar o editar opera contra eso, no contra la bodega principal de hoy. Cambiar la principal sólo afecta lo que viene.
-- **Sólo se deshace lo que se movió:** el estado del documento dice qué hizo (reservó, descontó o nada).
+- **Marca de arranque:** el consumidor sólo mira mensajes posteriores al despliegue (una fecha fija guardada en configuración o en la
+  migración). Así no recorre la historia de `created` y `cancelled` de todos los tenants antes del primer evento real.
+- **Orden:** el lote se ordena por (`OccurredAt`, `version` del payload, `Id` del outbox, que es `Guid.CreateVersion7()`), y sólo toma un
+  mensaje si no hay otro **más viejo del mismo documento** (misma `correlationId`) sin procesar. Un reintento o un lease vencido no puede
+  invertir `prepared` y `edited`. Documentos distintos avanzan en paralelo.
+- **Idempotencia:** por mensaje (inbox) y por versión. **Todo evento visto escribe o actualiza su fila** en `wms.document_stock_states`,
+  aunque no tenga efecto (estado `None`): así un `cancelled` que llegó antes que su `created` deja `last_version` y el `created` viejo no
+  reserva (hallazgo 8). Un evento con versión menor o igual a `last_version` se marca procesado sin efecto.
+- **Módulo `wms` (hallazgo 6):** sólo los eventos que **crean** estado (`created`, `wholesale-approved`, `received`, `pos.sale.created`)
+  miran si el tenant tiene el módulo; los de un documento que ya tiene estado se aplican siempre, aunque el módulo se haya apagado después.
+  La consulta es `ITenantModules.FindAsync` con nulo = apagado; no se usa `TenantModuleGuard`, que lanza 403. **Arranque en limpio:** nada
+  se rellena hacia atrás.
+- **El consumidor filtra las líneas antes de llamar al ledger** (hallazgo 2): el ledger tumba el lote entero en la primera entrada mala,
+  así que las líneas que no se pueden mover (§5.6) se apartan antes, con log y métrica, y el asiento lleva sólo las demás.
+- **Falla transitoria o determinista** (hallazgo 2): una excepción de infraestructura se reintenta con la curva de Purchases (5 s, 30 s,
+  5 min, luego cada 5 min). Una `WmsDomainException` determinista (perfil, ubicación bloqueada, ubicación en conteo) también se reintenta,
+  porque puede resolverse sola (el conteo cierra, alguien desbloquea); pasado el umbral, log de error y métrica, y el documento queda
+  `Parked` hasta que el mensaje pase. Sólo frena a ese documento.
+- **Una reversa vuelve a donde fue el original** y **sólo se deshace lo que se movió** (hallazgo 11): la fila de estado guarda
+  `warehouse_id`, `location_id`, el `batch_id` del asiento y su `occurred_at` (los movimientos están particionados por mes y buscarlos sin
+  fecha recorre todas las particiones, `wms.md`). La compensación revierte exactamente los movimientos de ese lote, y la nueva reserva sale
+  de las reservas que ese asiento consumió, no de las líneas actuales.
 
-**Máquina por pedido** (estado en `document_stock_states`):
+**Máquina por pedido.** Estados: `None`, `Reserved`, `TakenOutByPrepare`, `TakenOutByArchive`, `Released`, `HandedToOutbound`.
 
-| Estado | `prepared` / `archived` sin preparar | `unprepared` / `unarchived` | `edited` | `cancelled` |
-|---|---|---|---|---|
-| (sin estado) | nada | nada | nada | nada |
-| `Reserved` | descuenta, consume la reserva → `TakenOut` | — | reemplaza la reserva | libera → `Released` |
-| `TakenOut` | — | devuelve y vuelve a reservar → `Reserved` | nada (un pedido preparado no se edita) | **nada** si `fromPlatform` (decisión del owner); no ocurre desde la consola |
-| `Released` | nada | nada | nada | nada |
+| Desde | Evento | Efecto | Hacia |
+|---|---|---|---|
+| `None` | `created` (no en espera de mayorista) o `wholesale-approved` | reserva | `Reserved` |
+| `Reserved` | `edited` | cierra las reservas abiertas y abre las nuevas | `Reserved` |
+| `Reserved` | `prepared` (`origin = Manual`) | descuenta y consume la reserva | `TakenOutByPrepare` |
+| `Reserved` | `archived` con `isPrepared = false` | descuenta y consume la reserva | `TakenOutByArchive` |
+| `Reserved` | `cancelled` | libera | `Released` |
+| `TakenOutByPrepare` | `unprepared` | compensa el asiento y vuelve a reservar | `Reserved` |
+| `TakenOutByPrepare` | `archived` / `unarchived` con `isPrepared = true` | nada | igual |
+| `TakenOutByPrepare` | `cancelled` (`fromPlatform`) | nada: decisión del owner | `Released` |
+| `TakenOutByArchive` | `unarchived` con `isPrepared = false` | compensa el asiento y vuelve a reservar | `Reserved` |
+| `TakenOutByArchive` | `cancelled` (`fromPlatform`) | nada: decisión del owner | `Released` |
+| `HandedToOutbound` | cualquiera menos `cancelled` | nada (el pedido lo lleva T5) | igual |
 
-`created` (no mayorista en espera) y `wholesale-approved` reservan desde «sin estado». `archived` con `wasPrepared = true` no hace nada,
-y su `unarchived` tampoco.
+Cualquier otra combinación no hace nada y sólo avanza `last_version`. `HandedToOutbound` no lo escribe nadie en esta entrega: queda
+reservado para T5 (§5.7).
 
 ### 5.3 Bodega principal
 
-- `Warehouse.IsPrincipal` (columna `is_principal`), **una por tenant** (índice único parcial). Compras y ventas usan siempre la principal
-  en esta entrega.
-- **Ubicación general — decisión del agente:** una ubicación nueva `GENERAL` (rol `Storage`), creada con la bodega principal. `REC-01`
-  se descarta porque T3 la usa como muelle de llegada y mezclarla con lo vendible confundiría la recepción.
-- **Cuándo se crea — decisión del agente:** en el primer evento que la necesite, si el tenant tiene el módulo y no tiene principal. Si ya
-  tiene bodegas, la más antigua activa pasa a ser principal (y gana su `GENERAL` si no la tenía); si no tiene ninguna, se crea
-  `PRINCIPAL` con todas sus ubicaciones de nacimiento (y el dueño `Self` si falta). Encender el módulo no provisiona nada. Dos eventos
-  del mismo tenant no pueden provisionar a la vez: el consumidor toma un candado por tenant (`pg_advisory_xact_lock`) antes de buscar la
-  principal. Agregar `GENERAL` a una bodega que ya existe es un método nuevo del agregado `Warehouse`; si ya tiene una ubicación con ese
-  código, se usa esa.
-- **Cambiarla:** `PUT /tenants/{tenantId}/wms/warehouses/{warehouseId}/principal` con `wms.warehouse.manage` (permiso que ya existe),
-  `If-Match` con la versión. Responde la bodega. Es **contrato HTTP nuevo: requiere tu autorización antes del merge.** `WarehouseDto`
-  gana `isPrincipal`.
+- `Warehouse.IsPrincipal` (`is_principal`), **una por tenant** (índice único parcial), y `Warehouse.GeneralLocationId`
+  (`general_location_id`): la ubicación general se encuentra por id, no por código, porque el código se puede cambiar (hallazgo 13).
+- **Ubicación general — decisión del agente:** una ubicación nueva `GENERAL`, tipo `Bin` en la raíz, rol `Storage`, con almacenamiento y
+  picking permitidos (si no, `pickable` sería 0 y T5 no podría asignar de ahí). `REC-01` se descarta porque T3 la usa como muelle de llegada.
+- **Cuándo se crea — decisión del agente:** en el primer evento que la necesite, si el tenant tiene el módulo y no tiene principal. Si
+  tiene bodegas activas, la más antigua pasa a ser principal y gana su ubicación general (un método nuevo del agregado; si el código
+  `GENERAL` ya existe, usa `GENERAL-1`, `GENERAL-2`…). Si no tiene ninguna activa, crea una con código libre (`PRINCIPAL`, o `PRINCIPAL-1`…
+  si `IX_warehouses_tenant_code` lo choca con una inactiva), con sus ubicaciones de nacimiento y el dueño `Self` si falta. Encender el
+  módulo no provisiona nada. Un candado por tenant (`pg_advisory_xact_lock`) evita que dos eventos provisionen a la vez.
+- **No se desactiva la principal:** `Warehouse.Update` con `isActive = false` sobre la principal falla con un código nuevo
+  (`wms.warehouse.principal_cannot_be_deactivated`); primero se elige otra.
+- **Cambiarla:** `PUT /tenants/{tenantId}/wms/warehouses/{warehouseId}/principal` con `wms.warehouse.manage` (permiso y política ya
+  existen), versión en el cuerpo como el resto de la API de Wms (`{ "version": n }`). Quita la marca de la anterior y guarda antes de
+  ponerla en la nueva (el índice no es diferible); si la nueva no tiene ubicación general, la gana. Responde la bodega. Es **contrato HTTP
+  nuevo: requiere tu autorización antes del merge.** `WarehouseDto` gana `isPrincipal` y `generalLocationId`.
 
 ### 5.4 Reservas: un solo modelo para el pedido y para T5 (choque 2)
 
 El freno `on_hand + delta >= reserved` está en el saldo de cada ubicación. Si los pedidos reservaran ahí, un `Move` o un `Putaway` que
-saque mercancía de la ubicación general fallaría con `wms.stock.reserved`, y T5 (que reserva al liberar la ola y hace viajar la reserva
+saque mercancía de la ubicación general fallaría con `wms.stock.reserved`, y T5 (que asigna al liberar la ola y hace viajar la asignación
 con la mercancía, DA-21) tendría que convivir con otra cosa.
 
 **Decisión del agente: dos niveles en la misma tabla `wms.reservations`.**
 
-- **Reserva de demanda** (esta entrega): por bodega, variante y dueño, **sin ubicación** (`location_id` pasa a nulo). La deja un pedido
-  al existir. **No toca `StockBalance.Reserved`**, así que nunca frena un `Move`, un `Putaway` ni una venta.
-- **Asignación** (T5): por ubicación, con `location_id`. Es la que suma en `StockBalance.Reserved` y la que el freno del ledger respeta.
-  T5 convierte la reserva de demanda del pedido en asignaciones al liberar la ola; el contrato de este corte no cambia.
-- **Lo que se lee:** `reserved` y `available` del resumen por bodega y variante (`v_stock_summary`) suman las reservas de demanda
-  abiertas: `available = onHand − reservado`, negativo si toca, sin recortar. Las filas por ubicación siguen mostrando sólo lo asignado
-  (cero hasta T5). **Los DTO no cambian de campos**, sólo cambia lo que suman `reserved` y `available` del resumen.
-- **Clave:** una reserva de demanda abierta es única por (`tenant_id`, `demand_type`, `demand_id`, `demand_line_id`). Una edición cierra
-  las abiertas del pedido y abre las nuevas en la misma transacción.
-- Antes de volver nulo `location_id`, el constructor revisa que ninguna vista, índice o SQL del ledger lo suponga no nulo
-  (`IX_reservations_open_key`, `v_stock_summary`).
+- **Reserva de demanda** (esta entrega): por bodega, variante y dueño, **sin ubicación** (`location_id` pasa a nulo; la FK queda para
+  las que sí la tienen). No toca `StockBalance.Reserved`, así que nunca frena un `Move`, un `Putaway` ni una venta. Única entre las
+  abiertas por (`tenant_id`, `demand_type`, `demand_id`, `demand_line_id`) **con índice parcial** `WHERE status = 'Open' AND location_id IS
+  NULL`, para que T5 pueda asignar una línea desde dos ubicaciones o lotes (hallazgo 12).
+- **Asignación** (T5): por ubicación, con `location_id`. Es la que suma en `StockBalance.Reserved` y la que respeta el freno del ledger.
+  T5 convierte la reserva de demanda del pedido en asignaciones al liberarlo.
+- **Lo que se lee (hallazgo 9):**
+  - `v_stock_summary` se une con las reservas de demanda abiertas, para que una variante reservada antes de recibir nada aparezca con
+    `onHand = 0` y `reserved > 0`. `available = onHand − reservado`, negativo si toca, sin recortar.
+  - Los `totals` de la lista de stock (`StockReadQueries.SearchAsync`, que suma `v_stock_rows`) suman también las reservas de demanda del
+    mismo filtro, para que el total de la lista y el resumen digan lo mismo. Las filas por ubicación muestran sólo lo asignado.
+  - `pickable` sigue siendo lo físico que se puede tomar y puede quedar por encima de `available`: es correcto, y se dice en el DTO.
+  - Abrir, cerrar o consumir una reserva de demanda encola el cambio de saldo (`IBalanceChangeQueue`) de esa bodega y variante, para que
+    la pantalla se entere aunque no haya asiento.
+  - **Los DTO no cambian de campos**, sólo lo que suman `reserved` y `available`.
 
 ### 5.5 Saldo negativo por motivo, no por ubicación (choque 1)
 
@@ -203,62 +229,115 @@ Que la ubicación general admita negativos para todo dejaría a un `Move` sacar 
 rechace). **Regla:** sólo una salida por venta (`MovementReason.Ship` con documento `Order` o `PosSale`) puede dejar en negativo el saldo
 de origen; cualquier otro movimiento conserva el freno, también sobre un saldo que ya esté negativo.
 
-**Mecanismo — decisión del agente:** el freno queda en el código del ledger, no en el CHECK. La salida por venta va por el camino del
-upsert (sin `DebitAsync`) y deja `allows_negative = true` en esa fila de saldo, que lo conserva; el CHECK
-`on_hand >= 0 OR allows_negative` deja de frenarla. Todo otro débito desde una ubicación física sigue por `DebitAsync`, que exige
-`on_hand + delta >= reserved` y por eso falla sobre un saldo negativo con `wms.stock.insufficient`. Una compensación de una venta suma, así
-que puede subir un saldo negativo.
+**Mecanismo — decisión del agente:**
+- La salida por venta usa un débito propio que **sí respeta lo asignado:** puede bajar `on_hand` por debajo de cero, pero nunca por
+  debajo de `reserved` cuando `reserved > 0` (hallazgo 5b). Si toca lo asignado de T5, falla con `wms.stock.reserved` y el mensaje queda
+  `Parked` (no frena la venta, que ya pasó).
+- La fila de saldo que una venta deja negativa pasa a `allows_negative = true` y lo conserva, para que `CK_stock_balances_non_negative`
+  no la rechace. Como esa marca también relaja `CK_stock_balances_reserved`, la garantía de que lo asignado no queda descubierto vive en el
+  débito de venta (arriba) y en `DebitAsync` para todo lo demás. El constructor puede preferir cambiar el CHECK; la condición es la misma.
+- Todo otro débito desde una ubicación física sigue por `DebitAsync`, que exige `on_hand + delta >= reserved` y por eso falla sobre un
+  saldo negativo con `wms.stock.insufficient`. Una compensación de una venta suma, así que puede subir un saldo negativo.
 
 ### 5.6 Asientos
 
 | Hecho | Movimiento | Motivo | Documento |
 |---|---|---|---|
-| Orden recibida | `SUPPLIER` → `GENERAL` | `Receipt` | `PurchaseOrder` / línea |
-| Pedido descontado | `GENERAL` → `CUSTOMER` | `Ship` | `Order` / línea |
-| Pedido devuelto (`unprepare`, `unarchive`) | compensación del anterior | `Reversal` | `Order` |
-| Venta POS | `GENERAL` → `CUSTOMER` | `Ship` | `PosSale` / línea |
-| Venta POS anulada | compensación | `Reversal` | `PosSale` |
+| Orden recibida | `SUPPLIER` → general | `Receipt` | `PurchaseOrder` / línea |
+| Pedido descontado | general → `CUSTOMER` | `Ship` | `Order` / línea |
+| Pedido devuelto (`unprepare`, `unarchive`) | compensación del asiento guardado | `Reversal` | `Order` |
+| Venta POS | general → `CUSTOMER` | `Ship` | `PosSale` / línea |
+| Venta POS anulada | compensación del asiento guardado | `Reversal` | `PosSale` |
 
 - Dueño `Self`, estado `Available`, sin lote. `LedgerDocument.Type` gana `PurchaseOrder`, `Order` y `PosSale`.
-- **Cantidades — decisión del agente:** la cantidad del documento se toma como cantidad en la unidad base del perfil (factor 1). Las
-  presentaciones (ADR-08) no entran: ni la venta ni la compra dicen en qué presentación se movió. Los empaques por producto no cambian
-  esto: la cantidad del pedido ya está en unidades (250 = dos empaques de 100 y 150), no en empaques. Un producto físico vendido por kilo,
-  metro o litro mueve su cantidad tal cual; si trae más decimales de los que admite el perfil de la variante, la línea se salta con log y
-  métrica, como la de lote.
-- **Línea de compra con `variantId` nulo — decisión del agente:** se salta, con log de advertencia y métrica; `Received` es final, así
-  que esperar no la resolvería. Se corrige con un ajuste.
-- **Variante controlada por lote o serie:** no puede moverse sin lote. **Decisión del agente:** la línea se salta con log y métrica; el
-  inventario básico no conoce lotes. Sólo pasa con variantes que alguien configuró así: el perfil por defecto
-  (`GetOrCreateDefaultAsync`) no controla lote (el constructor lo confirma).
-- **Fecha:** `occurredAt` del evento. Si quedó fuera de la ventana de 30 días del ledger (`LedgerEntryRules`), se usa la hora del
-  proceso y se registra.
+- **Tipo de producto (hallazgo 14):** el de pedido viaja en el evento (`OrderItem.Kind`, congelado), así reservar y descontar ven lo mismo
+  aunque el producto cambie después. Para POS y Purchases lo resuelve el WMS con el puerto que ya existe: `WmsVariantSnapshot` gana `Kind`
+  y `SalesUnit`, y `WmsCatalogReader` (Bootstrapper) los llena.
+- **Cantidades y precisión (hallazgo 3) — decisión del agente:** la cantidad del documento se toma en la unidad base del perfil (factor
+  1). Los empaques por producto no cambian esto: la cantidad ya está en unidades, no en empaques. El perfil por defecto que crea el consumidor
+  toma la precisión de la unidad de venta: 0 para `Unit`, 2 para `Kilogram`, `Meter`, `SquareMeter` y `Liter` (las cantidades de POS,
+  pedidos y compras tienen como máximo 2 decimales). Un perfil que ya existe no se toca.
+- **Líneas que se apartan antes del asiento**, con log de advertencia y métrica, sin frenar el resto:
+  - línea de compra con `variantId` nulo (`Received` es final; esperar no la resuelve);
+  - variante que Catalog no encuentra y que no tiene perfil (el ledger lanzaría `ProfileVariantUnknown` para siempre);
+  - variante controlada por lote o serie (el inventario básico no conoce lotes);
+  - cantidad con más decimales de los que admite un perfil que alguien configuró a mano.
+  Una línea apartada queda anotada en la fila de estado, así una compensación o una reserva nueva tampoco la toca.
+- **Fecha:** `occurredAt` del evento. Si quedó fuera de la ventana de 30 días del ledger (`LedgerEntryRules`), se usa la hora del proceso y
+  se registra.
+- **Reversa manual (hallazgo 7):** `ReverseMovementHandler` rechaza los movimientos con documento `PurchaseOrder`, `Order` o `PosSale`
+  con un código nuevo (`wms.movement.reverse_from_document`): se deshacen desde el documento. Si no, una reversa manual seguida de un
+  `unprepare` o un `voided` devolvería dos veces.
+- **Conteo en la ubicación general:** mientras haya un conteo abierto ahí, el ledger sólo acepta ajustes y compensaciones
+  (`LedgerEntryRules`). Ventas y compras de ese tenant quedan en reintento hasta que el conteo cierre; ninguna venta se frena, sólo su
+  asiento espera. El frontend debería avisarlo al abrir un conteo sobre esa ubicación (se comenta en su tarjeta).
 
-### 5.7 Frontend (se comenta en su tarjeta al llegar a «Code Review»)
+### 5.7 Lo que queda previsto para T3, T5 y T7
 
-- Tipos de documento del ledger: `PurchaseOrder`, `Order`, `PosSale`.
-- `WarehouseDto.isPrincipal` y la ruta para cambiarla (§5.3).
-- El resumen de stock suma las reservas de demanda en `reserved` y `available` (§5.4).
+- **T3, recepción (hallazgo 4).** `origin` no basta: con la recepción del WMS y el «Recibir» manual a la vez, la misma orden podría sumar
+  dos veces. La fila de la orden en `document_stock_states` es el árbitro:
+  - el consumidor aparta un `received` con `origin = Manual` si la orden ya tiene documento de recepción en el WMS;
+  - T3 no deja abrir recepción sobre una orden cuya fila dice que ya la sumó el inventario básico.
+  T3 lo construye; este corte deja la fila y su estado (`Received` / `ReceivedByWms`).
+- **T5, salida (hallazgo 5a).** Al liberar un pedido a una ola, T5 pasa su fila a `HandedToOutbound` y convierte la reserva de demanda en
+  asignaciones, en la bodega que elija. Desde ahí este consumidor sólo atiende `cancelled` (y sólo para liberar lo que no se haya
+  asignado); `edited` y `prepared` con `origin = Manual` no hacen nada.
+- **T7, empaque.** Marca el pedido `Prepared` con `origin = WmsPacking`, que este consumidor ignora.
+
+### 5.8 Frontend (se comenta en su tarjeta al llegar a «Code Review»)
+
+- Tipos de documento del ledger: `PurchaseOrder`, `Order`, `PosSale`, y que esos movimientos no se revierten a mano (código nuevo).
+- `WarehouseDto.isPrincipal`, `generalLocationId` y la ruta para cambiar la principal (§5.3); el código nuevo al desactivarla.
+- El resumen y los totales de stock suman las reservas de demanda en `reserved` y `available`; `pickable` puede superar a `available`.
+- Abrir un conteo sobre la ubicación general deja en espera los asientos de ventas y compras.
 
 ## 6. Pruebas
 
-TDD, RED antes que GREEN. Unitarias para la máquina por pedido (cada celda de §5.2), la regla de negativo por motivo y cada payload.
-Integración (Testcontainers) para: cada publicador escribe su evento en la misma transacción; el consumidor asienta, reserva, libera y
-compensa; idempotencia por mensaje y por versión; tenant sin módulo; los tres choques (un `Move` desde un saldo negativo falla; una
-reserva de demanda no frena un `Move`; `origin = WmsReceipt` no suma). Pruebas de contrato que fijan los campos viejos de los tres eventos
-ampliados. Una `WmsLayerTests` nueva si el consumidor cruza capas, y la de arquitectura de los módulos que publican no cambia.
+TDD, RED antes que GREEN. Unitarias para la máquina por pedido (cada fila de §5.2, incluida la secuencia preparar → archivar →
+desarchivar del hallazgo 1), el orden de mensajes por documento, la regla de negativo por motivo y cada payload. Integración
+(Testcontainers) para: cada camino de §5.1 escribe su evento en la misma transacción; el consumidor asienta, reserva, libera y compensa;
+idempotencia por mensaje y por versión, incluido un `cancelled` antes de su `created`; tenant sin módulo y módulo apagado a mitad de camino;
+líneas apartadas (variante desconocida, lote, decimales); los tres choques (un `Move` desde un saldo negativo falla; una reserva de demanda
+no frena un `Move`; una venta no descubre lo asignado; `origin = WmsReceipt` no suma); la reversa manual rechazada; la vista y los totales
+con una reserva sin saldo. Pruebas de contrato que fijan los campos viejos de los tres eventos ampliados. Cambian las pruebas de
+arquitectura del inventario de réplicas (worker nuevo).
 
 ## 7. Al criterio del constructor
 
-- La forma exacta de los records de payload y del índice de `document_stock_states`.
-- Nombre de la métrica y del log de líneas saltadas.
+- La forma exacta de los records de payload y de los índices de `document_stock_states` y `inbox_messages`.
 - Cómo se consulta «hay un mensaje más viejo del mismo documento» sin volver lenta la consulta del lote.
+- Dónde vive la marca de arranque del consumidor.
+- Nombre de la métrica y del log de líneas apartadas.
+- Si el negativo por venta se logra con la marca de la fila o cambiando el CHECK (§5.5), con las mismas garantías.
 
 ## 8. Despliegue
 
-Migración en Wms (`warehouses.is_principal` con su índice único parcial, `reservations.location_id` nulo, `document_stock_states`,
-`inbox_messages`). Se despliega antes que el frontend, que lee todo lo nuevo de forma tolerante.
+Migración en Wms: `warehouses.is_principal` (índice único parcial) y `general_location_id`, `reservations.location_id` nulo con su índice
+parcial nuevo, `document_stock_states`, `inbox_messages` y la vista `v_stock_summary` nueva. Se despliega antes que el frontend, que lee
+todo lo nuevo de forma tolerante.
 
 ## 9. Para aprobar
 
 1. Este diseño entero, con las «Decisiones del agente».
-2. El contrato HTTP nuevo de §5.3 (`PUT …/principal`) y el campo `isPrincipal`.
+2. El contrato HTTP nuevo de §5.3 (`PUT …/principal`), los campos `isPrincipal` y `generalLocationId`, y los dos códigos de error nuevos
+   (`wms.warehouse.principal_cannot_be_deactivated`, `wms.movement.reverse_from_document`).
+
+## 10. Hallazgos de la revisión de Fable y dónde quedaron
+
+| # | Hallazgo | Dónde |
+|---|---|---|
+| 1 | Desarchivar un pedido preparado devolvía stock | §5.1 `isPrepared`, §5.2 estados separados |
+| 2 | Variante desconocida o línea inválida dejaba el documento trabado | §5.2 filtro previo y `Parked`, §5.6 líneas apartadas |
+| 3 | Cantidades con decimales nunca se contaban | §5.6 precisión por unidad de venta |
+| 4 | Recepción manual + recepción del WMS sumaban dos veces | §5.7 T3 |
+| 5 | Traspaso a T5/T7 indefinido; la venta podía comerse lo asignado | §5.2 `HandedToOutbound`, §5.5, §5.7 |
+| 6 | Apagar y prender el módulo dejaba reservas colgadas | §5.2 módulo |
+| 7 | Reversa manual podía devolver dos veces | §5.6 reversa manual |
+| 8 | Versión sin lápida y sin desempate | §5.1 versión por mutación, §5.2 orden e idempotencia |
+| 9 | Vista y totales no veían la reserva de demanda | §5.4 lo que se lee |
+| 10 | Caminos sin publicar (`AddOrderItems`, `SyncExternalPaymentStatus`) | §5.1 todos los caminos |
+| 11 | La fila de estado no alcanzaba para revertir | §5.2 `batch_id` y `occurred_at` |
+| 12 | Índice de reserva debía ser parcial | §5.4 |
+| 13 | Ubicación general por código, principal desactivable, `If-Match` | §5.3 |
+| 14 | Puerto duplicado; tipo de producto inestable | §5.6 tipo de producto |
+| 15 | Worker sin clasificar, sin marca de arranque, conteo congela asientos | §5.2, §5.6, §6 |
