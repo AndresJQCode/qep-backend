@@ -121,4 +121,7 @@ public static class WmsErrorCodes
     public const string IncidentTypeNotAllowed = "wms.incident.type_not_allowed";
     public const string IncidentInvalid = "wms.incident.invalid";
     public const string IncidentEvidenceInvalid = "wms.incident.evidence_invalid";
+    public const string IncidentNotFound = "wms.incident.not_found";
+    public const string IncidentSelfResolution = "wms.incident.self_resolution";
+    public const string IncidentResolutionNotAllowed = "wms.incident.resolution_not_allowed";
 }

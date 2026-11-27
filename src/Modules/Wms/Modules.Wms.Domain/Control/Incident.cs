@@ -168,6 +168,80 @@ public sealed class Incident
         return incident;
     }
 
+    /// <summary>Un supervisor la toma: <c>Open</c> pasa a <c>InReview</c> (spec §8.3).</summary>
+    public void Review(Guid by, DateTimeOffset now)
+    {
+        if (Status != IncidentStatus.Open)
+        {
+            throw new InvalidTransitionException(Status.ToString(), "review");
+        }
+
+        Status = IncidentStatus.InReview;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.InReview, by, null, now, now));
+    }
+
+    /// <summary>La cierra con una resolución que el tipo admite. <c>CountVariance</c> nunca se resuelve a mano: la cierra su ajuste.
+    /// <paramref name="batchId"/> es el lote del ledger si la resolución movió stock.</summary>
+    public void Resolve(IncidentResolution resolution, Guid by, string? note, Guid? batchId, DateTimeOffset now)
+    {
+        EnsureUnresolved("resolve");
+        if (!IncidentCatalog.ResolutionsOf(Type).Contains(resolution))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentResolutionNotAllowed, $"Una novedad {Type} no se resuelve con {resolution}.");
+        }
+
+        var trimmed = Trimmed(note, NoteMaxLength, "La nota de la resolución");
+        Status = IncidentStatus.Resolved;
+        Resolution = resolution;
+        ResolvedBy = by;
+        ResolvedAt = now.ToUniversalTime();
+        ResolutionNote = trimmed;
+        BatchId = batchId;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Resolved, by, resolution.ToString(), now, now));
+    }
+
+    /// <summary>La descarta. Sólo una novedad que no movió nada (<see cref="IncidentCatalog.CanBeRejected"/>); la nota es obligatoria.</summary>
+    public void Reject(Guid by, string note, DateTimeOffset now)
+    {
+        EnsureUnresolved("reject");
+        if (!IncidentCatalog.CanBeRejected(Type))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentResolutionNotAllowed, $"Una novedad {Type} no se rechaza.");
+        }
+
+        var trimmed = Trimmed(note, NoteMaxLength, "El motivo del rechazo")
+            ?? throw new WmsDomainException(WmsErrorCodes.IncidentInvalid, "El motivo del rechazo es obligatorio.");
+        Status = IncidentStatus.Rejected;
+        ResolvedBy = by;
+        ResolvedAt = now.ToUniversalTime();
+        ResolutionNote = trimmed;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Rejected, by, null, now, now));
+    }
+
+    /// <summary>Separación de funciones (DA-17, DA-47): quien reportó no acepta en el stock su propia novedad, porque eso mueve stock.
+    /// Se comparan membresías, nunca <c>SubjectId</c>.</summary>
+    public void EnsureNotSelfResolution(IncidentResolution resolution, Guid by)
+    {
+        if (resolution == IncidentResolution.AcceptIntoStock && ReportedBy != Guid.Empty && ReportedBy == by)
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentSelfResolution, "Quien reportó la novedad no puede aceptarla en el stock.");
+        }
+    }
+
+    private void EnsureUnresolved(string action)
+    {
+        if (Status is not (IncidentStatus.Open or IncidentStatus.InReview))
+        {
+            throw new InvalidTransitionException(Status.ToString(), action);
+        }
+    }
+
     private static string? Trimmed(string? value, int maxLength, string what)
     {
         var trimmed = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
