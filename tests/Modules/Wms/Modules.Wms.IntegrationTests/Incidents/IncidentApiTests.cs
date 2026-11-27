@@ -117,6 +117,47 @@ public sealed class IncidentApiTests
     }
 
     [Fact]
+    public async Task ReportingALocationMismatchWithAVariantCreatesACount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var (_, client) = await SeedOperatorAsync(factory);
+        using var _c = client;
+
+        var response = await ReportRawAsync(client, ReportBody(s, "LocationMismatch", variant: s.VariantId), NewKey());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var dto = await ReadAsync<IncidentDto>(response);
+        var countId = await ScalarAsync<Guid>(database, "SELECT id FROM wms.tasks WHERE type = 'Count'");
+        Assert.Equal(countId, dto.VerificationTaskId);
+        var count = await GetTaskAsync(s.Manager, countId);
+        Assert.Equal(("Ready", "Incident", dto.Id), (count.Status, count.SourceType, count.SourceId));
+        Assert.Equal(("A-01-02", "Available"), (count.Lines[0].FromLocationCode, count.Lines[0].StockStatus));
+        Assert.Contains(dto.Events, value => value.Kind == "VerificationLinked");
+    }
+
+    [Fact]
+    public async Task ALocationMismatchWithoutAVariantHasNoCount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var (_, client) = await SeedOperatorAsync(factory);
+        using var _c = client;
+
+        var response = await ReportRawAsync(client, ReportBody(s, "LocationMismatch"), NewKey());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Null((await ReadAsync<IncidentDto>(response)).VerificationTaskId);
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.tasks WHERE type = 'Count'"));
+    }
+
+    private static Task<TaskDto> GetTaskAsync(HttpClient client, Guid id) => GetAsync(client, id);
+
+    [Fact]
     public async Task ReportingWithoutAnyTaskPermissionIs403()
     {
         var (database, factory) = await OpenAsync();

@@ -102,6 +102,32 @@ public sealed class IncidentLifecycleTests
     }
 
     [Fact]
+    public void LinkingAVerificationKeepsTheVersionAndLeavesAnEventForTheSystem()
+    {
+        var incident = Report(IncidentType.ShortMove);
+        var count = Guid.CreateVersion7();
+
+        incident.LinkVerification(count, Now, "TSK-20261126-0001");
+
+        Assert.Equal(count, incident.VerificationTaskId);
+        Assert.Equal((IncidentStatus.Open, 1L), (incident.Status, incident.Version));
+        var last = incident.Events[^1];
+        Assert.Equal((IncidentEventKind.VerificationLinked, (Guid?)null, "TSK-20261126-0001"), (last.Kind, last.MemberId, last.Detail));
+    }
+
+    [Fact]
+    public void ALinkOnAClosedIncidentIsAnInvalidTransition()
+    {
+        var incident = Report();
+        incident.Reject(Supervisor, "descartada", Now);
+
+        var error = Assert.Throws<InvalidTransitionException>(() => incident.LinkVerification(Guid.NewGuid(), Now));
+
+        Assert.Equal("link-verification", error.ProblemExtensions["action"]);
+        Assert.Null(incident.VerificationTaskId);
+    }
+
+    [Fact]
     public void OnlyAnIncidentThatMovedNothingCanBeRejected()
     {
         var conflict = Report();

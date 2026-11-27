@@ -4,14 +4,117 @@ using Modules.Wms.Domain;
 using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
+using Modules.Wms.Domain.Warehousing;
 
 namespace Modules.Wms.Application;
 
 /// <summary>Arma la novedad que nace de una línea de tarea (spec 2026-11-26 §8.4). No guarda: comparte la transacción del handler que
 /// la llama, con la misma <c>Idempotency-Key</c>. La numeración toma un lock de transacción, así que va antes de cualquier llamada
 /// al ledger (orden de bloqueos: números antes que saldos).</summary>
-public sealed class TaskIncidentRecorder(IIncidentRepository incidents, IWmsEvidenceLookup evidenceLookup)
+public sealed class TaskIncidentRecorder(
+    IIncidentRepository incidents,
+    IWmsEvidenceLookup evidenceLookup,
+    IVariantProfileRepository profiles,
+    IWarehouseTaskRepository tasks,
+    IWmsUnitOfWork unitOfWork)
 {
+    /// <summary>La clave de stock que un <c>Count</c> de verificación cuenta y, si ya hay uno abierto sobre ella, ese <c>Count</c>
+    /// ya bloqueado (con su número, para la historia de la novedad).</summary>
+    public sealed record VerificationTarget(
+        Guid WarehouseId,
+        Guid OwnerId,
+        Guid LocationId,
+        Guid VariantId,
+        Guid? LotId,
+        StockStatus Status,
+        Guid? OpenCountId,
+        string? OpenCountNumber);
+
+    /// <summary>Primera mitad de la verificación (DA-44), que va <b>antes de numerar la novedad</b>: si la novedad pide un conteo
+    /// ciego de su ubicación y la variante no es de series (a una de series no se le genera <c>Count</c>: el supervisor acepta),
+    /// toma el <c>count-key</c> de la clave, busca el <c>Count</c> abierto sobre ella y, si hay uno, lo bloquea y confirma que sigue
+    /// abierto. Devuelve <c>null</c> si no hay nada que verificar. El orden de bloqueos es operario → su tarea → <c>count-key</c> →
+    /// el <c>Count</c> abierto → numeraciones → saldos: la acción <c>count</c> ya tiene la fila del <c>Count</c> y luego numera
+    /// (ajuste y novedad), así que quien enlaza tiene que pedir esa fila <b>antes</b> de tomar <c>incident-seq</c>.</summary>
+    public async Task<VerificationTarget?> LockVerificationAsync(
+        IncidentType type,
+        IncidentSubject subject,
+        Guid tenantId,
+        Guid warehouseId,
+        Guid ownerId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(subject);
+        if (!IncidentCatalog.RequestsVerification(type) || subject.Location is not { } location || subject.VariantId is not { } variant)
+        {
+            return null;
+        }
+
+        var profile = await profiles.FindAsync(tenantId, variant, cancellationToken);
+        if (profile?.Tracking == TrackingPolicy.Serial)
+        {
+            return null;
+        }
+
+        // Una novedad suelta no trae estado: lo que se verifica es lo disponible.
+        var status = subject.StockStatus ?? StockStatus.Available;
+        var lot = subject.LotId?.Value;
+        await unitOfWork.LockAsync(
+            $"count-key:{tenantId:D}:{ownerId:D}:{location.Value:D}:{variant:D}:{lot?.ToString("D") ?? "none"}:{status}",
+            cancellationToken);
+
+        Guid? openId = null;
+        string? openNumber = null;
+        if (await tasks.FindOpenCountAsync(tenantId, warehouseId, ownerId, location.Value, variant, lot, status, cancellationToken)
+            is { } candidate
+            && await tasks.LockAsync(tenantId, candidate, cancellationToken))
+        {
+            // Con la fila bloqueada se vuelve a mirar: si el conteo se cerró entre la búsqueda y el bloqueo, se crea otro.
+            var open = await tasks.GetAsync(tenantId, candidate, cancellationToken);
+            if (open is { Status: not (WarehouseTaskStatus.Done or WarehouseTaskStatus.Cancelled) })
+            {
+                (openId, openNumber) = (open.Id, open.Number);
+            }
+        }
+
+        return new VerificationTarget(warehouseId, ownerId, location.Value, variant, lot, status, openId, openNumber);
+    }
+
+    /// <summary>Segunda mitad: con la novedad ya armada, la enlaza al <c>Count</c> abierto o genera uno nuevo, de una línea, publicado,
+    /// del sistema y con la novedad como origen. El número de la tarea toma <c>task-seq</c>, después de <c>incident-seq</c>.</summary>
+    public async Task LinkVerificationAsync(
+        Incident incident, VerificationTarget? target, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+        if (target is null)
+        {
+            return;
+        }
+
+        if (target.OpenCountId is { } openId)
+        {
+            incident.LinkVerification(openId, now, target.OpenCountNumber);
+            return;
+        }
+
+        var number = await tasks.NextNumberAsync(incident.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var count = WarehouseTask.CreateCount(
+            incident.TenantId,
+            number,
+            new WarehouseId(target.WarehouseId),
+            new OwnerId(target.OwnerId),
+            [WarehouseTaskLine.CreateCount(
+                target.VariantId,
+                target.LotId is { } lot ? new LotId(lot) : null,
+                target.Status,
+                new LocationId(target.LocationId))],
+            TaskSourceType.Incident,
+            incident.Id,
+            now);
+        tasks.Add(count);
+        incident.LinkVerification(count.Id, now, count.Number);
+    }
+
     /// <summary>Las fotos que el operario adjuntó, como evidencia (DA-49). Se de-duplican primero; más de
     /// <see cref="Incident.MaxEvidence"/> distintas, una de otro tenant, de otro tipo de dueño o que no existe es 422
     /// <c>wms.incident.evidence_invalid</c>. Cuentan en cualquier estado: pueden estar subiendo todavía.</summary>
@@ -62,9 +165,12 @@ public sealed class TaskIncidentRecorder(IIncidentRepository incidents, IWmsEvid
 
         // La evidencia se valida antes de numerar: una foto ajena no toma el lock de numeración.
         var evidence = await ResolveEvidenceAsync(task.TenantId, photoFileIds, cancellationToken);
-        var number = await incidents.NextNumberAsync(task.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
         var subject = new IncidentSubject(
             task.Id, line.Id, line.FromLocationId, line.VariantId, lot, line.StockStatus, expected, actual);
+        // Antes de numerar: el count-key y el Count abierto van antes que incident-seq (ver LockVerificationAsync).
+        var verification = await LockVerificationAsync(
+            type, subject, task.TenantId, task.WarehouseId.Value, task.OwnerId.Value, cancellationToken);
+        var number = await incidents.NextNumberAsync(task.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
         var incident = Incident.Report(
             task.TenantId,
             number,
@@ -81,6 +187,7 @@ public sealed class TaskIncidentRecorder(IIncidentRepository incidents, IWmsEvid
             operationKey,
             reportedAt,
             now);
+        await LinkVerificationAsync(incident, verification, now, cancellationToken);
         incidents.Add(incident);
         return incident;
     }

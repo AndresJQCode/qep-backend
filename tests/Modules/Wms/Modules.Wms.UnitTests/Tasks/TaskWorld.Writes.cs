@@ -60,7 +60,8 @@ internal sealed partial class TaskWorld
     /// pruebas es el de los bloqueos, el ledger, el recibo y el guardado.</summary>
     public List<Incident> Incidents { get; } = [];
 
-    public TaskIncidentRecorder IncidentRecorder() => new(new FakeIncidents(this), new FakeEvidence());
+    public TaskIncidentRecorder IncidentRecorder() =>
+        new(new FakeIncidents(this), new FakeEvidence(), new FakeProfiles(), new FakeTasks(this), new FakeUnitOfWork(this));
 
     public IIncidentRepository IncidentRepository() => new FakeIncidents(this);
 

@@ -168,6 +168,17 @@ public sealed class Incident
         return incident;
     }
 
+    /// <summary>Enlaza el <c>Count</c> que verifica lo declarado (el que ya estaba abierto sobre la misma clave, o el que esta misma
+    /// transacción acaba de crear). Se llama al nacer la novedad, antes de guardarla: no sube la versión, porque ningún supervisor
+    /// la ha visto. <paramref name="taskNumber"/> es sólo para la historia.</summary>
+    public void LinkVerification(Guid countTaskId, DateTimeOffset now, string? taskNumber = null)
+    {
+        EnsureUnresolved("link-verification");
+        VerificationTaskId = countTaskId;
+        _events.Add(IncidentEvent.Record(
+            TenantId, Id, IncidentEventKind.VerificationLinked, null, taskNumber, now, now));
+    }
+
     /// <summary>Un supervisor la toma: <c>Open</c> pasa a <c>InReview</c> (spec §8.3).</summary>
     public void Review(Guid by, DateTimeOffset now)
     {

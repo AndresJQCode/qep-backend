@@ -97,7 +97,207 @@ public sealed class TaskShortApiTests
         Assert.Equal((floor.Worker, key), (incident.ReportedBy, incident.OperationKey));
         Assert.Equal(floor.Task.Lines[0].Id, incident.SourceTaskLineId);
         Assert.Equal(scanned, incident.ReportedAt, TimeSpan.FromMilliseconds(1));
-        Assert.Null(incident.VerificationTaskId);
+        // Un faltante pide un conteo de verificación (C3): la novedad ya lo tiene enlazado.
+        Assert.NotNull(incident.VerificationTaskId);
+    }
+
+    private static Task<long> CountTasksAsync(PostgreSqlContainer database) =>
+        ScalarAsync<long>(database, "SELECT count(*) FROM wms.tasks WHERE type = 'Count'");
+
+    [Fact]
+    public async Task AShortCreatesAReadyCountOfTheSourceKey()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+
+        var response = await ShortAsync(floor, 2);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var incident = Assert.Single(await IncidentsOfTaskAsync(database, floor.Task.Id));
+        var countId = await ScalarAsync<Guid>(database, "SELECT id FROM wms.tasks WHERE type = 'Count'");
+        Assert.Equal(countId, incident.VerificationTaskId);
+        var count = await GetAsync(floor.Setup.Manager, countId);
+        Assert.Equal(("Count", "Ready", "Incident", incident.Id), (count.Type, count.Status, count.SourceType, count.SourceId));
+        var line = Assert.Single(count.Lines);
+        Assert.Equal(("A-01-02", "V1", "Available", 0m, 0m), (line.FromLocationCode, line.VariantCode, line.StockStatus, line.QuantityPlanned, line.QuantityRemaining));
+        Assert.Null(line.ToLocationId);
+        Assert.Null(line.LotId);
+        Assert.Null(line.QuantityCounted);
+        Assert.Equal(1L, await CountTasksAsync(database));
+        Assert.Equal(
+            "VerificationLinked",
+            await ScalarAsync<string>(database, "SELECT kind FROM wms.incident_events WHERE kind = 'VerificationLinked'"));
+    }
+
+    // Dos operarios, dos movimientos que salen de la misma ubicación, los dos con su tarea reclamada.
+    private sealed record TwoShorts(LedgerSetup Setup, TaskDto First, HttpClient FirstClient, TaskDto Second, HttpClient SecondClient);
+
+    private static async Task<TwoShorts> ArrangeTwoShortsAsync(QepApiFactory factory, PostgreSqlContainer database)
+    {
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        await StockAsync(factory, s, s.BinA, 10);
+        await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 5)], priority: 5));
+        await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 4)], priority: 4));
+        return await ClaimTwoAsync(factory, s);
+    }
+
+    private static async Task<TwoShorts> ClaimTwoAsync(QepApiFactory factory, LedgerSetup s)
+    {
+        var (_, first) = await SeedOperatorAsync(factory);
+        var (_, second) = await SeedOperatorAsync(factory, SecondOperatorSubject);
+        var firstTask = await ReadAsync<TaskDto>(await NextRawAsync(first, s.WarehouseId));
+        var secondTask = await ReadAsync<TaskDto>(await NextRawAsync(second, s.WarehouseId));
+        return new TwoShorts(s, firstTask, first, secondTask, second);
+    }
+
+    // Con un lote planeado, el escaneo tiene que traerlo: el de la línea.
+    private static Task<HttpResponseMessage> ShortOfAsync(HttpClient client, TaskDto task, decimal found, string key) =>
+        ShortRawAsync(
+            client, task.Id, task.Lines[0].Id, ShortBody(task.LeaseToken!.Value, found, lotId: task.Lines[0].LotId), key);
+
+    [Fact]
+    public async Task ASecondShortOnTheSameKeyLinksTheOpenCount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var two = await ArrangeTwoShortsAsync(factory, database);
+        using var _a = two.FirstClient;
+        using var _b = two.SecondClient;
+
+        Assert.Equal(HttpStatusCode.OK, (await ShortOfAsync(two.FirstClient, two.First, 2, NewKey())).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ShortOfAsync(two.SecondClient, two.Second, 1, NewKey())).StatusCode);
+
+        Assert.Equal(1L, await CountTasksAsync(database));
+        var countId = await ScalarAsync<Guid>(database, "SELECT id FROM wms.tasks WHERE type = 'Count'");
+        Assert.Equal(2L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM wms.incidents WHERE verification_task_id = @count", ("count", countId)));
+    }
+
+    [Fact]
+    public async Task TwoConcurrentShortsOnTheSameKeyShareOneCount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var two = await ArrangeTwoShortsAsync(factory, database);
+        using var _a = two.FirstClient;
+        using var _b = two.SecondClient;
+
+        var responses = await Task.WhenAll(
+            ShortOfAsync(two.FirstClient, two.First, 2, NewKey()),
+            ShortOfAsync(two.SecondClient, two.Second, 1, NewKey()));
+
+        // El count-key serializa a los dos: el segundo encuentra el Count del primero y no crea otro.
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        Assert.Equal(1L, await CountTasksAsync(database));
+        Assert.Equal(2L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM wms.incidents WHERE verification_task_id IS NOT NULL"));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            database, "SELECT count(DISTINCT verification_task_id) FROM wms.incidents"));
+    }
+
+    [Fact]
+    public async Task AShortOnAnotherLotCreatesAnotherCount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await SetTrackingAsync(s.Manager, s.VariantId, "Lot");
+        var lotOne = await CreateLotAsync(factory, s, s.VariantId, "L1");
+        var lotTwo = await CreateLotAsync(factory, s, s.VariantId, "L2");
+        var two = await ArrangeTwoShortsOnLotsAsync(factory, s, lotOne, lotTwo);
+        using var _a = two.FirstClient;
+        using var _b = two.SecondClient;
+
+        Assert.Equal(HttpStatusCode.OK, (await ShortOfAsync(two.FirstClient, two.First, 2, NewKey())).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ShortOfAsync(two.SecondClient, two.Second, 1, NewKey())).StatusCode);
+
+        Assert.Equal(2L, await CountTasksAsync(database));
+        foreach (var lot in new[] { lotOne, lotTwo })
+        {
+            Assert.Equal(1L, await ScalarAsync<long>(
+                database, "SELECT count(*) FROM wms.task_lines WHERE quantity_planned = 0 AND lot_id = @lot", ("lot", lot)));
+        }
+    }
+
+    private static async Task<TwoShorts> ArrangeTwoShortsOnLotsAsync(QepApiFactory factory, LedgerSetup s, Guid lotOne, Guid lotTwo)
+    {
+        var destination = await CreateDestinationAsync(s);
+        await StockAsync(factory, s, s.BinA, 10, lotOne);
+        await StockAsync(factory, s, s.BinA, 10, lotTwo);
+        await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 5, lotOne)], priority: 5));
+        await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 4, lotTwo)], priority: 4));
+        return await ClaimTwoAsync(factory, s);
+    }
+
+    [Fact]
+    public async Task AShortOnASerialVariantCreatesNoCount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await SetTrackingAsync(s.Manager, s.VariantId, "Serial");
+        var destination = await CreateDestinationAsync(s);
+        await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 5)]));
+        var (_, client) = await SeedOperatorAsync(factory);
+        using var _c = client;
+        var task = await ReadAsync<TaskDto>(await NextRawAsync(client, s.WarehouseId));
+
+        // Con cero encontrado no hay llamada al ledger (que pediría los seriales): DA-44, a una variante de series no se le genera Count.
+        var response = await ShortOfAsync(client, task, 0, NewKey());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0L, await CountTasksAsync(database));
+        Assert.Null(Assert.Single(await IncidentsOfTaskAsync(database, task.Id)).VerificationTaskId);
+    }
+
+    [Fact]
+    public async Task TheCountAndItsIncidentRollBackWithTheShort()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        await ExecuteAsync(
+            database,
+            "UPDATE wms.stock_balances SET on_hand = 1 WHERE location_id = @location AND variant_id = @variant",
+            ("location", floor.Setup.BinA),
+            ("variant", floor.Setup.VariantId));
+
+        var response = await ShortAsync(floor, 2);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(0L, await CountTasksAsync(database));
+        Assert.Equal(0L, await IncidentCountAsync(database));
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.incident_events"));
+    }
+
+    [Fact]
+    public async Task RepeatingTheShortCreatesNoSecondCount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var key = NewKey();
+        var body = ShortBody(floor.Task.LeaseToken!.Value, 2);
+
+        var first = await ShortRawAsync(floor.Client, floor.Task.Id, floor.Task.Lines[0].Id, body, key);
+        var second = await ShortRawAsync(floor.Client, floor.Task.Id, floor.Task.Lines[0].Id, body, key);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(1L, await CountTasksAsync(database));
+        Assert.Equal(1L, await IncidentCountAsync(database));
     }
 
     [Fact]

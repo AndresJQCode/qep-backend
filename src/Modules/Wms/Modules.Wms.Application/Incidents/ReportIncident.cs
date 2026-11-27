@@ -166,7 +166,6 @@ public sealed class ReportIncidentHandler(
         }
 
         var evidence = await recorder.ResolveEvidenceAsync(command.TenantId, command.PhotoFileIds, cancellationToken);
-        var number = await incidents.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
         var subject = new IncidentSubject(
             command.SourceTaskId,
             null,
@@ -176,6 +175,11 @@ public sealed class ReportIncidentHandler(
             null,
             null,
             command.Quantity);
+        // Un LocationMismatch con variante pide un conteo de verificación (DA-44): el count-key y el Count abierto se toman antes de
+        // numerar la novedad, igual que en short.
+        var verification = await recorder.LockVerificationAsync(
+            type, subject, command.TenantId, warehouse.Id.Value, owner.Value, cancellationToken);
+        var number = await incidents.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
         var incident = Incident.Report(
             command.TenantId,
             number,
@@ -192,6 +196,7 @@ public sealed class ReportIncidentHandler(
             idempotency.Key,
             occurredAt,
             now);
+        await recorder.LinkVerificationAsync(incident, verification, now, cancellationToken);
         incidents.Add(incident);
 
         await unitOfWork.FlushAsync(cancellationToken);
