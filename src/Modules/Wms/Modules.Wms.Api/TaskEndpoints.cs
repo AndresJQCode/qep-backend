@@ -86,6 +86,10 @@ internal static class TaskEndpoints
             .RequireIdempotencyKey()
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+        OperatorAction<ShortTaskLineRequest, TaskDto>(group, "/tasks/{id:guid}/lines/{lineId:guid}/short", ShortAsync)
+            .RequireIdempotencyKey()
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
 
     private static RouteHandlerBuilder OperatorAction<TRequest, TResponse>(RouteGroupBuilder group, string route, Delegate handler)
@@ -133,6 +137,16 @@ internal static class TaskEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             ConfirmTaskLineCommand.From(tenantId, id, lineId, request), cancellationToken));
+
+    private static async Task<IResult> ShortAsync(
+        Guid tenantId,
+        Guid id,
+        Guid lineId,
+        ShortTaskLineRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ShortTaskLineCommand.From(tenantId, id, lineId, request), cancellationToken));
 
     // Las siete comparten política, respuesta y errores: sólo cambian el cuerpo y el comando.
     private static void SupervisorAction<TRequest>(RouteGroupBuilder group, string route, Delegate handler)

@@ -171,6 +171,18 @@ public sealed record ConfirmTaskLineRequest(
     DateTimeOffset? OccurredAt,
     string? DeviceId) : IIdempotentRequest;
 
+/// <summary>Lo que el operario escaneó al no encontrar todo. <c>QuantityFound</c> va al destino planeado; para otro destino se
+/// confirma antes con motivo y se declara el faltante con 0 (DA-41). <c>IncidentType</c> es el nombre del tipo: <c>ShortMove</c> o
+/// <c>LocationMismatch</c>.</summary>
+public sealed record ShortTaskLineRequest(
+    Guid LeaseToken,
+    decimal QuantityFound,
+    Guid? LotId,
+    string? IncidentType,
+    string? Note,
+    DateTimeOffset? OccurredAt,
+    string? DeviceId) : IIdempotentRequest;
+
 /// <summary>Cuerpo de <c>publish</c> y <c>unassign</c>. Las acciones del supervisor llevan la versión que leyó (412 si cambió).
 /// </summary>
 public sealed record TaskVersionRequest(long Version);

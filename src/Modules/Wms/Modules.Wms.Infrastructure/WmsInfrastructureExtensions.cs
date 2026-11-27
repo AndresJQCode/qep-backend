@@ -53,6 +53,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<OperatorTaskGuard>();
         services.AddScoped<TaskClosedNotifier>();
         services.AddScoped<OperatorLineRunner>();
+        services.AddScoped<TaskIncidentRecorder>();
         services.AddScoped<IImportPreviewStore, ImportPreviewStore>();
         services.AddSingleton<IInitialBalanceSheetReader, ClosedXmlInitialBalanceSheetReader>();
         services.AddSingleton<IStockExportBuilder, ClosedXmlStockExportBuilder>();

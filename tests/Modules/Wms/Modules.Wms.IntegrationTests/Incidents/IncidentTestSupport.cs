@@ -1,5 +1,8 @@
 using System.Globalization;
+using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
+using Testcontainers.PostgreSql;
 using Modules.Wms.Application;
 using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Inventory;
@@ -79,6 +82,76 @@ internal static class IncidentTestSupport
             .GetWithEventsAsync(incident.TenantId, incident.Id, TestContext.Current.CancellationToken);
         Assert.NotNull(reloaded);
         return reloaded;
+    }
+
+    /// <summary>Una fila de <c>wms.incidents</c> tal como la dejó una acción, leída con SQL: lo que importa de ella en las pruebas.</summary>
+    internal sealed record IncidentRow(
+        Guid Id,
+        string Type,
+        string Status,
+        decimal? ExpectedQty,
+        decimal? ActualQty,
+        Guid ReportedBy,
+        string? OperationKey,
+        Guid? VerificationTaskId,
+        Guid? LotId,
+        Guid? SourceTaskLineId,
+        string? RawPayload,
+        DateTimeOffset ReportedAt);
+
+    public static async Task<IReadOnlyList<IncidentRow>> IncidentsOfTaskAsync(PostgreSqlContainer database, Guid taskId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT id, type, status, expected_qty, actual_qty, reported_by, operation_key, verification_task_id, lot_id,
+                   source_task_line_id, raw_payload::text, reported_at
+            FROM wms.incidents WHERE source_task_id = @task ORDER BY reported_at, number
+            """,
+            connection);
+        command.Parameters.AddWithValue("task", taskId);
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var rows = new List<IncidentRow>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            rows.Add(new IncidentRow(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetDecimal(3),
+                reader.IsDBNull(4) ? null : reader.GetDecimal(4),
+                reader.GetGuid(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7),
+                reader.IsDBNull(8) ? null : reader.GetGuid(8),
+                reader.IsDBNull(9) ? null : reader.GetGuid(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.GetFieldValue<DateTimeOffset>(11)));
+        }
+
+        return rows;
+    }
+
+    /// <summary>El cuerpo de <c>short</c>: lo que el operario escaneó al no encontrar todo.</summary>
+    public static ShortTaskLineRequest ShortBody(
+        Guid token, decimal found, string type = "ShortMove", Guid? lotId = null, DateTimeOffset? occurredAt = null, string? note = null) =>
+        new(token, found, lotId, type, note, occurredAt ?? DateTimeOffset.UtcNow, "zebra-01");
+
+    public static async Task<HttpResponseMessage> ShortRawAsync(
+        HttpClient client, Guid taskId, Guid lineId, object body, string? key = null)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"{Tasks.TaskApiSupport.TasksUrl()}/{taskId}/lines/{lineId}/short")
+        {
+            Content = JsonContent.Create(body),
+        };
+        if (key is not null)
+        {
+            request.Headers.Add("Idempotency-Key", key);
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
     public static string NumberOf(DateOnly day, int sequence) =>

@@ -1369,6 +1369,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.ConfirmTaskLineCommand, Modules.Wms.Application.TaskDto>,
             Modules.Wms.Application.ConfirmTaskLineHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ShortTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ShortTaskLineHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
