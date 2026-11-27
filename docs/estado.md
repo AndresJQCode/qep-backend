@@ -636,6 +636,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-27 — **Decisión del owner: Granada sin factura de Siigo.** Granada (`GD`) no está en la lista de ciudades de Siigo
+  (`geography.billing_cities`), así que sus clientes no se facturan por Siigo ni entran a la bandeja del exterior. Se acepta así:
+  no se le escribe a Siigo ni se agrega a mano a la lista (tarjeta de Trello `mx0ytqLk`). Siguen pendientes el `id_type` 50/42
+  con contabilidad y la prueba contra Siigo real.
 - 2026-11-27 — Mergeado a `develop` (`bc2502615`, `--no-ff`, sin push; un primer merge `8a48f3147` llevó la rama hasta
   `c985ea6de`) **RRHH: recordatorio de cumpleaños de empleados** (`feature/hr-birthday-notices` hasta `23699c2d1`; tarjeta
   de Trello `KNdEXvgF`). Ajuste `GET/PUT /api/v1/tenants/{tenantId}/hr/birthday-notices` (`hr.employee.read` /
