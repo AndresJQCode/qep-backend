@@ -1109,6 +1109,70 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Hr.Infrastructure.Persistence.BirthdayNoticeDigest", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<DateOnly>("RunDate")
+                        .HasColumnType("date")
+                        .HasColumnName("run_date");
+
+                    b.Property<DateTimeOffset>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.HasKey("TenantId", "MemberId", "RunDate");
+
+                    b.ToTable("birthday_notice_digests", "hr", t =>
+                        {
+                            t.HasCheckConstraint("CK_birthday_notice_digests_status", "status IN ('Sending','Sent','Failed')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Hr.Infrastructure.Persistence.BirthdayNoticeRun", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateOnly>("RunDate")
+                        .HasColumnType("date")
+                        .HasColumnName("run_date");
+
+                    b.Property<DateTimeOffset>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.HasKey("TenantId", "RunDate");
+
+                    b.ToTable("birthday_notice_runs", "hr");
+                });
+
             modelBuilder.Entity("Modules.Hr.Infrastructure.Persistence.DailyDigest", b =>
                 {
                     b.Property<Guid>("TenantId")

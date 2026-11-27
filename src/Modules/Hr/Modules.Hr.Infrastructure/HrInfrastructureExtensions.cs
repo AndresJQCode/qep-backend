@@ -54,6 +54,12 @@ public static class HrInfrastructureExtensions
         services.AddScoped<MedicalExamEventPublisher>();
         services.AddScoped<IMedicalExamEventPublisher>(provider => provider.GetRequiredService<MedicalExamEventPublisher>());
         services.AddScoped<IHrMedicalExamsReminderProcessor, HrMedicalExamsReminderProcessor>();
+
+        // Spec 2026-11-26 §5.2: the daily birthday run, driven by the same worker tick, with its own claim tables.
+        services.AddScoped<BirthdayRunStore>();
+        services.AddScoped<BirthdayDigestStore>();
+        services.AddScoped<BirthdayEventPublisher>();
+        services.AddScoped<IHrBirthdayNoticesProcessor, HrBirthdayNoticesProcessor>();
         services.AddHostedService<HrMedicalExamsReminderWorker>();
 
         return services;
