@@ -174,9 +174,9 @@ public sealed class OperatorTaskHandlersTests
             world, command with { OccurredAt = TaskWorld.Start.AddDays(-31) }, WmsErrorCodes.MovementOccurredAtOutOfRange);
         await AssertDomainAsync(
             world, command with { OccurredAt = TaskWorld.Start.AddMinutes(6) }, WmsErrorCodes.MovementOccurredAtOutOfRange);
-        // La tarea se creó y se publicó en Start: un escaneo anterior es imposible.
+        // La tarea se creó y se publicó en Start: un escaneo anterior a la holgura del reloj (5 minutos) es imposible.
         await AssertDomainAsync(
-            world, command with { OccurredAt = TaskWorld.Start.AddMinutes(-1) }, WmsErrorCodes.MovementOccurredAtOutOfRange);
+            world, command with { OccurredAt = TaskWorld.Start.AddMinutes(-6) }, WmsErrorCodes.MovementOccurredAtOutOfRange);
     }
 
     [Fact]
