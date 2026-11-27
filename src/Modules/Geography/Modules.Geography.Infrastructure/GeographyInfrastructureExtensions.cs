@@ -30,6 +30,9 @@ public static class GeographyInfrastructureExtensions
         services.AddScoped<IRegionRepository, RegionRepository>();
         services.AddScoped<ICitySynonymRepository, CitySynonymRepository>();
         services.AddScoped<IUnresolvedCityRepository, UnresolvedCityRepository>();
+        services.AddScoped<IBillingCityRepository, BillingCityRepository>();
+        services.AddScoped<IForeignCitySynonymRepository, ForeignCitySynonymRepository>();
+        services.AddScoped<IUnresolvedForeignCityRepository, UnresolvedForeignCityRepository>();
         // Un puerto y no un caso de uso del dispatcher: lo llama Bootstrapper (SC-06, SC-13), sin sesión ni tenant.
         services.AddScoped<IUnresolvedCityReporter, UnresolvedCityReporter>();
         services.AddScoped<IGeographyUnitOfWork, GeographyUnitOfWork>();

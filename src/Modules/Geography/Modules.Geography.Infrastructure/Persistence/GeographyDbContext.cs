@@ -32,6 +32,15 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
     /// <summary>Busca por país y nombre. No es único: la lista de Siigo repite nombres dentro de un país (Boston, Berlín).</summary>
     public const string BillingCityNameIndex = "IX_billing_cities_country_name";
 
+    /// <summary>Un solo sinónimo vivo del exterior por país y texto. <c>GeographyUnitOfWork</c> discrimina por este nombre.</summary>
+    public const string ForeignSynonymTextActiveIndex = "IX_foreign_city_synonyms_country_text_active";
+
+    /// <summary>Una sola fila del exterior no resuelta por país y texto: el blanco del reporte por SQL.</summary>
+    public const string UnresolvedForeignTextOpenIndex = "IX_unresolved_foreign_cities_country_text_open";
+
+    /// <summary>Una ocurrencia por pedido y fila: el blanco del <c>ON CONFLICT (unresolved_city_id, order_id)</c>.</summary>
+    public const string ForeignOccurrenceOrderIndex = "IX_unresolved_foreign_city_occurrences_city_order";
+
     private const int StatusMaxLength = 16;
     private const int SourceMaxLength = 32;
 
@@ -39,6 +48,9 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
     // Customer.ClassificationId).
     private static readonly ValueConverter<CitySynonymId, Guid> SynonymIdConverter =
         new(id => id.Value, value => new CitySynonymId(value));
+
+    private static readonly ValueConverter<ForeignCitySynonymId, Guid> ForeignSynonymIdConverter =
+        new(id => id.Value, value => new ForeignCitySynonymId(value));
 
     public DbSet<Department> Departments => Set<Department>();
 
@@ -57,6 +69,12 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
     public DbSet<UnresolvedCity> UnresolvedCities => Set<UnresolvedCity>();
 
     public DbSet<UnresolvedCityOccurrence> UnresolvedCityOccurrences => Set<UnresolvedCityOccurrence>();
+
+    public DbSet<ForeignCitySynonym> ForeignCitySynonyms => Set<ForeignCitySynonym>();
+
+    public DbSet<UnresolvedForeignCity> UnresolvedForeignCities => Set<UnresolvedForeignCity>();
+
+    public DbSet<UnresolvedForeignCityOccurrence> UnresolvedForeignCityOccurrences => Set<UnresolvedForeignCityOccurrence>();
 
     internal DbSet<SeedState> SeedStates => Set<SeedState>();
 
@@ -79,6 +97,9 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
         ConfigureCitySynonym(modelBuilder);
         ConfigureUnresolvedCity(modelBuilder);
         ConfigureUnresolvedCityOccurrence(modelBuilder);
+        ConfigureForeignCitySynonym(modelBuilder);
+        ConfigureUnresolvedForeignCity(modelBuilder);
+        ConfigureUnresolvedForeignCityOccurrence(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
@@ -407,6 +428,123 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
         occurrence.HasIndex(value => value.UnresolvedCityId)
             .HasDatabaseName("IX_unresolved_city_occurrences_unresolved_city");
         occurrence.HasOne<UnresolvedCity>()
+            .WithMany()
+            .HasForeignKey(value => value.UnresolvedCityId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    // Sinónimos y bandeja del exterior (spec 2026-11-26): mismo patrón que los colombianos, por país y contra billing_cities.
+    private static void ConfigureForeignCitySynonym(ModelBuilder modelBuilder)
+    {
+        var synonym = modelBuilder.Entity<ForeignCitySynonym>();
+        synonym.ToTable("foreign_city_synonyms", Schema);
+        synonym.HasKey(value => value.Id);
+        synonym.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(ForeignSynonymIdConverter)
+            .ValueGeneratedNever();
+        synonym.Property(value => value.CountryCode)
+            .HasColumnName("country_code")
+            .HasMaxLength(2);
+        synonym.Property(value => value.NormalizedText)
+            .HasColumnName("normalized_text")
+            .HasMaxLength(CityText.MaxLength);
+        synonym.Property(value => value.DisplayText)
+            .HasColumnName("display_text")
+            .HasMaxLength(CityText.MaxLength);
+        synonym.Property(value => value.BillingCityId)
+            .HasColumnName("billing_city_id")
+            .HasConversion(id => id.Value, value => new BillingCityId(value));
+        synonym.Property(value => value.CreatedBy).HasColumnName("created_by");
+        synonym.Property(value => value.CreatedAt).HasColumnName("created_at");
+        synonym.Property(value => value.UpdatedBy).HasColumnName("updated_by");
+        synonym.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        synonym.Property(value => value.DeletedAt).HasColumnName("deleted_at");
+        synonym.Property(value => value.DeletedBy).HasColumnName("deleted_by");
+        synonym.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+        synonym.Ignore(value => value.IsDeleted);
+
+        // Parcial: borrar un sinónimo libera su texto para uno nuevo, y el borrado conserva su historia.
+        synonym.HasIndex(value => new { value.CountryCode, value.NormalizedText })
+            .IsUnique()
+            .HasFilter("deleted_at IS NULL")
+            .HasDatabaseName(ForeignSynonymTextActiveIndex);
+        synonym.HasIndex(value => value.BillingCityId).HasDatabaseName("IX_foreign_city_synonyms_billing_city");
+        synonym.HasOne<BillingCity>()
+            .WithMany()
+            .HasForeignKey(value => value.BillingCityId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureUnresolvedForeignCity(ModelBuilder modelBuilder)
+    {
+        var unresolved = modelBuilder.Entity<UnresolvedForeignCity>();
+        unresolved.ToTable("unresolved_foreign_cities", Schema, table =>
+            table.HasCheckConstraint("CK_unresolved_foreign_cities_status", StatusCheck()));
+        unresolved.HasKey(value => value.Id);
+        unresolved.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new UnresolvedForeignCityId(value))
+            .ValueGeneratedNever();
+        unresolved.Property(value => value.CountryCode)
+            .HasColumnName("country_code")
+            .HasMaxLength(2);
+        unresolved.Property(value => value.NormalizedText)
+            .HasColumnName("normalized_text")
+            .HasMaxLength(CityText.MaxLength);
+        unresolved.Property(value => value.CityText)
+            .HasColumnName("city_text")
+            .HasMaxLength(CityText.MaxLength);
+        // Texto y no el entero por defecto: el CHECK y el filtro del índice lo nombran.
+        unresolved.Property(value => value.Status)
+            .HasColumnName("status")
+            .HasConversion<string>()
+            .HasMaxLength(StatusMaxLength);
+        unresolved.Property(value => value.SynonymId)
+            .HasColumnName("synonym_id")
+            .HasConversion(ForeignSynonymIdConverter);
+        unresolved.Property(value => value.FirstSeenAt).HasColumnName("first_seen_at");
+        unresolved.Property(value => value.LastSeenAt).HasColumnName("last_seen_at");
+        unresolved.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        unresolved.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+
+        // Parcial: un texto resuelto que vuelve a aparecer (el sinónimo se borró) abre una fila nueva; uno descartado no,
+        // suma ocurrencias a la suya.
+        unresolved.HasIndex(value => new { value.CountryCode, value.NormalizedText })
+            .IsUnique()
+            .HasFilter("status <> 'Resolved'")
+            .HasDatabaseName(UnresolvedForeignTextOpenIndex);
+        unresolved.HasIndex(value => new { value.Status, value.LastSeenAt })
+            .IsDescending(false, true)
+            .HasDatabaseName("IX_unresolved_foreign_cities_status_last_seen");
+        unresolved.HasOne<ForeignCitySynonym>()
+            .WithMany()
+            .HasForeignKey(value => value.SynonymId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureUnresolvedForeignCityOccurrence(ModelBuilder modelBuilder)
+    {
+        var occurrence = modelBuilder.Entity<UnresolvedForeignCityOccurrence>();
+        occurrence.ToTable("unresolved_foreign_city_occurrences", Schema);
+        occurrence.HasKey(value => value.Id);
+        occurrence.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        occurrence.Property(value => value.UnresolvedCityId)
+            .HasColumnName("unresolved_city_id")
+            .HasConversion(id => id.Value, value => new UnresolvedForeignCityId(value));
+        occurrence.Property(value => value.TenantId).HasColumnName("tenant_id");
+        occurrence.Property(value => value.OrderId).HasColumnName("order_id");
+        occurrence.Property(value => value.SeenAt).HasColumnName("seen_at");
+
+        // Una ocurrencia por pedido y fila: la misma orden vista muchas veces no suma.
+        occurrence.HasIndex(value => new { value.UnresolvedCityId, value.OrderId })
+            .IsUnique()
+            .HasDatabaseName(ForeignOccurrenceOrderIndex);
+        occurrence.HasOne<UnresolvedForeignCity>()
             .WithMany()
             .HasForeignKey(value => value.UnresolvedCityId)
             .OnDelete(DeleteBehavior.Restrict);

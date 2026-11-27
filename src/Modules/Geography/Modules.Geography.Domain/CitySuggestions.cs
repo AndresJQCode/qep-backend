@@ -4,6 +4,9 @@ public sealed record CitySuggestionCandidate(CityId CityId, string Name, string 
 
 public sealed record CitySuggestion(CityId CityId, int Similarity);
 
+/// <summary>Una ciudad de la lista de Siigo que se le sugiere al operador para un texto del exterior.</summary>
+public sealed record BillingCitySuggestion(BillingCityId BillingCityId, int Similarity);
+
 /// <summary>
 /// Las ciudades que se le sugieren al operador para un texto que no resolvió: las tres más parecidas
 /// por distancia de edición, con un piso de similitud.
@@ -53,6 +56,25 @@ public static class CitySuggestions
             .ThenBy(item => item.Name, StringComparer.Ordinal)
             .Take(MaxSuggestions)
             .Select(item => item.Suggestion)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Lo mismo contra el catálogo de Siigo de un país: el <see cref="Score"/> contra el <c>NormalizedName</c>, el piso
+    /// <see cref="MinimumSimilarity"/>, y por desempate el nombre, el estado y el código ordinales (el catálogo repite
+    /// nombres dentro de un país, así que el orden tiene que ser total). Colombia no pasa por acá.
+    /// </summary>
+    public static IReadOnlyList<BillingCitySuggestion> Rank(string normalizedText, IEnumerable<BillingCity> cities)
+    {
+        return cities
+            .Select(city => new { City = city, Similarity = Score(normalizedText, city.NormalizedName) })
+            .Where(item => item.Similarity >= MinimumSimilarity)
+            .OrderByDescending(item => item.Similarity)
+            .ThenBy(item => item.City.CityName, StringComparer.Ordinal)
+            .ThenBy(item => item.City.StateName, StringComparer.Ordinal)
+            .ThenBy(item => item.City.CityCode, StringComparer.Ordinal)
+            .Take(MaxSuggestions)
+            .Select(item => new BillingCitySuggestion(item.City.Id, item.Similarity))
             .ToList();
     }
 

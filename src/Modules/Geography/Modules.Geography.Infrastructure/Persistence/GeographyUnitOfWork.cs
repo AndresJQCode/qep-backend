@@ -33,6 +33,13 @@ internal sealed class GeographyUnitOfWork(GeographyDbContext dbContext) : IGeogr
                 "There is already a synonym for that text in the department.",
                 exception);
         }
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception, GeographyDbContext.ForeignSynonymTextActiveIndex))
+        {
+            throw new ResourceConflictException(
+                "geography.synonym.already_exists",
+                "There is already a synonym for that text in the country.",
+                exception);
+        }
     }
 
     public async Task<IGeographyTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
@@ -49,6 +56,20 @@ internal sealed class GeographyUnitOfWork(GeographyDbContext dbContext) : IGeogr
         // El mismo texto que department_id::text || ':' || normalized_text en SQL (un Guid se formatea como el uuid de
         // Postgres): un candado tomado desde SQL crudo con esa expresión es el mismo candado.
         var key = $"{departmentId.Value}:{normalizedText}";
+        return dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", cancellationToken);
+    }
+
+    public Task LockForeignCityTextAsync(string countryCode, string normalizedText, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException(
+                "LockForeignCityTextAsync requires an open transaction (BeginTransactionAsync).");
+        }
+
+        // El prefijo "foreign:" separa este espacio de llaves del colombiano ({departmentId}:{texto}).
+        var key = $"foreign:{countryCode}:{normalizedText}";
         return dbContext.Database.ExecuteSqlAsync(
             $"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", cancellationToken);
     }

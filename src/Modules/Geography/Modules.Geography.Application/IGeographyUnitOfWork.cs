@@ -26,6 +26,13 @@ public interface IGeographyUnitOfWork
     /// fila ya resuelta.
     /// </summary>
     Task LockCityTextAsync(DepartmentId departmentId, string normalizedText, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <c>pg_advisory_xact_lock(hashtextextended('foreign:' || country || ':' || normalized_text, 0))</c>. Mismo contrato que
+    /// <see cref="LockCityTextAsync"/> para la bandeja del exterior; el prefijo <c>foreign:</c> evita chocar con la llave
+    /// colombiana <c>{departmentId}:{texto}</c>.
+    /// </summary>
+    Task LockForeignCityTextAsync(string countryCode, string normalizedText, CancellationToken cancellationToken);
 }
 
 /// <summary>Se confirma con <see cref="CommitAsync"/>; disponerla sin commit hace rollback, que además suelta los candados
