@@ -91,6 +91,72 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Geography.Domain.BillingCity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CityCode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("city_code");
+
+                    b.Property<string>("CityName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country_code");
+
+                    b.Property<string>("CountryName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("country_name");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("normalized_name");
+
+                    b.Property<string>("SiigoCountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("siigo_country_code");
+
+                    b.Property<string>("StateCode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("state_code");
+
+                    b.Property<string>("StateName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("state_name");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CountryCode", "NormalizedName")
+                        .HasDatabaseName("IX_billing_cities_country_name");
+
+                    b.HasIndex("CountryCode", "StateCode", "CityCode")
+                        .IsUnique()
+                        .HasDatabaseName("IX_billing_cities_country_state_city");
+
+                    b.ToTable("billing_cities", "geography");
+                });
+
             modelBuilder.Entity("Modules.Geography.Domain.City", b =>
                 {
                     b.Property<Guid>("Id")

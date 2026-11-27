@@ -39,6 +39,9 @@ public static class GeographyInfrastructureExtensions
         services.AddScoped<GeographySeeder>();
         services.AddScoped(provider => new RegionSeeder(
             provider.GetRequiredService<GeographyDbContext>(), RegionSeeder.EmbeddedSources));
+        services.AddScoped(provider => new BillingCitySeeder(
+            provider.GetRequiredService<GeographyDbContext>(),
+            () => GeographySeeder.OpenResource(BillingCitySeeder.ResourceSuffix)));
 
         return services;
     }

@@ -26,6 +26,12 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
     /// <summary>Una ocurrencia por fila de origen: el blanco del <c>ON CONFLICT (source, source_ref)</c> (SC-03).</summary>
     public const string OccurrenceSourceRefIndex = "IX_unresolved_city_occurrences_source_ref";
 
+    /// <summary>Una ciudad de Siigo por país, estado y código: el blanco del <c>ON CONFLICT</c> del importador.</summary>
+    public const string BillingCityCodesIndex = "IX_billing_cities_country_state_city";
+
+    /// <summary>Busca por país y nombre. No es único: la lista de Siigo repite nombres dentro de un país (Boston, Berlín).</summary>
+    public const string BillingCityNameIndex = "IX_billing_cities_country_name";
+
     private const int StatusMaxLength = 16;
     private const int SourceMaxLength = 32;
 
@@ -43,6 +49,8 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
     public DbSet<Region> Regions => Set<Region>();
 
     public DbSet<RegionCity> RegionCities => Set<RegionCity>();
+
+    public DbSet<BillingCity> BillingCities => Set<BillingCity>();
 
     public DbSet<CitySynonym> CitySynonyms => Set<CitySynonym>();
 
@@ -67,6 +75,7 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
         ConfigureRegion(modelBuilder);
         ConfigureRegionCity(modelBuilder);
         ConfigureSeedState(modelBuilder);
+        ConfigureBillingCity(modelBuilder);
         ConfigureCitySynonym(modelBuilder);
         ConfigureUnresolvedCity(modelBuilder);
         ConfigureUnresolvedCityOccurrence(modelBuilder);
@@ -212,6 +221,55 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
             .HasColumnName("content_hash")
             .HasMaxLength(64)
             .IsRequired();
+    }
+
+    // La lista de ciudades de Siigo fuera de Colombia (spec 2026-11-26): los códigos con los que se factura a otro país.
+    private static void ConfigureBillingCity(ModelBuilder modelBuilder)
+    {
+        var city = modelBuilder.Entity<BillingCity>();
+        city.ToTable("billing_cities", Schema);
+        city.HasKey(value => value.Id);
+        city.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new BillingCityId(value))
+            .ValueGeneratedNever();
+        city.Property(value => value.CountryCode)
+            .HasColumnName("country_code")
+            .HasMaxLength(2)
+            .IsRequired();
+        city.Property(value => value.SiigoCountryCode)
+            .HasColumnName("siigo_country_code")
+            .HasMaxLength(2)
+            .IsRequired();
+        city.Property(value => value.CountryName)
+            .HasColumnName("country_name")
+            .HasMaxLength(BillingCity.CountryNameMaxLength)
+            .IsRequired();
+        city.Property(value => value.StateCode)
+            .HasColumnName("state_code")
+            .HasMaxLength(BillingCity.CodeMaxLength)
+            .IsRequired();
+        city.Property(value => value.StateName)
+            .HasColumnName("state_name")
+            .HasMaxLength(BillingCity.NameMaxLength)
+            .IsRequired();
+        city.Property(value => value.CityCode)
+            .HasColumnName("city_code")
+            .HasMaxLength(BillingCity.CodeMaxLength)
+            .IsRequired();
+        city.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(BillingCity.NameMaxLength)
+            .IsRequired();
+        city.Property(value => value.NormalizedName)
+            .HasColumnName("normalized_name")
+            .HasMaxLength(CityText.MaxLength)
+            .IsRequired();
+        city.HasIndex(value => new { value.CountryCode, value.StateCode, value.CityCode })
+            .IsUnique()
+            .HasDatabaseName(BillingCityCodesIndex);
+        city.HasIndex(value => new { value.CountryCode, value.NormalizedName })
+            .HasDatabaseName(BillingCityNameIndex);
     }
 
     private static void ConfigureCitySynonym(ModelBuilder modelBuilder)
