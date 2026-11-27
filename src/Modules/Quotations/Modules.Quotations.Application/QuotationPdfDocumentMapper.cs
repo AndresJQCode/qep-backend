@@ -73,7 +73,8 @@ public static class QuotationPdfDocumentMapper
             quotation.Shipping.CashOnDelivery,
             ThousandsSeparator: thousands,
             DecimalSeparator: decimals,
-            Language: SupportedLanguages.OrDefault(language));
+            Language: SupportedLanguages.OrDefault(language),
+            Scope: ScopeFor(quotation.Project));
     }
 
     /// <summary>
@@ -138,8 +139,23 @@ public static class QuotationPdfDocumentMapper
             QuotationPdfKind.Order,
             thousands,
             decimals,
-            Language: SupportedLanguages.OrDefault(language));
+            Language: SupportedLanguages.OrDefault(language),
+            Scope: ScopeFor(header.Project));
     }
+
+    private static QuotationPdfScope? ScopeFor(ProjectScopeDto? project) =>
+        project is null
+            ? null
+            : new(
+                project.PricingMode == nameof(ProjectPricingMode.PerPhase),
+                [
+                    .. project.Phases.Select(phase =>
+                        new QuotationPdfScopePhase(phase.Name, phase.Price, ScopeItemsFor(phase.Items))),
+                ],
+                ScopeItemsFor(project.Items));
+
+    private static QuotationPdfScopeItem[] ScopeItemsFor(IReadOnlyList<ProjectItemDto> items) =>
+        [.. items.Select(item => new QuotationPdfScopeItem(item.Text))];
 
     /// <summary>Las respuestas ya traen sólo las que aplicaron (<c>AppliedWithholdings</c>), en su orden: una fila
     /// del documento por cada una, rotulada con el nombre de la tasa y su porcentaje efectivo (spec ReteICA por empresa
