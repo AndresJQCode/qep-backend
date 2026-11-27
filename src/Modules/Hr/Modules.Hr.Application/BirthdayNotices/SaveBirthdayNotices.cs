@@ -93,7 +93,8 @@ public sealed class SaveBirthdayNoticesHandler(
             HrAuditActions.Resources.BirthdayNotices, tenantId, changed, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await composer.ComposeAsync(tenantId, setting, cancellationToken);
+        // The PUT already required hr.settings.manage, so the candidates always come back.
+        return await composer.ComposeAsync(tenantId, setting, includeCandidates: true, cancellationToken);
     }
 
     // Every manager must be an active member of the tenant (FindAsync never returns another tenant's) and read employees,
