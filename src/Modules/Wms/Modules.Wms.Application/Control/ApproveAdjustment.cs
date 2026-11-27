@@ -18,7 +18,8 @@ public sealed class ApproveAdjustmentHandler(
     IClock clock,
     AdjustmentDtoComposer composer,
     IIncidentRepository incidents,
-    WmsCaller caller)
+    WmsCaller caller,
+    CountVarianceFreshness freshness)
     : ICommandHandler<ApproveAdjustmentCommand, AdjustmentDto>
 {
     public async Task<AdjustmentDto> HandleAsync(ApproveAdjustmentCommand command, CancellationToken cancellationToken)
@@ -34,7 +35,8 @@ public sealed class ApproveAdjustmentHandler(
 
         // Un ajuste que propuso un conteo no lo aprueba quien contó ni quien reportó el faltante (DA-17, DA-47). Se comparan
         // membresías (WmsCaller), nunca SubjectId. Sin novedad detrás, el ajuste se aprueba como siempre y no pide membresía.
-        if (await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken) is { } variance)
+        var variance = await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken);
+        if (variance is not null)
         {
             var member = await caller.RequireAsync(command.TenantId, cancellationToken);
             // Los reportantes salen de toda novedad que el Count de origen verificaba, sin mirar su estado ni su padre.
@@ -45,6 +47,14 @@ public sealed class ApproveAdjustmentHandler(
         }
 
         var now = clock.UtcNow;
+
+        // Un ajuste de conteo se abre con transacción: si el saldo cambió desde el conteo, el rechazo automático numera y bloquea.
+        await using var transaction = variance is null ? null : await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (variance is not null)
+        {
+            await freshness.EnsureFreshAsync(adjustment, variance, now, cancellationToken);
+        }
+
         adjustment.Approve(executionContext.SubjectId, now);
         auditRecorder.Record(
             command.TenantId,

@@ -107,6 +107,31 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
         return rows.Single();
     }
 
+    public async Task LockBalancesAsync(Guid tenantId, IReadOnlyCollection<StockKey> keys, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("LockBalancesAsync requires the transaction from BeginTransactionAsync.");
+        }
+
+        var ordered = keys.Distinct().Order(StockKeyComparer.Instance).ToList();
+        foreach (var key in ordered)
+        {
+            var status = key.Status.ToString();
+            var lot = key.LotId;
+            await dbContext.Database.SqlQuery<int>(
+                $"""
+                SELECT 1 AS "Value"
+                FROM wms.stock_balances
+                WHERE tenant_id = {tenantId} AND owner_id = {key.OwnerId} AND location_id = {key.LocationId}
+                  AND variant_id = {key.VariantId} AND lot_id IS NOT DISTINCT FROM {lot}::uuid AND status = {status}
+                  AND handling_unit_id IS NULL
+                FOR UPDATE
+                """).ToListAsync(cancellationToken);
+        }
+    }
+
     private sealed record BalanceKeyRow(Guid VariantId, Guid LocationId, Guid? LotId);
 
     public async Task<IReadOnlySet<(Guid VariantId, Guid LocationId, Guid? LotId)>> FindNonZeroBalanceKeysAsync(

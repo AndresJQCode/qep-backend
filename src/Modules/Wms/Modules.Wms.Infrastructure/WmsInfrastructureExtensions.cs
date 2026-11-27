@@ -56,6 +56,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<ITaskClosedHook, CountVerificationHook>();
         services.AddScoped<OperatorLineRunner>();
         services.AddScoped<TaskIncidentRecorder>();
+        services.AddScoped<CountVarianceFreshness>();
         services.AddScoped<IncidentDtoComposer>();
         services.AddScoped<IImportPreviewStore, ImportPreviewStore>();
         services.AddSingleton<IInitialBalanceSheetReader, ClosedXmlInitialBalanceSheetReader>();

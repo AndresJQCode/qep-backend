@@ -34,6 +34,10 @@ public interface IIncidentRepository
     /// conteo se cierra, el hook las resuelve o las desenlaza.</summary>
     Task<IReadOnlyList<Incident>> ListOpenVerifiedByAsync(Guid tenantId, Guid countTaskId, CancellationToken cancellationToken);
 
+    /// <summary>Todas las novedades que ese <c>Count</c> verifica (<c>verification_task_id</c>), en cualquier estado, rastreadas con sus
+    /// eventos: cuando el saldo cambia desde el conteo, se enlazan al conteo nuevo.</summary>
+    Task<IReadOnlyList<Incident>> ListVerifiedByAsync(Guid tenantId, Guid countTaskId, CancellationToken cancellationToken);
+
     /// <summary>La <c>CountVariance</c> que ese ajuste cierra, rastreada con sus eventos; <c>null</c> si el ajuste no nació de un
     /// conteo.</summary>
     Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken);

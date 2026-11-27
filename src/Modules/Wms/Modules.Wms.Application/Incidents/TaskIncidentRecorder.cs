@@ -50,22 +50,38 @@ public sealed class TaskIncidentRecorder(
             return null;
         }
 
+        // Una novedad suelta no trae estado: lo que se verifica es lo disponible.
+        return await LockCountTargetAsync(
+            tenantId, warehouseId, ownerId, location.Value, variant, subject.LotId?.Value, subject.StockStatus ?? StockStatus.Available,
+            cancellationToken);
+    }
+
+    /// <summary>La mitad de <see cref="LockVerificationAsync"/> que no mira el tipo de la novedad: toma el <c>count-key</c> de la clave y
+    /// bloquea el <c>Count</c> abierto sobre ella, si lo hay. <c>null</c> si la variante es de series (no se genera <c>Count</c>). Lo
+    /// llama también el conteo nuevo que se pide cuando el saldo cambió desde un conteo (ver <see cref="CountVarianceFreshness"/>).</summary>
+    public async Task<VerificationTarget?> LockCountTargetAsync(
+        Guid tenantId,
+        Guid warehouseId,
+        Guid ownerId,
+        Guid location,
+        Guid variant,
+        Guid? lot,
+        StockStatus status,
+        CancellationToken cancellationToken)
+    {
         var profile = await profiles.FindAsync(tenantId, variant, cancellationToken);
         if (profile?.Tracking == TrackingPolicy.Serial)
         {
             return null;
         }
 
-        // Una novedad suelta no trae estado: lo que se verifica es lo disponible.
-        var status = subject.StockStatus ?? StockStatus.Available;
-        var lot = subject.LotId?.Value;
         await unitOfWork.LockAsync(
-            $"count-key:{tenantId:D}:{ownerId:D}:{location.Value:D}:{variant:D}:{lot?.ToString("D") ?? "none"}:{status}",
+            $"count-key:{tenantId:D}:{ownerId:D}:{location:D}:{variant:D}:{lot?.ToString("D") ?? "none"}:{status}",
             cancellationToken);
 
         Guid? openId = null;
         string? openNumber = null;
-        if (await tasks.FindOpenCountAsync(tenantId, warehouseId, ownerId, location.Value, variant, lot, status, cancellationToken)
+        if (await tasks.FindOpenCountAsync(tenantId, warehouseId, ownerId, location, variant, lot, status, cancellationToken)
             is { } candidate
             && await tasks.LockAsync(tenantId, candidate, cancellationToken))
         {
@@ -77,7 +93,38 @@ public sealed class TaskIncidentRecorder(
             }
         }
 
-        return new VerificationTarget(warehouseId, ownerId, location.Value, variant, lot, status, openId, openNumber);
+        return new VerificationTarget(warehouseId, ownerId, location, variant, lot, status, openId, openNumber);
+    }
+
+    /// <summary>El <c>Count</c> que sustituye a uno cuyo ajuste quedó viejo: el que ya estaba abierto sobre la clave, o uno nuevo de una
+    /// línea, publicado, del sistema y con <paramref name="source"/> (la <c>CountVariance</c> rechazada) como origen. Devuelve su id y
+    /// su número. El número de la tarea toma <c>task-seq</c>.</summary>
+    public async Task<(Guid TaskId, string Number)> OpenRecountAsync(
+        Incident source, VerificationTarget target, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+        if (target.OpenCountId is { } openId)
+        {
+            return (openId, target.OpenCountNumber ?? string.Empty);
+        }
+
+        var number = await tasks.NextNumberAsync(source.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var count = WarehouseTask.CreateCount(
+            source.TenantId,
+            number,
+            new WarehouseId(target.WarehouseId),
+            new OwnerId(target.OwnerId),
+            [WarehouseTaskLine.CreateCount(
+                target.VariantId,
+                target.LotId is { } lot ? new LotId(lot) : null,
+                target.Status,
+                new LocationId(target.LocationId))],
+            TaskSourceType.Incident,
+            source.Id,
+            now);
+        tasks.Add(count);
+        return (count.Id, count.Number);
     }
 
     /// <summary>Segunda mitad: con la novedad ya armada, la enlaza al <c>Count</c> abierto o genera uno nuevo, de una línea, publicado,

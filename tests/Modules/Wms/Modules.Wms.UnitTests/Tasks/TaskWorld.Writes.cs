@@ -198,6 +198,11 @@ internal sealed partial class TaskWorld
                     && incident.Status is IncidentStatus.Open or IncidentStatus.InReview),
             ]);
 
+        public Task<IReadOnlyList<Incident>> ListVerifiedByAsync(
+            Guid tenantId, Guid countTaskId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Incident>>(
+                [.. world.Incidents.Where(incident => incident.TenantId == tenantId && incident.VerificationTaskId == countTaskId)]);
+
         public Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken) =>
             Task.FromResult(world.Incidents.Find(incident => incident.TenantId == tenantId && incident.AdjustmentId == adjustmentId));
 

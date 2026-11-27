@@ -91,6 +91,17 @@ internal sealed class IncidentRepository(WmsDbContext dbContext) : IIncidentRepo
             .ThenBy(incident => incident.Number)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<Incident>> ListVerifiedByAsync(
+        Guid tenantId, Guid countTaskId, CancellationToken cancellationToken) =>
+        await dbContext.Set<Incident>()
+            .AsSplitQuery()
+            .Include(incident => incident.Evidence)
+            .Include(incident => incident.Events)
+            .Where(incident => incident.TenantId == tenantId && incident.VerificationTaskId == countTaskId)
+            .OrderBy(incident => incident.ReportedAt)
+            .ThenBy(incident => incident.Number)
+            .ToListAsync(cancellationToken);
+
     public Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken) =>
         dbContext.Set<Incident>()
             .AsSplitQuery()

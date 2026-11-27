@@ -179,6 +179,16 @@ public sealed class Incident
             TenantId, Id, IncidentEventKind.VerificationLinked, null, taskNumber, now, now));
     }
 
+    /// <summary>El saldo cambió desde el conteo y el sistema pidió uno nuevo (decisión del owner, 2026-11-27): la novedad pasa a
+    /// apuntarle, en cualquier estado, porque la separación de funciones se deriva de las novedades que un <c>Count</c> verifica. Sube
+    /// la versión: un supervisor ya pudo haberla visto.</summary>
+    public void RelinkVerification(Guid countTaskId, string? taskNumber, DateTimeOffset now)
+    {
+        VerificationTaskId = countTaskId;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.VerificationLinked, null, taskNumber, now, now));
+    }
+
     /// <summary>El <c>Count</c> que la verificaba se canceló: deja de apuntarle y la novedad sigue abierta para que el supervisor la
     /// acepte (la próxima novedad sobre la clave genera otro conteo). Sube la versión: un supervisor ya pudo haberla visto.</summary>
     public void UnlinkVerification(string taskNumber, DateTimeOffset now)
@@ -234,7 +244,8 @@ public sealed class Incident
         ResolvedAt = now.ToUniversalTime();
         ResolutionNote = trimmed;
         Version++;
-        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Rejected, by, null, now, now));
+        _events.Add(IncidentEvent.Record(
+            TenantId, Id, IncidentEventKind.Rejected, by == Guid.Empty ? null : by, null, now, now));
     }
 
     /// <summary>Separación de funciones (DA-17, DA-47): quien contó, o quien reportó una de las novedades que este conteo cerró, no

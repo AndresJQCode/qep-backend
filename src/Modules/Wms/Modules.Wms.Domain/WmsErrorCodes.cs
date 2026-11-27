@@ -83,6 +83,10 @@ public static class WmsErrorCodes
     public const string AdjustmentNotFound = "wms.adjustment.not_found";
     public const string AdjustmentLineInvalid = "wms.adjustment.line_invalid";
 
+    /// <summary>422: el saldo de la clave cambió desde que un conteo lo vio; el ajuste <c>CountVariance</c> se rechazó solo y se pidió
+    /// un conteo nuevo (decisión del owner, 2026-11-27).</summary>
+    public const string AdjustmentCountStale = "wms.adjustment.count_stale";
+
     public const string ImportAmbiguousCode = "wms.import.ambiguous_code";
     public const string ImportUnknownCode = "wms.import.unknown_code";
     public const string ImportUnknownLocation = "wms.import.unknown_location";
