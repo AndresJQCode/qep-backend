@@ -12,6 +12,10 @@ public sealed record TaskTypeCount(WarehouseTaskType Type, int Count);
 /// <summary>Una tarea con el lease vencido, con su tenant para cargarla.</summary>
 public sealed record ExpiredTaskLease(Guid TenantId, Guid TaskId);
 
+/// <summary>Lo que <c>AcceptIntoStock</c> necesita de la línea de origen de una novedad: su destino (nulo si no tiene) y lo que todavía
+/// le falta por confirmar.</summary>
+public sealed record TaskLineFacts(Guid? ToLocationId, decimal Remaining);
+
 /// <summary>Una tarea abierta con asignado, lo justo para el tablero.</summary>
 public sealed record AssignedTaskRef(Guid TaskId, string Number, WarehouseTaskType Type, Guid AssignedMemberId);
 
@@ -64,9 +68,10 @@ public interface IWarehouseTaskRepository
     Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
         Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
 
-    /// <summary>El destino (<c>ToLocationId</c>) de cada línea que lo tiene, sin cargar la tarea ni rastrearla: lo que la resolución
-    /// <c>AcceptIntoStock</c> de una novedad necesita de la línea de origen. La línea sin destino o que no existe no viene.</summary>
-    Task<IReadOnlyDictionary<Guid, Guid>> FindLineDestinationsAsync(
+    /// <summary>El destino (<c>ToLocationId</c>, nulo si la línea no tiene) y lo que falta por confirmar de cada línea, sin cargar la
+    /// tarea ni rastrearla: lo que la resolución <c>AcceptIntoStock</c> de una novedad necesita de la línea de origen. La línea que no
+    /// existe no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, TaskLineFacts>> FindLineFactsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken);
 
     /// <summary>El id del <c>Count</c> abierto (ni <c>Done</c> ni <c>Cancelled</c>) que verifica esa clave; <c>null</c> si no hay

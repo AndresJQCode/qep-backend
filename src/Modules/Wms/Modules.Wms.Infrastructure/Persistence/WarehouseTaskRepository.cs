@@ -121,12 +121,12 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return rows.ToDictionary(row => row.Id, row => row.Number);
     }
 
-    public async Task<IReadOnlyDictionary<Guid, Guid>> FindLineDestinationsAsync(
+    public async Task<IReadOnlyDictionary<Guid, TaskLineFacts>> FindLineFactsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken)
     {
         if (lineIds.Count == 0)
         {
-            return new Dictionary<Guid, Guid>();
+            return new Dictionary<Guid, TaskLineFacts>();
         }
 
         var ids = lineIds.ToArray();
@@ -134,10 +134,12 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .AsNoTracking()
             .Where(task => task.TenantId == tenantId)
             .SelectMany(task => task.Lines)
-            .Where(line => ids.Contains(line.Id) && line.ToLocationId != null)
-            .Select(line => new { line.Id, line.ToLocationId })
+            .Where(line => ids.Contains(line.Id))
+            .Select(line => new { line.Id, line.ToLocationId, line.QuantityPlanned, line.QuantityConfirmed })
             .ToListAsync(cancellationToken);
-        return rows.ToDictionary(row => row.Id, row => row.ToLocationId!.Value.Value);
+        return rows.ToDictionary(
+            row => row.Id,
+            row => new TaskLineFacts(row.ToLocationId?.Value, row.QuantityPlanned - row.QuantityConfirmed));
     }
 
     public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(

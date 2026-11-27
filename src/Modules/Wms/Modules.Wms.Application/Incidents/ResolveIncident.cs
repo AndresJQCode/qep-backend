@@ -53,6 +53,7 @@ public sealed class ResolveIncidentHandler(
     IClock clock,
     IIncidentRepository incidents,
     IWarehouseTaskRepository tasks,
+    IVariantProfileRepository profiles,
     IInventoryLedger ledger,
     IValidator<ResolveIncidentCommand> validator)
     : ICommandHandler<ResolveIncidentCommand, IncidentResolutionDto>
@@ -136,19 +137,17 @@ public sealed class ResolveIncidentHandler(
         Incident incident, Guid member, string key, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var lineId = incident.SourceTaskLineId;
-        // TryGetValue y no GetValueOrDefault: una línea sin destino (la de un Count) daría Guid.Empty, que no es null.
-        Guid? destination = null;
-        if (lineId is { } id)
-        {
-            var destinations = await tasks.FindLineDestinationsAsync(incident.TenantId, [id], cancellationToken);
-            destination = destinations.TryGetValue(id, out var found) ? found : null;
-        }
+        var facts = lineId is { } id
+            ? await IncidentDtoComposer.ReadFactsAsync(tasks, profiles, incident, id, cancellationToken)
+            : AcceptIntoStockFacts.None;
 
-        if (!IncidentResolutionRules.CanAcceptIntoStock(incident, destination))
+        if (!IncidentResolutionRules.CanAcceptIntoStock(incident, facts))
         {
             throw new WmsDomainException(
-                WmsErrorCodes.IncidentResolutionNotAllowed, "Esta novedad no tiene un movimiento que aplicar: sólo se rechaza.");
+                WmsErrorCodes.IncidentResolutionNotAllowed, "Esta novedad no tiene un movimiento seguro que aplicar: sólo se rechaza.");
         }
+
+        var destination = facts.LineDestination;
 
         var owner = incident.OwnerId.Value;
         var lot = incident.LotId?.Value;
