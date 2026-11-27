@@ -276,6 +276,44 @@ public sealed class SiigoSettings
         }
     }
 
+    /// <summary>Los ids de formas de pago de Siigo que la configuración guarda (los vínculos por cuenta de cobro, crédito, contraentrega
+    /// y la de por defecto), sin repetir y sin los vacíos, en ese orden.</summary>
+    public IReadOnlyList<string> SavedPaymentTypeIds() =>
+    [
+        .. _paymentLinks.Select(link => link.SiigoPaymentTypeId)
+            .Append(CreditPaymentTypeId)
+            .Append(CashOnDeliveryPaymentTypeId)
+            .Append(DefaultPaymentTypeId)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal),
+    ];
+
+    /// <summary>
+    /// Las credenciales de la conexión pasaron a otra cuenta de Siigo: todo lo que guarda ids de la cuenta anterior se borra (comprobante,
+    /// centro de costo, bodega, producto del flete, vínculos de impuestos, retenciones, formas de pago, vendedores y productos, y los
+    /// registros de auto-vínculo) y los pasos quedan incompletos. Se conserva lo que no es de la cuenta: la empresa, la DIAN, el correo,
+    /// el flete aparte y el modo de precio. Sube la versión una sola vez: es configuración.
+    /// </summary>
+    public void ResetForAnotherAccount()
+    {
+        DocumentTypeId = null;
+        CostCenterId = null;
+        WarehouseId = null;
+        FreightProductCode = null;
+        CreditPaymentTypeId = null;
+        CreditDays = null;
+        CashOnDeliveryPaymentTypeId = null;
+        DefaultPaymentTypeId = null;
+        _taxLinks.Clear();
+        _withholdingLinks.Clear();
+        _paymentLinks.Clear();
+        _sellerLinks.Clear();
+        _variantLinks.Clear();
+        SellersAutoLinkedAt = null;
+        ProductsAutoLinkedAt = null;
+        Touch();
+    }
+
     private void Touch() => Version++;
 
     private void Sync<TLink, TKey>(

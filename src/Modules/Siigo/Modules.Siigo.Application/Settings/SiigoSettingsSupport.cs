@@ -14,6 +14,7 @@ internal static class SiigoSettingsSteps
     public const string Taxes = "taxes";
     public const string Payments = "payments";
     public const string Sellers = "sellers";
+    public const string AccountReset = "account_reset";
 }
 
 /// <summary>Lo que comparten los casos de uso de la configuración (spec 2026-11-18 §5.3): la doble capa de autorización, la conexión del
@@ -59,12 +60,17 @@ internal static class SiigoSettingsSupport
     /// <summary>En la misma unidad de trabajo que el cambio: si el guardado pierde, no queda auditoría. Lleva el nombre del paso y nada
     /// más: ni ids de Siigo ni valores.</summary>
     public static void Audit(
-        ISiigoAuditRecorder recorder, IExecutionContext executionContext, SiigoSettings settings, string step, DateTimeOffset now) =>
+        ISiigoAuditRecorder recorder,
+        IExecutionContext executionContext,
+        SiigoSettings settings,
+        string step,
+        DateTimeOffset now,
+        string action = SiigoAuditActions.SettingsUpdated) =>
         recorder.Record(
             settings.TenantId,
             executionContext.SubjectId,
             AuditActorType.Human,
-            SiigoAuditActions.SettingsUpdated,
+            action,
             SiigoAuditActions.ConnectionResourceType,
             settings.ConnectionId.ToString(),
             JsonSerializer.Serialize(new[] { step }),

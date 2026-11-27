@@ -6,6 +6,10 @@ public static class SiigoAuditActions
     /// <summary>Se guardó un paso de la configuración de una conexión; lleva los pasos cambiados, sin valores de Siigo.</summary>
     public const string SettingsUpdated = "siigo.settings.updated";
 
+    /// <summary>Las credenciales de la conexión pasaron a otra cuenta de Siigo y la configuración se borró (con la confirmación de quien
+    /// editó). Lleva sólo el nombre del paso, nunca ids ni valores.</summary>
+    public const string SettingsAccountReset = "siigo.settings.account_reset";
+
     public const string InvoiceCreated = "siigo.invoice.created";
 
     public const string InvoiceRejected = "siigo.invoice.rejected";

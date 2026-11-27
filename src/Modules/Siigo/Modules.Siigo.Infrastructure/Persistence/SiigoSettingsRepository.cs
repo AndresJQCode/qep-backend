@@ -17,6 +17,12 @@ internal sealed class SiigoSettingsRepository(SiigoDbContext dbContext) : ISiigo
             $"INSERT INTO siigo.settings (connection_id, tenant_id) VALUES ({connectionId}, {tenantId}) ON CONFLICT (connection_id) DO NOTHING",
             cancellationToken);
 
+        return await FindAsync(tenantId, connectionId, withVariantLinks, cancellationToken);
+    }
+
+    public async Task<SiigoSettings?> FindAsync(
+        Guid tenantId, Guid connectionId, bool withVariantLinks, CancellationToken cancellationToken)
+    {
         var query = dbContext.Settings
             .Include(settings => settings.TaxLinks)
             .Include(settings => settings.SellerLinks)
