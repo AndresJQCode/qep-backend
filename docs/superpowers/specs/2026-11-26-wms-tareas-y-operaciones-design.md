@@ -1082,10 +1082,10 @@ ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que
 - **B4. Decidido e implementado.** No hay tope automático de edad del reclamo. El tablero (`GET /tasks/summary`, `operators[]`) trae
   `lastProgressAt` (la hora de guardado del último evento `Claimed`, `LeaseResumed`, `LineConfirmed`, `LineShort` o `LineCancelled`
   de la tarea, en una sola consulta para todas las que están en curso) y `stalled` (el servidor lo calcula: `ahora - lastProgressAt
-  >= 15 minutos`). `lastActivityAt` no basta: el latido lo renueva. El umbral de 15 minutos es decisión del agente, por confirmar.
+  >= 15 minutos`). `lastActivityAt` no basta: el latido lo renueva. El umbral de 15 minutos lo aprobó el owner (2026-11-27).
   El supervisor decide si suelta o reasigna.
 - **B5. Decidido e implementado.** El día de `TSK-yyyyMMdd-NNNN` es el del huso del tenant (`ITenantClock`), no el de UTC, para el
-  mismo instante `now` que usa el handler (`WmsNumberingDay`). Los números ya emitidos no cambian. Decisión del agente, por confirmar:
+  mismo instante `now` que usa el handler (`WmsNumberingDay`). Los números ya emitidos no cambian. Aprobado por el owner (2026-11-27):
   `ADJ-` e `INC-` también cortan el día en el huso del tenant (la tarjeta decía «como los ajustes», pero en el código ajustes y
   novedades cortaban en UTC). El contador diario sigue siendo por prefijo `TSK-yyyyMMdd-`: el día local cambia de prefijo a las 00:00 locales.
 
