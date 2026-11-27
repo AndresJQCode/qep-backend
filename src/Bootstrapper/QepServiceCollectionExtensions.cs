@@ -1612,6 +1612,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListUnresolvedForeignCitiesQuery, UnresolvedForeignCityPageDto>, ListUnresolvedForeignCitiesHandler>();
         services.AddScoped<IQueryHandler<GetUnresolvedForeignCityQuery, UnresolvedForeignCityDetailDto>, GetUnresolvedForeignCityHandler>();
         services.AddScoped<IQueryHandler<ListForeignCitySynonymsQuery, ForeignCitySynonymPageDto>, ListForeignCitySynonymsHandler>();
+        // Las escrituras: confirmar, descartar, restaurar, corregir y borrar.
+        services.AddScoped<ICommandHandler<ResolveUnresolvedForeignCityCommand, ForeignCitySynonymDto>, ResolveUnresolvedForeignCityHandler>();
+        services.AddScoped<UnresolvedForeignCityTriage>();
+        services.AddScoped<ICommandHandler<DiscardUnresolvedForeignCityCommand, UnresolvedForeignCityListItemDto>, DiscardUnresolvedForeignCityHandler>();
+        services.AddScoped<ICommandHandler<RestoreUnresolvedForeignCityCommand, UnresolvedForeignCityListItemDto>, RestoreUnresolvedForeignCityHandler>();
+        services.AddScoped<ICommandHandler<CorrectForeignCitySynonymCommand, ForeignCitySynonymDto>, CorrectForeignCitySynonymHandler>();
+        services.AddScoped<ICommandHandler<DeleteForeignCitySynonymCommand, bool>, DeleteForeignCitySynonymHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en

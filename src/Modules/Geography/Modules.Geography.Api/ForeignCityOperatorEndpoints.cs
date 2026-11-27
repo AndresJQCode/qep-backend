@@ -50,6 +50,47 @@ public static class ForeignCityOperatorEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapPost("/unresolved/{id:guid}/resolve", ResolveAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Accepts<BillingCityChoiceRequest>("application/json")
+            .Produces<ForeignCitySynonymDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/unresolved/{id:guid}/discard", DiscardAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Produces<UnresolvedForeignCityListItemDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/unresolved/{id:guid}/restore", RestoreAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Produces<UnresolvedForeignCityListItemDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/synonyms/{id:guid}", CorrectSynonymAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Accepts<CorrectForeignCitySynonymRequest>("application/json")
+            .Produces<ForeignCitySynonymDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/synonyms/{id:guid}", DeleteSynonymAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
 
@@ -94,4 +135,46 @@ public static class ForeignCityOperatorEndpoints
         int pageSize = CityOperatorInput.DefaultPageSize) =>
         Results.Ok(await dispatcher.QueryAsync(
             new ListForeignCitySynonymsQuery(new TenantId(tenantId), country, search, page, pageSize), cancellationToken));
+
+    // Un billingCityId ausente o nulo llega como Guid.Empty y es 422 del validador (BillingCityId), no 400 del binder.
+    private static async Task<IResult> ResolveAsync(
+        Guid tenantId, Guid id, BillingCityChoiceRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ResolveUnresolvedForeignCityCommand(
+                new TenantId(tenantId), new UnresolvedForeignCityId(id), request.BillingCityId ?? Guid.Empty),
+            cancellationToken));
+
+    private static async Task<IResult> DiscardAsync(
+        Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new DiscardUnresolvedForeignCityCommand(new TenantId(tenantId), new UnresolvedForeignCityId(id)), cancellationToken));
+
+    private static async Task<IResult> RestoreAsync(
+        Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RestoreUnresolvedForeignCityCommand(new TenantId(tenantId), new UnresolvedForeignCityId(id)), cancellationToken));
+
+    // Un billingCityId o una expectedVersion ausentes llegan como 0 y son 422 del validador, no 400 del binder.
+    private static async Task<IResult> CorrectSynonymAsync(
+        Guid tenantId, Guid id, CorrectForeignCitySynonymRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new CorrectForeignCitySynonymCommand(
+                new TenantId(tenantId), new ForeignCitySynonymId(id), request.BillingCityId ?? Guid.Empty, request.ExpectedVersion ?? 0L),
+            cancellationToken));
+
+    private static async Task<IResult> DeleteSynonymAsync(
+        Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteForeignCitySynonymCommand(new TenantId(tenantId), new ForeignCitySynonymId(id)), cancellationToken);
+        return Results.NoContent();
+    }
 }
+
+/// <summary>La ciudad de la lista de Siigo elegida en el modal de confirmar. Nullable para que un campo ausente o nulo sea 422 del
+/// validador (<c>BillingCityId</c>), no un 400 del binder.</summary>
+public sealed record BillingCityChoiceRequest(Guid? BillingCityId);
+
+/// <summary>La ciudad nueva del sinónimo y la versión que la pantalla tenía. Nullable para que un campo ausente o nulo sea 422 del
+/// validador (<c>BillingCityId</c>, <c>ExpectedVersion</c>), no un 400 del binder.</summary>
+public sealed record CorrectForeignCitySynonymRequest(Guid? BillingCityId, long? ExpectedVersion);
