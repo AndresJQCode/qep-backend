@@ -26,6 +26,10 @@ internal sealed partial class TaskWorld
     /// <summary>La que devuelve «la mejor candidata».</summary>
     public Guid? Candidate { get; set; }
 
+    /// <summary>Lo que pasa con una tarea justo antes de que el repositorio la entregue al cargarla: el barrido o un supervisor que
+    /// actúan entre la lectura y el bloqueo de quien la reclama.</summary>
+    public Action<WarehouseTask>? OnLoadTask { get; set; }
+
     public IExecutionContext Context() => new FakeContext(this);
 
     public WmsAuthorization Authorization { get; } = new(new FakeModules());
@@ -133,7 +137,13 @@ internal sealed partial class TaskWorld
         public Task<WarehouseTask?> GetAsync(Guid tenantId, Guid id, CancellationToken cancellationToken)
         {
             world.Log.Add("load-task");
-            return Task.FromResult(Find(tenantId, id));
+            var task = Find(tenantId, id);
+            if (task is not null)
+            {
+                world.OnLoadTask?.Invoke(task);
+            }
+
+            return Task.FromResult(task);
         }
 
         public Task<WarehouseTask?> GetWithEventsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>

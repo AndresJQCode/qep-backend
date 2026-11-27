@@ -13,7 +13,8 @@ public sealed class OperatorTaskHandlersTests
 
     private static OperatorTaskGuard Guard(TaskWorld world) => new(world.Context(), world.Authorization);
 
-    private static Task<NextTaskResultDto> NextAsync(TaskWorld world, Guid? warehouse = null) =>
+    private static Task<NextTaskResultDto> NextAsync(
+        TaskWorld world, Guid? warehouse = null, string device = TaskWorld.Device) =>
         new NextTaskHandler(
                 world.Context(),
                 world.Authorization,
@@ -24,7 +25,7 @@ public sealed class OperatorTaskHandlersTests
                 world.Composer(),
                 new NextTaskValidator())
             .HandleAsync(
-                new NextTaskCommand(TaskWorld.Tenant, warehouse ?? world.Warehouse.Id.Value, TaskWorld.Device), Ct);
+                new NextTaskCommand(TaskWorld.Tenant, warehouse ?? world.Warehouse.Id.Value, device), Ct);
 
     private static Task<TaskDto> ClaimAsync(TaskWorld world, Guid taskId, string device = TaskWorld.Device) =>
         new ClaimTaskHandler(
@@ -389,6 +390,77 @@ public sealed class OperatorTaskHandlersTests
         Assert.Equal(TaskWorld.Start.AddMinutes(35), result.Task.LeaseExpiresAt);
         Assert.Equal(
             ["begin", $"lock task-member:{TaskWorld.Member:D}", "lock-task", "load-task", "save"], world.Log);
+    }
+
+    // M2: si el barrido la venció entre la lectura y el bloqueo, «siguiente» se la vuelve a dar a quien la tenía, con el mismo token
+    // (DA-34), en lugar de buscar otra.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NextGivesBackTheTaskTheSweeperExpiredBetweenTheReadAndTheLock(bool assigned)
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask(assignTo: assigned ? TaskWorld.Member : null);
+        task.Claim(TaskWorld.Member, TaskWorld.Device, TaskWorld.Start);
+        var token = task.LeaseToken;
+        world.Candidate = world.AddTask().Id;
+        world.Now = TaskWorld.Start.AddMinutes(40);
+        world.OnLoadTask = loaded =>
+        {
+            if (loaded.Id == task.Id)
+            {
+                loaded.ExpireLease(world.Now);
+            }
+        };
+
+        var result = await NextAsync(world);
+
+        Assert.Equal((task.Id, "InProgress", token), (result.Task!.Id, result.Task.Status, result.Task.LeaseToken));
+        Assert.Equal(TaskWorld.Start.AddMinutes(55), result.Task.LeaseExpiresAt);
+        Assert.DoesNotContain("candidate", world.Log);
+    }
+
+    // Si el barrido venció la tarea y un supervisor la retuvo, ya no es suya: sigue el camino normal.
+    [Fact]
+    public async Task NextTakesTheCandidateWhenTheExpiredTaskIsNoLongerTheCallers()
+    {
+        var world = new TaskWorld();
+        var (task, _) = ClaimedByCaller(world);
+        var candidate = world.AddTask();
+        world.Candidate = candidate.Id;
+        world.Now = TaskWorld.Start.AddMinutes(40);
+        world.OnLoadTask = loaded =>
+        {
+            if (loaded.Id != task.Id)
+            {
+                return;
+            }
+
+            loaded.ExpireLease(world.Now);
+            loaded.Hold(TaskWorld.OtherMember, null, world.Now);
+        };
+
+        var result = await NextAsync(world);
+
+        Assert.Equal(candidate.Id, result.Task!.Id);
+        Assert.Equal(WarehouseTaskStatus.Planned, task.Status);
+    }
+
+    // Pendiente del owner: otro celular de la misma persona sobre su propia tarea en curso recibe el token y el reclamo sigue en el
+    // celular original. Esta prueba documenta el comportamiento actual; no lo decide.
+    [Fact]
+    public async Task ClaimOrNextFromAnotherDeviceOfTheSameMemberHandsOverTheTokenAndKeepsTheClaimedDevice()
+    {
+        var world = new TaskWorld();
+        var (task, _) = ClaimedByCaller(world);
+        var token = task.LeaseToken;
+
+        var claimed = await ClaimAsync(world, task.Id, "otro-celular");
+        var next = await NextAsync(world, device: "otro-celular");
+
+        Assert.Equal(token, claimed.LeaseToken);
+        Assert.Equal(token, next.Task!.LeaseToken);
+        Assert.Equal(TaskWorld.Device, task.ClaimedDeviceId);
     }
 
     [Fact]
