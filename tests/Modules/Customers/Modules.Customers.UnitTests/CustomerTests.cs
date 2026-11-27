@@ -189,6 +189,29 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.identification_number_too_long", exception.Code);
     }
 
+    [Theory]
+    [InlineData(IdentificationType.Nit, "ACME SAS")]
+    [InlineData(IdentificationType.Cc, "JUAN PEREZ")]
+    [InlineData(IdentificationType.Ce, "123456A")]
+    public void CreateRejectsLettersInANumericDocumentType(IdentificationType type, string number)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(identification: Identification(type, number)));
+
+        Assert.Equal("customers.customer.identification_number_not_numeric", exception.Code);
+        Assert.Contains("IdentificationNumber", exception.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void CreateAcceptsALetteredNumberForAPassport()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "AB123456"),
+            contact: CustomerDomainFixtures.Spanish());
+
+        Assert.Equal("AB123456", customer.IdentificationNumber);
+    }
+
     // El CUC lo emite el backend (ICucGenerator + CucFormatter) y llega ya formado al agregado;
     // el agregado solo comprueba que llegue. Un cliente sin CUC es un cliente que la grilla pinta
     // con una celda vacia y que nadie puede buscar — la caja de busqueda del listado busca por CUC.

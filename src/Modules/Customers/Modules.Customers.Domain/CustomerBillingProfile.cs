@@ -22,6 +22,7 @@ public static class CustomerBillingProfileErrors
     public const string NameTooLong = "customers.billing_profile.name_too_long";
     public const string IdentificationRequired = "customers.billing_profile.identification_required";
     public const string IdentificationTooLong = "customers.billing_profile.identification_too_long";
+    public const string IdentificationNumberNotNumeric = "customers.billing_profile.identification_number_not_numeric";
     public const string IdentificationTypeInvalid = "customers.billing_profile.identification_type_invalid";
     public const string DocumentTypeNotAllowed = "customers.billing_profile.document_type_not_allowed";
     public const string PersonTypeInvalid = "customers.billing_profile.person_type_invalid";
@@ -228,6 +229,7 @@ public sealed record CustomerBillingProfileDetails
             CustomerBillingProfileErrors.IdentificationTooLong,
             "identification");
         var type = NormalizeIdentificationType(IdentificationType, country);
+        EnsureNumberMatchesType(type, number);
         var personType = NormalizePersonType(PersonType, type, country);
         var phone = NormalizePhone(Phone);
         var email = NormalizeEmail(Email);
@@ -307,6 +309,24 @@ public sealed record CustomerBillingProfileDetails
             : throw IdentificationTypeError(
                 CustomerBillingProfileErrors.DocumentTypeNotAllowed,
                 "The identification type is not allowed for the country.");
+    }
+
+    // NIT, CC y CE solo llevan dígitos. Vive en el alta y la edición, nunca al leer de la base, y bloquea también un
+    // número viejo reenviado sin cambios. Marca IdentificationNumber, el campo que la persona corrige.
+    private static void EnsureNumberMatchesType(string type, string number)
+    {
+        if (DocumentNumberFormat.IsValidFor(type, number))
+        {
+            return;
+        }
+
+        throw new CustomersDomainException(
+            CustomerBillingProfileErrors.IdentificationNumberNotNumeric,
+            DocumentNumberFormat.NumericTypesMessage,
+            new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                ["IdentificationNumber"] = [DocumentNumberFormat.NumericTypesMessage]
+            });
     }
 
     // Misma regla que Customer.EnsurePersonTypeMatches: en Colombia una persona juridica se identifica con NIT.

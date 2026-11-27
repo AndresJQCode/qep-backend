@@ -106,6 +106,14 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
                 && command.Country is { Length: CustomerContactInfo.CountryLength } country
                 && country.All(char.IsAsciiLetter));
 
+        // NIT, CC y CE solo llevan dígitos. Corre cuando el tipo ya es conocido y el número no está vacío (que falte
+        // lo dice el dominio); marca el número para que el 422 lleve el mapa errors con la clave del input.
+        RuleFor(command => command.IdentificationNumber)
+            .Must((command, number) => DocumentNumberFormat.IsValidFor(command.IdentificationType, number))
+            .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+            .When(command => DocumentTypesByCountry.IsKnown(command.IdentificationType)
+                && !string.IsNullOrWhiteSpace(command.IdentificationNumber));
+
         // Spec 2026-10-26: el tipo de persona es opcional, pero uno que no se reconoce se rechaza aca para que el 422
         // lleve el mapa errors con la clave PersonType. Se comprueba contra la misma tabla que el dominio
         // (PersonTypeParser), por lo mismo que el tipo de documento.
