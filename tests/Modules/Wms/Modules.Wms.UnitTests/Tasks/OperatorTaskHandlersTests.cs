@@ -198,10 +198,12 @@ public sealed class OperatorTaskHandlersTests
         var world = new TaskWorld();
         var (_, command) = ClaimedByCaller(world);
 
-        var error = await Assert.ThrowsAsync<ResourceConflictException>(
+        var error = await Assert.ThrowsAsync<TaskLeaseLostException>(
             () => ConfirmAsync(world, command with { LeaseToken = Guid.NewGuid() }));
 
         Assert.Equal(WmsErrorCodes.TaskLeaseLost, error.Code);
+        Assert.False(error.Resumable);
+        Assert.Equal(false, error.ProblemExtensions["resumable"]);
         Assert.Empty(world.Posted);
     }
 
@@ -454,12 +456,33 @@ public sealed class OperatorTaskHandlersTests
 
         var lease = await handler.HandleAsync(new HeartbeatTaskCommand(TaskWorld.Tenant, task.Id, token), Ct);
         task.ExpireLease(TaskWorld.Start.AddMinutes(30));
-        var error = await Assert.ThrowsAsync<ResourceConflictException>(
+        var error = await Assert.ThrowsAsync<TaskLeaseLostException>(
             () => handler.HandleAsync(new HeartbeatTaskCommand(TaskWorld.Tenant, task.Id, token), Ct));
 
         Assert.Equal(TaskWorld.Start.AddMinutes(17), lease.LeaseExpiresAt);
+        // Venció y nadie más la tomó: la app puede pedirla otra vez con claim.
+        Assert.True(error.Resumable);
         // Reanudable no alcanza: sólo una confirmación reanuda.
         Assert.Equal(WmsErrorCodes.TaskLeaseLost, error.Code);
+    }
+
+    // La app trata como éxito un unclaim repetido: la tarea ya no es suya y no se puede retomar con ese token.
+    [Fact]
+    public async Task RepeatingAnAppliedUnclaimIs409NotResumable()
+    {
+        var world = new TaskWorld();
+        var (task, _) = ClaimedByCaller(world);
+        var token = task.LeaseToken!.Value;
+        var handler = new UnclaimTaskHandler(
+            world.Context(), world.Authorization, world.Caller(), world.UnitOfWork(), world.Repository(), Guard(world),
+            world.Clock(), world.Composer(), new UnclaimTaskValidator());
+        var command = new UnclaimTaskCommand(TaskWorld.Tenant, task.Id, token, "ShiftEnd");
+        await handler.HandleAsync(command, Ct);
+
+        var error = await Assert.ThrowsAsync<TaskLeaseLostException>(() => handler.HandleAsync(command, Ct));
+
+        Assert.Equal(WmsErrorCodes.TaskLeaseLost, error.Code);
+        Assert.False(error.Resumable);
     }
 
     [Fact]
