@@ -388,7 +388,7 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
   `operation_receipts` devuelve la misma respuesta con 200 y el ledger guarda la misma clave en su lote.
 - La cola local (Room) es por usuario y por tarea, en orden FIFO. Si el servidor rechaza una operación, las siguientes de **esa** tarea
   se pausan y la app lo muestra; las de otras tareas siguen.
-- `occurredAt` es la hora del escaneo, dentro de la ventana del ledger (`[now − 30 días, now + 5 min]`) y no anterior a la publicación de la tarea (`released_at`, o `created_at` si nunca se publicó); un escaneo anterior es imposible y llega como 422 `wms.movement.occurred_at_out_of_range`. Es también la fecha de los
+- `occurredAt` es la hora del escaneo, dentro de la ventana del ledger (`[now − 30 días, now + 5 min]`) y no más de 5 minutos antes de la publicación de la tarea (`released_at`, o `created_at` si nunca se publicó; la misma tolerancia de reloj del ledger), *decisión del agente, por confirmar*; un escaneo anterior es imposible y llega como 422 `wms.movement.occurred_at_out_of_range`. Es también la fecha de los
   eventos que la confirmación deja en `task_events` (`LeaseResumed`, `LineConfirmed`, `Completed`) y de `completed_at` (DA-36).
 - La doble lectura del mismo código es UX, no idempotencia: la app ignora el mismo código en menos de 1 s y el servidor no deja
   superar lo planeado (`wms.task.quantity_exceeds_remaining`).
@@ -464,7 +464,7 @@ TaskBoardDto   { warehouseId, byStatus: [{ status, count }], byType: [{ type, op
   con una sola consulta de asignadas y una consulta de elegibles por permiso, no una por tarea.
 - `events` va en orden de `recorded_at` (hora del servidor), luego tipo e id; cada evento conserva su `occurredAt` (hora del
   escaneo). `recordedAt` no viaja: ninguna pantalla lo dibuja.
-- Confirmar exige: lease válido (o reanudable, §6.7); `occurredAt` dentro de la ventana del ledger y no anterior a la publicación (`wms.movement.occurred_at_out_of_range`); línea `Open`; `fromLocationId` = el planeado (`wms.task.location_mismatch`);
+- Confirmar exige: lease válido (o reanudable, §6.7); `occurredAt` dentro de la ventana del ledger y no más de 5 minutos antes de la publicación (la misma tolerancia de reloj del ledger; decisión del agente, por confirmar) (`wms.movement.occurred_at_out_of_range`); línea `Open`; `fromLocationId` = el planeado (`wms.task.location_mismatch`);
   `toLocationId` = el planeado, o distinto con `overrideReason` si el tipo lo admite y la ubicación es física, de la misma bodega y
   admite almacenamiento (`wms.task.location_mismatch` / `wms.task.location_invalid`); `lotId` igual al de la línea si la línea lo fija
   (`wms.task.lot_mismatch`); `quantity ≤ remaining` (`wms.task.quantity_exceeds_remaining`). El movimiento: de
@@ -1028,7 +1028,7 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 - El permiso `wms.task.manage` (DA-15): **aprobado**; la prueba ancla de permisos se renombró (ya no lleva la cuenta en el
   nombre). Unas plantillas de rol que traigan este permiso más adelante (O-6) necesitan una autorización nueva.
 - El contrato de §6.11: **aprobado con cambios**: M2 (`next`/`claim` renuevan el lease de quien ya tiene la tarea en curso, y
-  `wms.task.lease_lost` lleva `resumable`), B2 (`occurredAt` no anterior a la publicación) y la nota del `unclaim` repetido (409
+  `wms.task.lease_lost` lleva `resumable`), B2 (`occurredAt` no más de 5 minutos antes de la publicación, la misma tolerancia de reloj del ledger: decisión del agente, por confirmar) y la nota del `unclaim` repetido (409
   con `resumable: false`, que la app trata como éxito). M3 queda pendiente del owner.
 
 La misma revisión agregó, sin cambiar rutas ni códigos: `staleAssignments` en el tablero (M1), DTOs compuestos sólo con las

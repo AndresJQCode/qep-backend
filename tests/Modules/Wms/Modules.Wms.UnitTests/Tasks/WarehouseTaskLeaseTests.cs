@@ -662,19 +662,31 @@ public sealed class WarehouseTaskLeaseTests
         Assert.NotEqual(token, task.LeaseToken);
     }
 
-    // B2: nadie escanea una tarea antes de que exista en el pool.
+    // B2: nadie escanea una tarea mucho antes de que exista en el pool; la tolerancia es la del reloj del ledger (5 minutos).
     [Fact]
-    public void AScanEarlierThanTheReleaseIsRejectedWithoutResuming()
+    public void AScanMoreThanTheClockToleranceBeforeTheReleaseIsRejectedWithoutResuming()
     {
         var (task, token) = Claimed();
         task.ExpireLease(Expired);
 
         var error = Assert.Throws<WmsDomainException>(() => task.ConfirmLine(
-            Member, token, Device, task.Lines[0].Id, 1, Expired, Now.AddSeconds(-1)));
+            Member, token, Device, task.Lines[0].Id, 1, Expired, Now.AddMinutes(-6)));
 
         Assert.Equal(WmsErrorCodes.MovementOccurredAtOutOfRange, error.Code);
         Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
         Assert.Equal(0, task.Lines[0].QuantityConfirmed);
+    }
+
+    // B2: un celular con el reloj atrasado un par de minutos no se queda con un 422 permanente por un escaneo real.
+    [Fact]
+    public void AScanWithinTheClockToleranceBeforeTheReleaseIsAccepted()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        task.ConfirmLine(Member, token, Device, task.Lines[0].Id, 1, Expired, Now.AddMinutes(-4));
+
+        Assert.Equal(1, task.Lines[0].QuantityConfirmed);
     }
 
     [Fact]

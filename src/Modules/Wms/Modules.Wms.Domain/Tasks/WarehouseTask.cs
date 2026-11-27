@@ -357,7 +357,7 @@ public sealed class WarehouseTask
     /// <summary>Confirma parte o todo de una línea. Con un lease reanudable, reanuda la tarea antes: la mercancía ya se movió en el
     /// piso. El llamador responde antes el lease perdido (<see cref="CheckLease"/>) y la línea inexistente
     /// (<see cref="FindLine"/>).</summary>
-    /// <param name="occurredAt">Cuándo se escaneó, dentro de la ventana del ledger y no anterior a la publicación de la tarea; sin él, <paramref name="now"/>. Es la fecha de
+    /// <param name="occurredAt">Cuándo se escaneó, dentro de la ventana del ledger y no más de 5 minutos antes de la publicación de la tarea; sin él, <paramref name="now"/>. Es la fecha de
     /// los hechos que la confirmación deja en la historia y la de cierre (DA-36); el lease y la actividad usan
     /// <paramref name="now"/>.</param>
     /// <param name="memberIsBusy">La persona ya tiene otra tarea en curso: una confirmación tardía se anota sin reanudar ésta, que
@@ -400,11 +400,13 @@ public sealed class WarehouseTask
         var scannedAt = (occurredAt ?? now).ToUniversalTime();
         LedgerEntryRules.EnsureOccurredAtInWindow(scannedAt, now);
 
-        // B2: un escaneo anterior a la publicación es imposible (sin publicar, a la creación). Mismo código que la ventana del ledger.
-        if (scannedAt < (ReleasedAt ?? CreatedAt))
+        // B2: un escaneo muy anterior a la publicación es imposible (sin publicar, a la creación); la holgura es la del reloj del
+        // ledger, para que un celular atrasado no se quede con un 422 permanente. Mismo código que la ventana del ledger.
+        if (scannedAt < (ReleasedAt ?? CreatedAt).AddMinutes(-LedgerEntryRules.ClockToleranceMinutes))
         {
             throw new WmsDomainException(
-                WmsErrorCodes.MovementOccurredAtOutOfRange, "La fecha del escaneo no puede ser anterior a la publicación de la tarea.");
+                WmsErrorCodes.MovementOccurredAtOutOfRange,
+                "La fecha del escaneo no puede ser anterior a la publicación de la tarea por más de 5 minutos.");
         }
 
         // Después de validar: una confirmación rechazada no reanuda nada.
