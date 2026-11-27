@@ -57,7 +57,7 @@ public static class SiigoCustomerMapper
             identification,
             isCompany ? [party.Name.Trim()] : [first, rest],
             Clean(party.Address),
-            "Co",
+            Clean(party.SiigoCountryCode) ?? "Co",
             state,
             city,
             Phone(party.Phone),
@@ -69,7 +69,7 @@ public static class SiigoCustomerMapper
     /// <summary>
     /// El documento tal como se busca, se crea y se factura en Siigo; lo guardado en QEP no cambia (spec 2026-11-25). CC: sólo dígitos.
     /// NIT: sólo dígitos y sin el de verificación (<see cref="NitWithoutCheckDigit"/>). CE y pasaporte: sólo letras y dígitos ASCII, con
-    /// las mayúsculas como se escribieron. Otro tipo o sin tipo: sin espacios en los bordes. Consumidor final: el documento genérico.
+    /// las mayúsculas como se escribieron; NIF, NIE y Tax ID viajan igual (spec 2026-11-26). Sin tipo: sin espacios en los bordes. Consumidor final: el documento genérico.
     /// <c>null</c> si queda vacío.
     /// </summary>
     public static string? Identification(SiigoBilledPartyInput party)
@@ -85,7 +85,8 @@ public static class SiigoCustomerMapper
         {
             SiigoIdentificationKind.Cc => Digits(raw),
             SiigoIdentificationKind.Nit => NitWithoutCheckDigit(raw),
-            SiigoIdentificationKind.Ce or SiigoIdentificationKind.Pasaporte =>
+            SiigoIdentificationKind.Ce or SiigoIdentificationKind.Pasaporte or SiigoIdentificationKind.Nif
+                or SiigoIdentificationKind.Nie or SiigoIdentificationKind.TaxId =>
                 new string(raw.Where(char.IsAsciiLetterOrDigit).ToArray()),
             _ => raw,
         };

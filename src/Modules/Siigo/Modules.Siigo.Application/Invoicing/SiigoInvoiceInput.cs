@@ -45,8 +45,20 @@ public sealed record SiigoWithholdingInput(Guid TaxRateId, string Name, string T
 /// <summary>Un comprobante de pago del pedido: cada uno es un pago de la factura, por su monto.</summary>
 public sealed record SiigoPaymentProofInput(Guid ProofId, decimal Amount);
 
+/// <summary>
+/// La ciudad que el cliente escribió fuera de Colombia y que no se pudo vincular a la lista de Siigo (spec 2026-11-26).
+/// <paramref name="CountryCode"/> es el país de QEP en mayúscula; <paramref name="Reportable"/> es <c>false</c> cuando el país ni siquiera
+/// está en el catálogo, y entonces no se anota en la bandeja del operador. Es dato del cliente: nunca se imprime ni se loguea.
+/// </summary>
+public sealed record SiigoUnlinkedCity(string CountryCode, string CityText, bool Reportable)
+{
+    public override string ToString() => "SiigoUnlinkedCity { }";
+}
+
 /// <summary>La parte a la que se factura, ya resuelta (pedido o ficha del cliente). Lleva datos del cliente: nunca se imprime ni se
-/// loguea (el <c>ToString</c> no escribe nada).</summary>
+/// loguea (el <c>ToString</c> no escribe nada). <paramref name="SiigoCountryCode"/> es el código de país de la lista de Siigo (<c>Us</c>)
+/// y sólo viaja fuera de Colombia; <paramref name="UnlinkedCity"/> es la ciudad escrita que no se vinculó (el armador reporta
+/// <c>customer_city_unlinked</c> en vez de <c>customer_city_missing</c>).</summary>
 public sealed record SiigoBilledPartyInput(
     bool IsFinalConsumer,
     SiigoPersonKind? PersonType,
@@ -57,7 +69,9 @@ public sealed record SiigoBilledPartyInput(
     string? CityCode,
     string? StateCode,
     string? Email,
-    SiigoPhone? Phone)
+    SiigoPhone? Phone,
+    string? SiigoCountryCode = null,
+    SiigoUnlinkedCity? UnlinkedCity = null)
 {
     public override string ToString() => "SiigoBilledPartyInput { }";
 }

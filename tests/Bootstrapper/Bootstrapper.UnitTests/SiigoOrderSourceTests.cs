@@ -28,7 +28,7 @@ public sealed class SiigoOrderSourceTests
         Assert.Equal(Enum.GetNames<PartyIdentificationType>().Order(), Enum.GetNames<SiigoIdentificationKind>().Order());
 
     [Fact]
-    public void EveryQepIdentificationTypeEitherHasASiigoCodeOrIsKnownToBeUnsupported()
+    public void EveryQepIdentificationTypeHasASiigoCode()
     {
         var supported = Enum.GetValues<SiigoIdentificationKind>().Where(kind => SiigoIdentificationTypes.CodeFor(kind) is not null);
 
@@ -38,6 +38,9 @@ public sealed class SiigoOrderSourceTests
             nameof(PartyIdentificationType.Cc),
             nameof(PartyIdentificationType.Ce),
             nameof(PartyIdentificationType.Pasaporte),
+            nameof(PartyIdentificationType.Nif),
+            nameof(PartyIdentificationType.Nie),
+            nameof(PartyIdentificationType.TaxId),
         ];
         Assert.Equal(expected.Order(), supported.Select(kind => kind.ToString()).Order());
     }

@@ -6,7 +6,8 @@ namespace Modules.Siigo.Application.Invoicing;
 /// <c>tax_unlinked</c> (porcentaje), <c>withholding_unlinked</c> y <c>withholding_type_unsupported</c> (id de la tasa, nombre),
 /// <c>payment_unlinked</c> (clave de la cuenta de cobro; sin referencia cuando el pedido no tiene cuenta), <c>freight_product_missing</c>,
 /// <c>customer_identification_missing</c>, <c>customer_identification_type_unsupported</c>, <c>customer_city_missing</c>,
-/// <c>currency_unsupported</c> (la moneda) y <c>seller_unlinked</c> (<paramref name="Reference"/> = la membresía del asesor y
+/// <c>customer_city_unlinked</c> (la ciudad escrita fuera de Colombia no se vinculó a la lista de Siigo; sin referencia ni etiqueta: el
+/// texto es del cliente; spec 2026-11-26), <c>currency_unsupported</c> (la moneda) y <c>seller_unlinked</c> (<paramref name="Reference"/> = la membresía del asesor y
 /// <paramref name="Label"/> = su nombre o correo, que son de un miembro del tenant; spec 2026-11-20). Nunca lleva datos del cliente.
 /// </summary>
 public sealed record SiigoMissing(string Code, string? Reference, string? Label)
@@ -21,6 +22,7 @@ public sealed record SiigoMissing(string Code, string? Reference, string? Label)
     public const string CustomerIdentificationMissing = "customer_identification_missing";
     public const string CustomerIdentificationTypeUnsupported = "customer_identification_type_unsupported";
     public const string CustomerCityMissing = "customer_city_missing";
+    public const string CustomerCityUnlinked = "customer_city_unlinked";
     public const string CurrencyUnsupported = "currency_unsupported";
     public const string SellerUnlinked = "seller_unlinked";
 }

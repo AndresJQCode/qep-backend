@@ -303,6 +303,30 @@ public sealed class SiigoInvoiceBuilderTests
             missing.Select(value => $"{value.Code}:{value.Reference}"));
     }
 
+    // Spec 2026-11-26: una ciudad escrita sin vincular es «sin vincular», no «sin ciudad»; ocupa el mismo lugar que customer_city_missing.
+    [Fact]
+    public void AnUnlinkedForeignCityIsUnlinkedNotMissing()
+    {
+        var input = Order() with
+        {
+            BilledParty = Company() with
+            {
+                CityCode = null,
+                StateCode = null,
+                UnlinkedCity = new SiigoUnlinkedCity("US", "Miamy", Reportable: true),
+            },
+        };
+
+        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(input)).Missing;
+
+        var unlinked = Assert.Single(missing, value => value.Code.StartsWith("customer_city", StringComparison.Ordinal));
+        Assert.Equal(new SiigoMissing("customer_city_unlinked", null, null), unlinked);
+    }
+
+    [Fact]
+    public void TheUnlinkedCityNeverPrints() =>
+        Assert.DoesNotContain("Miamy", new SiigoUnlinkedCity("US", "Miamy", true).ToString(), StringComparison.Ordinal);
+
     [Fact]
     public void ANonCopOrderIsMissingTheCurrency()
     {

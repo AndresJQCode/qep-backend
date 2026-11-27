@@ -251,7 +251,9 @@ public static class SiigoInvoiceBuilder
 
         if (string.IsNullOrWhiteSpace(party.CityCode) || string.IsNullOrWhiteSpace(party.StateCode))
         {
-            missing.Add(new SiigoMissing(SiigoMissing.CustomerCityMissing, null, null));
+            // Una ciudad escrita que no se vinculó no es «sin ciudad»: el operador la vincula una vez para todos (spec 2026-11-26).
+            missing.Add(new SiigoMissing(
+                party.UnlinkedCity is null ? SiigoMissing.CustomerCityMissing : SiigoMissing.CustomerCityUnlinked, null, null));
         }
     }
 
