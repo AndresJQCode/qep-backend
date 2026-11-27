@@ -931,7 +931,7 @@ public sealed class CustomerWriteApiTests(SharedCustomersHost sharedHost) : ICla
 
         var response = await client.PostAsJsonAsync(
             CustomersUrl(),
-            NewForeignCustomerBody(classification.Id, identificationType: "CC"),
+            NewForeignCustomerBody(classification.Id, identificationType: "CC", identificationNumber: "12345678"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -960,7 +960,7 @@ public sealed class CustomerWriteApiTests(SharedCustomersHost sharedHost) : ICla
 
         var rejected = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{customer.Id}",
-            NewForeignCustomerBody(classification.Id, identificationType: "CC"),
+            NewForeignCustomerBody(classification.Id, identificationType: "CC", identificationNumber: "12345678"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);

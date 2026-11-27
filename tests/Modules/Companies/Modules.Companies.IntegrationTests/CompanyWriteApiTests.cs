@@ -780,7 +780,7 @@ public sealed class CompanyWriteApiTests
         {
             name = "Iberia S.L.",
             bankAccounts = new[] { BankAccount("ES-000123") },
-            taxId = "B12345678",
+            taxId = "123456789",
             country = "ES",
             documentType = "NIT",
             cityName = "Madrid"

@@ -175,11 +175,11 @@ public sealed class CustomerBillingProfilesApiTests
         var city = await EnsureCityAsync(client);
         var customer = await NewCustomerAsync(client, city);
         var first = await ReadAsync(await PostAsync(
-            client, customer.Id, ColombianBody(city.CityId, identificationNumber: "900123456-X")));
+            client, customer.Id, ColombianBody(city.CityId, identificationNumber: "900123456-7")));
         var versionSql = $"SELECT version FROM customers.customers WHERE id = '{customer.Id}'";
         var rowsSql = $"SELECT count(*) FROM customers.customer_billing_profiles WHERE customer_id = '{customer.Id}'";
         var version = await ScalarAsync(database.GetConnectionString(), versionSql);
-        var retry = ColombianBody(city.CityId, name: "comercial andina sas", identificationNumber: "900.123.456-x");
+        var retry = ColombianBody(city.CityId, name: "comercial andina sas", identificationNumber: "900.123.456-7");
         retry["phone"] = "3109999999";
         retry["vatSurplus"] = false;
 
