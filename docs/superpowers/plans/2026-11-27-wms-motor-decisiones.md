@@ -30,14 +30,14 @@ Owner answers (2026-11-27, Trello snLjp0i1):
 ## Task 3. B5: daily numbers in the tenant's time zone
 
 - All callers of `IWarehouseTaskRepository.NextNumberAsync` compute `today` from `ITenantClock` (Tenancy.Application, already referenced by Wms.Application), for the same instant `now` the handler already uses.
-- Agent decision, to confirm: apply the same to `ADJ-` (`IAdjustmentRepository.NextNumberAsync`) and `INC-` (`IIncidentRepository.NextNumberAsync`). The card said "como los ajustes", but in the code adjustments and incidents also cut the day in UTC.
+- Approved by the owner (2026-11-27): apply the same to `ADJ-` (`IAdjustmentRepository.NextNumberAsync`) and `INC-` (`IIncidentRepository.NextNumberAsync`). The card said "como los ajustes", but in the code adjustments and incidents also cut the day in UTC.
 - One helper in Wms.Application, not ten copies.
 
 ## Task 4. B4: «sin avance» on the board
 
 - `TaskOperatorDto` gets `LastProgressAt` (latest `Claimed`, `LeaseResumed`, `LineConfirmed`, `LineShort` or `LineCancelled` event of the task) and `Stalled` (bool, computed on the server).
 - `LastActivityAt` is not enough: the heartbeat renews it.
-- `Stalled` is true when `now - LastProgressAt >= 15 minutes`. The threshold is an agent decision, to confirm.
+- `Stalled` is true when `now - LastProgressAt >= 15 minutes`. The threshold was approved by the owner (2026-11-27).
 - One query for all tasks in progress, not one per task.
 - Additive BFF fields. Document the reason in the DTO.
 

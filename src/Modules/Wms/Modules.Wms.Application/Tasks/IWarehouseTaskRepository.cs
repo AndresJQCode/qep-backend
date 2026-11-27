@@ -64,6 +64,12 @@ public interface IWarehouseTaskRepository
     Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
         Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
 
+    /// <summary>La hora de guardado del último avance real de cada tarea (eventos <c>Claimed</c>, <c>LeaseResumed</c>,
+    /// <c>LineConfirmed</c>, <c>LineShort</c> y <c>LineCancelled</c>), en una sola consulta; la que no tiene ninguno no viene. El latido
+    /// no deja evento, y por eso no cuenta.</summary>
+    Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindLastProgressAtAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
+
     /// <summary>El número de cada tarea del tenant que esté entre <paramref name="taskIds"/>; la que no existe no viene.</summary>
     Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
         Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);

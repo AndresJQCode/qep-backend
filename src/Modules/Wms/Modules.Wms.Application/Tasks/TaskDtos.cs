@@ -115,7 +115,10 @@ public sealed record TaskStatusSliceDto(string Status, int Count);
 
 public sealed record TaskTypeSliceDto(string Type, int Open);
 
-/// <summary>Quién tiene una tarea en curso. <c>Since</c> es cuándo la reclamó.</summary>
+/// <summary>Quién tiene una tarea en curso. <c>Since</c> es cuándo la reclamó. <c>LastProgressAt</c> es el último avance real
+/// (reclamo, reanudación, línea confirmada, con faltante o cancelada) y <c>Stalled</c> lo calcula el servidor: la pantalla no puede
+/// deducirlo de <c>LastActivityAt</c>, que el latido renueva aunque el operario no haga nada, ni conoce el umbral (B4, owner,
+/// 2026-11-27: sin tope automático; el supervisor decide si la suelta o la reasigna).</summary>
 public sealed record TaskOperatorDto(
     Guid MemberId,
     string Name,
@@ -123,7 +126,9 @@ public sealed record TaskOperatorDto(
     string TaskNumber,
     string Type,
     DateTimeOffset? Since,
-    DateTimeOffset? LastActivityAt);
+    DateTimeOffset? LastActivityAt,
+    DateTimeOffset? LastProgressAt,
+    bool Stalled);
 
 /// <summary>Una tarea abierta asignada a alguien que ya no está activo o perdió el permiso del tipo (BFF, revisión T1 M1). La
 /// pantalla no puede saberlo: no conoce Tenancy ni los permisos de nadie, y sin esta lista la tarea espera para siempre a una persona

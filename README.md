@@ -7115,31 +7115,31 @@ cancelar nunca mueve stock: sólo la confirmación de una línea, que escribe un
 **Supervisor** (bajo `/api/v1/tenants/{tenantId}/wms`). Las acciones llevan `version` (412 `concurrency.conflict`), responden la tarea
 sin `events` y se auditan.
 
-| Ruta                                                                | Permiso             | Cuerpo / idempotencia                                                                                                                                                                                 |
-| ------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /tasks`                                                       | `wms.task.manage`   | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
-| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | —                                                                                                                                                                                                     |
-| `GET /tasks/summary?warehouseId`                                    | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué                                                                                                                          |
-| `GET /tasks/assignees?warehouseId&type`                             | `wms.task.manage`   | Membresías activas con el permiso del tipo                                                                                                                                                            |
-| `GET /tasks/{id}`                                                   | `wms.document.read` | La única respuesta con `events`                                                                                                                                                                       |
-| `POST /tasks/{id}/publish`, `/unassign`                             | `wms.task.manage`   | `{ version }`                                                                                                                                                                                         |
-| `POST /tasks/{id}/hold`                                             | `wms.task.manage`   | `{ version, reason? }`                                                                                                                                                                                |
-| `POST /tasks/{id}/assign`                                           | `wms.task.manage`   | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress`                                                                                                                           |
-| `POST /tasks/{id}/priority`                                         | `wms.task.manage`   | `{ priority, urgent, version }`                                                                                                                                                                       |
-| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel`                 | `wms.task.manage`   | `{ reason, version }`                                                                                                                                                                                 |
+| Ruta | Permiso | Cuerpo / idempotencia |
+| --- | --- | --- |
+| `POST /tasks` | `wms.task.manage` | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
+| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | — |
+| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué. Cada fila de `operators` trae `lastProgressAt` (último reclamo, reanudación o línea confirmada, con faltante o cancelada; el latido no cuenta) y `stalled` (sin avance hace 15 minutos o más, calculado por el servidor; no hay tope automático: el supervisor suelta o reasigna) |
+| `GET /tasks/assignees?warehouseId&type` | `wms.task.manage` | Membresías activas con el permiso del tipo |
+| `GET /tasks/{id}` | `wms.document.read` | La única respuesta con `events` |
+| `POST /tasks/{id}/publish`, `/unassign` | `wms.task.manage` | `{ version }` |
+| `POST /tasks/{id}/hold` | `wms.task.manage` | `{ version, reason? }` |
+| `POST /tasks/{id}/assign` | `wms.task.manage` | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress` |
+| `POST /tasks/{id}/priority` | `wms.task.manage` | `{ priority, urgent, version }` |
+| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel` | `wms.task.manage` | `{ reason, version }` |
 
 **Operario.** La ruta exige `wms.document.read` y el handler, además, el permiso del tipo.
 
-| Ruta                                           | Cuerpo                                                                                                  | Respuesta                                                                                                    |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `GET /tasks/mine?warehouseId`                  | —                                                                                                       | `{ current, assigned }`                                                                                      |
-| `POST /tasks/next`                             | `{ warehouseId, deviceId }`                                                                             | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso               |
-| `POST /tasks/{id}/claim`                       | `{ deviceId }`                                                                                          | 200. Sólo admite la asignada a quien llama o su propio reclamo vencido; lo demás, 422 `wms.task.not_offered` |
-| `POST /tasks/{id}/heartbeat`                   | `{ leaseToken }`                                                                                        | 200 `{ leaseExpiresAt }`                                                                                     |
-| `POST /tasks/{id}/unclaim`                     | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`)                                | 200                                                                                                          |
-| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200                                                                                                          |
-| `POST /tasks/{id}/lines/{lineId}/short` (IK)   | `{ leaseToken, quantityFound, lotId?, incidentType, note?, photoFileIds?, occurredAt, deviceId }`       | 200 la tarea                                                                                                 |
-| `POST /tasks/{id}/lines/{lineId}/count` (IK)   | `{ leaseToken, locationId, lotId?, quantityCounted, occurredAt, deviceId }`                             | 200 la tarea                                                                                                 |
+| Ruta | Cuerpo | Respuesta |
+| --- | --- | --- |
+| `GET /tasks/mine?warehouseId` | — | `{ current, assigned }` |
+| `POST /tasks/next` | `{ warehouseId, deviceId }` | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso |
+| `POST /tasks/{id}/claim` | `{ deviceId }` | 200. Sólo admite la asignada a quien llama o su propio reclamo vencido. Una del pool (`Ready`) que no sea su reclamo vencido, 422 `wms.task.not_offered`; asignada a otra persona, 422 `wms.task.assigned_to_other`; en curso de otra persona, sin publicar o cerrada, 422 `wms.task.invalid_transition` |
+| `POST /tasks/{id}/heartbeat` | `{ leaseToken }` | 200 `{ leaseExpiresAt }` |
+| `POST /tasks/{id}/unclaim` | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`) | 200 |
+| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200 |
+| `POST /tasks/{id}/lines/{lineId}/short` (IK) | `{ leaseToken, quantityFound, lotId?, incidentType, note?, photoFileIds?, occurredAt, deviceId }` | 200 la tarea |
+| `POST /tasks/{id}/lines/{lineId}/count` (IK) | `{ leaseToken, locationId, lotId?, quantityCounted, occurredAt, deviceId }` | 200 la tarea |
 
 `short` confirma lo encontrado hacia el destino planeado, cierra la línea como `Short` y deja la novedad en la misma transacción y con
 la misma `Idempotency-Key`; nunca ajusta stock. `count` sólo existe para el tipo `Count` (permiso `wms.count.perform`); `confirm` y
@@ -7157,7 +7157,7 @@ confirmación llevan la hora del escaneo (`occurredAt`).
 
 **Códigos.** 404 `wms.task.not_found` (tarea o línea). 409 `wms.task.lease_lost`, `wms.task.member_busy` (con `taskId`; falta cuando lo
 detecta el índice único). 422 `wms.task.invalid_transition` (con `from` y `action`), `wms.task.assigned_to_other`, `wms.task.not_offered` (`claim` de una
-tarea del pool o de otra persona: el trabajo nuevo llega por `next`),
+tarea del pool, `Ready`, que no es el reclamo vencido de quien llama: el trabajo nuevo llega por `next`),
 `wms.task.assignee_not_eligible`, `wms.task.location_invalid`, `wms.task.location_mismatch`, `wms.task.lot_mismatch`,
 `wms.task.quantity_exceeds_remaining`, `wms.task.line_invalid`. Al crear llegan además `wms.profile.variant_unknown`,
 `wms.uom.precision_exceeded` y `wms.lot.not_found` (404); al confirmar, los del ledger (`wms.stock.insufficient`,
