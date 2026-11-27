@@ -130,13 +130,16 @@ public sealed record TaskOperatorDto(
 public sealed record TaskStaleAssignmentDto(Guid TaskId, string TaskNumber, Guid MemberId, string Name);
 
 /// <summary>El tablero de una bodega (BFF, spec 2026-11-26 §6.10). <c>ByStatus</c> y <c>ByType</c> vienen completos, también en cero:
-/// la pantalla no conoce los enums. <c>StaleAssignments</c> viene completa: ver <see cref="TaskStaleAssignmentDto"/>.</summary>
+/// la pantalla no conoce los enums. <c>StaleAssignments</c> viene completa: ver <see cref="TaskStaleAssignmentDto"/>.
+/// <c>OpenIncidents</c> cuenta las novedades <c>Open</c> e <c>InReview</c> de la bodega (spec 2026-11-26 §8.5): la pantalla pinta el
+/// aviso sin pedir la bandeja.</summary>
 public sealed record TaskBoardDto(
     Guid WarehouseId,
     IReadOnlyList<TaskStatusSliceDto> ByStatus,
     IReadOnlyList<TaskTypeSliceDto> ByType,
     IReadOnlyList<TaskOperatorDto> Operators,
-    IReadOnlyList<TaskStaleAssignmentDto> StaleAssignments);
+    IReadOnlyList<TaskStaleAssignmentDto> StaleAssignments,
+    int OpenIncidents);
 
 public sealed record TaskAssigneeDto(Guid MemberId, string Name);
 

@@ -65,6 +65,7 @@ public static class WmsAuditActions
         public const string Import = "wms.import";
         public const string Export = "wms.export";
         public const string Task = "wms.task";
+        public const string Incident = "wms.incident";
     }
 
     public const string WarehouseCreated = "wms.warehouse.created";

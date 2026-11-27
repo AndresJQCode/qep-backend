@@ -60,7 +60,9 @@ internal sealed partial class TaskWorld
     /// pruebas es el de los bloqueos, el ledger, el recibo y el guardado.</summary>
     public List<Incident> Incidents { get; } = [];
 
-    public TaskIncidentRecorder IncidentRecorder() => new(new FakeIncidents(this));
+    public TaskIncidentRecorder IncidentRecorder() => new(new FakeIncidents(this), new FakeEvidence());
+
+    public IIncidentRepository IncidentRepository() => new FakeIncidents(this);
 
     public SupervisorTaskRunner SupervisorRunner() =>
         new(Context(), Authorization, Repository(), UnitOfWork(), Recorder(), Clock(), Caller(), Composer(), Notifier());
@@ -163,11 +165,38 @@ internal sealed partial class TaskWorld
         public Task<Incident?> GetWithEventsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(world.Incidents.Find(incident => incident.TenantId == tenantId && incident.Id == id));
 
+        public Task<Incident?> GetAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+            GetWithEventsAsync(tenantId, id, cancellationToken);
+
+        public Task<IncidentPage> ListAsync(
+            Guid tenantId,
+            Guid? warehouseId,
+            IncidentStatus? status,
+            IncidentType? type,
+            int page,
+            int pageSize,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<int> CountOpenAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken) =>
+            Task.FromResult(world.Incidents.Count(incident =>
+                incident.TenantId == tenantId
+                && incident.WarehouseId.Value == warehouseId
+                && incident.Status is IncidentStatus.Open or IncidentStatus.InReview));
+
         public Task<bool> ExistsWithOperationKeyAsync(Guid tenantId, string operationKey, CancellationToken cancellationToken) =>
             Task.FromResult(world.Incidents.Exists(incident => incident.TenantId == tenantId && incident.OperationKey == operationKey));
 
         public Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken) =>
             Task.FromResult($"NOV-{today:yyyyMMdd}-{world.Incidents.Count + 1:D4}");
+    }
+
+    /// <summary>Estas pruebas no adjuntan fotos: ningún id es evidencia.</summary>
+    private sealed class FakeEvidence : IWmsEvidenceLookup
+    {
+        public Task<IReadOnlySet<Guid>> FindEvidenceAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid>());
     }
 
     private sealed class FakeTasks(TaskWorld world) : IWarehouseTaskRepository
@@ -176,6 +205,14 @@ internal sealed partial class TaskWorld
             world.Tasks.Find(task => task.TenantId == tenantId && task.Id == id);
 
         public void Add(WarehouseTask task) => world.Tasks.Add(task);
+
+        public Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyDictionary<Guid, Guid>> FindLineDestinationsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<bool> LockAsync(Guid tenantId, Guid id, CancellationToken cancellationToken)
         {

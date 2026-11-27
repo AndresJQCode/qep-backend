@@ -101,6 +101,42 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return [.. counts.Select(value => new TaskTypeCount(value.Type, value.Count))];
     }
 
+    public async Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken)
+    {
+        if (taskIds.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var ids = taskIds.ToArray();
+        var rows = await dbContext.Set<WarehouseTask>()
+            .AsNoTracking()
+            .Where(task => task.TenantId == tenantId && ids.Contains(task.Id))
+            .Select(task => new { task.Id, task.Number })
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(row => row.Id, row => row.Number);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, Guid>> FindLineDestinationsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken)
+    {
+        if (lineIds.Count == 0)
+        {
+            return new Dictionary<Guid, Guid>();
+        }
+
+        var ids = lineIds.ToArray();
+        var rows = await dbContext.Set<WarehouseTask>()
+            .AsNoTracking()
+            .Where(task => task.TenantId == tenantId)
+            .SelectMany(task => task.Lines)
+            .Where(line => ids.Contains(line.Id) && line.ToLocationId != null)
+            .Select(line => new { line.Id, line.ToLocationId })
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(row => row.Id, row => row.ToLocationId!.Value.Value);
+    }
+
     public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
         Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken)
     {

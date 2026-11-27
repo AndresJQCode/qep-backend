@@ -59,6 +59,15 @@ public interface IWarehouseTaskRepository
     Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
         Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
 
+    /// <summary>El número de cada tarea del tenant que esté entre <paramref name="taskIds"/>; la que no existe no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
+
+    /// <summary>El destino (<c>ToLocationId</c>) de cada línea que lo tiene, sin cargar la tarea ni rastrearla: lo que la resolución
+    /// <c>AcceptIntoStock</c> de una novedad necesita de la línea de origen. La línea sin destino o que no existe no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, Guid>> FindLineDestinationsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken);
+
     /// <summary>Sin rastreo.</summary>
     Task<IReadOnlyList<WarehouseTask>> ListInProgressAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);
 

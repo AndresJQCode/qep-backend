@@ -70,6 +70,9 @@ internal static class WmsNotFound
     public static ResourceNotFoundException Owner(Guid id) =>
         new(WmsErrorCodes.OwnerNotFound, $"Owner '{id}' was not found.");
 
+    public static ResourceNotFoundException Incident(Guid id) =>
+        new(WmsErrorCodes.IncidentNotFound, $"Incident '{id}' was not found.");
+
     public static ResourceNotFoundException Adjustment(Guid id) =>
         new(WmsErrorCodes.AdjustmentNotFound, $"Adjustment '{id}' was not found.");
 

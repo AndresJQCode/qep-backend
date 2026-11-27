@@ -12,6 +12,7 @@ public sealed class GetTaskBoardHandler(
     WmsAuthorization authorization,
     IWarehouseRepository warehouses,
     IWarehouseTaskRepository tasks,
+    IIncidentRepository incidents,
     IWmsMemberDirectory members)
     : IQueryHandler<GetTaskBoardQuery, TaskBoardDto>
 {
@@ -27,6 +28,8 @@ public sealed class GetTaskBoardHandler(
             .ToDictionary(count => count.Status, count => count.Count);
         var byType = (await tasks.CountOpenByTypeAsync(query.TenantId, query.WarehouseId, cancellationToken))
             .ToDictionary(count => count.Type, count => count.Count);
+
+        var openIncidents = await incidents.CountOpenAsync(query.TenantId, query.WarehouseId, cancellationToken);
 
         // Una InProgress siempre tiene quien la reclamó (CK_tasks_claim).
         var working = await tasks.ListInProgressAsync(query.TenantId, query.WarehouseId, cancellationToken);
@@ -83,6 +86,7 @@ public sealed class GetTaskBoardHandler(
             [
                 .. stale.Select(task => new TaskStaleAssignmentDto(
                     task.TaskId, task.Number, task.AssignedMemberId, names.GetValueOrDefault(task.AssignedMemberId) ?? "Sin nombre")),
-            ]);
+            ],
+            openIncidents);
     }
 }

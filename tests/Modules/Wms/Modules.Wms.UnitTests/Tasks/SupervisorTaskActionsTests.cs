@@ -160,7 +160,7 @@ public sealed class SupervisorTaskActionsTests
         claimed.Heartbeat(TaskWorld.Member, claimed.LeaseToken!.Value, TaskWorld.Start.AddMinutes(9));
         world.AddTask();
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
@@ -186,7 +186,7 @@ public sealed class SupervisorTaskActionsTests
         world.AddTask(assignTo: TaskWorld.Member);
         world.AddTask();
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
@@ -209,7 +209,7 @@ public sealed class SupervisorTaskActionsTests
         var lost = world.AddTask(assignTo: TaskWorld.OtherMember);
         world.AddTask(assignTo: TaskWorld.Member);
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
