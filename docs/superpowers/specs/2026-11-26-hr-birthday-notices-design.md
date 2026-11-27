@@ -1,6 +1,6 @@
 # Employee birthday notices (HR) — design
 
-Status: draft, pending owner approval. Repo: `qep-backend`. Frontend counterpart: delivered as a prompt to the `qep-frontend` session.
+Status: approved by the owner on 2026-11-26. Repo: `qep-backend`. Frontend counterpart: card https://trello.com/c/4kvFw8GV.
 
 ## 1. Intent
 
