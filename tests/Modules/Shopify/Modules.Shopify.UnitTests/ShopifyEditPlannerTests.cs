@@ -323,6 +323,28 @@ public sealed class ShopifyEditPlannerTests
         Assert.Empty(world.World.UnresolvedCities.Reports);
     }
 
+    // Como la importación (FitsTheOrder): un campo más largo que la parte de Quotations no se manda, porque Quotations la
+    // rechazaría y el cambio quedaría Pending para siempre. Es conflicto y el pedido no cambia.
+    [Theory]
+    [InlineData("name")]
+    [InlineData("address")]
+    [InlineData("phone")]
+    public async Task AForeignEditThatDoesNotFitTheOrderIsAConflict(string field)
+    {
+        var incoming = field switch
+        {
+            "name" => Alcala with { Name = new string('a', ShopifyCityCorrection.PartyNameMaxLength + 1) },
+            "address" => Alcala with { Address1 = new string('a', ShopifyCityCorrection.PartyAddressMaxLength + 1) },
+            _ => Alcala with { Phone = new string('1', ShopifyCityCorrection.PartyPhoneMaxLength + 1) },
+        };
+
+        var (_, plan) = await PlanSpanishAsync(incoming, SpanishParty(MadridRegionId), SpanishParty(MadridRegionId));
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal((ShopifyEditGroupOutcome.Conflict, "party_incomplete"), (group.Outcome, group.Reason));
+        Assert.Null(plan.Draft);
+    }
+
     [Fact]
     public async Task ACustomLineEditMatchesThroughItsMapping()
     {

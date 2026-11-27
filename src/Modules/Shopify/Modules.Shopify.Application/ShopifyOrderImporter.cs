@@ -322,8 +322,8 @@ public sealed class ShopifyOrderImporter(
         return (party, destination.RegionUnresolved);
     }
 
-    // Los anchos de la parte en Quotations (ShopifyCityCorrectionParityTests).
-    private static bool FitsTheOrder((string Name, string Phone, string Address, string Email) fields) =>
+    // Los anchos de la parte en Quotations (ShopifyCityCorrectionParityTests). También la usa ShopifyEditPlanner.
+    internal static bool FitsTheOrder((string Name, string Phone, string Address, string Email) fields) =>
         fields.Name.Length <= ShopifyCityCorrection.PartyNameMaxLength
         && fields.Phone.Length <= ShopifyCityCorrection.PartyPhoneMaxLength
         && fields.Address.Length <= ShopifyCityCorrection.PartyAddressMaxLength

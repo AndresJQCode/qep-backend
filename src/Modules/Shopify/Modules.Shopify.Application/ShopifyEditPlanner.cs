@@ -209,6 +209,13 @@ public sealed class ShopifyEditPlanner(
             return (Conflict(diff, ShopifyEditReasons.PartyIncomplete), null);
         }
 
+        // Fuera de Colombia, la guarda de la importación: un campo que no cabe en la parte de Quotations la haría rechazar y el
+        // cambio quedaría Pending. Colombia sigue como estaba.
+        if (destination.Country is not null && !ShopifyOrderImporter.FitsTheOrder(fields))
+        {
+            return (Conflict(diff, ShopifyEditReasons.PartyIncomplete), null);
+        }
+
         // Un payload que no guardó el zip no dice que Shopify no tenga ninguno: vale el del pedido.
         var postalCode = incoming.ShippingAddress is { ZipUnrecorded: true }
             ? order.ShippingParty?.PostalCode
