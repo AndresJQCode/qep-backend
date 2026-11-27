@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -501,6 +502,47 @@ public sealed class QuotationPricingRecalculationTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal((10m, 0m), (DiscountOf(quotation, goneLine), DiscountOf(quotation, keptLine)));
+    }
+
+    // Spec 2026-11-26 §5: en un proyecto el precio lo escribe el asesor, así que no corren las escalas, el piso, el
+    // grupo ni la compra mínima. La pasada sale después de bajar la regla de redondeo, sin leer catálogo ni ajustes.
+    [Fact]
+    public async Task AProjectSkipsScalesFloorAndMinimumPurchase()
+    {
+        var service = Guid.CreateVersion7();
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "QUO-2026-0002", ClientId, AdvisorId, new DateOnly(2026, 10, 31), null, null,
+            QuotationParties.Empty, null, "COP", customerVatSurplus: false, customerWithholdings: [],
+            MunicipalContext.None, AdvisorId, Now, QuotationKind.Project);
+        quotation.ReplaceProjectScope(
+            ProjectScope.Create(service, ProjectPricingMode.Global, 100_000.4m, [], []),
+            new ProjectServiceLine(service, Guid.CreateVersion7(), 19, ProductKind.Service, SalesUnit.Hour),
+            AdvisorId,
+            Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new UnreachablePricingLookup(),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("COP", new PriceRounding(0, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            TestContext.Current.CancellationToken);
+
+        var line = Assert.Single(quotation.Items);
+        Assert.Equal((100_000m, 0m, 100_000m), (line.UnitPrice, line.DiscountPercentage, quotation.Total));
+        Assert.Equal(new PriceRounding(0, PriceRoundingMode.Up), quotation.PriceRounding);
+    }
+
+    private sealed class UnreachablePricingLookup : IQuotationProductPricingLookup
+    {
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
+            Guid tenantId, Guid variantId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A project never reads the catalog to recalculate.");
+
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A project never reads the catalog to recalculate.");
     }
 
     private static void ChangeBillingCurrency(Quotation quotation, Guid variantId, string currency, decimal unitPrice) =>

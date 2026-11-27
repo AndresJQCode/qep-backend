@@ -114,6 +114,7 @@ public sealed class SaveQuotationHandler(
         string[] summaryParts =
         [
             .. new[] { QuotationChangeSummary.HeaderChanged(outcome.HeaderBefore, outcome.HeaderAfter, format) }.OfType<string>(),
+            .. QuotationChangeSummary.ProjectChanged(outcome.HeaderBefore.ProjectScope, outcome.HeaderAfter.ProjectScope),
             .. await QuotationMunicipalHistory.SummaryPartsAsync(geographyLookup, outcome, cancellationToken),
         ];
         if (summaryParts.Length > 0)

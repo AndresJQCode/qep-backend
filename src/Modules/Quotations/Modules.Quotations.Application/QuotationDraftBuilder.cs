@@ -13,7 +13,8 @@ public sealed record QuotationDraftInput(
     MemberId AdvisorId,
     IQuotationEdits Edits,
     DateOnly Today,
-    DateTimeOffset Now);
+    DateTimeOffset Now,
+    QuotationKind Kind = QuotationKind.Standard);
 
 /// <summary>La cotización armada en memoria, el nombre del cliente para el historial de la creación y los
 /// cambios de línea para el historial de cada una.</summary>
@@ -94,7 +95,7 @@ public sealed class QuotationDraftBuilder(
 
         // Ruling L1: el contrato de antes, { clientId }, deja exactamente lo de antes —versión 1 incluida—, así
         // que no pasa por UpdateDetails, que sube la versión.
-        if (IsOnlyTheClient(edits))
+        if (IsOnlyTheClient(edits, input.Kind))
         {
             var empty = Quotation.Create(
                 QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
@@ -109,7 +110,7 @@ public sealed class QuotationDraftBuilder(
         var quotation = Quotation.Create(
             QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
             validUntil, edits.PaymentMethod, edits.Notes, QuotationParties.Empty, billingAccount, defaultCurrency,
-            customer.VatSurplus, customerWithholdings, municipal, input.AdvisorId, input.Now);
+            customer.VatSurplus, customerWithholdings, municipal, input.AdvisorId, input.Now, input.Kind);
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
             quotation, new ResolvedEdits(edits, validUntil), input.TenantId, companyLookup,
@@ -124,8 +125,10 @@ public sealed class QuotationDraftBuilder(
     }
 
     // Un cuerpo con municipio, porcentajes o «Sin retención» nunca se salta la validación de ApplyAsync.
-    private static bool IsOnlyTheClient(IQuotationEdits edits) =>
-        edits.ValidUntil is null
+    private static bool IsOnlyTheClient(IQuotationEdits edits, QuotationKind kind) =>
+        kind != QuotationKind.Project
+        && edits.Project is null
+        && edits.ValidUntil is null
         && edits.PaymentMethod is null
         && edits.Notes is null
         && edits.Parties is null

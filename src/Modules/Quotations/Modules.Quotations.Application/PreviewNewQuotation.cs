@@ -73,7 +73,7 @@ public sealed class PreviewNewQuotationHandler(
         var draft = await drafts.BuildAsync(
             new QuotationDraftInput(
                 query.TenantId, query.ClientId, QuotationDraftBuilder.PreviewQuotationNumber, advisorId, query,
-                calendar.Today, calendar.UtcNow),
+                calendar.Today, calendar.UtcNow, QuotationKindNames.Parse(query.Kind)!.Value),
             cancellationToken);
 
         return draft.Quotation.ToDto() with { Id = Guid.Empty, QuotationNumber = string.Empty, Version = 0 };

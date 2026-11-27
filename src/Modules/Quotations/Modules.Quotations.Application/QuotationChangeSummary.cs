@@ -259,12 +259,38 @@ public static class QuotationChangeSummary
         // consecuencia mucho más grande que el resto de la lista.
         if (before.Currency != after.Currency)
         {
-            changes.Add(
-                $"moneda ({before.Currency} → {after.Currency}), " +
-                "con los precios de todas las líneas revalorizados");
+            // Un proyecto no se revaloriza: sus precios se borran o se vuelven a escribir, y eso lo cuenta
+            // ProjectChanged.
+            changes.Add(after.ProjectScope is null
+                ? $"moneda ({before.Currency} → {after.Currency}), con los precios de todas las líneas revalorizados"
+                : $"moneda ({before.Currency} → {after.Currency})");
         }
 
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
+    }
+
+    /// <summary>
+    /// Lo que cambió del alcance de un proyecto (spec 2026-11-26 §11), una frase por cosa: la estructura —servicio,
+    /// modo, fases e ítems— y el precio, que es la noticia. Nada en un documento <c>Standard</c>.
+    /// </summary>
+    public static IEnumerable<string> ProjectChanged(ProjectScope? before, ProjectScope? after)
+    {
+        if (before is null || after is null)
+        {
+            yield break;
+        }
+
+        var structureChanged = before.WithoutPrices() != after.WithoutPrices();
+        if (structureChanged)
+        {
+            yield return "Alcance actualizado.";
+        }
+
+        // Con la misma estructura, cualquier diferencia es de precios, aunque el total no se mueva.
+        if (before.Total != after.Total || (!structureChanged && before != after))
+        {
+            yield return "Precio del proyecto actualizado.";
+        }
     }
 
     // Spec 2026-10-17 §5.4: transportadora, modo, valor y contraentrega. El valor se dice porque es la
@@ -371,7 +397,8 @@ public sealed record QuotationHeaderSnapshot(
     string? CarrierName = null,
     FreightChargeMode? FreightChargeMode = null,
     decimal FreightAmount = 0m,
-    bool CashOnDelivery = false)
+    bool CashOnDelivery = false,
+    ProjectScope? ProjectScope = null)
 {
     /// <summary>Lo que el historial compara del envío. La tasa no va: no es una elección de quien edita.</summary>
     internal ShippingDetails Freight =>
@@ -398,7 +425,8 @@ public sealed record QuotationHeaderSnapshot(
         quotation.CarrierName,
         quotation.FreightChargeMode,
         quotation.FreightAmount,
-        quotation.CashOnDelivery);
+        quotation.CashOnDelivery,
+        quotation.ProjectScope);
 
     private static string? Describe(QuotationParty? party) =>
         party is null

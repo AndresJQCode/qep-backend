@@ -98,7 +98,8 @@ public sealed class CreateQuotationHandler(
 
         var draft = await drafts.BuildAsync(
             new QuotationDraftInput(
-                command.TenantId, command.ClientId, quotationNumber, advisorId, command, calendar.Today, now),
+                command.TenantId, command.ClientId, quotationNumber, advisorId, command, calendar.Today, now,
+                QuotationKindNames.Parse(command.Kind)!.Value),
             cancellationToken);
         var quotation = draft.Quotation;
         // El armado no lo exige para que el cálculo previo no falle mientras la persona escribe. Crear sí,

@@ -37,6 +37,13 @@ internal static class QuotationPricingRecalculation
         quotation.UsePriceRounding(
             await priceRounding.GetAsync(tenantId, quotation.Currency, cancellationToken), occurredAt);
 
+        // En un proyecto el precio lo escribe el asesor (spec 2026-11-26 §5): ni escalas, ni piso, ni grupo, ni compra
+        // mínima.
+        if (quotation.Kind == QuotationKind.Project)
+        {
+            return;
+        }
+
         if (quotation.Items.Count == 0)
         {
             return;
