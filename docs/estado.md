@@ -626,6 +626,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`98b1d85ad`, `--no-ff`, sin push) **guarda de largo en ediciones de Shopify fuera
+  de Colombia** (`fix/shopify-edit-length-guard`, `d75205829`). Una edición de dirección extranjera con nombre, teléfono,
+  dirección o correo más largo que la parte de Quotations salía `Apply`, Quotations la rechazaba y el cambio quedaba
+  `Pending`; ahora es conflicto `party_incomplete` (motivo existente; sin contrato nuevo). Colombia sin cambios. Pruebas:
+  `Shopify.UnitTests` 990/990; `test-feature.ps1` sin correr (el owner pidió sólo el merge).
 - 2026-11-26 — Mergeado a `develop` (`5b88a12bd`, `--no-ff`, sin push) **mensaje de WhatsApp borrado por el contacto**
   (`feature/whatsapp-revoke-deleted`, `12d8aaecd`). Meta manda el «eliminar para todos» como un mensaje aparte de tipo
   `revoke`; la ingesta lo guarda como `Unsupported` con `details.type = "revoke"` y el hilo decía «Mensaje no compatible».
