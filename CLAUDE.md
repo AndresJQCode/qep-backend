@@ -128,6 +128,14 @@ queda en «Por hacer».
   edita, dos ramas en paralelo chocan ahí en cada merge. Nada pasa a «Construido» sin evidencia en el código:
   la clase, la ruta o el commit.
 
+  **El Registro va aparte y las entradas son cortas** (decisión del owner, 2026-11-27). `estado.md` llegó a 444 KB —la
+  mitad, Registro— y ningún agente lo podía leer entero. Ahora `estado.md` dice sólo cómo están las cosas hoy, y el
+  Registro vive en `docs/estado/registro-<AAAA-MM>.md`, la entrada nueva arriba del archivo del mes en curso. Una entrada
+  tiene **dos líneas como máximo**: fecha, qué cambió y por qué importa, más el commit o merge y la tarjeta de Trello. El
+  detalle (pruebas, archivos, decisiones menores) ya vive en el commit y en la tarjeta, y no se repite. Lo que se cumple
+  (un ítem que llegó a `main`, una prueba manual hecha, un trabajo cerrado) **sale** de `estado.md` en el mismo commit
+  que lo registra: si no se poda, el archivo vuelve a crecer.
+
 ## Entorno de desarrollo
 
 **Windows con PowerShell.** Todo comando que se entregue al developer va en PowerShell.
