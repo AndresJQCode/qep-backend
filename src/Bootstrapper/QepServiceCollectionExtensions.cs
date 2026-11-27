@@ -668,6 +668,12 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Hr.Application.AddAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
             Modules.Hr.Application.AddAssignmentHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RewriteAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RewriteAssignmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RemoveAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RemoveAssignmentHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Hr.Application.RenewContractCommand, Modules.Hr.Application.EmployeeDetailDto>,
             Modules.Hr.Application.RenewContractHandler>();
         services.AddScoped<

@@ -93,6 +93,13 @@ public sealed record SalaryRewriteRequest(decimal? Amount, bool? Teleworker, boo
 public sealed record AssignmentRequest(
     DateOnly? EffectiveDate, Guid? PositionId, Guid? AreaId, Guid? WorkplaceId, Guid? DocumentFileId);
 
+/// <summary>
+/// Reescribe un registro de cargo y lugar (spec 2026-11-26): fecha, cargo, área y centro; la sede sale del centro. El PDF se sigue
+/// cambiando por su propia ruta. <c>ConfirmRewrite</c> distinto de <c>true</c> es 422 <c>hr.assignment.rewrite_unconfirmed</c>.
+/// </summary>
+public sealed record AssignmentRewriteRequest(
+    DateOnly? EffectiveDate, Guid? PositionId, Guid? AreaId, Guid? WorkplaceId, bool? ConfirmRewrite);
+
 public sealed record RenewalRequest(DateOnly? NewEndDate, Guid? DocumentFileId);
 
 public sealed record TerminateRequest(string? Reason, DateOnly? Date, string? Notes);
