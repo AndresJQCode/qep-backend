@@ -38,9 +38,11 @@ public interface IIncidentRepository
     /// conteo.</summary>
     Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken);
 
-    /// <summary>Las membresías (sin repetir) que reportaron las novedades que esa <c>CountVariance</c> cerró: ninguna puede aprobar el
-    /// ajuste (DA-47).</summary>
-    Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken);
+    /// <summary>Las membresías (sin repetir) que reportaron una novedad que ese <c>Count</c> verifica (<c>verification_task_id</c>), en
+    /// cualquier estado y con o sin padre: ninguna puede aprobar el ajuste de su <c>CountVariance</c> (DA-47). No se deriva de las
+    /// hijas de la <c>CountVariance</c>: una novedad que el supervisor aceptó a mano antes de que el conteo cerrara no es hija de nadie,
+    /// y su reportante aprobaría el ajuste que él mismo provocó.</summary>
+    Task<IReadOnlyList<Guid>> ListReportersVerifiedByAsync(Guid tenantId, Guid countTaskId, CancellationToken cancellationToken);
 
     /// <summary>Si esa membresía reportó alguna novedad que ese <c>Count</c> verifica (<c>verification_task_id</c>), en cualquier
     /// estado: nadie cuenta el conteo de una novedad que reportó (decisión del owner, 2026-11-27). Sin rastreo.</summary>

@@ -37,8 +37,11 @@ public sealed class ApproveAdjustmentHandler(
         if (await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken) is { } variance)
         {
             var member = await caller.RequireAsync(command.TenantId, cancellationToken);
-            variance.EnsureNotInvolvedInApproval(
-                member, await incidents.ListReportersOfChildrenAsync(command.TenantId, variance.Id, cancellationToken));
+            // Los reportantes salen de toda novedad que el Count de origen verificaba, sin mirar su estado ni su padre.
+            var reporters = variance.SourceTaskId is { } countTaskId
+                ? await incidents.ListReportersVerifiedByAsync(command.TenantId, countTaskId, cancellationToken)
+                : [];
+            variance.EnsureNotInvolvedInApproval(member, reporters);
         }
 
         var now = clock.UtcNow;

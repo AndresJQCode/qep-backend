@@ -201,12 +201,12 @@ internal sealed partial class TaskWorld
         public Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken) =>
             Task.FromResult(world.Incidents.Find(incident => incident.TenantId == tenantId && incident.AdjustmentId == adjustmentId));
 
-        public Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(
-            Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<Guid>> ListReportersVerifiedByAsync(
+            Guid tenantId, Guid countTaskId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Guid>>(
             [
                 .. world.Incidents
-                    .Where(incident => incident.TenantId == tenantId && incident.ParentIncidentId == parentIncidentId)
+                    .Where(incident => incident.TenantId == tenantId && incident.VerificationTaskId == countTaskId)
                     .Select(incident => incident.ReportedBy)
                     .Distinct(),
             ]);

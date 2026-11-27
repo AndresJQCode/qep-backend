@@ -234,7 +234,7 @@ public sealed class IncidentPersistenceTests
     }
 
     [Fact]
-    public async Task ListReportersOfChildrenAsyncReturnsTheDistinctReportersOfTheChildren()
+    public async Task ListReportersVerifiedByAsyncReturnsTheDistinctReportersOfEveryIncidentTheCountVerifies()
     {
         var (database, factory) = await OpenAsync();
         await using var _ = database;
@@ -242,22 +242,22 @@ public sealed class IncidentPersistenceTests
         var s = await ArrangeAsync(database, factory);
         var first = Guid.CreateVersion7();
         var second = Guid.CreateVersion7();
-        var parent = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.CountVariance));
+        var count = Guid.CreateVersion7();
         var childOfFirst = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: first));
         var secondChild = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: second));
         var againFirst = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: first));
         await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: Guid.CreateVersion7()));
         await ExecuteAsync(
             database,
-            "UPDATE wms.incidents SET parent_incident_id = @parent WHERE id IN (@a, @b, @c)",
-            ("parent", parent.Id), ("a", childOfFirst.Id), ("b", secondChild.Id), ("c", againFirst.Id));
+            "UPDATE wms.incidents SET verification_task_id = @count WHERE id IN (@a, @b, @c)",
+            ("count", count), ("a", childOfFirst.Id), ("b", secondChild.Id), ("c", againFirst.Id));
         await using var scope = factory.Services.CreateAsyncScope();
         var incidents = scope.ServiceProvider.GetRequiredService<IIncidentRepository>();
 
-        var reporters = await incidents.ListReportersOfChildrenAsync(s.TenantId, parent.Id, Ct);
+        var reporters = await incidents.ListReportersVerifiedByAsync(s.TenantId, count, Ct);
 
         Assert.Equal(new[] { first, second }.Order(), reporters.Order());
-        Assert.Empty(await incidents.ListReportersOfChildrenAsync(Guid.CreateVersion7(), parent.Id, Ct));
+        Assert.Empty(await incidents.ListReportersVerifiedByAsync(Guid.CreateVersion7(), count, Ct));
     }
 
     [Fact]

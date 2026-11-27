@@ -70,6 +70,36 @@ public sealed class CountVarianceAdjustmentTests
     }
 
     [Fact]
+    public async Task TheReporterWhoseShortWasAcceptedByHandBeforeTheCountClosesCannotApproveIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var shortage = await ArrangeShortageAsync(database, factory);
+        using var _r = shortage.ReporterClient;
+        // El supervisor acepta el faltante a mano antes de que alguien cuente: la novedad ya no está abierta, pero sigue enlazada al Count.
+        var accepted = await shortage.Setup.Manager.PostAsJsonAsync(
+            $"{WmsUrl()}/incidents/{shortage.IncidentId}/resolve", new { version = 1, resolution = "Accept" }, Ct);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var (_, counterClient) = await SeedCounterAsync(factory);
+        using var _c = counterClient;
+        var count = await ReadAsync<Modules.Wms.Application.TaskDto>(await NextRawAsync(counterClient, shortage.Setup.WarehouseId));
+        var counted = await CountRawAsync(
+            counterClient, count.Id, count.Lines[0].Id, CountBody(count.LeaseToken!.Value, shortage.Setup.BinA, 5), NewKey());
+        Assert.Equal(HttpStatusCode.OK, counted.StatusCode);
+        var adjustmentId = await ScalarAsync<Guid>(database, "SELECT id FROM wms.adjustments");
+        var adjustment = await GetAdjustmentAsync(shortage.Setup.Manager, adjustmentId);
+        using var reporter = CreateClient(
+            factory, OperatorSubject, TenantId, WmsPermissions.DocumentRead, WmsPermissions.AdjustmentApprove);
+
+        var response = await AdjustmentTestSupport.ActionRawAsync(reporter, adjustmentId, "approve", new { version = adjustment.Version });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.incident.self_resolution", await CodeOfAsync(response));
+        Assert.Equal("Proposed", (await GetAdjustmentAsync(shortage.Setup.Manager, adjustmentId)).Status);
+    }
+
+    [Fact]
     public async Task TheCounterCannotApproveIt()
     {
         var (database, factory) = await OpenAsync();

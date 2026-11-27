@@ -99,11 +99,11 @@ internal sealed class IncidentRepository(WmsDbContext dbContext) : IIncidentRepo
             .FirstOrDefaultAsync(
                 incident => incident.TenantId == tenantId && incident.AdjustmentId == adjustmentId, cancellationToken);
 
-    public async Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(
-        Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken) =>
+    public async Task<IReadOnlyList<Guid>> ListReportersVerifiedByAsync(
+        Guid tenantId, Guid countTaskId, CancellationToken cancellationToken) =>
         await dbContext.Set<Incident>()
             .AsNoTracking()
-            .Where(incident => incident.TenantId == tenantId && incident.ParentIncidentId == parentIncidentId)
+            .Where(incident => incident.TenantId == tenantId && incident.VerificationTaskId == countTaskId)
             .Select(incident => incident.ReportedBy)
             .Distinct()
             .ToListAsync(cancellationToken);
