@@ -199,7 +199,9 @@ no pasa de 4 años (Ley 2466/2025, FI-EMP-009).
 ### Historiales con fecha de vigencia (FI-EMP-011, 012)
 
 Todo cambio después del alta es un registro nuevo con fecha desde la que rige; nada se sobreescribe salvo «Editar» con
-confirmación. Cada registro puede llevar su PDF firmado (el otrosí en papel).
+confirmación. Un registro de cargo y lugar de trabajo también se edita (con confirmación) y se elimina, mientras no haya regido en
+una nómina `Approved` o `Closed`: ver [`2026-11-26-hr-editar-eliminar-cargo-lugar-design.md`](2026-11-26-hr-editar-eliminar-cargo-lugar-design.md).
+Cada registro puede llevar su PDF firmado (el otrosí en papel).
 
 **Salario.** Cada registro: monto, fecha de vigencia, teletrabajador (sí/no).
 - *Crear*: un registro nuevo desde una fecha posterior al último registro. Es lo que se usa para un aumento o una baja.
