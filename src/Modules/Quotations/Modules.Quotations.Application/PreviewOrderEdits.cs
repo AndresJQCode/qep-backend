@@ -147,7 +147,7 @@ public sealed class PreviewOrderEditsHandler(
         // Mismo orden que el guardado: la facturación mueve la retención y el excedente de IVA, así que va antes
         // de recalcular. Sin la regla NIT ni las exigencias de fila completa: el preview no las aplica mientras la persona teclea.
         OrderBillingEdits.Apply(
-            order, query.Billing, tenantCountry: null, strict: false, updatedBy, now);
+            order, query.Billing, strict: false, updatedBy, now);
 
         // Las mismas reglas que el guardado (D21–D23): una tasa de otro país es 422 también acá, para que la vista previa
         // no muestre una retención que el guardado rechazaría.

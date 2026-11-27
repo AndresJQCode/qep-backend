@@ -63,7 +63,6 @@ public sealed class StoreOrderGatewayTests
             ThrowingProxy.Create<IQuotationLifecycleEventPublisher>(),
             ThrowingProxy.Create<IOrderNumberGenerator>(),
             new DefaultNumberingFormats(),
-            new StubTenantDirectory(),
             new FixedTenantClock(Now),
             ThrowingProxy.Create<IQuotationWithholdingLookup>());
     }

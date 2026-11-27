@@ -96,8 +96,7 @@ public sealed class ExternalQuotationService(
             var quotation = built.Quotation;
             quotation.AssignExternalKey(externalKey);
             quotation.EnsureBillingIdentified();
-            var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(draft.TenantId), cancellationToken);
-            BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails(), regional?.Country);
+            BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails());
             await BillingPersonTypeRequirement.EnsureForQuotationAsync(tenantDirectory, draft.TenantId, quotation, cancellationToken);
 
             repository.Add(quotation);

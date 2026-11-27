@@ -104,7 +104,6 @@ internal static class OrderBillingEdits
     public static string? Apply(
         Order order,
         OrderBillingEditRequest? billing,
-        string? tenantCountry,
         bool strict,
         MemberId updatedBy,
         DateTimeOffset now)
@@ -117,7 +116,7 @@ internal static class OrderBillingEdits
         var party = billing.Party.ToDomain();
         if (strict)
         {
-            BillingPartyFiscalRules.EnsureConsistent(party, tenantCountry);
+            BillingPartyFiscalRules.EnsureConsistent(party);
         }
 
         var before = OrderChangeSummary.BillingLabel(order);
