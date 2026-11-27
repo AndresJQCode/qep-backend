@@ -52,6 +52,19 @@ public sealed class OrderBillingEditTests
             BillingVatSurplus = false,
         });
 
+    // Los errores de campo de la edición del pedido salen con la clave que el validador de la edición ya usa
+    // (Billing.Party.*), no con la del alta (Parties.Billing.*): el formulario de edición marca el input por esa clave.
+    [Fact]
+    public void SetBillingReportsAnInvalidDocumentNumberUnderTheOrderEditFieldKey()
+    {
+        var order = OrderWithRow();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.SetBilling(Row() with { IdentificationNumber = "ACME SAS" }, false, false, partyVatSurplus: false, Advisor, Now));
+
+        Assert.Equal(["Billing.Party.IdentificationNumber"], error.FieldErrors.Keys);
+    }
+
     // El pedido tiene una sola fuente de tasas (spec impuestos por tipo §7.5): cambiar a quién se le factura no las
     // toca; sólo SetWithholdings las cambia.
     [Fact]

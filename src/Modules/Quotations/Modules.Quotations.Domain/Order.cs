@@ -921,7 +921,7 @@ public sealed class Order
         EnsureBillingIsConsistent(billsToFinalConsumer, billing is not null, billingUsesBusinessName);
 
         // La fila candidata se arma aparte para validar lo normalizado antes de mutar nada.
-        var candidate = billing is null ? null : OrderParty.Create(Id, QuotationPartyRole.Billing, billing);
+        var candidate = billing is null ? null : OrderParty.Create(Id, QuotationPartyRole.Billing, billing, "Billing.Party");
         var vatSurplus = billing is null ? null : partyVatSurplus;
         if (enforceCompleteness)
         {
@@ -947,7 +947,7 @@ public sealed class Order
         }
         else if (current is not null)
         {
-            current.Apply(candidate.ToDetails());
+            current.Apply(candidate.ToDetails(), "Billing.Party");
         }
         else
         {
