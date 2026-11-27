@@ -3,6 +3,9 @@
 Entradas del registro de [`docs/estado.md`](../estado.md) de este mes, la más reciente arriba. Lo que vale hoy está en
 `estado.md`; esto es historia y no se corrige.
 
+- 2026-11-27 — **Contabilidad confirmó el `id_type` de Siigo:** Tax ID `50` y NIF/NIE `42`, como ya los manda
+  `SiigoIdentificationTypes`; sin cambio de código. Mergeado a `develop` (`dcf0bb4ea`, `docs/siigo-id-type-confirmado`
+  hasta `8bb3b4d20`, sin push). Sigue pendiente la prueba contra Siigo real.
 - 2026-11-27 — **Decisión del owner: Granada sin factura de Siigo.** Granada (`GD`) no está en la lista de ciudades de Siigo
   (`geography.billing_cities`), así que sus clientes no se facturan por Siigo ni entran a la bandeja del exterior. Se acepta así:
   no se le escribe a Siigo ni se agrega a mano a la lista (tarjeta de Trello `mx0ytqLk`). Siguen pendientes el `id_type` 50/42
