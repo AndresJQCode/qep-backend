@@ -61,7 +61,9 @@ internal sealed partial class TaskWorld
     public List<Incident> Incidents { get; } = [];
 
     public TaskIncidentRecorder IncidentRecorder() =>
-        new(new FakeIncidents(this), new FakeEvidence(), new FakeProfiles(), new FakeTasks(this), new FakeUnitOfWork(this));
+        new(new FakeIncidents(this), new FakeEvidence(), new FakeProfiles(), new FakeTasks(this), new FakeUnitOfWork(this), NumberingDay());
+
+    public static WmsNumberingDay NumberingDay() => new(new FakeTenantClock());
 
     public IIncidentRepository IncidentRepository() => new FakeIncidents(this);
 

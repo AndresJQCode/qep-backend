@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Tenancy.Application;
 using Modules.Wms.Application;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Warehousing;
@@ -11,6 +12,13 @@ internal sealed partial class TaskWorld
     private sealed class FakeClock(TaskWorld world) : IClock
     {
         public DateTimeOffset UtcNow => world.Now;
+    }
+
+    /// <summary>El huso de los tenants de prueba: Colombia, como el del arnés de integración.</summary>
+    private sealed class FakeTenantClock : ITenantClock
+    {
+        public Task<TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult(new TenantCalendar(Start, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota")));
     }
 
     private sealed class FakeWarehouses(TaskWorld world) : IWarehouseRepository

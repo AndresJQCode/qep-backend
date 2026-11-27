@@ -51,6 +51,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<WarehouseTaskDtoComposer>();
         services.AddScoped<SupervisorTaskRunner>();
         services.AddScoped<OperatorTaskGuard>();
+        services.AddScoped<WmsNumberingDay>();
         services.AddScoped<TaskClosedNotifier>();
         // Los ganchos de cierre de tarea, en orden de registro: el conteo de verificación evalúa lo contado (spec 2026-11-26 §8.4).
         services.AddScoped<ITaskClosedHook, CountVerificationHook>();

@@ -43,7 +43,8 @@ public sealed class CommitInitialBalancesHandler(
     IStockReadQueries stockQueries,
     WmsCaller caller,
     IWmsEventPublisher events,
-    IWmsConfirmMetrics metrics)
+    IWmsConfirmMetrics metrics,
+    WmsNumberingDay numberingDay)
     : ICommandHandler<CommitInitialBalancesCommand, InitialBalanceCommitDto>
 {
     public async Task<InitialBalanceCommitDto> HandleAsync(CommitInitialBalancesCommand command, CancellationToken cancellationToken)
@@ -93,7 +94,7 @@ public sealed class CommitInitialBalancesHandler(
 
         var lines = await BuildLinesAsync(command.TenantId, preview.OwnerId.Value, warehouse, rows, now, cancellationToken);
 
-        var number = await adjustments.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await adjustments.NextNumberAsync(command.TenantId, await numberingDay.OfAsync(command.TenantId, now, cancellationToken), cancellationToken);
         var adjustment = Adjustment.Propose(
             command.TenantId,
             number,

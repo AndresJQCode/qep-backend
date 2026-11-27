@@ -16,7 +16,8 @@ public sealed class TaskIncidentRecorder(
     IWmsEvidenceLookup evidenceLookup,
     IVariantProfileRepository profiles,
     IWarehouseTaskRepository tasks,
-    IWmsUnitOfWork unitOfWork)
+    IWmsUnitOfWork unitOfWork,
+    WmsNumberingDay numberingDay)
 {
     /// <summary>La clave de stock que un <c>Count</c> de verificación cuenta y, si ya hay uno abierto sobre ella, ese <c>Count</c>
     /// ya bloqueado (con su número, para la historia de la novedad).</summary>
@@ -109,7 +110,7 @@ public sealed class TaskIncidentRecorder(
             return (openId, target.OpenCountNumber ?? string.Empty);
         }
 
-        var number = await tasks.NextNumberAsync(source.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await tasks.NextNumberAsync(source.TenantId, await numberingDay.OfAsync(source.TenantId, now, cancellationToken), cancellationToken);
         var count = WarehouseTask.CreateCount(
             source.TenantId,
             number,
@@ -144,7 +145,7 @@ public sealed class TaskIncidentRecorder(
             return;
         }
 
-        var number = await tasks.NextNumberAsync(incident.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await tasks.NextNumberAsync(incident.TenantId, await numberingDay.OfAsync(incident.TenantId, now, cancellationToken), cancellationToken);
         var count = WarehouseTask.CreateCount(
             incident.TenantId,
             number,
@@ -217,7 +218,7 @@ public sealed class TaskIncidentRecorder(
         // Antes de numerar: el count-key y el Count abierto van antes que incident-seq (ver LockVerificationAsync).
         var verification = await LockVerificationAsync(
             type, subject, task.TenantId, task.WarehouseId.Value, task.OwnerId.Value, cancellationToken);
-        var number = await incidents.NextNumberAsync(task.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await incidents.NextNumberAsync(task.TenantId, await numberingDay.OfAsync(task.TenantId, now, cancellationToken), cancellationToken);
         var incident = Incident.Report(
             task.TenantId,
             number,
@@ -276,7 +277,7 @@ public sealed class TaskIncidentRecorder(
                 task.Id, line.Id, line.FromLocationId, line.VariantId, line.LotId, line.StockStatus, null, quantity);
         var inWindow = occurredAt >= now.AddDays(-LedgerEntryRules.MaxPastDays)
             && occurredAt <= now.AddMinutes(LedgerEntryRules.MaxFutureMinutes);
-        var number = await incidents.NextNumberAsync(task.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await incidents.NextNumberAsync(task.TenantId, await numberingDay.OfAsync(task.TenantId, now, cancellationToken), cancellationToken);
         incidents.Add(Incident.Report(
             task.TenantId,
             number,

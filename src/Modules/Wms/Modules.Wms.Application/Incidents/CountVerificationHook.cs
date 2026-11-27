@@ -21,7 +21,8 @@ public sealed class CountVerificationHook(
     IStockReadQueries stock,
     IAdjustmentRepository adjustments,
     IWmsAuditRecorder auditRecorder,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    WmsNumberingDay numberingDay)
     : ITaskClosedHook
 {
     public async Task OnClosedAsync(TaskClosed closed, CancellationToken cancellationToken)
@@ -87,7 +88,7 @@ public sealed class CountVerificationHook(
         }
 
         var adjustmentNumber = await adjustments.NextNumberAsync(
-            task.TenantId, DateOnly.FromDateTime(closed.Now.UtcDateTime), cancellationToken);
+            task.TenantId, await numberingDay.OfAsync(task.TenantId, closed.Now, cancellationToken), cancellationToken);
         var adjustment = Adjustment.Propose(
             task.TenantId,
             adjustmentNumber,
@@ -120,7 +121,7 @@ public sealed class CountVerificationHook(
             closed.Now);
 
         var incidentNumber = await incidents.NextNumberAsync(
-            task.TenantId, DateOnly.FromDateTime(closed.Now.UtcDateTime), cancellationToken);
+            task.TenantId, await numberingDay.OfAsync(task.TenantId, closed.Now, cancellationToken), cancellationToken);
         var variance = Incident.Report(
             task.TenantId,
             incidentNumber,
