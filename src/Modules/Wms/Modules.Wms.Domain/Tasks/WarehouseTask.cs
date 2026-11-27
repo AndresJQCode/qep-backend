@@ -372,29 +372,130 @@ public sealed class WarehouseTask
         DateTimeOffset? occurredAt = null,
         bool memberIsBusy = false)
     {
+        var (line, lease, device, scannedAt) = PrepareLineWrite(
+            memberId,
+            leaseToken,
+            deviceId,
+            lineId,
+            "confirm-line",
+            now,
+            occurredAt,
+            line =>
+            {
+                if (quantity <= 0)
+                {
+                    throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, "La cantidad confirmada tiene que ser mayor que cero.");
+                }
+
+                if (quantity > line.Remaining)
+                {
+                    throw new WmsDomainException(
+                        WmsErrorCodes.TaskQuantityExceedsRemaining, "La cantidad confirmada supera lo que falta de la línea.");
+                }
+            });
+
+        // Después de validar: una confirmación rechazada no reanuda nada.
+        var staysReleased = ApplyLease(lease, memberIsBusy, memberId, device, scannedAt, now);
+        line.Confirm(quantity);
+        FinishLineWrite(staysReleased, now);
+        Version++;
+        Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity, recordedAt: now);
+        CloseIfFinished(memberId, scannedAt, now);
+        return line;
+    }
+
+    /// <summary>De lo que falta de la línea sólo había <paramref name="quantityFound"/> (puede ser cero). Lo encontrado se confirma
+    /// como en <see cref="ConfirmLine"/>; la línea queda <c>Short</c> y la tarea se cierra si era la última abierta. Mismo lease,
+    /// misma reanudación, misma regla de DA-32 y misma ventana y piso de <paramref name="occurredAt"/> que
+    /// <see cref="ConfirmLine"/>. La diferencia no se ajusta en el piso: la propone el conteo (DA-18).</summary>
+    public WarehouseTaskLine ShortLine(
+        Guid memberId,
+        Guid leaseToken,
+        string deviceId,
+        Guid lineId,
+        decimal quantityFound,
+        DateTimeOffset now,
+        DateTimeOffset? occurredAt = null,
+        bool memberIsBusy = false)
+    {
+        var (line, lease, device, scannedAt) = PrepareLineWrite(
+            memberId,
+            leaseToken,
+            deviceId,
+            lineId,
+            "short-line",
+            now,
+            occurredAt,
+            line =>
+            {
+                if (quantityFound < 0)
+                {
+                    throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, "La cantidad encontrada no puede ser negativa.");
+                }
+
+                if (quantityFound > line.Remaining)
+                {
+                    throw new WmsDomainException(
+                        WmsErrorCodes.TaskQuantityExceedsRemaining, "La cantidad encontrada supera lo que falta de la línea.");
+                }
+
+                // Encontrar todo no es un faltante: eso es confirmar.
+                if (quantityFound == line.Remaining)
+                {
+                    throw new WmsDomainException(
+                        WmsErrorCodes.TaskLineInvalid,
+                        "Si encontraste todo lo que falta, confirma la línea en vez de declarar un faltante.");
+                }
+            });
+
+        var staysReleased = ApplyLease(lease, memberIsBusy, memberId, device, scannedAt, now);
+        if (quantityFound > 0)
+        {
+            line.Confirm(quantityFound);
+        }
+
+        FinishLineWrite(staysReleased, now);
+        Version++;
+        if (quantityFound > 0)
+        {
+            Record(
+                TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantityFound, recordedAt: now);
+        }
+
+        var missing = line.Remaining;
+        line.MarkShort();
+        Record(TaskEventKind.LineShort, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: missing, recordedAt: now);
+        CloseIfFinished(memberId, scannedAt, now);
+        return line;
+    }
+
+    /// <summary>Lo que comparten las acciones del operario sobre una línea: lease perdido (el llamador ya lo respondió), celular,
+    /// línea abierta, la validación de cantidades propia de la acción, la ventana del ledger y el piso de la publicación. No cambia
+    /// nada.</summary>
+    private (WarehouseTaskLine Line, LeaseCheck Lease, string Device, DateTimeOffset ScannedAt) PrepareLineWrite(
+        Guid memberId,
+        Guid leaseToken,
+        string deviceId,
+        Guid lineId,
+        string action,
+        DateTimeOffset now,
+        DateTimeOffset? occurredAt,
+        Action<WarehouseTaskLine> validateQuantity)
+    {
         var lease = CheckLease(memberId, leaseToken);
         if (lease == LeaseCheck.Lost)
         {
-            throw new InvalidOperationException($"Task {Id} cannot be confirmed with a lost lease.");
+            throw new InvalidOperationException($"Task {Id} cannot act on a line with a lost lease.");
         }
 
         var device = RequiredDevice(deviceId);
         var line = LineOf(lineId);
         if (line.Status != TaskLineStatus.Open)
         {
-            throw new TaskTransitionException(line.Status.ToString(), "confirm-line");
+            throw new TaskTransitionException(line.Status.ToString(), action);
         }
 
-        if (quantity <= 0)
-        {
-            throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, "La cantidad confirmada tiene que ser mayor que cero.");
-        }
-
-        if (quantity > line.Remaining)
-        {
-            throw new WmsDomainException(
-                WmsErrorCodes.TaskQuantityExceedsRemaining, "La cantidad confirmada supera lo que falta de la línea.");
-        }
+        validateQuantity(line);
 
         // timestamptz sólo admite offset cero.
         var scannedAt = (occurredAt ?? now).ToUniversalTime();
@@ -409,7 +510,14 @@ public sealed class WarehouseTask
                 "La fecha del escaneo no puede ser anterior a la publicación de la tarea por más de 5 minutos.");
         }
 
-        // Después de validar: una confirmación rechazada no reanuda nada.
+        return (line, lease, device, scannedAt);
+    }
+
+    /// <summary>Con un lease reanudable y una persona libre, la tarea vuelve a <c>InProgress</c>. Devuelve <c>true</c> si se queda
+    /// donde estaba (DA-32).</summary>
+    private bool ApplyLease(
+        LeaseCheck lease, bool memberIsBusy, Guid memberId, string device, DateTimeOffset scannedAt, DateTimeOffset now)
+    {
         var staysReleased = lease == LeaseCheck.Resumable && memberIsBusy;
         if (lease == LeaseCheck.Resumable && !memberIsBusy)
         {
@@ -417,7 +525,11 @@ public sealed class WarehouseTask
             Record(TaskEventKind.LeaseResumed, memberId, scannedAt, deviceId: device, recordedAt: now);
         }
 
-        line.Confirm(quantity);
+        return staysReleased;
+    }
+
+    private void FinishLineWrite(bool staysReleased, DateTimeOffset now)
+    {
         if (staysReleased)
         {
             LastActivityAt = now;
@@ -426,11 +538,6 @@ public sealed class WarehouseTask
         {
             Renew(now);
         }
-
-        Version++;
-        Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity, recordedAt: now);
-        CloseIfFinished(memberId, scannedAt, now);
-        return line;
     }
 
     private void Release(Guid by, DateTimeOffset now)
@@ -440,8 +547,9 @@ public sealed class WarehouseTask
         Record(TaskEventKind.Published, by, now);
     }
 
-    /// <summary>Sin líneas abiertas la tarea se cierra: <c>Done</c> si alguna quedó <c>Done</c>, <c>Cancelled</c> si se cancelaron
-    /// todas. <paramref name="cancelReason"/> sólo falta al confirmar, donde siempre queda al menos una <c>Done</c> si no hay abiertas.
+    /// <summary>Sin líneas abiertas la tarea se cierra: <c>Done</c> si alguna quedó <c>Done</c> o <c>Short</c>, <c>Cancelled</c> si se
+    /// cancelaron todas. <paramref name="cancelReason"/> sólo falta al confirmar o declarar un faltante, donde siempre queda al menos
+    /// una <c>Done</c> o <c>Short</c> si no hay abiertas.
     /// </summary>
     private void CloseIfFinished(Guid by, DateTimeOffset now, DateTimeOffset recordedAt, string? cancelReason = null)
     {
@@ -450,7 +558,7 @@ public sealed class WarehouseTask
             return;
         }
 
-        if (_lines.Exists(line => line.Status == TaskLineStatus.Done))
+        if (_lines.Exists(line => line.Status is TaskLineStatus.Done or TaskLineStatus.Short))
         {
             Status = WarehouseTaskStatus.Done;
             CompletedAt = now;

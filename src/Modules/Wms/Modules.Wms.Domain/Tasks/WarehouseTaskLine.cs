@@ -75,6 +75,10 @@ public sealed class WarehouseTaskLine
         }
     }
 
+    /// <summary>De lo que faltaba sólo había una parte: la línea se cierra sin completarse. Conserva lo confirmado y ya no admite
+    /// más confirmaciones.</summary>
+    internal void MarkShort() => Status = TaskLineStatus.Short;
+
     internal void Cancel(string reason)
     {
         Status = TaskLineStatus.Cancelled;
