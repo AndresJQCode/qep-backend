@@ -167,5 +167,7 @@ public sealed class QuotationDraftBuilder(
         public IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages => Body.WithholdingPercentages;
 
         public IReadOnlyList<string>? ClearedWithholdingTypes => Body.ClearedWithholdingTypes;
+
+        public ProjectScopeRequest? Project => Body.Project;
     }
 }

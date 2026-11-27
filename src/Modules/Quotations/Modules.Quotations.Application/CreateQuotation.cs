@@ -24,7 +24,9 @@ public sealed record CreateQuotationCommand(
     bool IsRetail = false,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<QuotationDto>, IQuotationEdits
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    string? Kind = null,
+    ProjectScopeRequest? Project = null) : ICommand<QuotationDto>, IQuotationEdits
 {
     IReadOnlyList<QuotationItemAddition> IQuotationEdits.Items => Items ?? [];
 }
@@ -37,6 +39,7 @@ public sealed class CreateQuotationValidator : QuotationEditsValidator<CreateQuo
         : base(requireBillingIdentification: true)
     {
         RuleFor(command => command.ClientId).NotEmpty();
+        QuotationKindRules.AddTo(this, command => command.Kind);
     }
 }
 

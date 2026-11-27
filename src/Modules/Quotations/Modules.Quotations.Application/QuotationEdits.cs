@@ -72,6 +72,10 @@ public interface IQuotationEdits : IQuotationHeaderEdits
 
     /// <summary>Los tipos municipales con «Sin retención» (owner 2026-11-13); null o vacío = sin marca.</summary>
     IReadOnlyList<string>? ClearedWithholdingTypes { get; }
+
+    /// <summary>El alcance y el precio de una cotización de proyecto (spec 2026-11-26 §6.3): reemplaza el bloque entero;
+    /// null conserva el guardado. Null por defecto, como <see cref="BillingCompanyId"/>.</summary>
+    ProjectScopeRequest? Project => null;
 }
 
 /// <summary>
@@ -188,6 +192,11 @@ public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits
         RuleFor(edits => edits.Shipping!)
             .SetValidator(new ShippingRequestValidator())
             .When(edits => edits.Shipping is not null);
+
+        // Con SetValidator sobre la propiedad, los errores salen como `Project.…`, que es lo que pinta la pantalla.
+        RuleFor(edits => edits.Project!)
+            .SetValidator(new ProjectScopeRequestValidator())
+            .When(edits => edits.Project is not null);
 
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {

@@ -24,7 +24,9 @@ public sealed record PreviewNewQuotationQuery(
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
-    Guid? BillingCompanyId = null) : IQuery<QuotationDto>, IQuotationEdits;
+    Guid? BillingCompanyId = null,
+    string? Kind = null,
+    ProjectScopeRequest? Project = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las reglas de la creación salvo el documento de la facturación, que el cálculo previo no exige: corre
 /// mientras la persona escribe, igual que <see cref="PreviewQuotationValidator"/>.</summary>
@@ -34,6 +36,7 @@ public sealed class PreviewNewQuotationValidator : QuotationEditsValidator<Previ
         : base(requireBillingIdentification: false)
     {
         RuleFor(query => query.ClientId).NotEmpty();
+        QuotationKindRules.AddTo(this, query => query.Kind);
     }
 }
 

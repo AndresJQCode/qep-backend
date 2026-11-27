@@ -284,7 +284,9 @@ public static class QuotationEndpoints
                 request.IsRetail,
                 OperationCityChoices.From(request.OperationCityId, "quotation"),
                 request.WithholdingPercentages,
-                request.ClearedWithholdingTypes),
+                request.ClearedWithholdingTypes,
+                request.Kind,
+                request.Project),
             cancellationToken);
 
         return Results.Created(
@@ -312,7 +314,9 @@ public static class QuotationEndpoints
                 OperationCityChoices.From(request.OperationCityId, "quotation"),
                 request.WithholdingPercentages,
                 request.ClearedWithholdingTypes,
-                request.BillingCompanyId),
+                request.BillingCompanyId,
+                request.Kind,
+                request.Project),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -347,7 +351,8 @@ public static class QuotationEndpoints
                 ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
                 OperationCityChoices.From(request.OperationCityId, "quotation"),
                 request.WithholdingPercentages,
-                request.ClearedWithholdingTypes),
+                request.ClearedWithholdingTypes,
+                request.Project),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
@@ -375,7 +380,8 @@ public static class QuotationEndpoints
                 OperationCityChoices.From(request.OperationCityId, "quotation"),
                 request.WithholdingPercentages,
                 request.ClearedWithholdingTypes,
-                request.BillingCompanyId),
+                request.BillingCompanyId,
+                request.Project),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -571,6 +577,8 @@ public static class QuotationEndpoints
         quotation.OrderId,
         quotation.OrderStatus,
         ShippingResponse.From(quotation.Shipping),
-        quotation.RequiresShipping);
+        quotation.RequiresShipping,
+        quotation.Kind,
+        quotation.PricingMode);
 
 }

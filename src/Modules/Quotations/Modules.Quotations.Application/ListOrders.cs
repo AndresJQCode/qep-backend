@@ -61,7 +61,9 @@ public sealed record OrderListItemDto(
     /// las líneas.</summary>
     bool RequiresShipping,
     /// <summary>Mayorista fase 3: número de la orden y aprobación; null fuera de un pedido mayorista.</summary>
-    OrderListWholesaleDto? Wholesale = null);
+    OrderListWholesaleDto? Wholesale = null,
+    /// <summary>Ver <see cref="OrderDto.Kind"/>.</summary>
+    string Kind = "Standard");
 
 /// <summary><c>PendingWholesaleApprovals</c>: el aviso «N pedidos de distribuidores esperan tu aprobación» (adenda), con los
 /// filtros vigentes salvo el de estado.</summary>

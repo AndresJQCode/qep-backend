@@ -55,7 +55,9 @@ internal static class QuotationMapping
         quotation.IsRetail,
         quotation.OperationCityId,
         [.. quotation.WithholdingVerdicts.Select(ToDto)],
-        quotation.RequiresShipping);
+        quotation.RequiresShipping,
+        quotation.Kind.ToString(),
+        ProjectScopeDto.From(quotation.ProjectScope, quotation.Currency));
 
     /// <summary>El veredicto de una tasa tal como viaja (spec retenciones por UVT §6); el motivo, con el nombre del enum. La
     /// usa también el pedido.</summary>
@@ -173,7 +175,9 @@ internal static class QuotationMapping
         order?.Id.Value,
         order?.Status.ToString(),
         quotation.ShippingDtoOf(),
-        requiresShipping);
+        requiresShipping,
+        quotation.Kind.ToString(),
+        quotation.ProjectPricingMode?.ToString());
 
     private static QuotationItemDto ToDto(QuotationItem item, PriceRounding rounding) => new(
         item.Id.Value,

@@ -29,7 +29,8 @@ public sealed record SaveQuotationCommand(
     ShippingRequest? Shipping = null,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<QuotationDto>, IQuotationEdits;
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    ProjectScopeRequest? Project = null) : ICommand<QuotationDto>, IQuotationEdits;
 
 public sealed class SaveQuotationValidator : QuotationEditsValidator<SaveQuotationCommand>;
 

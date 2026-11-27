@@ -66,7 +66,11 @@ public sealed record QuotationListItemDto(
     ShippingDto Shipping,
     /// <summary>Ver <see cref="Quotation.RequiresShipping"/> (spec 2026-11-18 §5). Lo resuelve el handler con una consulta
     /// por página, por la misma razón que <see cref="IsComplete"/>: la fila no trae las líneas.</summary>
-    bool RequiresShipping);
+    bool RequiresShipping,
+    /// <summary>Ver <see cref="QuotationDto.Kind"/>.</summary>
+    string Kind,
+    /// <summary>Ver <see cref="QuotationListItemResponse.PricingMode"/>.</summary>
+    string? PricingMode);
 
 /// <summary>Una página del listado y el total que la UI necesita para paginar. Mismo criterio
 /// que <c>CustomerPage</c> en Customers.</summary>
