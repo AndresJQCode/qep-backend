@@ -283,7 +283,9 @@ internal static class MessageMapping
                         : Agent(conversationEvent.AgentId, chatbotNames),
                     conversationEvent.Output),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
-            row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported) : null,
+            row.Kind == MessageKind.Unsupported && mediaState is null
+                ? UnsupportedMessageReasons.ForMetaType(MetaType(row.DetailsJson)) ?? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported)
+                : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
             Chatbot(row.SentByChatbotId, chatbotNames),
             // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
@@ -441,6 +443,28 @@ internal static class MessageMapping
                 handoff.Provider,
                 handoff.ChatbotName,
                 handoff.AgentName);
+
+    /// <summary>El <c>type</c> de Meta que la ingesta guarda en <c>details</c> de un <c>Unsupported</c>, o <c>null</c>.</summary>
+    private static string? MetaType(string? detailsJson)
+    {
+        if (detailsJson is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(detailsJson);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String
+                ? type.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     /// <summary><c>details</c> de un <c>Unsupported</c> es <c>{ type, errors }</c> con los <c>errors</c> de Meta tal cual
     /// (<c>WebhookPayloadParser</c>). El primer <c>code</c> numérico, o <c>null</c> si no hay o el JSON no tiene esa forma.</summary>

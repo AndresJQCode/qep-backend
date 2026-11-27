@@ -25,4 +25,11 @@ public static class UnsupportedMessageReasons
         metaErrorCode is { } code
             ? imported && code == 131051 ? ImportedUnsupportedType : Texts.GetValueOrDefault(code)
             : null;
+
+    // «revoke»: el contacto borró un mensaje para todos. Meta lo manda como un mensaje aparte, sin errors, que apunta al borrado
+    // por revoke.original_message_id; la ingesta lo guarda como Unsupported con details.type = "revoke" (2026-11-23).
+    private const string Revoked = "Se eliminó este mensaje.";
+
+    /// <summary>El texto que sale del <c>type</c> de Meta y no de un código de error. Hoy sólo <c>revoke</c>.</summary>
+    public static string? ForMetaType(string? metaType) => metaType == "revoke" ? Revoked : null;
 }

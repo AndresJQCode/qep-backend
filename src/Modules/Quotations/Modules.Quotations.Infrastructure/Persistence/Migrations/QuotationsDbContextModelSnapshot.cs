@@ -340,6 +340,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_store_pickup");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Standard")
+                        .HasColumnName("kind");
+
                     b.Property<decimal>("NetTotal")
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
@@ -397,6 +404,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("PreparedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("prepared_by");
+
+                    b.Property<string>("ProjectScope")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("project_scope");
 
                     b.Property<Guid?>("PurchaseOrderId")
                         .HasColumnType("uuid")
@@ -532,6 +543,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.ToTable("orders", "quotations", t =>
                         {
                             t.HasCheckConstraint("CK_orders_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
+
+                            t.HasCheckConstraint("CK_orders_kind", "kind IN ('Standard','Project')");
 
                             t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store','Wholesale')");
                         });
@@ -991,6 +1004,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_store_pickup");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Standard")
+                        .HasColumnName("kind");
+
                     b.Property<decimal>("NetTotal")
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
@@ -1016,6 +1036,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("PdfFileId")
                         .HasColumnType("uuid")
                         .HasColumnName("pdf_file_id");
+
+                    b.Property<string>("ProjectPricingMode")
+                        .HasColumnType("text")
+                        .HasColumnName("project_pricing_mode");
+
+                    b.Property<string>("ProjectScope")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("project_scope");
 
                     b.Property<string>("QuotationNumber")
                         .IsRequired()
@@ -1130,6 +1158,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.ToTable("quotations", "quotations", t =>
                         {
                             t.HasCheckConstraint("CK_quotations_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
+
+                            t.HasCheckConstraint("CK_quotations_kind", "kind IN ('Standard','Project')");
+
+                            t.HasCheckConstraint("CK_quotations_project_pricing_mode", "project_pricing_mode IN ('Global','PerPhase')");
                         });
                 });
 
