@@ -1,4 +1,6 @@
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
+using Modules.Wms.Domain.Warehousing;
 
 namespace Modules.Wms.UnitTests.Tasks;
 
@@ -24,6 +26,37 @@ public sealed class WarehouseTaskDtoComposerTests
         Assert.Equal((5m, 0m, 5m), (line.QuantityPlanned, line.QuantityConfirmed, line.QuantityRemaining));
         Assert.Equal(("Open", "Available"), (line.LineStatus, line.StockStatus));
         Assert.Empty(dto.Events);
+    }
+
+    // M4: la composición corre con la tarea y los saldos bloqueados: sólo lee las ubicaciones de sus líneas, sin la bodega entera.
+    [Fact]
+    public async Task TheDetailReadsOnlyTheLocationsOfItsLines()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+
+        var dto = await world.Composer().ComposeAsync(task, null, withEvents: false, Ct);
+
+        Assert.Equal(("A-01-01", "A-01-02"), (dto.Lines[0].FromLocationCode, dto.Lines[0].ToLocationCode));
+        // LocationId no es comparable: se compara como conjunto.
+        var read = Assert.Single(world.LocationReads);
+        Assert.Equal(2, read.Count);
+        Assert.True(new HashSet<LocationId> { world.From, world.To }.SetEquals(read));
+        Assert.DoesNotContain("warehouse-tree", world.Log);
+    }
+
+    [Fact]
+    public async Task SummariesReadOnlyTheFirstSourceOfEachTask()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask(lines: [world.Line(), WarehouseTaskLine.Create(
+            TaskWorld.Variant, null, StockStatus.Available, world.Spare, world.To, 1)]);
+
+        var dto = Assert.Single(await world.Composer().ComposeSummariesAsync(TaskWorld.Tenant, [task], Ct));
+
+        Assert.Equal("A-01-01", dto.FirstFromLocationCode);
+        Assert.Equal([world.From], Assert.Single(world.LocationReads).ToArray());
+        Assert.DoesNotContain("warehouse-tree", world.Log);
     }
 
     [Fact]

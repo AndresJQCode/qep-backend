@@ -22,6 +22,26 @@ public sealed class WarehouseTaskPersistenceTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
+    public async Task LocationCodesComeOnlyFromTheTenantAndTheIndexesExist()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var warehouses = scope.ServiceProvider.GetRequiredService<IWarehouseRepository>();
+
+        var mine = await warehouses.FindLocationCodesAsync(s.TenantId, [new LocationId(s.BinA)], Ct);
+        var foreign = await warehouses.FindLocationCodesAsync(Guid.CreateVersion7(), [new LocationId(s.BinA)], Ct);
+
+        Assert.Single(mine);
+        Assert.Empty(foreign);
+        Assert.Equal(2L, await ScalarAsync<long>(
+            database,
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname IN ('IX_tasks_board', 'IX_tasks_list')"));
+    }
+
+    [Fact]
     public async Task ATaskRoundTripsWithItsLinesAndEvents()
     {
         var (database, factory) = await OpenAsync();

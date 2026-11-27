@@ -49,6 +49,9 @@ internal sealed partial class TaskWorld
     /// <summary>Qué se pidió y en qué orden: bloqueos, ledger, recibo y guardado.</summary>
     public List<string> Log { get; } = [];
 
+    /// <summary>Las ubicaciones que se pidieron por código, una lista por llamada.</summary>
+    public List<IReadOnlyCollection<LocationId>> LocationReads { get; } = [];
+
     public WarehouseTaskLine Line(decimal quantity = 5, LotId? lot = null) =>
         WarehouseTaskLine.Create(Variant, lot, StockStatus.Available, From, To, quantity);
 
