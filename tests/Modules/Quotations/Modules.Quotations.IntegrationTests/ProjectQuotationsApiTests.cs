@@ -595,6 +595,52 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
         }
     }
 
+    // Spec §5: borrar el producto del servicio no le quita la línea a un borrador de proyecto ni lo reprecia; se congela su
+    // foto, como la de una cotización enviada. Un borrador estándar pierde la línea del producto borrado, como siempre.
+    [Fact]
+    public async Task DeletingTheServiceProductKeepsTheProjectDraftLine()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var project = await CreateProjectAsync(setup, Global(setup.ServiceId, 100_000m));
+        var otherProduct = await CreateProductWithScalesAsync(setup.Client, setup.TenantId);
+        var standard = await CreateQuotationAsync(setup.Client, setup.TenantId, setup.ClientId);
+        var added = await setup.Client.PostAsJsonAsync(
+            $"{QuotationUrl(setup, standard.Id)}/items",
+            new AddQuotationItemRequest(otherProduct, 1m),
+            TestContext.Current.CancellationToken);
+        Assert.True(added.IsSuccessStatusCode, await added.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var before = Assert.Single(project.Items);
+
+        await DeleteProductAsync(setup, setup.ServiceId);
+        await DeleteProductAsync(setup, otherProduct);
+
+        var after = await GetAsync(setup, project.Id);
+        var line = Assert.Single(after.Items);
+        Assert.Equal(
+            (before.Id, setup.ServiceId, "Desarrollo a la medida", before.ProductCode, 100_000m),
+            (line.Id, line.VariantId, line.ProductName, line.ProductCode, line.UnitPrice));
+        Assert.False(string.IsNullOrEmpty(line.ProductCode));
+        Assert.Equal((project.Version, 100_000m, 100_000m), (after.Version, after.Total, after.Project!.Total!.Value));
+        Assert.Empty((await GetAsync(setup, standard.Id)).Items);
+
+        // El servicio guardado no cambia, así que el borrador se sigue guardando con su línea congelada.
+        var saved = await ReadAsync(
+            await PutAsync(setup, after, Save(Global(setup.ServiceId, 250_000m))), HttpStatusCode.OK);
+        var repriced = Assert.Single(saved.Items);
+        Assert.Equal((before.Id, "Desarrollo a la medida", 250_000m), (repriced.Id, repriced.ProductName, repriced.UnitPrice));
+    }
+
+    private static async Task DeleteProductAsync(Setup setup, Guid productId)
+    {
+        var url = $"/api/v1/tenants/{setup.TenantId}/catalog/products/{productId}";
+        var product = await setup.Client.GetFromJsonAsync<JsonElement>(url, TestContext.Current.CancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+        request.Headers.IfMatch.Add(new EntityTagHeaderValue($"\"{product.GetProperty("version").GetInt64()}\""));
+        var response = await setup.Client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
     private static Task<HttpResponseMessage> CallAsync(Setup setup, QuotationResponse quotation, string route)
     {
         var token = TestContext.Current.CancellationToken;
