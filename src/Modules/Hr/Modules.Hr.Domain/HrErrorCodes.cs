@@ -70,6 +70,12 @@ public static class HrErrorCodes
     public const string MedicalExamStatusInvalid = "hr.medical_exam.status_invalid";
     public const string ExamFrequencyInvalid = "hr.settings.exam_frequency_invalid";
 
+    // Birthday notices (spec 2026-11-26 §5.1): all 422, each marks its field.
+    public const string BirthdayManagerNotFound = "hr.birthday_notice.manager_not_found";
+    public const string BirthdayManagerWithoutAccess = "hr.birthday_notice.manager_without_access";
+    public const string BirthdayConnectionRequired = "hr.birthday_notice.connection_required";
+    public const string BirthdayConnectionInvalid = "hr.birthday_notice.connection_invalid";
+
     // 422, importación por Excel (Tarea 10): errores de archivo y confirmación.
     public const string ImportFileRequired = "hr.import.file_required";
     public const string ImportExtensionInvalid = "hr.import.extension_invalid";

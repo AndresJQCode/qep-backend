@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Notifications.Application;
 using Modules.Notifications.Infrastructure.Channels;
+using Modules.Notifications.Infrastructure.HrBirthdays;
 using Modules.Notifications.Infrastructure.InApp;
 using Modules.Notifications.Infrastructure.Messaging;
 using Modules.Notifications.Infrastructure.Persistence;
@@ -85,6 +86,10 @@ public static class NotificationsInfrastructureExtensions
         // Task-notices spec 2026-11-22 §5.4: the escalation of unread assignments, a pass a minute; ports implemented in Bootstrapper.
         services.AddScoped<TaskNoticeEscalationProcessor>();
         services.AddHostedService<TaskNoticeEscalationWorker>();
+        // HR birthday notices spec 2026-11-26 §5.3: the WhatsApp and email deliveries of the daily digest, a pass a minute; the WhatsApp port is
+        // implemented in Bootstrapper.
+        services.AddScoped<HrBirthdayDeliveryProcessor>();
+        services.AddHostedService<HrBirthdayDeliveryWorker>();
 
         return services;
     }

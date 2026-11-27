@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Hr.Application;
+using Modules.Hr.Application.BirthdayNotices;
 using Modules.Hr.Application.MedicalExams;
 
 namespace Modules.Hr.Api;
@@ -40,6 +41,22 @@ public static class HrEndpoints
             .RequireAuthorization(HrPermissions.EmployeeRead)
             .Produces<HrSettingsDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        // Birthday notices (spec 2026-11-26 §5.1): who receives the daily digest. The PUT is an upsert: the first one carries no
+        // If-Match, the following ones must.
+        group.MapGet("/birthday-notices", GetBirthdayNoticesAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead)
+            .Produces<BirthdayNoticesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/birthday-notices", SaveBirthdayNoticesAsync)
+            .RequireAuthorization(HrPermissions.SettingsManage)
+            .Accepts<BirthdayNoticeRequest>("application/json")
+            .Produces<BirthdayNoticesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         group.MapPost("/sites", CreateSiteAsync)
             .RequireAuthorization(HrPermissions.SettingsManage)
@@ -609,6 +626,27 @@ public static class HrEndpoints
         var settings = await dispatcher.QueryAsync(new GetHrSettingsQuery(tenantId), cancellationToken);
 
         return Results.Ok(settings);
+    }
+
+    private static async Task<IResult> GetBirthdayNoticesAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var notices = await dispatcher.QueryAsync(new GetBirthdayNoticesQuery(tenantId), cancellationToken);
+
+        return Results.Ok(notices);
+    }
+
+    private static async Task<IResult> SaveBirthdayNoticesAsync(
+        Guid tenantId,
+        BirthdayNoticeRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var notices = await dispatcher.SendAsync(
+            new SaveBirthdayNoticesCommand(tenantId, request, IfMatchOf(httpContext)), cancellationToken);
+
+        return Results.Ok(notices);
     }
 
     private static async Task<IResult> CreateSiteAsync(

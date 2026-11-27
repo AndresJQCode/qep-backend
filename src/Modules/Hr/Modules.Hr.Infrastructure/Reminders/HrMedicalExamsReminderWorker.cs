@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Modules.Hr.Application.BirthdayNotices;
 using Modules.Hr.Application.MedicalExams;
 using Modules.Hr.Infrastructure.Persistence;
 
@@ -25,6 +26,9 @@ internal sealed partial class HrMedicalExamsReminderWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Medical exams reminder run failed for tenant {TenantId}.")]
     private static partial void LogTenantFailed(ILogger logger, Exception exception, Guid tenantId);
 
+    [LoggerMessage(Level = LogLevel.Error, Message = "Birthday notices run failed for tenant {TenantId}.")]
+    private static partial void LogBirthdaysFailed(ILogger logger, Exception exception, Guid tenantId);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(options.Value.SweepMinutes));
@@ -35,6 +39,7 @@ internal sealed partial class HrMedicalExamsReminderWorker(
                 foreach (var tenantId in await ListTenantsAsync(stoppingToken))
                 {
                     await ProcessTenantAsync(tenantId, stoppingToken);
+                    await ProcessBirthdaysAsync(tenantId, stoppingToken);
                 }
             }
             catch (OperationCanceledException)
@@ -57,6 +62,21 @@ internal sealed partial class HrMedicalExamsReminderWorker(
             .Select(employee => employee.TenantId)
             .Distinct()
             .ToListAsync(cancellationToken);
+    }
+
+    // The birthday run of the same tenant (spec 2026-11-26 §5.2), in its own scope and try/catch: a failure in one run never stops
+    // the other. A tenant without a birthday setting exits at its first query.
+    private async Task ProcessBirthdaysAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<IHrBirthdayNoticesProcessor>().ProcessTenantAsync(tenantId, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogBirthdaysFailed(logger, exception, tenantId);
+        }
     }
 
     private async Task ProcessTenantAsync(Guid tenantId, CancellationToken cancellationToken)

@@ -127,6 +127,7 @@ internal static class InAppNotificationMapper
         InAppNotificationKind.SupportTaskAssigned or InAppNotificationKind.SupportTicketAssigned => ["ticketId", "ticketNumber", "resolution"],
         InAppNotificationKind.HrMedicalExamsDue => ["pendingCount", "runDate"],
         InAppNotificationKind.HrExitExamRequired => ["employeeId", "employeeName", "dueDate"],
+        InAppNotificationKind.HrBirthdays => ["runDate", "today", "todayTotal", "upcoming", "upcomingTotal", "upcomingDate"],
         _ => [],
     };
 

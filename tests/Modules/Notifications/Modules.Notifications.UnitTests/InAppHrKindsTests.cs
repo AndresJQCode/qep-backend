@@ -48,6 +48,33 @@ public sealed class InAppHrKindsTests
         Assert.False(exit.TryGetProperty("restrictions", out _));
     }
 
+    [Fact]
+    public async Task MapperKeepsTheBirthdayKeys()
+    {
+        var stored = JsonSerializer.Serialize(new
+        {
+            runDate = "2026-11-26",
+            today = new[] { new { employeeId = Guid.CreateVersion7(), employeeName = "Ana Pérez" } },
+            todayTotal = 1,
+            upcoming = Array.Empty<object>(),
+            upcomingTotal = 0,
+            upcomingDate = (string?)null,
+            memberId = Guid.NewGuid(),
+            birthDate = "1990-11-26",
+        });
+
+        var data = await DataOfAsync(InAppNotificationKind.HrBirthdays, stored);
+
+        Assert.Equal(
+            ["runDate", "today", "todayTotal", "upcoming", "upcomingDate", "upcomingTotal"],
+            data.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        Assert.Equal("Ana Pérez", Assert.Single(data.GetProperty("today").EnumerateArray()).GetProperty("employeeName").GetString());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("upcomingDate").ValueKind);
+        Assert.False(data.TryGetProperty("birthDate", out _));
+        Assert.False(data.TryGetProperty("memberId", out _));
+        Assert.True(nameof(InAppNotificationKind.HrBirthdays).Length <= 64);
+    }
+
     private sealed class NoNames : IInAppNotificationNames
     {
         public Task<IReadOnlyDictionary<Guid, string>> MemberNamesAsync(

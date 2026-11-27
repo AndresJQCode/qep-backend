@@ -557,6 +557,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetHrSettingsQuery, Modules.Hr.Application.HrSettingsDto>,
             Modules.Hr.Application.GetHrSettingsHandler>();
+        // Hr, birthday notices (spec 2026-11-26): the setting of who receives the daily digest.
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.BirthdayNoticesComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.BirthdayNotices.GetBirthdayNoticesQuery, Modules.Hr.Application.BirthdayNotices.BirthdayNoticesDto>,
+            Modules.Hr.Application.BirthdayNotices.GetBirthdayNoticesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.BirthdayNotices.SaveBirthdayNoticesCommand, Modules.Hr.Application.BirthdayNotices.BirthdayNoticesDto>,
+            Modules.Hr.Application.BirthdayNotices.SaveBirthdayNoticesHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.CreateSiteCommand, Modules.Hr.Application.SiteDto>,
             Modules.Hr.Application.CreateSiteHandler>();
@@ -2070,6 +2078,8 @@ public static class QepServiceCollectionExtensions
         // Support task notices: the assignment notice template, sibling of the wholesale invitation notice.
         services.AddScoped<ICommandHandler<ProvisionTaskNoticeTemplateCommand, ManagedTemplateDto>, ProvisionTaskNoticeTemplateHandler>();
         services.AddScoped<IQueryHandler<GetTaskNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetTaskNoticeTemplateDraftHandler>();
+        services.AddScoped<ICommandHandler<ProvisionHrBirthdayNoticeTemplateCommand, ManagedTemplateDto>, ProvisionHrBirthdayNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetHrBirthdayNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetHrBirthdayNoticeTemplateDraftHandler>();
         // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista.
         services.AddScoped<ICommandHandler<ProvisionAppointmentReminderTemplateCommand, ManagedTemplateDto>, ProvisionAppointmentReminderTemplateHandler>();
         services.AddScoped<IQueryHandler<GetAppointmentReminderTemplateDraftQuery, SystemTemplateDraftDto>, GetAppointmentReminderTemplateDraftHandler>();
@@ -2544,6 +2554,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeState, TaskNoticeState>();
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeRecipients, TaskNoticeRecipients>();
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeWhatsApp, TaskNoticeWhatsAppSender>();
+        // HR birthday notices spec 2026-11-26 §5.3: the WhatsApp digest, through the approved HrBirthdayNotice template of Messaging.
+        services.AddScoped<Modules.Notifications.Application.IHrBirthdayWhatsApp, HrBirthdayWhatsAppSender>();
         services.AddScoped<
             IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
             Modules.Notifications.Application.ListInAppNotificationsHandler>();
@@ -2711,6 +2723,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        // Hr, birthday notices: the WhatsApp connections of the tenant and whether a manager has phone and email, by their own ports.
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.IHrWhatsAppConnections, HrWhatsAppConnections>();
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.IHrMemberContacts, HrMemberContacts>();
         services.AddScoped<Modules.Hr.Application.MedicalExams.IHrBusinessCalendar, HrBusinessCalendarSource>();
         // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
         services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();

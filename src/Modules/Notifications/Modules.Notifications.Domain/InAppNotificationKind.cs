@@ -18,4 +18,5 @@ public enum InAppNotificationKind
     HrMedicalExamsDue,
     HrExitExamRequired,
     ServicePriceReviewsDue,
+    HrBirthdays,
 }

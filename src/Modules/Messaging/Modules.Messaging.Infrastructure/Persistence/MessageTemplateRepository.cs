@@ -63,6 +63,12 @@ internal sealed class MessageTemplateRepository(MessagingDbContext dbContext) : 
             template => template.TenantId == tenantId && template.ConnectionId == connectionId && template.Kind == MessageTemplateKind.TaskNotice,
             cancellationToken);
 
+    public Task<MessageTemplate?> FindHrBirthdayNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.FirstOrDefaultAsync(
+            template => template.TenantId == tenantId && template.ConnectionId == connectionId
+                && template.Kind == MessageTemplateKind.HrBirthdayNotice,
+            cancellationToken);
+
     public Task<MessageTemplate?> FindAppointmentReminderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         dbContext.MessageTemplates.FirstOrDefaultAsync(
             template => template.TenantId == tenantId && template.ConnectionId == connectionId

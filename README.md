@@ -111,57 +111,57 @@ se compromete en un `appsettings*.json`. Se provee por secretos de usuario en
 local y por variable de entorno en k8s
 ([`prod-secret.yaml`](k8s/prod-secret.yaml), no el ConfigMap: lleva contraseña).
 
-| Clave                                                  | Valor local                                                                                   | Uso                                                                                                                 |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
-| `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
-| `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
-| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`, `LegalParameters`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
-| `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
-| `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
-| `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
-| `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
-| `Cors:AllowedOrigins`                                  | ausente (sin CORS); `appsettings.Development.json` trae `http://localhost:3002`                | Orígenes exactos desde los que el navegador llama a la API con la cookie de sesión. Cada uno `https://host[:puerto]`, sin barra final, path ni comodín; uno inválido ⇒ la API no inicia. Sólo en `Development` vale además `http://localhost[:puerto]`: es `bun dev` llamando directo con `VITE_API_BASE_URL=http://localhost:5000`, sin el proxy de Vite (que no reenvía el WebSocket del hub de Mensajería). Un túnel con host propio (`https://…`) se suma por user-secrets en `Cors:AllowedOrigins:1`. La defensa CSRF depende de que sea exacta: un comodín —ni siquiera `*.qcode.co`, donde corren otras apps— la desactiva (ver [Pipeline HTTP](#pipeline-http-programcs)). En k8s: `https://qep.qcode.co` |
-| `Authentication:UseDevelopmentStub`                    | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`** | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque                                |
-| `Authentication:Authority`                             | ausente (cae a `https://accounts.google.com`)                                                 | Emisor OIDC; sólo se define para pisar el de Google                                                                 |
-| `Authentication:Audience`                              | ausente                                                                                       | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId`                      |
-| `Authentication:Session:CookieName`                    | `qep_session`                                                                                 | Nombre de la cookie de sesión                                                                                       |
-| `Authentication:Session:AbsoluteLifetimeDays`          | `30`                                                                                          | Vida máxima de la sesión. Debe ser positiva y ≥ `IdleTimeoutDays`                                                   |
-| `Authentication:Session:IdleTimeoutDays`               | `7`                                                                                           | Expiración por inactividad                                                                                          |
-| `Registration:PublicTenantSignupEnabled`               | `true` en `appsettings.json`                                                                  | Alta pública de tenants. **Ausente ⇒ `false`**: se lee con `GetValue<bool>`                                         |
-| `Notifications:EmailProvider`                          | `log` en `appsettings.json`                                                                   | `log` o `infobip`. Con `infobip`, las tres claves `Notifications:Infobip:*` pasan a ser requeridas. **En `Production` `log` es rechazado**: el arranque falla en lugar de dar por entregada una invitación que nunca sale |
-| `Notifications:InvitationUrl`                          | `http://localhost:3002/invitations`                                                           | Base absoluta del deep-link de invitación; el email lleva `{InvitationUrl}/{token}`                                 |
-| `Notifications:AppBaseUrl`                             | `http://localhost:3002`                                                                       | Base del frontend para los links de cuenta (verificar, restablecer) y el de la invitación de mayorista, `{AppBaseUrl}/wholesale-invitations/{token}`. El mayorista no tiene variable propia |
-| `Audit:SecurityRetentionDays`                          | `2555` (~7 años)                                                                              | Ventana de retención de auditoría de seguridad. Debe ser positiva                                                   |
-| `Audit:OperationalRetentionDays`                       | `730` (2 años)                                                                                | Ventana de retención de auditoría operativa. Debe ser positiva                                                      |
-| `Storage:PresignedUrlMinutes`                          | `5`                                                                                           | Vigencia de la URL firmada. Debe ser positiva                                                                       |
-| `Storage:ExportUrlHours`                               | `24`                                                                                          | Vigencia del enlace de descarga de un reporte exportado. Entre 1 y 168 (SigV4 no firma mas de 7 dias)               |
-| `Storage:StagingRetentionHours`                        | `24`                                                                                          | Retención de los objetos en staging. Debe ser positiva                                                              |
-| `Storage:StagingCleanupMinutes`                        | `60`                                                                                          | Período del barrido de staging. Debe ser positivo                                                                   |
-| `Storage:PaymentProofOrphanCleanup:MinimumAgeHours`    | `24`                                                                                          | Edad mínima de un objeto de `payment-proofs/` para que la reconciliación lo considere. Debe ser positiva             |
-| `Storage:PaymentProofOrphanCleanup:IntervalHours`      | `24`                                                                                          | Período de la reconciliación de `payment-proofs/`. Entre 1 y 1193                                                   |
-| `Storage:PaymentProofOrphanCleanup:DryRun`             | `true` en `appsettings.json` y en `k8s/prod-configMap.yaml`                                   | Con `true` la reconciliación sólo escribe en el log lo que borraría. Se pasa a `false` a mano, después de revisar esos logs en producción |
-| `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                      | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta. Los usa la publicación de imágenes de producto **y** el logo del tenant (`PUT /settings/logo`); sin ellos, `PUT` responde `422 storage.public.not_configured` |
-| `Storage:ClamAv:Enabled`                               | `false`                                                                                       | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                         |
-| `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                      | Destino del escaneo. `Port` entre 1 y 65535                                                                         |
-| `Quotations:PaymentProofs:PublicLinks`                 | `false` en `appsettings.json`                                                                 | Con `true`, cada comprobante de pago nuevo se copia al bucket público al adjuntarse y el Excel de pedidos lo enlaza. **Exige `Storage:R2:PublicBucket` y `Storage:R2:PublicBaseUrl` en cualquier ambiente**: sin ellos la API no arranca. Apagarla no despublica lo ya copiado |
-| `Integrations:SecretProtection:ActiveKeyId`            | ausente (user-secrets en local)                                                               | Id de la llave con la que se cifran las credenciales de las conexiones (`^[a-z0-9]{1,32}$`). **En `Production` es obligatoria**, y su llave tiene que existir y ser de 32 bytes en base64: sin ella la API no arranca. Fuera de producción, sin ella la API arranca y crear o editar una conexión responde `503 integrations.secret_protection.unavailable`. Ver [Integraciones](#integraciones-conexiones-del-tenant) |
-| `Integrations:SecretProtection:Keys:<id>`              | user-secrets                                                                                  | Llave AES-256 (32 bytes en base64). Es un secreto: en k8s va en el Secret, nunca en el ConfigMap |
-| `Integrations:SecretProtection:RekeyIntervalMinutes`   | `60`                                                                                          | Cada cuánto el worker re-cifra con la llave activa, además de al arrancar. Entre 1 y 1440 |
-| `Integrations:Zenvia:BaseUrl`                          | `https://api.zenvia.com`                                                                      | URL de la prueba de credenciales de Zenvia (`GET /v2/templates`). HTTPS absoluta. El envío de cotizaciones y pedidos usa la suya, `Quotations:WhatsApp:BaseUrl` |
-| `Meta:App:AppId`, `Meta:App:ConfigId`                | ausentes (user-secrets en local)                                                              | La app de Meta de toda la plataforma (spec 2026-10-09). Públicos: viajan en el popup de Embedded Signup. **En `Production` son obligatorios** junto con los tres de abajo (`MetaAppOptionsValidator`); fuera, sin ellos `whatsapp-cloud` no sale en el catálogo y el webhook responde 403/401 |
-| `Meta:App:GraphApiVersion`                           | `v24.0` (sólo fuera de `Production`)                                                          | Versión de Graph; patrón `^v\d+\.\d+$`. **También es obligatoria en `Production`** (`MetaAppOptionsValidator` exige las cinco claves: AppId, ConfigId, GraphApiVersion, AppSecret, WebhookVerifyToken); el ConfigMap de k8s la fija en `v24.0` |
-| `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`  | user-secrets                                                                                  | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret |
-| `Meta:App:WebhookOverrideCallbackUrl` | vacío | **Temporal.** URL https que la suscripción de una WABA le pide a Meta en vez de la URL de la app; vacío = sin override. Ver [Historial de coexistencia](#historial-de-coexistencia) |
-| `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
-| `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
-| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `ScheduledPollSeconds 5`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas, mensajes programados y purga |
-| `Messaging:Campaigns:MessagesPerSecond`              | `20` (opcional; `1 <= valor <= MaxMessagesPerSecond`)                                         | Ritmo inicial y objetivo de envío de una campaña **por conexión**, compartido por todas las réplicas (cubo en Postgres, `messaging.connection_send_budgets`). Es adaptativo: un `130429` de Meta lo baja a la mitad y pausa la conexión 30 s; sin nuevos `130429` sube 1 mps cada 30 s hasta este valor |
-| `Messaging:Campaigns:MaxMessagesPerSecond`           | `80` (opcional; hasta `1000`)                                                                 | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número |
-| `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
-| `Messaging:Search:StatementTimeoutMs`                | `2000`                                                                                        | Tope de la búsqueda en el historial; al pasarlo responde 422 en `q` |
-| `ApiAccess:RateLimit:PerKeyPerMinute`                | `300`                                                          | API externa: peticiones por minuto por clave, después de autenticar. En memoria, ver «API externa». |
-| `ApiAccess:RateLimit:PerIpPerMinute`                 | `600`                                                          | API externa: peticiones por minuto por IP, antes de autenticar. En memoria, ver «API externa». |
+| Clave                                                  | Valor local                                                                                                                                           | Uso                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                                                                                 | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                                                                             | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase`                                                                                                                                                                                                                                                                                                                                                                                          |
+| `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                                                                                       | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                                                                               | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`, `LegalParameters`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13)                                                                                                                                                                                                                                                                                                                                                                             |
+| `Valkey:OperationTimeoutMs`                            | `100`                                                                                                                                                 | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                                                                               | Exportación OTLP de trazas y métricas                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                                                                         | `service.name` del recurso; en k8s lo fija el Deployment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                                                                              | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium                                                                                                                                                                                                                                                                                                                                                              |
+| `Cors:AllowedOrigins`                                  | ausente (sin CORS); `appsettings.Development.json` trae `http://localhost:3002`                                                                       | Orígenes exactos desde los que el navegador llama a la API con la cookie de sesión. Cada uno `https://host[:puerto]`, sin barra final, path ni comodín; uno inválido ⇒ la API no inicia. Sólo en `Development` vale además `http://localhost[:puerto]`: es `bun dev` llamando directo con `VITE_API_BASE_URL=http://localhost:5000`, sin el proxy de Vite (que no reenvía el WebSocket del hub de Mensajería). Un túnel con host propio (`https://…`) se suma por user-secrets en `Cors:AllowedOrigins:1`. La defensa CSRF depende de que sea exacta: un comodín —ni siquiera `*.qcode.co`, donde corren otras apps— la desactiva (ver [Pipeline HTTP](#pipeline-http-programcs)). En k8s: `https://qep.qcode.co` |
+| `Authentication:UseDevelopmentStub`                    | `true` en Development, pero **los dos perfiles de `launchSettings.json` lo fijan en `false`**                                                         | Stub de identidad por headers `X-*`. Fuera de Development, `true` aborta el arranque                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `Authentication:Authority`                             | ausente (cae a `https://accounts.google.com`)                                                                                                         | Emisor OIDC; sólo se define para pisar el de Google                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `Authentication:Audience`                              | ausente                                                                                                                                               | Audiencia JWT; requerida fuera de Development salvo que se dé `Authentication:Google:ClientId`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `Authentication:Session:CookieName`                    | `qep_session`                                                                                                                                         | Nombre de la cookie de sesión                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `Authentication:Session:AbsoluteLifetimeDays`          | `30`                                                                                                                                                  | Vida máxima de la sesión. Debe ser positiva y ≥ `IdleTimeoutDays`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `Authentication:Session:IdleTimeoutDays`               | `7`                                                                                                                                                   | Expiración por inactividad                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `Registration:PublicTenantSignupEnabled`               | `true` en `appsettings.json`                                                                                                                          | Alta pública de tenants. **Ausente ⇒ `false`**: se lee con `GetValue<bool>`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `Notifications:EmailProvider`                          | `log` en `appsettings.json`                                                                                                                           | `log` o `infobip`. Con `infobip`, las tres claves `Notifications:Infobip:*` pasan a ser requeridas. **En `Production` `log` es rechazado**: el arranque falla en lugar de dar por entregada una invitación que nunca sale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `Notifications:InvitationUrl`                          | `http://localhost:3002/invitations`                                                                                                                   | Base absoluta del deep-link de invitación; el email lleva `{InvitationUrl}/{token}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `Notifications:AppBaseUrl`                             | `http://localhost:3002`                                                                                                                               | Base del frontend para los links de cuenta (verificar, restablecer) y el de la invitación de mayorista, `{AppBaseUrl}/wholesale-invitations/{token}`. El mayorista no tiene variable propia                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `Audit:SecurityRetentionDays`                          | `2555` (~7 años)                                                                                                                                      | Ventana de retención de auditoría de seguridad. Debe ser positiva                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `Audit:OperationalRetentionDays`                       | `730` (2 años)                                                                                                                                        | Ventana de retención de auditoría operativa. Debe ser positiva                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `Storage:PresignedUrlMinutes`                          | `5`                                                                                                                                                   | Vigencia de la URL firmada. Debe ser positiva                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `Storage:ExportUrlHours`                               | `24`                                                                                                                                                  | Vigencia del enlace de descarga de un reporte exportado. Entre 1 y 168 (SigV4 no firma mas de 7 dias)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `Storage:StagingRetentionHours`                        | `24`                                                                                                                                                  | Retención de los objetos en staging. Debe ser positiva                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `Storage:StagingCleanupMinutes`                        | `60`                                                                                                                                                  | Período del barrido de staging. Debe ser positivo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `Storage:PaymentProofOrphanCleanup:MinimumAgeHours`    | `24`                                                                                                                                                  | Edad mínima de un objeto de `payment-proofs/` para que la reconciliación lo considere. Debe ser positiva                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `Storage:PaymentProofOrphanCleanup:IntervalHours`      | `24`                                                                                                                                                  | Período de la reconciliación de `payment-proofs/`. Entre 1 y 1193                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `Storage:PaymentProofOrphanCleanup:DryRun`             | `true` en `appsettings.json` y en `k8s/prod-configMap.yaml`                                                                                           | Con `true` la reconciliación sólo escribe en el log lo que borraría. Se pasa a `false` a mano, después de revisar esos logs en producción                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `Storage:R2:PublicBucket` + `Storage:R2:PublicBaseUrl` | ausentes                                                                                                                                              | Bucket público de lectura y su dominio. **Se configuran juntos o ninguno**; `PublicBaseUrl` debe ser HTTPS absoluta. Los usa la publicación de imágenes de producto **y** el logo del tenant (`PUT /settings/logo`); sin ellos, `PUT` responde `422 storage.public.not_configured`                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `Storage:ClamAv:Enabled`                               | `false`                                                                                                                                               | Escaneo de malware. Con `true`, `Host` no puede estar vacío                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `Storage:ClamAv:Host` / `Port` / `TimeoutSeconds`      | `clamav` / `3310` / `30`                                                                                                                              | Destino del escaneo. `Port` entre 1 y 65535                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `Quotations:PaymentProofs:PublicLinks`                 | `false` en `appsettings.json`                                                                                                                         | Con `true`, cada comprobante de pago nuevo se copia al bucket público al adjuntarse y el Excel de pedidos lo enlaza. **Exige `Storage:R2:PublicBucket` y `Storage:R2:PublicBaseUrl` en cualquier ambiente**: sin ellos la API no arranca. Apagarla no despublica lo ya copiado                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `Integrations:SecretProtection:ActiveKeyId`            | ausente (user-secrets en local)                                                                                                                       | Id de la llave con la que se cifran las credenciales de las conexiones (`^[a-z0-9]{1,32}$`). **En `Production` es obligatoria**, y su llave tiene que existir y ser de 32 bytes en base64: sin ella la API no arranca. Fuera de producción, sin ella la API arranca y crear o editar una conexión responde `503 integrations.secret_protection.unavailable`. Ver [Integraciones](#integraciones-conexiones-del-tenant)                                                                                                                                                                                                                                                                                            |
+| `Integrations:SecretProtection:Keys:<id>`              | user-secrets                                                                                                                                          | Llave AES-256 (32 bytes en base64). Es un secreto: en k8s va en el Secret, nunca en el ConfigMap                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `Integrations:SecretProtection:RekeyIntervalMinutes`   | `60`                                                                                                                                                  | Cada cuánto el worker re-cifra con la llave activa, además de al arrancar. Entre 1 y 1440                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `Integrations:Zenvia:BaseUrl`                          | `https://api.zenvia.com`                                                                                                                              | URL de la prueba de credenciales de Zenvia (`GET /v2/templates`). HTTPS absoluta. El envío de cotizaciones y pedidos usa la suya, `Quotations:WhatsApp:BaseUrl`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `Meta:App:AppId`, `Meta:App:ConfigId`                  | ausentes (user-secrets en local)                                                                                                                      | La app de Meta de toda la plataforma (spec 2026-10-09). Públicos: viajan en el popup de Embedded Signup. **En `Production` son obligatorios** junto con los tres de abajo (`MetaAppOptionsValidator`); fuera, sin ellos `whatsapp-cloud` no sale en el catálogo y el webhook responde 403/401                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `Meta:App:GraphApiVersion`                             | `v24.0` (sólo fuera de `Production`)                                                                                                                  | Versión de Graph; patrón `^v\d+\.\d+$`. **También es obligatoria en `Production`** (`MetaAppOptionsValidator` exige las cinco claves: AppId, ConfigId, GraphApiVersion, AppSecret, WebhookVerifyToken); el ConfigMap de k8s la fija en `v24.0`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`    | user-secrets                                                                                                                                          | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `Meta:App:WebhookOverrideCallbackUrl`                  | vacío                                                                                                                                                 | **Temporal.** URL https que la suscripción de una WABA le pide a Meta en vez de la URL de la app; vacío = sin override. Ver [Historial de coexistencia](#historial-de-coexistencia)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `Messaging:Webhook:MaxBodyBytes`                       | `4194304`                                                                                                                                             | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`    | `64` / `256`                                                                                                                                          | Limitador `webhook`: concurrencia global con cola, no por IP                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `Messaging:Workers:*`                                  | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `ScheduledPollSeconds 5`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas, mensajes programados y purga                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `Messaging:Campaigns:MessagesPerSecond`                | `20` (opcional; `1 <= valor <= MaxMessagesPerSecond`)                                                                                                 | Ritmo inicial y objetivo de envío de una campaña **por conexión**, compartido por todas las réplicas (cubo en Postgres, `messaging.connection_send_budgets`). Es adaptativo: un `130429` de Meta lo baja a la mitad y pausa la conexión 30 s; sin nuevos `130429` sube 1 mps cada 30 s hasta este valor                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Messaging:Campaigns:MaxMessagesPerSecond`             | `80` (opcional; hasta `1000`)                                                                                                                         | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `Messaging:MarketingOptOut:ButtonTexts`                | `["Detener promociones", "Stop promotions"]` (opcional)                                                                                               | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `Messaging:Search:StatementTimeoutMs`                  | `2000`                                                                                                                                                | Tope de la búsqueda en el historial; al pasarlo responde 422 en `q`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ApiAccess:RateLimit:PerKeyPerMinute`                  | `300`                                                                                                                                                 | API externa: peticiones por minuto por clave, después de autenticar. En memoria, ver «API externa».                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ApiAccess:RateLimit:PerIpPerMinute`                   | `600`                                                                                                                                                 | API externa: peticiones por minuto por IP, antes de autenticar. En memoria, ver «API externa».                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Ejemplo con variables de entorno:
 
@@ -194,11 +194,11 @@ prefijo los borraría a los 3 días**. El prefijo lleva la barra final.
 
 Panel de Cloudflare: R2 → el bucket privado → Settings → Object lifecycle rules → Add rule.
 
-| Campo | Valor |
-| --- | --- |
-| Nombre | `automations-http-responses-3d` |
-| Prefijo | `automations/http-responses/` |
-| Acción | Delete objects, 3 días después de creado |
+| Campo   | Valor                                    |
+| ------- | ---------------------------------------- |
+| Nombre  | `automations-http-responses-3d`          |
+| Prefijo | `automations/http-responses/`            |
+| Acción  | Delete objects, 3 días después de creado |
 
 Nada más marcado. Alternativa por CLI, en PowerShell (wrangler pide su propio login; no se usa ninguna credencial de
 `qep-backend-secret`). Confirma la sintaxis con `--help`, porque wrangler la cambió entre versiones:
@@ -434,12 +434,12 @@ con todos los módulos del catálogo y una membresía `admin` para `Seed:Operato
 desplegado durante el desarrollo, donde la base se borra y se vuelve a crear: después
 de un borrado no hay ningún paso manual, alcanza con que la aplicación reinicie.
 
-| Clave                          | Por defecto | Qué hace                                                                      |
-| ------------------------------ | ----------- | ----------------------------------------------------------------------------- |
-| `Seed__Enabled`                | `false`     | Interruptor de la semilla de arranque. Apagado, no se siembra nada            |
-| `Seed__OwnerEmail`             | sin valor   | Email que recibe la membresía con rol `admin`                                 |
+| Clave                          | Por defecto | Qué hace                                                                                                         |
+| ------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------- |
+| `Seed__Enabled`                | `false`     | Interruptor de la semilla de arranque. Apagado, no se siembra nada                                               |
+| `Seed__OwnerEmail`             | sin valor   | Email que recibe la membresía con rol `admin`                                                                    |
 | `Seed__OperatorOwnerEmail`     | sin valor   | Email de QCode que recibe el `admin` del tenant operador. Sin valor no se crea QCode: sólo se advierte en el log |
-| `Seed__ExportLoad__Quotations` | `0`         | Cotizaciones de la [carga sintética](#carga-sintética-para-medir-la-exportación). `0` la apaga |
+| `Seed__ExportLoad__Quotations` | `0`         | Cotizaciones de la [carga sintética](#carga-sintética-para-medir-la-exportación). `0` la apaga                   |
 
 El usuario se siembra **sólo con su email**, sin proveedor vinculado: el primer login
 con Google lo vincula solo, porque `ProviderLinkingService` busca por email verificado.
@@ -584,11 +584,11 @@ referencia blanda `region_id` a `geography.regions`, sin llave foránea entre es
 - **Datos existentes:** ninguna fila se migra; las anteriores quedan con `region_id = null`.
 - El selector sigue leyendo el catálogo de abajo: la región elegida filtra las ciudades y ahora además viaja al guardar.
 
-| Ruta | Respuesta |
-| --- | --- |
-| `GET /api/v1/countries` | `[{ code, name, regionKind }]`: el catálogo de países por nombre. `regionKind` es `Department` (`CO`), `Province` (`ES`) o `null` si el país no tiene catálogo de regiones: ahí la pantalla cae al texto libre. |
-| `GET /api/v1/countries/{country}/regions` | `[{ id, code, name }]` por nombre. País sin catálogo: `200 []`. |
-| `GET /api/v1/countries/{country}/regions/{regionId}/cities` | `[{ id, code, name }]` por nombre. Región que no es de ese país: `404 geography.region.not_found`. |
+| Ruta                                                        | Respuesta                                                                                                                                                                                                       |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/countries`                                     | `[{ code, name, regionKind }]`: el catálogo de países por nombre. `regionKind` es `Department` (`CO`), `Province` (`ES`) o `null` si el país no tiene catálogo de regiones: ahí la pantalla cae al texto libre. |
+| `GET /api/v1/countries/{country}/regions`                   | `[{ id, code, name }]` por nombre. País sin catálogo: `200 []`.                                                                                                                                                 |
+| `GET /api/v1/countries/{country}/regions/{regionId}/cities` | `[{ id, code, name }]` por nombre. Región que no es de ese país: `404 geography.region.not_found`.                                                                                                              |
 
 - **Colombia** sale de DIVIPOLA (`departments`, `cities`): los `id` son los mismos que sirven `/api/v1/departments`
   y `/api/v1/cities`, que no cambian.
@@ -669,19 +669,19 @@ puede confirmar como sinónimo: 422 `geography.synonym.matches_city`.
 **Consola del operador.** Todo bajo `/api/v1/tenants/{tenantId}/operator/cities`, con el tenant operador en la ruta
 (`Platform:OperatorTenantId`) y doble capa: la política `operator.cities.read` o `operator.cities.manage` y el handler.
 
-| Ruta | Permiso | Qué hace |
-| --- | --- | --- |
-| `GET summary` | read | Contadores: pendientes, descartados, sinónimos y pedidos esperando. |
-| `GET unresolved`, `GET unresolved/{id}` | read | La bandeja y el detalle, con hasta tres sugerencias (similitud mínima 50). |
-| `POST unresolved/{id}/impact` `{ cityId }` | read | Qué pasaría al confirmar; no escribe. |
-| `POST unresolved/{id}/resolve` `{ cityId }` | manage | Crea el sinónimo y publica `resolved`. 409 si ya hay uno vivo. |
-| `POST unresolved/{id}/discard`, `.../restore` | manage | Saca o devuelve una fila de la bandeja. |
-| `GET synonyms` | read | La lista, con los contadores de lo corregido, pendiente y fallido. |
-| `POST synonyms/{id}/impact` `{ cityId }` | read | Qué pasaría al corregirlo a otra ciudad. |
-| `PUT synonyms/{id}` `{ cityId, expectedVersion }` | manage | Cambia la ciudad y publica `corrected`. 412 si la versión cambió. |
-| `DELETE synonyms/{id}` | manage | Borrado lógico: deja de casar y no deshace lo corregido; no publica nada. |
-| `POST synonyms/{id}/retry` | manage | Devuelve a `Pending` los trabajos `Failed` del sinónimo. |
-| `POST backfill` | manage | Recorre los pedidos ya importados (ver abajo). |
+| Ruta                                              | Permiso | Qué hace                                                                   |
+| ------------------------------------------------- | ------- | -------------------------------------------------------------------------- |
+| `GET summary`                                     | read    | Contadores: pendientes, descartados, sinónimos y pedidos esperando.        |
+| `GET unresolved`, `GET unresolved/{id}`           | read    | La bandeja y el detalle, con hasta tres sugerencias (similitud mínima 50). |
+| `POST unresolved/{id}/impact` `{ cityId }`        | read    | Qué pasaría al confirmar; no escribe.                                      |
+| `POST unresolved/{id}/resolve` `{ cityId }`       | manage  | Crea el sinónimo y publica `resolved`. 409 si ya hay uno vivo.             |
+| `POST unresolved/{id}/discard`, `.../restore`     | manage  | Saca o devuelve una fila de la bandeja.                                    |
+| `GET synonyms`                                    | read    | La lista, con los contadores de lo corregido, pendiente y fallido.         |
+| `POST synonyms/{id}/impact` `{ cityId }`          | read    | Qué pasaría al corregirlo a otra ciudad.                                   |
+| `PUT synonyms/{id}` `{ cityId, expectedVersion }` | manage  | Cambia la ciudad y publica `corrected`. 412 si la versión cambió.          |
+| `DELETE synonyms/{id}`                            | manage  | Borrado lógico: deja de casar y no deshace lo corregido; no publica nada.  |
+| `POST synonyms/{id}/retry`                        | manage  | Devuelve a `Pending` los trabajos `Failed` del sinónimo.                   |
+| `POST backfill`                                   | manage  | Recorre los pedidos ya importados (ver abajo).                             |
 
 Un `cityId` de otro departamento es 422 `geography.city.not_in_department`; los listados devuelven la `page` pedida, sin
 recortarla.
@@ -772,17 +772,17 @@ de la excepción y la facturación sigue.
 **Consola del operador.** Todo bajo `/api/v1/tenants/{tenantId}/operator/cities/foreign`, con el tenant operador en la ruta y
 doble capa (política + handler), con los permisos `operator.cities.read` y `operator.cities.manage` de siempre.
 
-| Ruta | Permiso | Qué hace |
-| --- | --- | --- |
-| `GET countries` | read | Los países del catálogo, los que tienen pendientes primero y después por nombre sin tildes. |
-| `GET catalog?country=&search=` | read | Las ciudades de un país para el modal de confirmar. `country` es obligatorio (422 si falta). |
-| `GET unresolved` | read | La bandeja, con filtros de país, estado y búsqueda, paginada. |
-| `GET unresolved/{id}` | read | El detalle: la fila, los tenants que la vieron y hasta tres sugerencias. |
-| `GET synonyms` | read | La lista de sinónimos del exterior, por país y búsqueda, paginada. |
-| `POST unresolved/{id}/resolve` `{ billingCityId }` | manage | Crea el sinónimo. 409 si ya hay uno vivo; 422 `geography.billing_city.not_in_country` si la ciudad es de otro país. |
-| `POST unresolved/{id}/discard`, `.../restore` | manage | Saca o devuelve una fila de la bandeja. |
-| `PUT synonyms/{id}` `{ billingCityId, expectedVersion }` | manage | Cambia la ciudad del sinónimo. 412 si la versión cambió. |
-| `DELETE synonyms/{id}` | manage | Borrado lógico: el texto deja de casar. |
+| Ruta                                                     | Permiso | Qué hace                                                                                                            |
+| -------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `GET countries`                                          | read    | Los países del catálogo, los que tienen pendientes primero y después por nombre sin tildes.                         |
+| `GET catalog?country=&search=`                           | read    | Las ciudades de un país para el modal de confirmar. `country` es obligatorio (422 si falta).                        |
+| `GET unresolved`                                         | read    | La bandeja, con filtros de país, estado y búsqueda, paginada.                                                       |
+| `GET unresolved/{id}`                                    | read    | El detalle: la fila, los tenants que la vieron y hasta tres sugerencias.                                            |
+| `GET synonyms`                                           | read    | La lista de sinónimos del exterior, por país y búsqueda, paginada.                                                  |
+| `POST unresolved/{id}/resolve` `{ billingCityId }`       | manage  | Crea el sinónimo. 409 si ya hay uno vivo; 422 `geography.billing_city.not_in_country` si la ciudad es de otro país. |
+| `POST unresolved/{id}/discard`, `.../restore`            | manage  | Saca o devuelve una fila de la bandeja.                                                                             |
+| `PUT synonyms/{id}` `{ billingCityId, expectedVersion }` | manage  | Cambia la ciudad del sinónimo. 412 si la versión cambió.                                                            |
+| `DELETE synonyms/{id}`                                   | manage  | Borrado lógico: el texto deja de casar.                                                                             |
 
 Confirmar un texto es `geography.synonym.matches_city` sólo si coincide con **una** ciudad del país; con dos o más (Boston) sí se
 puede confirmar. No hay vista de impacto ni eventos: Colombia los necesita para corregir pedidos de Shopify y el exterior no.
@@ -808,20 +808,20 @@ que se toma al montar al cliente, y el permiso más cercano (`platform.*`) lo ti
 tenant**, o sea el admin del cliente. Spec:
 [`docs/superpowers/specs/2026-09-17-numeracion-configurable-design.md`](docs/superpowers/specs/2026-09-17-numeracion-configurable-design.md).
 
-| Columna          | Qué vale                                                        |
-| ---------------- | --------------------------------------------------------------- |
-| `tenant_id`      | El tenant. Junto a `document_type` es la clave primaria          |
-| `document_type`  | `order` o `quotation`                                           |
+| Columna          | Qué vale                                                                         |
+| ---------------- | -------------------------------------------------------------------------------- |
+| `tenant_id`      | El tenant. Junto a `document_type` es la clave primaria                          |
+| `document_type`  | `order` o `quotation`                                                            |
 | `prefix`         | De 0 a 10 caracteres en `[A-Za-z0-9-]`. El guion va en el prefijo, si lo quieres |
-| `include_year`   | `true` o `false`                                                 |
-| `year_separator` | `''`, `-` o `/`. Sólo se usa si `include_year`                   |
-| `min_digits`     | De 1 a 10. Relleno con ceros a la izquierda; es un mínimo, no un ancho |
+| `include_year`   | `true` o `false`                                                                 |
+| `year_separator` | `''`, `-` o `/`. Sólo se usa si `include_year`                                   |
+| `min_digits`     | De 1 a 10. Relleno con ceros a la izquierda; es un mínimo, no un ancho           |
 
-| Caso                       | `prefix` | `include_year` | `year_separator` | `min_digits` | Resultado        |
-| -------------------------- | -------- | -------------- | ---------------- | ------------ | ---------------- |
-| Default actual (sin fila)  | `PED-`   | `true`         | `-`              | `4`          | `PED-2026-0001`  |
-| Cliente que trae su serie  | `PW`     | `false`        | `''`             | `1`          | `PW234235`       |
-| Con año y seis dígitos     | `PW-`    | `true`         | `-`              | `6`          | `PW-2026-000007` |
+| Caso                      | `prefix` | `include_year` | `year_separator` | `min_digits` | Resultado        |
+| ------------------------- | -------- | -------------- | ---------------- | ------------ | ---------------- |
+| Default actual (sin fila) | `PED-`   | `true`         | `-`              | `4`          | `PED-2026-0001`  |
+| Cliente que trae su serie | `PW`     | `false`        | `''`             | `1`          | `PW234235`       |
+| Con año y seis dígitos    | `PW-`    | `true`         | `-`              | `6`          | `PW-2026-000007` |
 
 Los cuatro rangos son `CHECK` en la base: un `min_digits` de 11 o un `document_type` inventado no
 entran, sin importar quién corra el SQL.
@@ -1174,26 +1174,26 @@ acepta en `Development` y `Testing` (en Staging el arranque falla, para que no c
 
 ### Códigos de error de las rutas públicas
 
-| Status | `code` | Cuándo |
-| --- | --- | --- |
-| 400 | `store.public.body_invalid` | El cuerpo de `POST /order-requests` no es JSON o llegó cortado. |
-| 401 | `store.public.client_unauthorized` | Falta `X-Qep-Storefront-Key` o no coincide. |
-| 404 | `store.public.not_found` | No hay tienda publicada en ese host. En un `GET` sale con `Cache-Control: public, max-age=60` (el max-age del catálogo, sin `stale-while-revalidate`); el resto de los errores no se cachea. |
-| 404 | `store.public.product_not_found` / `store.public.department_not_found` | El producto o el departamento no existe o no se publica. |
-| 413 | `store.public.body_too_large` | El cuerpo de `POST /order-requests` pasa de 64 KB. |
-| 422 | `validation.failed` | Un campo no cumple su forma; el detalle viaja en `errors`. |
-| 422 | `store.public.currency_invalid` | Falta `currency` o no es una moneda de la tienda. |
-| 422 | `store.public.visitor_ip_required` | Un envío sin `X-Qep-Visitor-Ip` legible. |
-| 422 | `store.order_request.consent_required` | No se aceptó la política de datos. |
-| 422 | `store.order_request.captcha_invalid` | Turnstile rechazó el token. |
-| 422 | `store.order_request.country_not_sold` | El país de facturación o envío no es de venta. |
-| 422 | `store.order_request.city_invalid` | La ciudad no cumple su carril (ids en Colombia, texto afuera). |
-| 422 | `store.order_request.phone_invalid` | El teléfono no se normaliza en el país de su bloque. |
-| 422 | `store.order_request.line_unavailable` | Una línea del carrito ya no se puede vender. |
-| 422 | `store.order_request.currency_not_in_store` | La tienda ya no tiene cuenta de cobro en esa moneda. |
-| 429 | `store.order_request.daily_cap` | La tienda llegó a su tope diario de pedidos. |
-| 429 | (sin cuerpo, con `Retry-After`) | La IP del visitante superó su límite. |
-| 503 | `store.captcha.unavailable` | Turnstile no responde o su configuración está rota. |
+| Status | `code`                                                                 | Cuándo                                                                                                                                                                                       |
+| ------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `store.public.body_invalid`                                            | El cuerpo de `POST /order-requests` no es JSON o llegó cortado.                                                                                                                              |
+| 401    | `store.public.client_unauthorized`                                     | Falta `X-Qep-Storefront-Key` o no coincide.                                                                                                                                                  |
+| 404    | `store.public.not_found`                                               | No hay tienda publicada en ese host. En un `GET` sale con `Cache-Control: public, max-age=60` (el max-age del catálogo, sin `stale-while-revalidate`); el resto de los errores no se cachea. |
+| 404    | `store.public.product_not_found` / `store.public.department_not_found` | El producto o el departamento no existe o no se publica.                                                                                                                                     |
+| 413    | `store.public.body_too_large`                                          | El cuerpo de `POST /order-requests` pasa de 64 KB.                                                                                                                                           |
+| 422    | `validation.failed`                                                    | Un campo no cumple su forma; el detalle viaja en `errors`.                                                                                                                                   |
+| 422    | `store.public.currency_invalid`                                        | Falta `currency` o no es una moneda de la tienda.                                                                                                                                            |
+| 422    | `store.public.visitor_ip_required`                                     | Un envío sin `X-Qep-Visitor-Ip` legible.                                                                                                                                                     |
+| 422    | `store.order_request.consent_required`                                 | No se aceptó la política de datos.                                                                                                                                                           |
+| 422    | `store.order_request.captcha_invalid`                                  | Turnstile rechazó el token.                                                                                                                                                                  |
+| 422    | `store.order_request.country_not_sold`                                 | El país de facturación o envío no es de venta.                                                                                                                                               |
+| 422    | `store.order_request.city_invalid`                                     | La ciudad no cumple su carril (ids en Colombia, texto afuera).                                                                                                                               |
+| 422    | `store.order_request.phone_invalid`                                    | El teléfono no se normaliza en el país de su bloque.                                                                                                                                         |
+| 422    | `store.order_request.line_unavailable`                                 | Una línea del carrito ya no se puede vender.                                                                                                                                                 |
+| 422    | `store.order_request.currency_not_in_store`                            | La tienda ya no tiene cuenta de cobro en esa moneda.                                                                                                                                         |
+| 429    | `store.order_request.daily_cap`                                        | La tienda llegó a su tope diario de pedidos.                                                                                                                                                 |
+| 429    | (sin cuerpo, con `Retry-After`)                                        | La IP del visitante superó su límite.                                                                                                                                                        |
+| 503    | `store.captcha.unavailable`                                            | Turnstile no responde o su configuración está rota.                                                                                                                                          |
 
 Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 con el mismo pedido (la clave del pedido es
 `store-checkout:{clientRequestId}`, única por tenant), sin volver a pedir captcha. Los códigos conservan el prefijo
@@ -1267,22 +1267,22 @@ El perfil **no** valida contra la tienda (país vendido, ciudad del departamento
 
 #### Rutas
 
-| # | Método y ruta | Cuerpo | Éxito | Errores | Límite | IP | Turnstile | Sesión |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `POST /buyer/register` | `{ "email", "password", "acceptsDataPolicy": true, "turnstileToken", "profile": BuyerProfile \| null }` | `202` sin cuerpo | 422 `validation.failed` (`Email`, `Password`, `TurnstileToken`, `Profile.*`), 422 `store.buyer.consent_required`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
-| 2 | `POST /buyer/email/verify` | `{ "token" }` | `204` | 422 `validation.failed` (`Token`), 422 `store.buyer.token_invalid` (inexistente, vencido o usado: no se distingue) | credenciales | no | no | no |
-| 3 | `POST /buyer/email/resend` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
-| 4 | `POST /buyer/session` (login) | `{ "email", "password" }` | `200` `{ "sessionToken": "<43 chars base64url>", "expiresAt": "2026-12-07T15:04:05+00:00", "buyer": Buyer }` | 422 `validation.failed` (sólo vacíos), 401 `store.buyer.credentials_invalid` (email inexistente o contraseña mala, mismo cuerpo), 403 `store.buyer.email_not_verified` (contraseña correcta, sin verificar) | credenciales | opcional | no | no |
-| 5 | `GET /buyer/session` | — | `200` `Buyer` | 401 `store.buyer.session_invalid` | lectura | no | no | sí |
-| 6 | `DELETE /buyer/session` (logout) | — | `204` siempre (idempotente; sin sesión válida en ese host no hace nada) | — | lectura | no | no | opcional |
-| 7 | `PUT /buyer/profile` | `BuyerProfile` | `200` `Buyer` | 401 `store.buyer.session_invalid`, 422 `validation.failed` | lectura | no | no | sí |
-| 8 | `POST /buyer/password` (cambiar) | `{ "currentPassword", "newPassword" }` | `204`; revoca las **demás** sesiones, la actual sigue | 401 `store.buyer.session_invalid`, 422 `validation.failed` (`NewPassword`), 422 `store.buyer.password_incorrect` (`errors.CurrentPassword`) | credenciales | no | no | sí |
-| 9 | `POST /buyer/password/forgot` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
-| 10 | `POST /buyer/password/reset` | `{ "token", "newPassword" }` | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid` | credenciales | no | no | no |
-| 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
-| 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
-| 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`, totales, partes y `buyerNotes`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
-| 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está `Open` con pago `PaymentPending`, sin comprobantes, sin preparar y sin facturar, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
+| #   | Método y ruta                         | Cuerpo                                                                                                  | Éxito                                                                                                                                         | Errores                                                                                                                                                                                                                                                 | Límite       | IP       | Turnstile | Sesión   |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | -------- | --------- | -------- |
+| 1   | `POST /buyer/register`                | `{ "email", "password", "acceptsDataPolicy": true, "turnstileToken", "profile": BuyerProfile \| null }` | `202` sin cuerpo                                                                                                                              | 422 `validation.failed` (`Email`, `Password`, `TurnstileToken`, `Profile.*`), 422 `store.buyer.consent_required`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable`                                                                    | credenciales | sí       | sí        | no       |
+| 2   | `POST /buyer/email/verify`            | `{ "token" }`                                                                                           | `204`                                                                                                                                         | 422 `validation.failed` (`Token`), 422 `store.buyer.token_invalid` (inexistente, vencido o usado: no se distingue)                                                                                                                                      | credenciales | no       | no        | no       |
+| 3   | `POST /buyer/email/resend`            | `{ "email", "turnstileToken" }`                                                                         | `202` sin cuerpo                                                                                                                              | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable`                                                                                                                                                             | credenciales | sí       | sí        | no       |
+| 4   | `POST /buyer/session` (login)         | `{ "email", "password" }`                                                                               | `200` `{ "sessionToken": "<43 chars base64url>", "expiresAt": "2026-12-07T15:04:05+00:00", "buyer": Buyer }`                                  | 422 `validation.failed` (sólo vacíos), 401 `store.buyer.credentials_invalid` (email inexistente o contraseña mala, mismo cuerpo), 403 `store.buyer.email_not_verified` (contraseña correcta, sin verificar)                                             | credenciales | opcional | no        | no       |
+| 5   | `GET /buyer/session`                  | —                                                                                                       | `200` `Buyer`                                                                                                                                 | 401 `store.buyer.session_invalid`                                                                                                                                                                                                                       | lectura      | no       | no        | sí       |
+| 6   | `DELETE /buyer/session` (logout)      | —                                                                                                       | `204` siempre (idempotente; sin sesión válida en ese host no hace nada)                                                                       | —                                                                                                                                                                                                                                                       | lectura      | no       | no        | opcional |
+| 7   | `PUT /buyer/profile`                  | `BuyerProfile`                                                                                          | `200` `Buyer`                                                                                                                                 | 401 `store.buyer.session_invalid`, 422 `validation.failed`                                                                                                                                                                                              | lectura      | no       | no        | sí       |
+| 8   | `POST /buyer/password` (cambiar)      | `{ "currentPassword", "newPassword" }`                                                                  | `204`; revoca las **demás** sesiones, la actual sigue                                                                                         | 401 `store.buyer.session_invalid`, 422 `validation.failed` (`NewPassword`), 422 `store.buyer.password_incorrect` (`errors.CurrentPassword`)                                                                                                             | credenciales | no       | no        | sí       |
+| 9   | `POST /buyer/password/forgot`         | `{ "email", "turnstileToken" }`                                                                         | `202` sin cuerpo                                                                                                                              | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable`                                                                                                                                                             | credenciales | sí       | sí        | no       |
+| 10  | `POST /buyer/password/reset`          | `{ "token", "newPassword" }`                                                                            | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión                                                              | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid`                                                                                                                                                                       | credenciales | no       | no        | no       |
+| 11  | `POST /buyer/account/delete`          | `{ "password" }`                                                                                        | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada»                                          | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`)                                                                                                                                                             | credenciales | no       | no        | sí       |
+| 12  | `GET /buyer/orders?page&pageSize`     | —                                                                                                       | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50)                                                                                                | lectura      | sí       | no        | sí       |
+| 13  | `GET /buyer/orders/{orderId}`         | —                                                                                                       | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`, totales, partes y `buyerNotes`)                                                | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant)                                                                                                                                       | lectura      | sí       | no        | sí       |
+| 14  | `POST /buyer/orders/{orderId}/cancel` | —                                                                                                       | `200` `BuyerOrderDetail` ya anulado                                                                                                           | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está `Open` con pago `PaymentPending`, sin comprobantes, sin preparar y sin facturar, o perdió una carrera de concurrencia) | lectura      | sí       | no        | sí       |
 
 Notas:
 
@@ -1324,6 +1324,7 @@ Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de 
   automático (alta diferida, inicio de sesión) vuelve a tocar la cuenta de ese pedido.
 - **La anulación del comprador es más estricta que la del equipo** (D5, spec 2026-11-10): sólo si `Status == Open`, `PaymentStatus == PaymentPending`, no hay ningún comprobante de pago registrado, el pedido no está preparado **y** no está facturado (`Order.CanBeCancelledByBuyer`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
 - Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
+
 #### Cambios en `POST /order-requests`
 
 Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
@@ -1331,8 +1332,8 @@ Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
 ```jsonc
 {
   "...": "campos de hoy",
-  "createAccount": { "password": "…", "acceptsDataPolicy": true },   // opcional; null o ausente = no crear
-  "updateProfile": false                                              // opcional; default false
+  "createAccount": { "password": "…", "acceptsDataPolicy": true }, // opcional; null o ausente = no crear
+  "updateProfile": false, // opcional; default false
 }
 ```
 
@@ -1346,7 +1347,13 @@ Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
   El pedido se acepta igual y el BFF borra la cookie.
 
 ```jsonc
-{ "id": "<guid del pedido>", "number": "PED-2026-0001", "total": 10000, "currency": "COP", "buyerSessionRejected": false }
+{
+  "id": "<guid del pedido>",
+  "number": "PED-2026-0001",
+  "total": 10000,
+  "currency": "COP",
+  "buyerSessionRejected": false,
+}
 ```
 
 - Reintento con el mismo `clientRequestId`: el primer recibo, `buyerSessionRejected: false`, sin crear cuenta ni tocar el perfil.
@@ -1357,24 +1364,24 @@ Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
 
 Los envía Notifications; los enlaces apuntan al host de la tienda:
 
-| Evento | Enlace |
-| --- | --- |
-| Verificación (registro, reenvío, checkout con email nuevo o sin verificar) | `https://{host}/cuenta/verificar?token=<token>` |
-| «Ya tienes una cuenta» | `https://{host}/cuenta/ingresar` y `https://{host}/cuenta/olvide` |
-| Restablecer contraseña | `https://{host}/cuenta/restablecer?token=<token>` |
-| Cuenta eliminada | sin enlace |
+| Evento                                                                     | Enlace                                                            |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Verificación (registro, reenvío, checkout con email nuevo o sin verificar) | `https://{host}/cuenta/verificar?token=<token>`                   |
+| «Ya tienes una cuenta»                                                     | `https://{host}/cuenta/ingresar` y `https://{host}/cuenta/olvide` |
+| Restablecer contraseña                                                     | `https://{host}/cuenta/restablecer?token=<token>`                 |
+| Cuenta eliminada                                                           | sin enlace                                                        |
 
 ### Eventos de outbox
 
 Todos viven en `platform.outbox_messages`.
 
-| Evento | Lo escribe | Lo consume | Lleva |
-| --- | --- | --- | --- |
-| `store.buyer-signup-requested.v1` | Store, en la **misma transacción de Store posterior al pedido** (`createAccount`); idempotente por `orderId` (`buyers.processed_signups`) | `BuyerSignupRequestedWorker` (Buyers) | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
-| `buyers.email-verification-requested.v1` | Buyers | `BuyerVerificationDeliveryWorker` (Notifications) | token de verificación en claro |
-| `buyers.existing-account-notice.v1` | Buyers | `BuyerExistingAccountDeliveryWorker` | sin token |
-| `buyers.password-reset-requested.v1` | Buyers | `BuyerPasswordResetDeliveryWorker` | token de restablecer en claro |
-| `buyers.account-deleted.v1` | Buyers | `BuyerAccountDeletedDeliveryWorker` | sin token |
+| Evento                                   | Lo escribe                                                                                                                                | Lo consume                                        | Lleva                                                                    |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------ |
+| `store.buyer-signup-requested.v1`        | Store, en la **misma transacción de Store posterior al pedido** (`createAccount`); idempotente por `orderId` (`buyers.processed_signups`) | `BuyerSignupRequestedWorker` (Buyers)             | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
+| `buyers.email-verification-requested.v1` | Buyers                                                                                                                                    | `BuyerVerificationDeliveryWorker` (Notifications) | token de verificación en claro                                           |
+| `buyers.existing-account-notice.v1`      | Buyers                                                                                                                                    | `BuyerExistingAccountDeliveryWorker`              | sin token                                                                |
+| `buyers.password-reset-requested.v1`     | Buyers                                                                                                                                    | `BuyerPasswordResetDeliveryWorker`                | token de restablecer en claro                                            |
+| `buyers.account-deleted.v1`              | Buyers                                                                                                                                    | `BuyerAccountDeletedDeliveryWorker`               | sin token                                                                |
 
 Cada consumidor lleva su propio inbox (el de Buyers es `buyers.inbox_messages`). Los cuatro correos comparten `BuyerEmailPayload`
 (`AccountId`, `Email`, `StoreHost`, `StoreName`, `Token`).
@@ -1432,46 +1439,46 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 - [Cotizaciones y pedidos](docs/integracion-cotizaciones-y-pedidos.md) — estados, rutas, formas de
   los DTOs (el pedido con sus datos propios y el pedido manual) y códigos de error.
 
-| Grupo de rutas                                     | Operaciones                                                                                 | Autorización                                                                                 |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `/health/live`                                     | `GET`                                                                                       | anónimo                                                                                      |
-| `/health/ready`                                    | `GET`                                                                                       | anónimo                                                                                      |
-| `/api/v1/version`                                  | `GET`                                                                                       | anónimo, limitado por IP (`public`)                                                          |
-| `/api/v1/auth/registration-policy`                 | `GET`                                                                                       | anónimo                                                                                      |
-| `/api/v1/auth/register-tenant`                     | `POST`                                                                                      | token del proveedor OIDC                                                                     |
-| `/api/v1/auth/session`                             | `POST`                                                                                      | token del proveedor OIDC                                                                     |
-| `/api/v1/auth/me`, `/api/v1/auth/logout`           | `GET`, `POST`                                                                               | sólo autenticación                                                                           |
-| `/api/v1/tenants/{tenantId}/authorization/me`      | `GET`                                                                                       | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular) |
-| `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `advisorship.read`                                                                    |
-| `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PUT`                                                                                | `tenancy.settings.read` / `.update`                                                          |
-| `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
-| `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
-| `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
-| `/api/v1/tenants/{tenantId}/catalog/categories`    | `GET`, `POST`; por categoría `PUT` y `DELETE` (`If-Match`); `PUT pos-quick-access`           | `catalog.product.read` / `.manage`                                                           |
-| `/api/v1/tenants/{tenantId}/catalog/price-lists`   | `GET` (todas, por nombre), `POST` (201 + `Location`), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `catalog.price_list.in_use` si un canal o un distribuidor la usa), `overrides` (`GET` paginado con `search`; `PUT` por lote `{ set, remove }`, `If-Match`, hasta 500 filas). Ver [Listas de precios por canal](#listas-de-precios-por-canal) | `catalog.price_list.manage` |
-| `/api/v1/tenants/{tenantId}/catalog/channel-prices` | `GET` y `PUT` (la lista de `Pos`, `Store` y `Quotations`; `null` = precio base; sin `If-Match`) | `catalog.price_list.manage` |
-| `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
-| `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
-| `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
-| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `mark-paid`, `unmark-paid`, `prepare`, `unprepare`, `archive`, `unarchive`, `approve` (pedido `Wholesale`), `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional); el `GET` de la lista acepta `wholesaleApproval`=`Pending`\|`Approved` y responde `pendingWholesaleApprovals` (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual), [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp) y [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)) | `quotations.order.read` / `.manage` (`prepare`, `unprepare`, `archive`, `unarchive`, `approve`) / `.approve` (`mark-paid`, `unmark-paid`) / `.cancel` / `.invoice` |
-| `/api/v1/tenants/{tenantId}/orders-settings`       | `GET`, `PUT` (los tres ajustes del pedido; ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `tenancy.settings.read` / `.update` |
-| `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
-| `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
-| `/api/v1/tenants/{tenantId}/purchases/orders` | `GET` (`status`=`Draft`\|`Sent`\|`Confirmed`\|`Received`\|`Cancelled` sin importar mayúsculas, `supplierId`, `search` en el número o el nombre del proveedor, `page`, `pageSize` por defecto 50, tope 200; de la más nueva a la más vieja; `counts` por estado más `all` con los mismos filtros salvo `status`), `POST` (201 + `Location`, en `Draft` con número `OC-0001` por tenant; un alta rechazada no gasta número), `preview` (`POST`, mismo cuerpo, no escribe; `purchases.order.manage`), y por orden `GET`, `pdf` (`GET`, `application/pdf`, `OC-0001.pdf`, en cualquier estado), `PUT` y `DELETE` (sólo `Draft`, `If-Match`), `send`, `confirm` (cuerpo `{ lines: [{ lineId, confirmedQuantity, confirmedUnitCost }] }` con cada línea una vez), `receive` y `cancel` (`POST`, `If-Match`). Costos sin IVA; el IVA se suma en `totals` con la tasa que la línea copió del catálogo al guardar el borrador. Módulo `purchases` (apagado por defecto). Errores propios: `purchases.order.not_found` (404), `.not_draft` y `.invalid_transition` (409), `.empty`, `.line_not_in_catalog`, `.supplier_inactive`, `.invalid_currency`, `.confirm_lines_mismatch` (422), `.pdf_render_failed` (502); proveedor inexistente: `suppliers.supplier.not_found` (404) | `purchases.order.read` (`GET`, `pdf`) / `purchases.order.manage` (`POST`, `preview`, `PUT`, `DELETE`, `send`, `confirm`, `receive`, `cancel`) |
-| `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog` | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive` | `purchases.order.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/price-lists/preview` | `POST` (la lista sin guardar, `{ adjustmentPercent, visibility, categoryIds, exclusions }`: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe). Las listas mismas están en `/catalog/price-lists` desde el spec 2026-11-22. Módulo `wholesale` | `catalog.price_list.manage` + `wholesale.distributor.read` |
-| `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `catalog.price_list.manage` + `wholesale.distributor.read` |
-| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone`, `whatsAppConnectionId` y los datos del distribuidor: `businessName`, `country`, `identificationType`, `identificationNumber`, `contactName`, `email`, `cityId`, `cityName`, `address`, todos opcionales; `If-Match`; ver [Editar un distribuidor](#editar-un-distribuidor)), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
-| `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `email-code` (`POST`, anónimo, `credentials`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
-| `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
-| `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
-| `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
-| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause`, `automation/resume`, `automation/start` y `automation/continue` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`); `conversations/{id}/customer` (`PUT`, `If-Match`, cuerpo `{ customerId }`, `.manage`; ver [Identidad, clientes y asignación](#identidad-clientes-y-asignación-spec-2026-10-10)) | `messaging.conversation.read` / `.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)); `appointment-reminder` (`POST`, cuerpo opcional `{ body }`) y `appointment-reminder/draft` (`GET`), la plantilla `qep_agenda_recordatorio` del recordatorio de cita de la Agenda | `messaging.template.manage` |
-| `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
+| Grupo de rutas                                                                        | Operaciones                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Autorización                                                                                                                                                       |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/health/live`                                                                        | `GET`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | anónimo                                                                                                                                                            |
+| `/health/ready`                                                                       | `GET`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | anónimo                                                                                                                                                            |
+| `/api/v1/version`                                                                     | `GET`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | anónimo, limitado por IP (`public`)                                                                                                                                |
+| `/api/v1/auth/registration-policy`                                                    | `GET`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | anónimo                                                                                                                                                            |
+| `/api/v1/auth/register-tenant`                                                        | `POST`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | token del proveedor OIDC                                                                                                                                           |
+| `/api/v1/auth/session`                                                                | `POST`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | token del proveedor OIDC                                                                                                                                           |
+| `/api/v1/auth/me`, `/api/v1/auth/logout`                                              | `GET`, `POST`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | sólo autenticación                                                                                                                                                 |
+| `/api/v1/tenants/{tenantId}/authorization/me`                                         | `GET`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | sólo autenticación (deliberado: pedir permiso para saber qué permisos se tienen es circular)                                                                       |
+| `/api/v1/tenants/{tenantId}/authorization/catalog`                                    | `GET`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `advisorship.read`                                                                                                                                                 |
+| `/api/v1/tenants/{tenantId}/settings`                                                 | `GET`, `PUT`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `tenancy.settings.read` / `.update`                                                                                                                                |
+| `/api/v1/tenants/{tenantId}/memberships`                                              | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `advisorship.invite` / `.read` / `.manage`                                                                                                                         |
+| `/api/v1/tenants/{tenantId}/catalog/products`                                         | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `catalog.product.read` / `.manage`                                                                                                                                 |
+| `/api/v1/tenants/{tenantId}/catalog/options`                                          | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `catalog.product.read` / `.manage`                                                                                                                                 |
+| `/api/v1/tenants/{tenantId}/catalog/categories`                                       | `GET`, `POST`; por categoría `PUT` y `DELETE` (`If-Match`); `PUT pos-quick-access`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `catalog.product.read` / `.manage`                                                                                                                                 |
+| `/api/v1/tenants/{tenantId}/catalog/price-lists`                                      | `GET` (todas, por nombre), `POST` (201 + `Location`), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `catalog.price_list.in_use` si un canal o un distribuidor la usa), `overrides` (`GET` paginado con `search`; `PUT` por lote `{ set, remove }`, `If-Match`, hasta 500 filas). Ver [Listas de precios por canal](#listas-de-precios-por-canal)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `catalog.price_list.manage`                                                                                                                                        |
+| `/api/v1/tenants/{tenantId}/catalog/channel-prices`                                   | `GET` y `PUT` (la lista de `Pos`, `Store` y `Quotations`; `null` = precio base; sin `If-Match`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `catalog.price_list.manage`                                                                                                                                        |
+| `/api/v1/tenants/{tenantId}/files`                                                    | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `storage.file.read` / `.upload` / `.publish` / `.delete`                                                                                                           |
+| `/api/v1/tenants/{tenantId}/customers`                                                | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `customers.customer.read`                                                                                                                                          |
+| `/api/v1/tenants/{tenantId}/customers/{customerId}`                                   | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `customers.customer.merge`                                                                                                                                         |
+| `/api/v1/tenants/{tenantId}/orders`                                                   | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `mark-paid`, `unmark-paid`, `prepare`, `unprepare`, `archive`, `unarchive`, `approve` (pedido `Wholesale`), `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional); el `GET` de la lista acepta `wholesaleApproval`=`Pending`\|`Approved` y responde `pendingWholesaleApprovals` (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual), [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp) y [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `quotations.order.read` / `.manage` (`prepare`, `unprepare`, `archive`, `unarchive`, `approve`) / `.approve` (`mark-paid`, `unmark-paid`) / `.cancel` / `.invoice` |
+| `/api/v1/tenants/{tenantId}/orders-settings`                                          | `GET`, `PUT` (los tres ajustes del pedido; ver [Pedidos](#pedidos-datos-propios-y-pedido-manual))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `tenancy.settings.read` / `.update`                                                                                                                                |
+| `/api/v1/tenants/{tenantId}/pos`                                                      | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                                                                                       |
+| `/api/v1/tenants/{tenantId}/suppliers`                                                | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`)                                  |
+| `/api/v1/tenants/{tenantId}/purchases/orders`                                         | `GET` (`status`=`Draft`\|`Sent`\|`Confirmed`\|`Received`\|`Cancelled` sin importar mayúsculas, `supplierId`, `search` en el número o el nombre del proveedor, `page`, `pageSize` por defecto 50, tope 200; de la más nueva a la más vieja; `counts` por estado más `all` con los mismos filtros salvo `status`), `POST` (201 + `Location`, en `Draft` con número `OC-0001` por tenant; un alta rechazada no gasta número), `preview` (`POST`, mismo cuerpo, no escribe; `purchases.order.manage`), y por orden `GET`, `pdf` (`GET`, `application/pdf`, `OC-0001.pdf`, en cualquier estado), `PUT` y `DELETE` (sólo `Draft`, `If-Match`), `send`, `confirm` (cuerpo `{ lines: [{ lineId, confirmedQuantity, confirmedUnitCost }] }` con cada línea una vez), `receive` y `cancel` (`POST`, `If-Match`). Costos sin IVA; el IVA se suma en `totals` con la tasa que la línea copió del catálogo al guardar el borrador. Módulo `purchases` (apagado por defecto). Errores propios: `purchases.order.not_found` (404), `.not_draft` y `.invalid_transition` (409), `.empty`, `.line_not_in_catalog`, `.supplier_inactive`, `.invalid_currency`, `.confirm_lines_mismatch` (422), `.pdf_render_failed` (502); proveedor inexistente: `suppliers.supplier.not_found` (404) | `purchases.order.read` (`GET`, `pdf`) / `purchases.order.manage` (`POST`, `preview`, `PUT`, `DELETE`, `send`, `confirm`, `receive`, `cancel`)                      |
+| `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog`                 | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `purchases.order.manage`                                                                                                                                           |
+| `/api/v1/tenants/{tenantId}/wholesale/price-lists/preview`                            | `POST` (la lista sin guardar, `{ adjustmentPercent, visibility, categoryIds, exclusions }`: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe). Las listas mismas están en `/catalog/price-lists` desde el spec 2026-11-22. Módulo `wholesale`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `catalog.price_list.manage` + `wholesale.distributor.read`                                                                                                         |
+| `/api/v1/tenants/{tenantId}/wholesale/categories`                                     | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `catalog.price_list.manage` + `wholesale.distributor.read`                                                                                                         |
+| `/api/v1/tenants/{tenantId}/wholesale/distributors`                                   | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone`, `whatsAppConnectionId` y los datos del distribuidor: `businessName`, `country`, `identificationType`, `identificationNumber`, `contactName`, `email`, `cityId`, `cityName`, `address`, todos opcionales; `If-Match`; ver [Editar un distribuidor](#editar-un-distribuidor)), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`)                                                                                                                                                                                                                                                        | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto)                                                                                   |
+| `/api/v1/wholesale-invitations/{token}`                                               | `GET` (anónimo, límite `public`), `email-code` (`POST`, anónimo, `credentials`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | —                                                                                                                                                                  |
+| `/api/v1/tenants/{tenantId}/operator/tenants`                                         | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador                                                        |
+| `/api/v1/tenants/{tenantId}/integrations`                                             | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `integrations.connection.read` / `.manage`                                                                                                                         |
+| `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup`                    | `POST`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `integrations.connection.manage`                                                                                                                                   |
+| `/api/v1/tenants/{tenantId}/messaging`                                                | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause`, `automation/resume`, `automation/start` y `automation/continue` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`); `conversations/{id}/customer` (`PUT`, `If-Match`, cuerpo `{ customerId }`, `.manage`; ver [Identidad, clientes y asignación](#identidad-clientes-y-asignación-spec-2026-10-10))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `messaging.conversation.read` / `.manage`                                                                                                                          |
+| `/api/v1/tenants/{tenantId}/messaging/quick-replies`                                  | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage`                                                                                             |
+| `/api/v1/tenants/{tenantId}/messaging/resolution-reasons`                             | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage`                                                                                       |
+| `/api/v1/tenants/{tenantId}/messaging/business-hours`                                 | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage`                                                                                          |
+| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)); `appointment-reminder` (`POST`, cuerpo opcional `{ body }`) y `appointment-reminder/draft` (`GET`), la plantilla `qep_agenda_recordatorio` del recordatorio de cita de la Agenda; `hr-birthday-notice` (`POST`, cuerpo opcional `{ body }`) y `hr-birthday-notice/draft` (`GET`), la plantilla `qep_cumpleanos_equipo` del aviso de cumpleaños de RR. HH. (la pantalla la trae en `hrBirthdayNoticeTemplate`)                                                                                                                                                                                                                                                                                                                                                                                                                              | `messaging.template.manage`                                                                                                                                        |
+| `/api/webhooks/whatsapp`                                                              | `GET` (verificación), `POST` (firmado por Meta)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | anónimo, limitador `webhook`, exento de CSRF                                                                                                                       |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
 **403, nunca 404**, cuando el recurso pertenece a otro tenant.
@@ -1550,12 +1557,12 @@ del login (spec `docs/superpowers/specs/2026-10-14-version-desplegada-design.md`
 
 ### Configuración del tenant
 
-| Método   | Ruta                                        | Permiso                   |
-| -------- | -------------------------------------------- | -------------------------- |
-| `GET`    | `/api/v1/tenants/{tenantId}/settings`        | `tenancy.settings.read`   |
-| `PUT`    | `/api/v1/tenants/{tenantId}/settings`        | `tenancy.settings.update` |
-| `PUT`    | `/api/v1/tenants/{tenantId}/settings/logo`   | `tenancy.settings.update` |
-| `DELETE` | `/api/v1/tenants/{tenantId}/settings/logo`   | `tenancy.settings.update` |
+| Método   | Ruta                                       | Permiso                   |
+| -------- | ------------------------------------------ | ------------------------- |
+| `GET`    | `/api/v1/tenants/{tenantId}/settings`      | `tenancy.settings.read`   |
+| `PUT`    | `/api/v1/tenants/{tenantId}/settings`      | `tenancy.settings.update` |
+| `PUT`    | `/api/v1/tenants/{tenantId}/settings/logo` | `tenancy.settings.update` |
+| `DELETE` | `/api/v1/tenants/{tenantId}/settings/logo` | `tenancy.settings.update` |
 
 El `GET` devuelve la configuración y un encabezado `ETag` con su versión. El
 `PATCH` exige enviar esa versión en `If-Match`; una versión desactualizada
@@ -1624,13 +1631,13 @@ Spec: [2026-11-22 i18n](docs/superpowers/specs/2026-11-22-i18n-espanol-espana-y-
 formato regional: `defaultCulture`, `numberFormat` y `dateFormat` no cambian con él. El catálogo es
 `SupportedLanguages` (`BuildingBlocks.Domain.Localization`), y el diccionario de cada idioma lo tiene el frontend.
 
-| Dónde | Campo | Qué es |
-| ----- | ----- | ------ |
-| `GET`/`PUT /tenants/{tenantId}/settings` | `language` | El idioma del tenant, para quien no eligió uno: `es-419` (por defecto) o `es-ES`. Si el `PUT` no lo trae, se conserva; un valor fuera del catálogo responde `422 tenancy.settings.language.invalid`. |
-| `GET`/`PUT /auth/preferences` | `language` | Lo que eligió la persona en este tenant, o `null` para seguir al tenant. En el `PUT`: ausente o `null` conserva, `""` vuelve al del tenant, y un valor fuera del catálogo responde `422 identity.preference.language.invalid`. |
-| `GET`/`PUT /auth/preferences` | `effectiveLanguage` | El diccionario que tiene que cargar la pantalla: el elegido, si no el del tenant. |
-| `/auth/me`, `POST /auth/session` | `activeTenants[].language` | El idioma **efectivo** de la persona en cada tenant, disponible antes de la primera pintura. |
-| `POST /auth/register-tenant`, `POST /auth/password/register-tenant` | `language` | Opcional; ausente o `""` es `es-419`. |
+| Dónde                                                               | Campo                      | Qué es                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`/`PUT /tenants/{tenantId}/settings`                            | `language`                 | El idioma del tenant, para quien no eligió uno: `es-419` (por defecto) o `es-ES`. Si el `PUT` no lo trae, se conserva; un valor fuera del catálogo responde `422 tenancy.settings.language.invalid`.                           |
+| `GET`/`PUT /auth/preferences`                                       | `language`                 | Lo que eligió la persona en este tenant, o `null` para seguir al tenant. En el `PUT`: ausente o `null` conserva, `""` vuelve al del tenant, y un valor fuera del catálogo responde `422 identity.preference.language.invalid`. |
+| `GET`/`PUT /auth/preferences`                                       | `effectiveLanguage`        | El diccionario que tiene que cargar la pantalla: el elegido, si no el del tenant.                                                                                                                                              |
+| `/auth/me`, `POST /auth/session`                                    | `activeTenants[].language` | El idioma **efectivo** de la persona en cada tenant, disponible antes de la primera pintura.                                                                                                                                   |
+| `POST /auth/register-tenant`, `POST /auth/password/register-tenant` | `language`                 | Opcional; ausente o `""` es `es-419`.                                                                                                                                                                                          |
 
 Los correos ya están en español neutro con tuteo, y solo cambian los términos que en España se dicen distinto: «cotización»
 es «presupuesto» (correos de exportación, en el idioma efectivo de quien exportó) y «radicado» es «número de caso» (correo de apertura
@@ -1642,8 +1649,8 @@ en el siguiente export, porque el idioma entra a la huella; el despliegue no reg
 
 ### Invitación de memberships
 
-| Método | Ruta                                     | Permiso                     |
-| ------ | ---------------------------------------- | --------------------------- |
+| Método | Ruta                                     | Permiso              |
+| ------ | ---------------------------------------- | -------------------- |
 | `POST` | `/api/v1/tenants/{tenantId}/memberships` | `advisorship.invite` |
 
 La operación obtiene o crea en Identity un usuario invitado, y después crea su
@@ -1726,9 +1733,9 @@ validación también incluyen un mapa `errors`.
 
 ### Perfil del miembro: nombre y código de asesor
 
-| Método | Ruta                                                              | Permiso              |
-| ------ | ----------------------------------------------------------------- | --------------------- |
-| `PUT`  | `/api/v1/tenants/{tenantId}/memberships/{membershipId}/profile`   | `advisorship.manage` |
+| Método | Ruta                                                            | Permiso              |
+| ------ | --------------------------------------------------------------- | -------------------- |
+| `PUT`  | `/api/v1/tenants/{tenantId}/memberships/{membershipId}/profile` | `advisorship.manage` |
 
 Cambia, en un solo request, el nombre con el que el tenant presenta a la persona —el que imprime
 el PDF de cotización— y su código de asesor, el entero con el que la identifica el sistema externo
@@ -1774,7 +1781,16 @@ Cuando una cotización se factura a otra persona —la parte de facturación (`p
 dentro de `parties[]` (rol `Billing`):
 
 ```json
-{ "parties": { "billing": { "name": "Distribuciones Andinas S.A.S.", "identificationNumber": "901555444-1", "phone": "6015550000" }, "shipping": null } }
+{
+  "parties": {
+    "billing": {
+      "name": "Distribuciones Andinas S.A.S.",
+      "identificationNumber": "901555444-1",
+      "phone": "6015550000"
+    },
+    "shipping": null
+  }
+}
 ```
 
 - Vacío o sólo espacios es `null`; se recorta y nada más (los puntos y guiones de un NIT quedan
@@ -1799,9 +1815,9 @@ pinta el documento entero antes de que exista y lo crea de una vez. Son dos ruta
 `/api/v1/tenants/{tenantId}`, las dos con el permiso `quotations.quotation.manage` (el de siempre, sin permiso
 nuevo) y el mismo cuerpo, `CreateQuotationRequest`:
 
-| Método y ruta | Respuesta |
-| --- | --- |
-| `POST /quotations` | `201` + `Location` + `QuotationResponse`, en `Draft` con las líneas que traiga |
+| Método y ruta              | Respuesta                                                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `POST /quotations`         | `201` + `Location` + `QuotationResponse`, en `Draft` con las líneas que traiga                                          |
 | `POST /quotations/preview` | `200` + `QuotationResponse` calculado **sin persistir**: `id` vacío (`00000000-…`), `quotationNumber: ""`, `version: 0` |
 
 ```json
@@ -1940,12 +1956,12 @@ Spec 2026-11-24 §10 y §11 (`docs/superpowers/specs/2026-11-24-perfiles-de-fact
 Desde el spec 2026-11-10 el pedido tiene cuatro ejes independientes, al estilo de Shopify. Viajan por
 la API con su nombre:
 
-| Eje | Campo | Valores | Quién lo mueve |
-| --- | --- | --- | --- |
-| Estado | `status` | `Open`, `Archived`, `Cancelled` | `archive`/`unarchive` (`.manage`), `cancel` (`.cancel`), el archivado automático |
-| Pago | `paymentStatus` | `PaymentPending`, `PartialPaymentReceived`, `PendingVerification`, `FullPaymentReceived` | el sistema con los comprobantes; `mark-paid`/`unmark-paid` (`.approve`); Shopify |
-| Envío | `fulfillmentStatus` | `NotPrepared`, `Prepared` | `prepare`/`unprepare` (`.manage`) |
-| Facturado | `invoiced` (+ `invoicedAt`, `invoicedBy`) | marca | `invoice`/`uninvoice` (`.invoice`) |
+| Eje       | Campo                                     | Valores                                                                                  | Quién lo mueve                                                                   |
+| --------- | ----------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Estado    | `status`                                  | `Open`, `Archived`, `Cancelled`                                                          | `archive`/`unarchive` (`.manage`), `cancel` (`.cancel`), el archivado automático |
+| Pago      | `paymentStatus`                           | `PaymentPending`, `PartialPaymentReceived`, `PendingVerification`, `FullPaymentReceived` | el sistema con los comprobantes; `mark-paid`/`unmark-paid` (`.approve`); Shopify |
+| Envío     | `fulfillmentStatus`                       | `NotPrepared`, `Prepared`                                                                | `prepare`/`unprepare` (`.manage`)                                                |
+| Facturado | `invoiced` (+ `invoicedAt`, `invoicedBy`) | marca                                                                                    | `invoice`/`uninvoice` (`.invoice`)                                               |
 
 - **El pago lo calcula el sistema.** Sin comprobantes es `PaymentPending`; con menos que el neto,
   `PartialPaymentReceived`; con lo que lo cubre (comparado como lo muestra la moneda: pesos enteros en
@@ -1972,11 +1988,11 @@ la API con su nombre:
 - **Ajustes por tenant** en `GET`/`PUT /orders-settings` (`tenancy.settings.read` / `.update`; los tres
   campos son obligatorios en el `PUT`):
 
-  | Campo | Por defecto | Efecto |
-  | --- | --- | --- |
-  | `requirePaymentProofToMarkPaid` | `false` | `mark-paid` exige al menos un comprobante (`order.order.payment_proof_required`) |
-  | `requireFullPaymentToInvoice` | `true` | `invoice` exige pagado (`order.order.not_paid`) |
-  | `autoArchive` | `false` | un pedido que queda pagado y preparado se archiva solo, con historial «Archivado automáticamente» |
+  | Campo                           | Por defecto | Efecto                                                                                            |
+  | ------------------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+  | `requirePaymentProofToMarkPaid` | `false`     | `mark-paid` exige al menos un comprobante (`order.order.payment_proof_required`)                  |
+  | `requireFullPaymentToInvoice`   | `true`      | `invoice` exige pagado (`order.order.not_paid`)                                                   |
+  | `autoArchive`                   | `false`     | un pedido que queda pagado y preparado se archiva solo, con historial «Archivado automáticamente» |
 
 - Cada acción deja historial (`PaidMarked`, `PaidUnmarked`, `Prepared`, `PreparationUndone`, `Archived`,
   `Unarchived`) y auditoría (`quotation.order.paid_marked`, `…paid_unmarked`, `…prepared`,
@@ -2120,17 +2136,17 @@ hasta **250 fotos** en orden —la primera es la principal— y cada variante pu
 Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/catalog`, con `catalog.product.read` para leer y
 `catalog.product.manage` para escribir (sin permisos nuevos):
 
-| Método y ruta | Para qué |
-| --- | --- |
-| `GET /options` | La biblioteca de opciones del tenant, con `canDelete` por opción y por valor. El primer `GET` siembra «Talla» y «Color» **inactivas** (una sola vez: una predefinida borrada no vuelve) |
-| `POST /options` | Crea una opción activa con sus valores |
-| `PUT /options/{optionId}` | Reemplaza nombre, estado y la lista de valores en orden; un valor guardado que no viene se borra si ninguna variante lo usa (si alguna lo usa, `409 catalog.option.in_use`) |
-| `DELETE /options/{optionId}` | Borra una opción sin uso; en uso responde `409 catalog.option.in_use` y no cambia nada (se desactiva por el `PUT`) |
-| `GET /products` | El listado sigue siendo por producto: `code` (el de la única variante, `null` con varias), `variantCount` y `priceRange` por moneda. Con `includeVariants=true` trae además `variants[]`, las vendibles, para el selector de cotizaciones y pedidos (página topada en 50). `search` encuentra por nombre, `Code` de variante o código de barras |
-| `GET /products/{productId}` | El detalle: `options[]`, **todas** las `variants[]` en orden (con nombre visible, `canDelete` e `imageUrl` ya resueltos), `gallery[]` y `version` |
-| `POST /products` | Crea producto, opciones, variantes y galería de una vez |
-| `PUT /products/{productId}` | Reemplaza el recurso entero con `expectedVersion` (`412 concurrency.conflict` si cambió). Las variantes se emparejan por `id`; una guardada que no viene responde `422 catalog.variant.missing_in_request`: **omitir no borra**. Borrar es mandar su id en `deletedVariantIds`, y se borra si ninguna línea la usa o se desactiva si alguna sí |
-| `POST /products/price-scales/copy` | Copia las escalas de una variante (`sourceVariantId`) a otras (`targetVariantIds`, hasta 200 variantes) |
+| Método y ruta                      | Para qué                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /options`                     | La biblioteca de opciones del tenant, con `canDelete` por opción y por valor. El primer `GET` siembra «Talla» y «Color» **inactivas** (una sola vez: una predefinida borrada no vuelve)                                                                                                                                                         |
+| `POST /options`                    | Crea una opción activa con sus valores                                                                                                                                                                                                                                                                                                          |
+| `PUT /options/{optionId}`          | Reemplaza nombre, estado y la lista de valores en orden; un valor guardado que no viene se borra si ninguna variante lo usa (si alguna lo usa, `409 catalog.option.in_use`)                                                                                                                                                                     |
+| `DELETE /options/{optionId}`       | Borra una opción sin uso; en uso responde `409 catalog.option.in_use` y no cambia nada (se desactiva por el `PUT`)                                                                                                                                                                                                                              |
+| `GET /products`                    | El listado sigue siendo por producto: `code` (el de la única variante, `null` con varias), `variantCount` y `priceRange` por moneda. Con `includeVariants=true` trae además `variants[]`, las vendibles, para el selector de cotizaciones y pedidos (página topada en 50). `search` encuentra por nombre, `Code` de variante o código de barras |
+| `GET /products/{productId}`        | El detalle: `options[]`, **todas** las `variants[]` en orden (con nombre visible, `canDelete` e `imageUrl` ya resueltos), `gallery[]` y `version`                                                                                                                                                                                               |
+| `POST /products`                   | Crea producto, opciones, variantes y galería de una vez                                                                                                                                                                                                                                                                                         |
+| `PUT /products/{productId}`        | Reemplaza el recurso entero con `expectedVersion` (`412 concurrency.conflict` si cambió). Las variantes se emparejan por `id`; una guardada que no viene responde `422 catalog.variant.missing_in_request`: **omitir no borra**. Borrar es mandar su id en `deletedVariantIds`, y se borra si ninguna línea la usa o se desactiva si alguna sí  |
+| `POST /products/price-scales/copy` | Copia las escalas de una variante (`sourceVariantId`) a otras (`targetVariantIds`, hasta 200 variantes)                                                                                                                                                                                                                                         |
 
 - **Nombre visible**: el del producto en la variante por defecto; con opciones,
   `«{producto} – {valor1} / {valor2} / {valor3}»` (guion largo con espacios). Lo arma el backend y es lo
@@ -2165,21 +2181,21 @@ Los errores llegan por dos caminos, y el formulario lee los dos con el mismo map
   omitirlo no desactiva.
 - **Contra la base**: con su propio `code` y, cuando señala una fila, también `errors` con el campo:
 
-| Código | Status | Cuándo |
-| --- | --- | --- |
-| `catalog.option.name_taken` | 422 | Ya existe una opción con ese nombre en el tenant (sin distinguir mayúsculas ni espacios de borde) |
-| `catalog.option.not_found` | 404 / 422 | `404` en `/options/{optionId}`; `422` con `errors["OptionIds[i]"]` cuando el producto nombra una opción que no es del tenant |
-| `catalog.option.in_use` | 409 | Borrar una opción, o quitar un valor, que alguna variante usa |
-| `catalog.option.inactive` / `value_inactive` | 422 | Usar en un producto una opción o un valor inactivo que ese producto no usaba |
-| `catalog.option.value_not_found` | 422 | Un valor que no es de esa opción (`errors["Variants[i].OptionValueIds[j]"]`), o un id de valor desconocido o repetido en el `PUT` de la opción |
-| `catalog.variant.combination_duplicate` | 422 | Dos variantes activas con la misma combinación |
-| `catalog.variant.active_required` | 422 | Ninguna variante activa |
-| `catalog.product.code_taken` | 422 | El `Code` ya es de una variante de otro producto (`errors["Variants[i].Code"]`) |
-| `catalog.variant.barcode_taken` | 422 | El código de barras ya lo usa otra variante del tenant: el índice es único en todo el tenant (`errors["Variants[i].Barcode"]`) |
-| `catalog.variant.missing_in_request` | 422 | El `PUT` omite una variante guardada que no está en `deletedVariantIds` |
-| `catalog.variant.duplicated_in_request` | 422 | Un id en `variants` y en `deletedVariantIds` a la vez, o repetido en `deletedVariantIds` |
-| `catalog.variant.not_found` | 422 / 404 | Un id de variante que no es del producto; `404` en la copia de escalas |
-| `concurrency.conflict` | 412 | `expectedVersion` vieja en el `PUT` del producto |
+| Código                                       | Status    | Cuándo                                                                                                                                         |
+| -------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog.option.name_taken`                  | 422       | Ya existe una opción con ese nombre en el tenant (sin distinguir mayúsculas ni espacios de borde)                                              |
+| `catalog.option.not_found`                   | 404 / 422 | `404` en `/options/{optionId}`; `422` con `errors["OptionIds[i]"]` cuando el producto nombra una opción que no es del tenant                   |
+| `catalog.option.in_use`                      | 409       | Borrar una opción, o quitar un valor, que alguna variante usa                                                                                  |
+| `catalog.option.inactive` / `value_inactive` | 422       | Usar en un producto una opción o un valor inactivo que ese producto no usaba                                                                   |
+| `catalog.option.value_not_found`             | 422       | Un valor que no es de esa opción (`errors["Variants[i].OptionValueIds[j]"]`), o un id de valor desconocido o repetido en el `PUT` de la opción |
+| `catalog.variant.combination_duplicate`      | 422       | Dos variantes activas con la misma combinación                                                                                                 |
+| `catalog.variant.active_required`            | 422       | Ninguna variante activa                                                                                                                        |
+| `catalog.product.code_taken`                 | 422       | El `Code` ya es de una variante de otro producto (`errors["Variants[i].Code"]`)                                                                |
+| `catalog.variant.barcode_taken`              | 422       | El código de barras ya lo usa otra variante del tenant: el índice es único en todo el tenant (`errors["Variants[i].Barcode"]`)                 |
+| `catalog.variant.missing_in_request`         | 422       | El `PUT` omite una variante guardada que no está en `deletedVariantIds`                                                                        |
+| `catalog.variant.duplicated_in_request`      | 422       | Un id en `variants` y en `deletedVariantIds` a la vez, o repetido en `deletedVariantIds`                                                       |
+| `catalog.variant.not_found`                  | 422 / 404 | Un id de variante que no es del producto; `404` en la copia de escalas                                                                         |
+| `concurrency.conflict`                       | 412       | `expectedVersion` vieja en el `PUT` del producto                                                                                               |
 
 Los códigos de antes se conservan; `catalog.product.code_taken` ahora habla del `Code` de la variante.
 El contrato completo para el frontend, con los cuerpos y las respuestas, está en
@@ -2244,16 +2260,16 @@ contraentrega.
 **Transportadoras** (`CarrierEndpoints`, bajo `/api/v1/tenants/{tenantId}`; lectura con
 `TenancyPermissions.SettingsRead`, escritura con `TenancyPermissions.SettingsUpdate`):
 
-| Método | Ruta | Qué hace |
-| --- | --- | --- |
-| `GET` | `/carriers` | La tasa del IVA del envío, **todas** las transportadoras, activas e inactivas, en orden, y `freightChargeModes` |
-| `POST` | `/carriers` | Crea una (`name`, `externalNames`, `supportsCashOnDelivery`); responde 201 con `ETag` |
-| `PUT` | `/carriers/{carrierId}` | Edita; exige `If-Match` con la `version` cargada (428 sin él, 412 si cambió) |
-| `POST` | `/carriers/{carrierId}/activate` y `/deactivate` | Prende o apaga |
-| `PUT` | `/carriers/order` | Reordena con la lista completa de ids (`carrierIds`) |
-| `PUT` | `/carriers/freight-tax-rate` | Fija la tasa del IVA del envío (`taxRateId`); con `taxRateId: null` la quita |
-| `PUT` | `/carriers/freight-charge-modes` | Las opciones de «¿Quién paga el envío?» que quedan activas (`enabledModes`) y la por defecto (`defaultMode`, opcional); responde como `GET /carriers` |
-| `GET` | `/shipping-options` | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas, la tasa, `freightChargeModes` y `defaultFreightChargeMode` |
+| Método | Ruta                                             | Qué hace                                                                                                                                              |
+| ------ | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/carriers`                                      | La tasa del IVA del envío, **todas** las transportadoras, activas e inactivas, en orden, y `freightChargeModes`                                       |
+| `POST` | `/carriers`                                      | Crea una (`name`, `externalNames`, `supportsCashOnDelivery`); responde 201 con `ETag`                                                                 |
+| `PUT`  | `/carriers/{carrierId}`                          | Edita; exige `If-Match` con la `version` cargada (428 sin él, 412 si cambió)                                                                          |
+| `POST` | `/carriers/{carrierId}/activate` y `/deactivate` | Prende o apaga                                                                                                                                        |
+| `PUT`  | `/carriers/order`                                | Reordena con la lista completa de ids (`carrierIds`)                                                                                                  |
+| `PUT`  | `/carriers/freight-tax-rate`                     | Fija la tasa del IVA del envío (`taxRateId`); con `taxRateId: null` la quita                                                                          |
+| `PUT`  | `/carriers/freight-charge-modes`                 | Las opciones de «¿Quién paga el envío?» que quedan activas (`enabledModes`) y la por defecto (`defaultMode`, opcional); responde como `GET /carriers` |
+| `GET`  | `/shipping-options`                              | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas, la tasa, `freightChargeModes` y `defaultFreightChargeMode`            |
 
 - **Las transportadoras no se borran, se desactivan.** Un documento guarda la foto del nombre al elegirla y
   no pierde lo que ya eligió si la transportadora se apaga después; una desactivada no se puede elegir en
@@ -2270,7 +2286,7 @@ contraentrega.
   `Free`, en ese orden) aunque estén apagadas. Las tres nacen activas: sin fila o sin tocar, todas. Se fija
   con `PUT /carriers/freight-charge-modes` y `{ "enabledModes": ["Charged", "Free"] }`; las que no vienen se
   apagan, la lista vacía las apaga todas, un nombre repetido se tolera y uno desconocido es `422
-  validation.failed` con `errors["EnabledModes[i]"]` (sin `enabledModes` también, en `errors["EnabledModes"]`).
+validation.failed` con `errors["EnabledModes[i]"]` (sin `enabledModes` también, en `errors["EnabledModes"]`).
   Elegir o cambiar a un modo apagado al crear, guardar o previsualizar responde
   `…freight_charge_mode_disabled`; el documento que ya lo tenía lo conserva mientras no lo cambie, y
   quitarlo (`null`) siempre se puede. No aplica a la conversión (copia lo de la cotización) ni a Shopify. Se
@@ -2294,6 +2310,7 @@ contraentrega.
 `shipping: { carrierId, freightChargeMode, freightAmount, cashOnDelivery }`, y las respuestas devuelven
 `shipping` con forma fija, también en recogida:
 `{ isStorePickup, carrier: { id, name } | null, chargeMode, freightAmount, freightTaxPercentage, freightSubtotal, freightTaxAmount, cashOnDelivery }`.
+
 - `freightChargeMode` viaja con el nombre del enum: `Charged` (se cobra al cliente y suma al total),
   `OnDelivery` (lo paga el cliente a la transportadora: el valor es informativo y **no suma**) o `Free`
   (valor 0). `null` es «sin envío registrado».
@@ -2441,10 +2458,10 @@ su fila y la semilla la recree.
 Un tenant cuyo layout ya existía conserva el de antes —no hay migración de layouts—
 y lo cambia desde su pantalla de configuración.
 
-| Método | Ruta                                                | Permiso                  |
-| ------ | --------------------------------------------------- | ------------------------ |
-| `GET`  | `/api/v1/tenants/{tenantId}/orders-export-layout`   | `tenancy.settings.read`  |
-| `PUT`  | `/api/v1/tenants/{tenantId}/orders-export-layout`   | `tenancy.settings.update`|
+| Método | Ruta                                              | Permiso                   |
+| ------ | ------------------------------------------------- | ------------------------- |
+| `GET`  | `/api/v1/tenants/{tenantId}/orders-export-layout` | `tenancy.settings.read`   |
+| `PUT`  | `/api/v1/tenants/{tenantId}/orders-export-layout` | `tenancy.settings.update` |
 
 El `GET` devuelve el layout **efectivo**: lo guardado en su orden más toda columna del catálogo
 que no esté guardada, al final, con su nombre por defecto y visible u oculta según su
@@ -2473,13 +2490,13 @@ mismas reglas que `sheetName` —permisos, `If-Match`, auditoría y no-op—, y 
 que ya existía quedó en `true` (migración `AddOrdersExportLayoutPhoneDialCode`, aditiva). Sólo toca las cuatro columnas de
 teléfono del catálogo —`phone`, `customer_phone`, `billing_phone` y `shipping_phone`—; las fijas salen como se escribieron.
 
-| `includePhoneDialCode` | Teléfono guardado                     | Sale en el Excel |
-| ---------------------- | ------------------------------------- | ---------------- |
-| `true`                 | cualquiera                            | como está        |
-| `false`                | `+573001234567`                       | `3001234567`     |
-| `false`                | `+34612345678`                        | `612345678`      |
-| `false`                | sin `+` (`3001234567`, `573001234567`) | como está       |
-| `false`                | con `+` y no se puede partir          | como está        |
+| `includePhoneDialCode` | Teléfono guardado                      | Sale en el Excel |
+| ---------------------- | -------------------------------------- | ---------------- |
+| `true`                 | cualquiera                             | como está        |
+| `false`                | `+573001234567`                        | `3001234567`     |
+| `false`                | `+34612345678`                         | `612345678`      |
+| `false`                | sin `+` (`3001234567`, `573001234567`) | como está        |
+| `false`                | con `+` y no se puede partir           | como está        |
 
 El número se parte con `libphonenumber` (`IPhoneNumberSplitter` de Customers, detrás del puerto `IQuotationPhoneNumbers`); lo que
 no es un número válido no se puede partir.
@@ -2495,23 +2512,23 @@ Un layout guardado se aplica en la siguiente exportación de pedidos; el de coti
 Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/pos`. El detalle de cada contrato vive en
 el spec del slice; esta tabla es el inventario.
 
-| Método y ruta                      | Permiso                | Para qué                                                                         |
-| ---------------------------------- | ---------------------- | -------------------------------------------------------------------------------- |
-| `GET /register`                    | `pos.register.operate` | Contexto de la caja: cajero, empresas emisoras y la sesión abierta con su versión |
-| `POST /sessions`                   | `pos.register.operate` | Abre la caja con la base inicial (`openingFloat`, obligatoria)                   |
-| `POST /sessions/{sessionId}/close` | `pos.register.operate` | Cierra la caja con el conteo (`countedCash`, obligatorio); exige `If-Match`      |
-| `GET /sessions`                    | `pos.sale.read`        | Lista paginada de sesiones de caja                                               |
-| `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                   |
-| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles; `categoryId` filtra por esa categoría y sus descendientes (un id ajeno o desconocido da página vacía) |
+| Método y ruta                      | Permiso                | Para qué                                                                                                                                                                                                                     |
+| ---------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /register`                    | `pos.register.operate` | Contexto de la caja: cajero, empresas emisoras y la sesión abierta con su versión                                                                                                                                            |
+| `POST /sessions`                   | `pos.register.operate` | Abre la caja con la base inicial (`openingFloat`, obligatoria)                                                                                                                                                               |
+| `POST /sessions/{sessionId}/close` | `pos.register.operate` | Cierra la caja con el conteo (`countedCash`, obligatorio); exige `If-Match`                                                                                                                                                  |
+| `GET /sessions`                    | `pos.sale.read`        | Lista paginada de sesiones de caja                                                                                                                                                                                           |
+| `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                                                                                                                                                               |
+| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles; `categoryId` filtra por esa categoría y sus descendientes (un id ajeno o desconocido da página vacía)                        |
 | `GET /categories`                  | `pos.sale.create`      | Categorías con el conteo de productos activos acumulado, incluidas las de 0, `quickAccessPosition` (chips de acceso rápido, `null` sin fijar; la lista sigue por nombre) y `total` de activos del tenant con o sin categoría |
-| `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
-| `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
-| `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional |
-| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento, CUC o teléfono (desde 7 dígitos, sin importar el formato) |
-| `POST /customers`                  | `pos.sale.customer`    | Alta rápida: ficha incompleta con documento; 422 `pos.customer.identification_taken` trae `existing` |
-| `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
-| `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo     |
-| `POST /sales/{saleId}/void`        | `pos.sale.void`        | Anula una venta, con motivo; sólo si su caja sigue abierta                       |
+| `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code`                                                                                                                                    |
+| `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`)                                                                                                                                     |
+| `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional                                                                                   |
+| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento, CUC o teléfono (desde 7 dígitos, sin importar el formato)                                                                             |
+| `POST /customers`                  | `pos.sale.customer`    | Alta rápida: ficha incompleta con documento; 422 `pos.customer.identification_taken` trae `existing`                                                                                                                         |
+| `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                                                                                                                                                                         |
+| `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo                                                                                                                                                 |
+| `POST /sales/{saleId}/void`        | `pos.sale.void`        | Anula una venta, con motivo; sólo si su caja sigue abierta                                                                                                                                                                   |
 
 ### Clientes: documento repetido, coincidencias y anomalías
 
@@ -2519,7 +2536,7 @@ Spec `2026-10-24-clientes-duplicados`. Tres reglas, cada una con su respuesta:
 
 - **R1, mismo tipo y mismo número: se frena.** `POST`/`PUT /customers` responde 422
   `customers.customer.identification_taken` y ahora trae `existing: { id, name, identificationType,
-  identificationNumber, cuc | null, isComplete, isActive }`, el cliente que ya tiene ese documento. `existing` puede faltar
+identificationNumber, cuc | null, isComplete, isActive }`, el cliente que ya tiene ese documento. `existing` puede faltar
   (carrera entre dos altas: el índice único gana y el dueño ya no se encuentra al releer).
 - **R2, mismo número con otro tipo, o el mismo tipo con otro formato: se avisa, no se frena.**
   `GET …/customers/identification-matches?number=&type=&excludeCustomerId=` (`customers.customer.read`; `number` obligatorio,
@@ -2629,13 +2646,13 @@ auto-accept del login: `POST /api/v1/auth/session` sigue aceptando todas las
 membresías invitadas del usuario al iniciar sesión, y este camino se le suma en
 lugar de reemplazarlo.
 
-| Estado | Código de dominio                       | Significado                              |
-| ------ | --------------------------------------- | ---------------------------------------- |
-| `401`  | —                                       | No hay sesión                            |
-| `403`  | `tenancy.invitation.user_mismatch`      | La sesión es de otra cuenta              |
-| `404`  | `tenancy.invitation.not_found`          | Ningún hash coincide con el token        |
-| `422`  | `tenancy.membership.invitation_expired` | La invitación venció                     |
-| `422`  | `tenancy.membership.not_invited`        | El estado ya no admite aceptar           |
+| Estado | Código de dominio                       | Significado                       |
+| ------ | --------------------------------------- | --------------------------------- |
+| `401`  | —                                       | No hay sesión                     |
+| `403`  | `tenancy.invitation.user_mismatch`      | La sesión es de otra cuenta       |
+| `404`  | `tenancy.invitation.not_found`          | Ningún hash coincide con el token |
+| `422`  | `tenancy.membership.invitation_expired` | La invitación venció              |
+| `422`  | `tenancy.membership.not_invited`        | El estado ya no admite aceptar    |
 
 El `403` no revela de quién es la invitación: mismo criterio de no filtrar
 identidades que el `403` de login. Y el `422` distingue vencimiento de estado no
@@ -2667,14 +2684,14 @@ El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}?ev={pr
 link viejo pasa a `404`). `ev` es la prueba de buzón (spec `2026-11-24-invitacion-distribuidor-prueba-de-correo-design.md`): sólo
 la lleva el link del correo; el de «Copiar», `invitationUrl` y el aviso de WhatsApp van sin ella.
 
-| Método | Ruta                                                   | Autenticación                        | Límite        |
-| ------ | ------------------------------------------------------ | ------------------------------------ | ------------- |
-| `GET`  | `/api/v1/wholesale-invitations/{token}`                | Anónimo                              | `public`      |
-| `POST` | `/api/v1/wholesale-invitations/{token}/email-code`     | Anónimo, `{ email }`, siempre `202`  | `credentials` |
-| `POST` | `/api/v1/wholesale-invitations/{token}/session`        | Bearer de Google (o stub)            | `credentials` |
+| Método | Ruta                                                          | Autenticación                                                    | Límite        |
+| ------ | ------------------------------------------------------------- | ---------------------------------------------------------------- | ------------- |
+| `GET`  | `/api/v1/wholesale-invitations/{token}`                       | Anónimo                                                          | `public`      |
+| `POST` | `/api/v1/wholesale-invitations/{token}/email-code`            | Anónimo, `{ email }`, siempre `202`                              | `credentials` |
+| `POST` | `/api/v1/wholesale-invitations/{token}/session`               | Bearer de Google (o stub)                                        | `credentials` |
 | `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ email, password, code?, termsVersion, emailProof? }` | `credentials` |
-| `GET`  | `/api/v1/wholesale-invitations/{token}/linkable-tenants` | Sesión QEP                         | `public`      |
-| `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
+| `GET`  | `/api/v1/wholesale-invitations/{token}/linkable-tenants`      | Sesión QEP                                                       | `public`      |
+| `POST` | `/api/v1/wholesale-invitations/{token}/accept`                | Sesión QEP                                                       | `public`      |
 
 Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.md`: el link identifica la invitación y el
 correo no tiene que ser el invitado. Por sí solo no prueba el buzón; el del correo sí puede, con su `ev` (spec 2026-11-24).
@@ -2698,7 +2715,7 @@ correo no tiene que ser el invitado. Por sí solo no prueba el buzón; el del co
 - `accept` recibe `{ mode: "NewTenant", termsVersion? }` o `{ mode: "LinkTenant", tenantId }`. `NewTenant` crea el tenant del
   distribuidor con la razón social de la invitación como nombre y un slug que sugiere el servidor (con sufijo si está tomado;
   si se lo ganan en una carrera, reintenta hasta 3 veces), con `catalog, customers, companies, quotations, orders, reporting,
-  suppliers, purchases`, aunque el alta pública esté apagada; un `displayName` o `slug` en el cuerpo se usan si vienen (el país es
+suppliers, purchases`, aunque el alta pública esté apagada; un `displayName` o `slug` en el cuerpo se usan si vienen (el país es
   siempre el del distribuidor). Quien no aceptó
   la versión vigente de los términos manda `termsVersion` (`422` en `TermsVersion` sin ella). `LinkTenant` vincula un tenant
   donde la sesión es owner o tiene el rol de sistema `admin` en una membresía activa; prende `catalog`, `suppliers` y
@@ -2779,7 +2796,7 @@ enviarla, crea el pedido en el tenant mayorista (`source: "Wholesale"`, `externa
   precio de lista con IVA.
 - **Enviar** es idempotente por la clave `purchase-order:{comprador}:{orden}`: un reintento adopta el pedido que ya existe con sus
   líneas, sin revalidar. Si el motor de pedidos del mayorista lo rechaza, o su moneda ya no es la de la orden, `409
-  purchases.order.wholesaler_rejected` (el código interno queda en el log).
+purchases.order.wholesaler_rejected` (el código interno queda en el log).
 - **Aprobar** (`POST /orders/{id}/approve`, `quotations.order.manage`) congela el pedido y publica
   `quotations.order.wholesale-approved.v1` con las líneas finales. Compras lo consume con su inbox (`purchases.inbox_messages`,
   consumidor `purchases.wholesale-order-events`) y confirma la orden línea por línea (`Unchanged`, `Changed`, `Rejected`,
@@ -2797,10 +2814,10 @@ cuelgan de `/api/v1/tenants/{tenantId}/hr/employees/{employeeId}/contracts/{cont
 `If-Match` con `employee.version` (sin el header, 428; con una versión vieja, 412, como las demás escrituras con `If-Match` de
 Hr), y responden la ficha completa (`EmployeeDetailDto`).
 
-| Ruta | Cuerpo |
-| --- | --- |
-| `PUT /assignments/{recordId}` | `{ effectiveDate, positionId, areaId, workplaceId, confirmRewrite }` (`areaId` opcional) |
-| `DELETE /assignments/{recordId}` | sin cuerpo |
+| Ruta                             | Cuerpo                                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `PUT /assignments/{recordId}`    | `{ effectiveDate, positionId, areaId, workplaceId, confirmRewrite }` (`areaId` opcional) |
+| `DELETE /assignments/{recordId}` | sin cuerpo                                                                               |
 
 El PDF del registro se sigue cambiando con `PUT /assignments/{recordId}/document`. La fecha del primer registro no se edita (es
 el inicio del contrato) y el primero no se elimina. Un registro que ya rigió en una nómina `Approved` o `Closed` del empleado
@@ -2818,22 +2835,41 @@ ficha):
 Validación: 422 `validation.failed` con `effectiveDate`, `positionId`, `areaId` y `workplaceId` en el mapa `errors`, como el
 alta (incluye la fecha posterior a la terminación). Los códigos de dominio:
 
-| Código | Estado | Cuándo |
-| --- | --- | --- |
-| `hr.assignment.not_found` | 404 | el registro no es del contrato |
-| `hr.contract.not_active` | 422 | contrato terminado |
-| `hr.assignment.workplace_other_company` | 422 | el centro es de otra empresa; trae el mapa `errors` con `workplaceId` |
-| `hr.assignment.rewrite_unconfirmed` | 422 | `PUT` sin `confirmRewrite: true` |
-| `hr.assignment.first_record_date_fixed` | 422 | cambiar la fecha del primero |
-| `hr.assignment.first_record_not_deletable` | 422 | eliminar el primero |
-| `hr.assignment.effective_date_out_of_order` | 422 | la fecha nueva no queda entre el registro anterior y el siguiente |
-| `hr.assignment.unchanged` | 422 | dos registros vecinos quedarían iguales |
-| `hr.assignment.site_change_not_first_of_month` | 422 | un cambio de lugar quedaría en un día distinto del 1 |
-| `hr.assignment.used_by_payroll` | 422 | alcanza una nómina `Approved` o `Closed` |
+| Código                                         | Estado | Cuándo                                                                |
+| ---------------------------------------------- | ------ | --------------------------------------------------------------------- |
+| `hr.assignment.not_found`                      | 404    | el registro no es del contrato                                        |
+| `hr.contract.not_active`                       | 422    | contrato terminado                                                    |
+| `hr.assignment.workplace_other_company`        | 422    | el centro es de otra empresa; trae el mapa `errors` con `workplaceId` |
+| `hr.assignment.rewrite_unconfirmed`            | 422    | `PUT` sin `confirmRewrite: true`                                      |
+| `hr.assignment.first_record_date_fixed`        | 422    | cambiar la fecha del primero                                          |
+| `hr.assignment.first_record_not_deletable`     | 422    | eliminar el primero                                                   |
+| `hr.assignment.effective_date_out_of_order`    | 422    | la fecha nueva no queda entre el registro anterior y el siguiente     |
+| `hr.assignment.unchanged`                      | 422    | dos registros vecinos quedarían iguales                               |
+| `hr.assignment.site_change_not_first_of_month` | 422    | un cambio de lugar quedaría en un día distinto del 1                  |
+| `hr.assignment.used_by_payroll`                | 422    | alcanza una nómina `Approved` o `Closed`                              |
 
 Cada cambio queda en el historial de actividad (`AssignmentRewritten`, `AssignmentDeleted`) y en la auditoría
 (`hr.contract.assignment_rewritten`, `hr.contract.assignment_deleted`). Eliminar un registro con PDF avisa a Storage para que lo
 purgue si ya nadie lo usa (ver [PDF de RRHH liberados](#biblioteca-de-archivos-cloudflare-r2)).
+
+### RRHH: avisos de cumpleaños
+
+Spec `docs/superpowers/specs/2026-11-26-hr-birthday-notices-design.md`. Un resumen diario por persona designada, con los
+cumpleaños de hoy y los de dentro de `leadDays` días. Sin fila guardada la función está apagada.
+
+- **`GET /api/v1/tenants/{tenantId}/hr/birthday-notices`** (`hr.employee.read`): `200` con `managers`
+  (`{ memberId, displayName, hasPhone, hasEmail, hasHrAccess }`, en el orden guardado), `leadDays`, `whatsAppEnabled`,
+  `whatsAppConnectionId`, `emailEnabled` y `version`. Sin fila: sin personas, `leadDays` 1, canales apagados y `version` `null`.
+- **`PUT` a la misma ruta** (`hr.settings.manage` + `hr.employee.read`): cuerpo `{ managerMemberIds, leadDays, whatsAppEnabled,
+whatsAppConnectionId, emailEnabled }` y la misma respuesta. El `PUT` reemplaza todo: un indicador omitido apaga ese canal. Es un upsert: sin fila el primer `PUT` va **sin** `If-Match` (con él,
+  `412 concurrency.conflict`); con fila `If-Match` es obligatorio (`428 precondition.if_match_required`) y una versión vieja es `412`.
+- **`422`:** `validation.failed` (con el mapa `errors`: `managerMemberIds` nulo o con más de 20 personas, `leadDays` fuera de 0 a 7),
+  `hr.birthday_notice.manager_not_found` (no es un miembro activo del tenant), `hr.birthday_notice.manager_without_access` (sin
+  `hr.employee.read`), `hr.birthday_notice.connection_required` (WhatsApp prendido sin conexión) y
+  `hr.birthday_notice.connection_invalid` (no es una conexión de WhatsApp activa del tenant). Los cuatro marcan su campo.
+  `403` si el tenant de la ruta no es el activo o falta un permiso. Sin teléfono o sin correo **no** es error: el `GET` lo avisa con
+  `hasPhone` / `hasEmail`.
+- **Auditoría:** `hr.birthday_notices.saved` (recurso `birthday_notices`, id = el tenant), sólo nombres de campo.
 
 ## Arquitectura y persistencia
 
@@ -3173,14 +3209,14 @@ Las colas asíncronas y el rezago de la mensajería salen de los meters `Qep.Pla
 60 s deja de publicarse, así que un hueco en el panel significa que el muestreador (o esa cola) no está respondiendo, no que
 la cola esté vacía.
 
-| Métrica                     | Unidad | Etiqueta  | Qué mide                                                                                              |
-| --------------------------- | ------ | --------- | ----------------------------------------------------------------------------------------------------- |
-| `qep.queue.backlog`         | —      | `queue`   | Filas pendientes de la cola                                                                           |
-| `qep.queue.retrying`        | —      | `queue`   | De esas, las que ya se intentaron al menos una vez y reintentan                                       |
-| `qep.queue.oldest_age`      | s      | `queue`   | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                |
-| `qep.messaging.inbound.lag` | s      | `channel` | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
-| `qep.webhook.discarded`     | —      | `provider`, `reason` | Contador: eventos de Meta que llegaron con firma válida y no se ingresaron a propósito     |
-| `qep.webhook.last_received` | s      | `provider` | Hora Unix del último webhook de Meta aceptado (el `received_at` más reciente de `webhook_deliveries`) |
+| Métrica                     | Unidad | Etiqueta             | Qué mide                                                                                                |
+| --------------------------- | ------ | -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `qep.queue.backlog`         | —      | `queue`              | Filas pendientes de la cola                                                                             |
+| `qep.queue.retrying`        | —      | `queue`              | De esas, las que ya se intentaron al menos una vez y reintentan                                         |
+| `qep.queue.oldest_age`      | s      | `queue`              | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                  |
+| `qep.messaging.inbound.lag` | s      | `channel`            | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
+| `qep.webhook.discarded`     | —      | `provider`, `reason` | Contador: eventos de Meta que llegaron con firma válida y no se ingresaron a propósito                  |
+| `qep.webhook.last_received` | s      | `provider`           | Hora Unix del último webhook de Meta aceptado (el `received_at` más reciente de `webhook_deliveries`)   |
 
 `oldest_age` ignora lo que ya reintenta (una fila sana en reintento largo o un outbox envenenado no son atraso); en
 `automation` también las que espera una anterior de su misma conversación, y en `media` los medios importados con el
@@ -3209,11 +3245,11 @@ Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backen
 El cliente de Valkey (spec 2026-11-13) publica tres métricas en el meter `Qep.Platform`. Valkey **no** entra a
 `/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
 
-| Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
-| ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
-| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area,reason}` | `area`, `reason` | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
-| `qep.valkey.operation.duration` | `qep_valkey_operation_duration_seconds` (histograma) | `area`, `outcome` | Cuánto tarda cada operación pedida con `ValkeyGateway.TryAsync`, medida desde el pod. `outcome`: `ok`, `error`, `late` (pasó el tope y después respondió; se mide al terminar) y `late_error` (pasó el tope y después falló). No mide `Publish` ni `Subscribe`, y sin conexión no hay operación que medir |
+| Métrica                         | Prometheus                                           | Etiqueta          | Qué mide                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------- | ---------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `qep.valkey.connected`          | `qep_valkey_connected`                               | —                 | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído                                                                                                                                                                                                                                                                                                                                                                            |
+| `qep.valkey.fallbacks`          | `qep_valkey_fallbacks_total{area,reason}`            | `area`, `reason`  | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
+| `qep.valkey.operation.duration` | `qep_valkey_operation_duration_seconds` (histograma) | `area`, `outcome` | Cuánto tarda cada operación pedida con `ValkeyGateway.TryAsync`, medida desde el pod. `outcome`: `ok`, `error`, `late` (pasó el tope y después respondió; se mide al terminar) y `late_error` (pasó el tope y después falló). No mide `Publish` ni `Subscribe`, y sin conexión no hay operación que medir                                                                                                                                                                   |
 
 La alerta sobre las dos primeras no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
@@ -3290,13 +3326,13 @@ secretos; nunca `get secret -o yaml` ni `-o json`):
 kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-config -o jsonpath='{.data}' | Select-String -Pattern "Valkey__"
 ```
 
-| Área          | Etiqueta `area` | Contador                         | Comportamiento que se verifica                                                                          |
-| ------------- | --------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Sessions`    | `sessions`      | `increase(...[1h])` = 0          | Cierra sesión y repite un request con la cookie vieja: 401 al instante (prueba que el `DEL` corre)      |
-| `Permissions` | `permissions`   | `increase(...[1h])` = 0          | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente     |
-| `Doorbells`   | `doorbells`     | `increase(...[1h])` = 0          | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
-| `ApiKeyTouch` | `api_key_touch` | `increase(...[1h])` = 0          | Sin comportamiento visible: el contador es la verificación                                               |
-| `LegalParameters` | `legal_parameters` | `increase(...[1h])` = 0     | Cambia un valor legal desde la consola del operador y léelo desde otra réplica: el valor nuevo se ve al instante |
+| Área              | Etiqueta `area`    | Contador                | Comportamiento que se verifica                                                                                                                                                                            |
+| ----------------- | ------------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Sessions`        | `sessions`         | `increase(...[1h])` = 0 | Cierra sesión y repite un request con la cookie vieja: 401 al instante (prueba que el `DEL` corre)                                                                                                        |
+| `Permissions`     | `permissions`      | `increase(...[1h])` = 0 | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente                                                                                                      |
+| `Doorbells`       | `doorbells`        | `increase(...[1h])` = 0 | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
+| `ApiKeyTouch`     | `api_key_touch`    | `increase(...[1h])` = 0 | Sin comportamiento visible: el contador es la verificación                                                                                                                                                |
+| `LegalParameters` | `legal_parameters` | `increase(...[1h])` = 0 | Cambia un valor legal desde la consola del operador y léelo desde otra réplica: el valor nuevo se ve al instante                                                                                          |
 
 Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
 el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
@@ -3537,12 +3573,12 @@ están disponibles. Con uno solo, sale por él. Con varios, sale por la elecció
 (`quotations.tenant_whatsapp_channels`, migración nueva de Quotations) o por el `connectionId` del cuerpo. Los cuatro
 códigos, todos 422 que dejan la cotización como estaba y sin `SendFailed`:
 
-| Código | Cuándo |
-| --- | --- |
-| `quotation.whatsapp.no_channel` | No hay canales disponibles |
-| `quotation.whatsapp.channel_required` | Hay varios y ninguno elegido vigente; no viaja la lista, el cliente pide el `GET` |
-| `quotation.whatsapp.channel_unavailable` | El `connectionId` no está entre los disponibles |
-| `quotation.whatsapp.channel_already_set` | Ya hay una elección vigente y el `connectionId` es otro (el mismo id se acepta) |
+| Código                                   | Cuándo                                                                            |
+| ---------------------------------------- | --------------------------------------------------------------------------------- |
+| `quotation.whatsapp.no_channel`          | No hay canales disponibles                                                        |
+| `quotation.whatsapp.channel_required`    | Hay varios y ninguno elegido vigente; no viaja la lista, el cliente pide el `GET` |
+| `quotation.whatsapp.channel_unavailable` | El `connectionId` no está entre los disponibles                                   |
+| `quotation.whatsapp.channel_already_set` | Ya hay una elección vigente y el `connectionId` es otro (el mismo id se acepta)   |
 
 Con varios canales y ninguno elegido, un envío con `connectionId` válido **guarda** la elección para todo el
 tenant, pero sólo si el envío salió. Las fallas del envío en sí (`quotation.whatsapp.send_failed`,
@@ -3565,25 +3601,25 @@ en borrador con `SendFailed` en el historial y no dicen por qué canal fue.
 
 Las variables de la plantilla de Zenvia son las que `ZenviaWhatsAppSender` completa en runtime:
 
-| Variable | De dónde sale |
-| --- | --- |
-| `documentUrl` | URL pública de la copia que publica `IQuotationPdfStorage.PublishAsync` (`SendQuotation.cs`); Meta no puede bajar una prefirmada de R2 |
-| `fullname` | `Customer.Name` |
-| `order_number` | `Quotation.QuotationNumber` |
-| `total` | `Quotation.Total`, formateado `C0` en `es-CO` |
-| `valid_until` | `Quotation.ValidUntil`, formateado `d 'de' MMMM 'de' yyyy` en `es-CO` |
+| Variable       | De dónde sale                                                                                                                          |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `documentUrl`  | URL pública de la copia que publica `IQuotationPdfStorage.PublishAsync` (`SendQuotation.cs`); Meta no puede bajar una prefirmada de R2 |
+| `fullname`     | `Customer.Name`                                                                                                                        |
+| `order_number` | `Quotation.QuotationNumber`                                                                                                            |
+| `total`        | `Quotation.Total`, formateado `C0` en `es-CO`                                                                                          |
+| `valid_until`  | `Quotation.ValidUntil`, formateado `d 'de' MMMM 'de' yyyy` en `es-CO`                                                                  |
 
 **El pedido usa una segunda plantilla** (`POST /orders/{id}/send`, ver
 [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)), y el campo `orderTemplateId` de la
 conexión apunta a ella. Sus variables son las de la cotización menos
 `valid_until` —un pedido no vence—, con el documento como header `MEDIA_DOCUMENT`:
 
-| Variable | De dónde sale |
-| --- | --- |
-| `documentUrl` | URL pública de la copia del PDF del pedido (`SendOrder.cs`) |
-| `fullname` | `Customer.Name`, o el nombre de la facturación propia del pedido con `recipient: "Billing"` |
-| `order_number` | `Order.OrderNumber` |
-| `total` | `Order.Total`, con el mismo formato que la cotización |
+| Variable       | De dónde sale                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| `documentUrl`  | URL pública de la copia del PDF del pedido (`SendOrder.cs`)                                 |
+| `fullname`     | `Customer.Name`, o el nombre de la facturación propia del pedido con `recipient: "Billing"` |
+| `order_number` | `Order.OrderNumber`                                                                         |
+| `total`        | `Order.Total`, con el mismo formato que la cotización                                       |
 
 > **Zenvia:** el texto de la plantilla del pedido, su `name` y su aprobación siguen siendo del owner. Por eso
 > `orderTemplateId` es opcional en la conexión: sin él, la conexión no está disponible para pedidos (spec 2026-11-09 D6)
@@ -3607,11 +3643,11 @@ puede elegir antes del despliegue del frontend).
 **Paso manual, justo después de desplegar el backend y antes de que alguien envíe:**
 
 - [ ] Para cada tenant con Zenvia **y** una conexión de Meta con la plantilla de cotización `APPROVED`, elige el
-  canal con el `PUT`. Sin esto, todo envío de ese tenant responde `quotation.whatsapp.channel_required` y el
-  frontend actual no sabe contestarlo: «Enviar» queda roto hasta que se elija.
+      canal con el `PUT`. Sin esto, todo envío de ese tenant responde `quotation.whatsapp.channel_required` y el
+      frontend actual no sabe contestarlo: «Enviar» queda roto hasta que se elija.
 - [ ] Antes, mira si Origen Botánico tiene esa conexión de Meta: `GET .../quotations/whatsapp-channels` lista
-  los canales disponibles, y si `needsChoice` es `false` no hay nada que hacer. Con un solo canal disponible
-  tampoco hace falta el `PUT`.
+      los canales disponibles, y si `needsChoice` es `false` no hay nada que hacer. Con un solo canal disponible
+      tampoco hace falta el `PUT`.
 
 ```powershell
 '{ "connectionId": "<id-de-la-conexion>" }' | Set-Content -Encoding ascii canal.json
@@ -3712,14 +3748,14 @@ El PDF de la cotización lo renderiza `qcode-pdf`, un servicio de Typst genéric
 con otras aplicaciones de QCode: no conoce la cotización, así que el markup viaja entero en el
 cuerpo de cada request. `QCodePdfRenderer` es su único cliente.
 
-| Clave | Manifiesto | Token del pipeline |
-| --- | --- | --- |
+| Clave                      | Manifiesto                                           | Token del pipeline        |
+| -------------------------- | ---------------------------------------------------- | ------------------------- |
 | `Quotations__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
-| `Quotations__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
-| `Support__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
-| `Support__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
-| `Purchases__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
-| `Purchases__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
+| `Quotations__Pdf__ApiKey`  | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml)       | `QUOTATIONS_PDF_API_KEY`  |
+| `Support__Pdf__BaseUrl`    | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
+| `Support__Pdf__ApiKey`     | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml)       | `QUOTATIONS_PDF_API_KEY`  |
+| `Purchases__Pdf__BaseUrl`  | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
+| `Purchases__Pdf__ApiKey`   | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml)       | `QUOTATIONS_PDF_API_KEY`  |
 
 **Una sola clave para todo el backend de QEP** (decisión del owner, 2026-11-17). Cada módulo que genera PDF tiene su sección
 (`Quotations:Pdf`, `Support:Pdf`, `Purchases:Pdf`) y su validador, para que ninguno dependa de la configuración de otro, pero en
@@ -3739,7 +3775,7 @@ sin el cuerpo del servicio.
 **Sin la API key el pod no arranca en producción.** A diferencia de WhatsApp, acá no hay
 fallback: `qcode-pdf` respondería 401 y todo envío moriría con `quotation.pdf.render_failed`.
 `QuotationsOptionsValidator` la exige con `ValidateOnStart` porque descubrirlo cuando una
-asesora aprieta *Enviar* es más caro que un despliegue que no levanta. Fuera de producción la
+asesora aprieta _Enviar_ es más caro que un despliegue que no levanta. Fuera de producción la
 clave es opcional.
 
 `BaseUrl` debe ser HTTPS absoluta **en todo ambiente**, incluido local: la cotización completa
@@ -3750,11 +3786,11 @@ clave es opcional.
 Spec `docs/superpowers/specs/2026-11-16-pdf-content-design.md`. El PDF de cotizaciones y pedidos tiene tres secciones que cada
 tenant configura en `GET`/`PUT /api/v1/tenants/{tenantId}/quotations/settings/pdf-content` (`tenancy.settings.read` / `.update`):
 
-| Sección | Dónde sale |
-| --- | --- |
-| `paymentNotice` | Debajo del recuadro de condiciones de pago, en rojo; sólo si el documento tiene cuenta para el pago |
-| `terms` | Después de los totales |
-| `deliveryProcess` | En página aparte, al final |
+| Sección           | Dónde sale                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| `paymentNotice`   | Debajo del recuadro de condiciones de pago, en rojo; sólo si el documento tiene cuenta para el pago |
+| `terms`           | Después de los totales                                                                              |
+| `deliveryProcess` | En página aparte, al final                                                                          |
 
 Cada una se prende, se marca para cotización y/o pedido, y lleva título (texto plano, ≤ 120) y texto enriquecido (HTML saneado
 con el saneador compartido de `BuildingBlocks`, ≤ 20 000). Los dos aceptan variables `{{nombre}}` (`QuotationPdfVariables.All`:
@@ -3824,10 +3860,10 @@ escritura: ninguna respuesta, log, auditoría ni evento las lleva, y se guardan 
 AES-256-GCM en `integrations.connection_secrets` (`nonce || ciphertext || tag`, AAD
 `integrations.connection:{connectionId}:{fieldKey}`). La llave vive **fuera** de la base:
 
-| Clave | Dónde vive en prod | Contenido |
-| --- | --- | --- |
-| `Integrations:SecretProtection:ActiveKeyId` | ConfigMap | id de llave (`^[a-z0-9]{1,32}$`); no es secreto |
-| `Integrations:SecretProtection:Keys:<id>` | Secret, desde la variable secreta del grupo `Backend-prod` | 32 bytes en base64 |
+| Clave                                       | Dónde vive en prod                                         | Contenido                                       |
+| ------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------- |
+| `Integrations:SecretProtection:ActiveKeyId` | ConfigMap                                                  | id de llave (`^[a-z0-9]{1,32}$`); no es secreto |
+| `Integrations:SecretProtection:Keys:<id>`   | Secret, desde la variable secreta del grupo `Backend-prod` | 32 bytes en base64                              |
 
 #### Generar una llave en local
 
@@ -3877,8 +3913,9 @@ Nunca se retira una llave a la que todavía apunta algún secreto.
    ```
 
    Si quedan en `k1`, el log del worker dice cuántos se saltó (`n connection secrets could not be
-   re-encrypted …`) y su línea final da `rekey finished: n re-encrypted, m skipped`. Con `m = 0` y
+re-encrypted …`) y su línea final da `rekey finished: n re-encrypted, m skipped`. Con `m = 0` y
    filas en `k1`, es la ventana del rolling update: la corrida siguiente lo resuelve.
+
 4. **Retirar** `k1` (variable y línea del Secret) sólo cuando el conteo da 0 en `k1`. Si la llave se
    filtró: las mismas fases y, además, pedirles a los tenants que roten sus tokens en el proveedor.
 
@@ -3966,19 +4003,19 @@ kind, mime canónico, tope de WhatsApp y de Instagram); la sesión de subida ya 
 canal no recibe o un archivo que pasa su tope es 422 **antes** del `PUT`. El contenido lo confirma `OutboundMediaSniffer` (64
 bytes de cabecera):
 
-| Kind  | Extensión → mime | WhatsApp | Instagram | Firma |
-| ----- | ---------------- | -------- | --------- | ----- |
-| Video | `.mp4` → `video/mp4` | 16 MB | 25 MB | `ftyp` con marca `iso*`, `mp4*`, `avc1` o `M4V ` |
-| Video | `.3gp` → `video/3gpp` | 16 MB | — | `ftyp` con marca `3gp*` |
-| Audio | `.mp3` → `audio/mpeg` | 16 MB | 25 MB | `ID3` o trama MPEG (`FF Ex`, capa ≠ 00) |
-| Audio | `.m4a` → `audio/mp4` | 16 MB | 25 MB | `ftyp` con marca `M4A `, `iso*` o `mp4*` |
-| Audio | `.aac` → `audio/aac` | 16 MB | 25 MB | ADTS (`FF F1`/`FF F9`) |
-| Audio | `.amr` → `audio/amr` | 16 MB | — | `#!AMR\n` o `#!AMR-WB\n` |
-| Audio | `.ogg` → `audio/ogg` | 16 MB | — | `OggS` con `OpusHead` (Vorbis no) |
-| Documento | `.ppt` → `application/vnd.ms-powerpoint` | 100 MB | — | OLE (`D0CF11E0A1B11AE1`, como `.doc`/`.xls`) |
-| Documento | `.pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation` | 100 MB | — | zip (`PK`, como `.docx`/`.xlsx`) |
-| Documento | `.txt` → `text/plain` | 100 MB | — | UTF-8 válido sin bytes de control (sin firma; deja fuera binarios y UTF-16) |
-| Sticker | `.webp` → `image/webp` | 100 KB estático, 500 KB animado | — | `RIFF`…`WEBP` con chunk `VP8 `, `VP8L` o `VP8X` |
+| Kind      | Extensión → mime                                                                      | WhatsApp                        | Instagram | Firma                                                                       |
+| --------- | ------------------------------------------------------------------------------------- | ------------------------------- | --------- | --------------------------------------------------------------------------- |
+| Video     | `.mp4` → `video/mp4`                                                                  | 16 MB                           | 25 MB     | `ftyp` con marca `iso*`, `mp4*`, `avc1` o `M4V `                            |
+| Video     | `.3gp` → `video/3gpp`                                                                 | 16 MB                           | —         | `ftyp` con marca `3gp*`                                                     |
+| Audio     | `.mp3` → `audio/mpeg`                                                                 | 16 MB                           | 25 MB     | `ID3` o trama MPEG (`FF Ex`, capa ≠ 00)                                     |
+| Audio     | `.m4a` → `audio/mp4`                                                                  | 16 MB                           | 25 MB     | `ftyp` con marca `M4A `, `iso*` o `mp4*`                                    |
+| Audio     | `.aac` → `audio/aac`                                                                  | 16 MB                           | 25 MB     | ADTS (`FF F1`/`FF F9`)                                                      |
+| Audio     | `.amr` → `audio/amr`                                                                  | 16 MB                           | —         | `#!AMR\n` o `#!AMR-WB\n`                                                    |
+| Audio     | `.ogg` → `audio/ogg`                                                                  | 16 MB                           | —         | `OggS` con `OpusHead` (Vorbis no)                                           |
+| Documento | `.ppt` → `application/vnd.ms-powerpoint`                                              | 100 MB                          | —         | OLE (`D0CF11E0A1B11AE1`, como `.doc`/`.xls`)                                |
+| Documento | `.pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation` | 100 MB                          | —         | zip (`PK`, como `.docx`/`.xlsx`)                                            |
+| Documento | `.txt` → `text/plain`                                                                 | 100 MB                          | —         | UTF-8 válido sin bytes de control (sin firma; deja fuera binarios y UTF-16) |
+| Sticker   | `.webp` → `image/webp`                                                                | 100 KB estático, 500 KB animado | —         | `RIFF`…`WEBP` con chunk `VP8 `, `VP8L` o `VP8X`                             |
 
 **La tabla está en borrador hasta las verificaciones V-1..V-3 con Meta real** (las corre el owner; ver el spec): lo que Meta
 no acepte se quita de `OutboundMediaPolicy` y de esta tabla. No hay transcodificación ni `ffmpeg`: `.mov`, `.webm`, `.avi`,
@@ -4075,17 +4112,17 @@ elegida, mientras la ventana de 24 h siga abierta. Hay a lo sumo uno activo por 
 `Failed` ocupan el cupo). Rutas bajo `/api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}`; leer pide
 `messaging.conversation.read` y el resto `messaging.conversation.manage`, por permiso (no por ser el asignado ni el autor):
 
-| Ruta | Qué hace |
-| --- | --- |
-| `GET /scheduled-message` | `{ scheduledMessage }`: el activo o `null`. Trae `canRetry`, calculado por el backend |
-| `POST /scheduled-messages` | Crea (JSON: `clientId`, `scheduledAt`, y `text` **o** `uploadId` + `fileName` con `caption`). `201`; un `clientId` repetido devuelve `200` con la fila ya guardada |
-| `POST /scheduled-messages/audio` | Nota de voz, multipart (`clientId`, `scheduledAt`, `file`) |
-| `PUT /scheduled-messages/{id}` | Edita `scheduledAt`, `text`, `caption`; lo omitido o `null` conserva lo guardado, `caption: ""` borra el pie. Sólo en `Scheduled` |
-| `POST …/{id}/cancel` | Cancela (`204`). Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
-| `POST …/{id}/send-now` | «Enviar ya»: adelanta la hora y responde `202`; la salida la hace el worker en su próximo ciclo. Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
-| `POST …/{id}/retry` | Reintenta un `Failed` (`202`); sólo si `canRetry`. Cuerpo `{ expectedVersion }`. `422 messaging.scheduled.outside_window` si la ventana ya no alcanza y `422 messaging.contact.blocked` si el contacto está bloqueado |
-| `POST …/{id}/discard` | Descarta un `Failed` (`204`). Cuerpo `{ expectedVersion }` |
-| `GET …/{id}/media` | El adjunto, con `Range` |
+| Ruta                             | Qué hace                                                                                                                                                                                                              |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /scheduled-message`         | `{ scheduledMessage }`: el activo o `null`. Trae `canRetry`, calculado por el backend                                                                                                                                 |
+| `POST /scheduled-messages`       | Crea (JSON: `clientId`, `scheduledAt`, y `text` **o** `uploadId` + `fileName` con `caption`). `201`; un `clientId` repetido devuelve `200` con la fila ya guardada                                                    |
+| `POST /scheduled-messages/audio` | Nota de voz, multipart (`clientId`, `scheduledAt`, `file`)                                                                                                                                                            |
+| `PUT /scheduled-messages/{id}`   | Edita `scheduledAt`, `text`, `caption`; lo omitido o `null` conserva lo guardado, `caption: ""` borra el pie. Sólo en `Scheduled`                                                                                     |
+| `POST …/{id}/cancel`             | Cancela (`204`). Cuerpo `{ expectedVersion }`. Sólo en `Scheduled`                                                                                                                                                    |
+| `POST …/{id}/send-now`           | «Enviar ya»: adelanta la hora y responde `202`; la salida la hace el worker en su próximo ciclo. Cuerpo `{ expectedVersion }`. Sólo en `Scheduled`                                                                    |
+| `POST …/{id}/retry`              | Reintenta un `Failed` (`202`); sólo si `canRetry`. Cuerpo `{ expectedVersion }`. `422 messaging.scheduled.outside_window` si la ventana ya no alcanza y `422 messaging.contact.blocked` si el contacto está bloqueado |
+| `POST …/{id}/discard`            | Descarta un `Failed` (`204`). Cuerpo `{ expectedVersion }`                                                                                                                                                            |
+| `GET …/{id}/media`               | El adjunto, con `Range`                                                                                                                                                                                               |
 
 La versión viaja en el cuerpo (`expectedVersion`), no en `If-Match`, como las campañas: una versión vieja responde `412`.
 
@@ -4263,7 +4300,7 @@ pase la URL de la app a QEP.
   cuenta como ausente: el pod arranca sin override. El validador exige una URL https absoluta de hasta 200
   caracteres (el límite de Meta) y el token de verificación.
 - **Si Meta la rechaza** (por ejemplo, falla el desafío), el signup responde `422
-  integrations.whatsapp.registration_failed`, no guarda la conexión ni publica el evento del historial, y **no se
+integrations.whatsapp.registration_failed`, no guarda la conexión ni publica el evento del historial, y **no se
   reintenta sin override**: eso mandaría a lulo un historial que se pide una sola vez. Arregla la causa y repite el
   Embedded Signup.
 - **Qué sigue llegando a lulo.** Según la documentación de Meta (revisada el 2026-10-30), el override aplica a
@@ -4358,6 +4395,7 @@ El código está en `develop` desde `a5a79c0` (2026-10-13). Antes de llevarlo a 
 
    Ojo con el prefijo: **no** uses `staging/` a secas. Esa clave es de Storage y los comprobantes de pago viven ahí
    retenidos (ver «Comprobantes de pago v2»).
+
 2. **Verificar el CORS del bucket privado.** El `PUT` va al mismo bucket que la biblioteca de archivos, así que la regla
    de [`ops/r2-cors.aws.json`](ops/r2-cors.aws.json) ya sirve si está aplicada: `PUT`, `Content-Type` **e**
    `If-None-Match`, con el origen exacto del SPA de producción. Compruébalo con una subida real desde la pantalla, no
@@ -4383,13 +4421,13 @@ Spec `qep-frontend/docs/superpowers/specs/2026-10-14-mensajeria-tiempo-real-desi
 depender sólo del polling: un hub avisa **qué cambió, por ids**, y la SPA invalida y relee por HTTP. El canal
 avisa, no transporta: la autorización sigue en los `GET`.
 
-| Qué | Valor |
-| --- | --- |
-| Hub | `/api/v1/hubs/messaging`, política `messaging.conversation.read`; al conectar revalida módulo `messaging` y membresía activa (`MessagingHub`). |
-| Tenant | `X-Tenant-Id` o, **sólo bajo `/api/v1/hubs/`**, el query `tenantId`: el handshake WebSocket del navegador no lleva headers (`TenantRequestResolver`). |
-| Eventos | `conversationChanged { conversationId }` y `inboundMessage { conversationId, messageId }` al grupo del tenant; `notify { conversationId, reason }` al miembro asignado, o al tenant si nadie la tiene. |
-| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Para el reparto de eventos, con dos réplicas no hace falta sticky session ni Valkey. El handshake del hub sí lo necesitaría: `negotiate` crea la conexión en la memoria del pod que lo atiende, así que con más de una réplica el frontend tiene que saltarlo y conectar sólo por WebSocket (`skipNegotiation: true`, spec `2026-10-29-replicas-multiples-design.md`, D-1). |
-| Fallos | Un aviso que falla no reintenta la entrega ni deshace el envío: se registra y el polling relajado del frontend (60/30 s) lo recoge. |
+| Qué     | Valor                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Hub     | `/api/v1/hubs/messaging`, política `messaging.conversation.read`; al conectar revalida módulo `messaging` y membresía activa (`MessagingHub`).                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Tenant  | `X-Tenant-Id` o, **sólo bajo `/api/v1/hubs/`**, el query `tenantId`: el handshake WebSocket del navegador no lleva headers (`TenantRequestResolver`).                                                                                                                                                                                                                                                                                                                                                                                            |
+| Eventos | `conversationChanged { conversationId }` y `inboundMessage { conversationId, messageId }` al grupo del tenant; `notify { conversationId, reason }` al miembro asignado, o al tenant si nadie la tiene.                                                                                                                                                                                                                                                                                                                                           |
+| Fanout  | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Para el reparto de eventos, con dos réplicas no hace falta sticky session ni Valkey. El handshake del hub sí lo necesitaría: `negotiate` crea la conexión en la memoria del pod que lo atiende, así que con más de una réplica el frontend tiene que saltarlo y conectar sólo por WebSocket (`skipNegotiation: true`, spec `2026-10-29-replicas-multiples-design.md`, D-1). |
+| Fallos  | Un aviso que falla no reintenta la entrega ni deshace el envío: se registra y el polling relajado del frontend (60/30 s) lo recoge.                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 Lo que se publica: asignar, transferir, liberar, resolver, reabrir, leído, no leído, saliente consolidado
 (`Sent` o `Failed`), acuse aplicado y entrante insertado. Un reenvío de Meta no avisa. Instagram va por el mismo
@@ -4407,24 +4445,25 @@ lo usa hoy Soporte y se describe en [Tiempo real y notas internas de Soporte](#t
 La preferencia de sonido viaja en `GET/PUT /api/v1/auth/preferences` como `messageSound` (default `true`). El
 `PUT` acepta cada campo por separado y conserva el que no viene; un cuerpo vacío es 422
 `identity.preference.empty`.
+
 #### Plantillas de WhatsApp desde QEP
 
 Spec: `docs/superpowers/specs/2026-10-14-gestor-de-plantillas-whatsapp-design.md`. El admin (permiso
 `messaging.template.manage`, de fábrica sólo en `admin`) gestiona las plantillas de cada conexión `whatsapp-cloud`
 bajo `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management`:
 
-| Método y ruta | Qué hace |
-| --- | --- |
-| `GET /` | La pantalla: conexión, estado de la plantilla de cotización (`quotationTemplate`) y de la de pedido (`orderTemplate`, spec 2026-11-09 D4), última sincronización y todas las plantillas con su estado y motivo de rechazo. Si la conexión nunca se sincronizó, la primera lectura llena el espejo. |
-| `POST /templates` | Crea una plantilla libre (texto, variables con nombre, pie, botones) y la manda a aprobar. |
-| `POST /quotation` | Aprovisiona la plantilla de cotización con su PDF de ejemplo; reintenta si la anterior fue rechazada; adopta una `qep_cotizacion` igual creada a mano en Meta. |
-| `POST /order` | Lo mismo para la plantilla de pedido `qep_pedido` (spec 2026-11-09 D1–D3): variables fijas más `numero_pedido` y `valor_total`, sin vigencia; una por conexión (`messaging.template.order_exists`), adopción de una `qep_pedido` compatible o `messaging.template.order_conflict`. Con ella aprobada, la conexión puede mandar pedidos. |
-| `POST /billing` | Aprovisiona las dos plantillas de cobro (recordatorio y mora). Igual que `POST /quotation`, el cuerpo HTTP es **opcional**: sin él se crea el texto base de la definición; con él, el tenant manda su propio texto. |
-| `GET /quotation/draft` | Borrador que abre la ventana de edición de la plantilla de cotización: texto inicial, variables disponibles con su etiqueta y si ya se puede editar. |
-| `GET /order/draft` | Lo mismo para la plantilla de pedido. |
-| `GET /billing/draft` | Lo mismo para las dos plantillas de cobro. |
-| `DELETE /templates/{templateId}` | Borra en Meta (sólo ese idioma) y en el espejo; 422 `messaging.template.in_use_by_campaign` si una campaña programada o enviándose la usa. |
-| `POST /sync` | Sincroniza el espejo contra Meta. |
+| Método y ruta                    | Qué hace                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /`                          | La pantalla: conexión, estado de la plantilla de cotización (`quotationTemplate`) y de la de pedido (`orderTemplate`, spec 2026-11-09 D4), última sincronización y todas las plantillas con su estado y motivo de rechazo. Si la conexión nunca se sincronizó, la primera lectura llena el espejo.                                      |
+| `POST /templates`                | Crea una plantilla libre (texto, variables con nombre, pie, botones) y la manda a aprobar.                                                                                                                                                                                                                                              |
+| `POST /quotation`                | Aprovisiona la plantilla de cotización con su PDF de ejemplo; reintenta si la anterior fue rechazada; adopta una `qep_cotizacion` igual creada a mano en Meta.                                                                                                                                                                          |
+| `POST /order`                    | Lo mismo para la plantilla de pedido `qep_pedido` (spec 2026-11-09 D1–D3): variables fijas más `numero_pedido` y `valor_total`, sin vigencia; una por conexión (`messaging.template.order_exists`), adopción de una `qep_pedido` compatible o `messaging.template.order_conflict`. Con ella aprobada, la conexión puede mandar pedidos. |
+| `POST /billing`                  | Aprovisiona las dos plantillas de cobro (recordatorio y mora). Igual que `POST /quotation`, el cuerpo HTTP es **opcional**: sin él se crea el texto base de la definición; con él, el tenant manda su propio texto.                                                                                                                     |
+| `GET /quotation/draft`           | Borrador que abre la ventana de edición de la plantilla de cotización: texto inicial, variables disponibles con su etiqueta y si ya se puede editar.                                                                                                                                                                                    |
+| `GET /order/draft`               | Lo mismo para la plantilla de pedido.                                                                                                                                                                                                                                                                                                   |
+| `GET /billing/draft`             | Lo mismo para las dos plantillas de cobro.                                                                                                                                                                                                                                                                                              |
+| `DELETE /templates/{templateId}` | Borra en Meta (sólo ese idioma) y en el espejo; 422 `messaging.template.in_use_by_campaign` si una campaña programada o enviándose la usa.                                                                                                                                                                                              |
+| `POST /sync`                     | Sincroniza el espejo contra Meta.                                                                                                                                                                                                                                                                                                       |
 
 **El espejo.** Vive en `messaging.message_templates` y lo alimentan la creación, el webhook
 `message_template_status_update` (lo procesa `WebhookDeliveryProcessor`, sin auditoría) y el refresco. El catálogo de
@@ -4491,10 +4530,10 @@ conexión, status, `code` de Graph y motivo, nunca el token).
    o el `GET /templates` de la bandeja o de las campañas—, así que el catálogo de envío no queda vacío tras el
    despliegue; es una llamada a Meta por conexión, también con `messaging.conversation.read`. Dos primeros llenados a
    la vez no fallan: el que pierde lee lo que llenó el otro (un `POST /sync` explícito que pierde sí da 412). El
-   catálogo viejo hacía *single-flight* y recordaba 30 s una falla de Meta, y eso ya no existe: con Meta caído, cada
+   catálogo viejo hacía _single-flight_ y recordaba 30 s una falla de Meta, y eso ya no existe: con Meta caído, cada
    destinatario de una campaña sobre una conexión nunca sincronizada espera su propio timeout una vez.
 5. Avisar que las plantillas creadas en la consola de Meta **ya no aparecen solas a los 5 minutos**: entran con
-   *Actualizar* (`GET /templates?refresh=true`) o con el `POST …/sync` del admin. El webhook
+   _Actualizar_ (`GET /templates?refresh=true`) o con el `POST …/sync` del admin. El webhook
    `message_template_status_update` sólo cambia el estado de las que el espejo ya tiene; una plantilla que no tiene
    fila deja un log y la trae el siguiente refresco.
 
@@ -4537,11 +4576,11 @@ sus variables e intentos. Lo que el cliente escribió durante la pausa no se rep
 "automationContinue": { "mode": "PendingStep", "customerWroteDuringPause": false } // o null
 ```
 
-| Estado | `mode` | Primera opción del modal | POST |
-|---|---|---|---|
-| `Paused`, `automationStart: Available`, se puede continuar | `PendingStep` | «Continuar donde iba» | `automation/continue` |
-| `Paused`, `automationStart: Available`, no se puede | `FlowStart` | Empieza el flujo cuando el cliente escriba | `automation/resume` |
-| Cualquier otro caso, o falló la evaluación | `automationContinue: null` | Sin modal de dos opciones | — |
+| Estado                                                     | `mode`                     | Primera opción del modal                   | POST                  |
+| ---------------------------------------------------------- | -------------------------- | ------------------------------------------ | --------------------- |
+| `Paused`, `automationStart: Available`, se puede continuar | `PendingStep`              | «Continuar donde iba»                      | `automation/continue` |
+| `Paused`, `automationStart: Available`, no se puede        | `FlowStart`                | Empieza el flujo cuando el cliente escriba | `automation/resume`   |
+| Cualquier otro caso, o falló la evaluación                 | `automationContinue: null` | Sin modal de dos opciones                  | —                     |
 
 Se puede continuar con pausa `Manual`, corrida `Waiting`, nadie devolvió la conversación después de que la corrida arrancó, el chatbot de la
 conexión es el de la corrida y ningún evento `Taken`, `AutoTaken` o `Transferred` desde la pausa. `customerWroteDuringPause` es
@@ -4561,14 +4600,14 @@ Un tenant define horarios semanales y los asigna a sus conexiones de WhatsApp e 
 `messaging.business_hours_schedules` (`weekly` y `exceptions` en `jsonb`, `holiday_country` `'CO'` o `null`, nombre único por tenant sin
 distinguir mayúsculas y un solo predeterminado por tenant) y `messaging.connection_business_hours` (un horario por conexión).
 
-| Ruta (bajo `…/messaging/business-hours`) | `If-Match` | Respuesta | Errores propios |
-| ---------------------------------------- | ---------- | --------- | --------------- |
-| `GET /` | no | `items`, `timeZone` y `connections` (todas las conexiones del tenant, en cualquier estado, con su horario actual) | |
-| `POST /` | no | 201 | 409 `messaging.business_hours.name_taken` |
-| `PUT /{id}` | sí (412 / 428) | 200; reemplaza el horario y sus conexiones | 404 `not_found`, 409 `name_taken` |
-| `DELETE /{id}` | sí (412 / 428) | 204 | 404 `not_found`, 422 `in_use` (tiene conexiones vivas) o `is_default` |
-| `POST /{id}/duplicate` | no | 201, nombre «… (copia)», «… (copia 2)»… | 404 `not_found`, 409 `name_taken` |
-| `POST /{id}/default` | sí (412 / 428) | 200; sube la versión de este y del predeterminado anterior | 404 `not_found`, 409 `default_conflict` |
+| Ruta (bajo `…/messaging/business-hours`) | `If-Match`     | Respuesta                                                                                                         | Errores propios                                                       |
+| ---------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `GET /`                                  | no             | `items`, `timeZone` y `connections` (todas las conexiones del tenant, en cualquier estado, con su horario actual) |                                                                       |
+| `POST /`                                 | no             | 201                                                                                                               | 409 `messaging.business_hours.name_taken`                             |
+| `PUT /{id}`                              | sí (412 / 428) | 200; reemplaza el horario y sus conexiones                                                                        | 404 `not_found`, 409 `name_taken`                                     |
+| `DELETE /{id}`                           | sí (412 / 428) | 204                                                                                                               | 404 `not_found`, 422 `in_use` (tiene conexiones vivas) o `is_default` |
+| `POST /{id}/duplicate`                   | no             | 201, nombre «… (copia)», «… (copia 2)»…                                                                           | 404 `not_found`, 409 `name_taken`                                     |
+| `POST /{id}/default`                     | sí (412 / 428) | 200; sube la versión de este y del predeterminado anterior                                                        | 404 `not_found`, 409 `default_conflict`                               |
 
 Todos los códigos propios llevan el prefijo `messaging.business_hours.`. Escribir pide `messaging.business_hours.manage` (de fábrica sólo
 en `admin`); leer, `messaging.conversation.read`. El 422 `validation.failed` trae el mapa `errors` con las claves `Name`, `Weekly`,
@@ -4664,17 +4703,17 @@ cuando se prende un módulo, así que no hay otro lugar donde engancharse.
 
 **Rutas** bajo `/api/v1/tenants/{tenantId}/pipeline`:
 
-| Método | Ruta | Permiso |
-| --- | --- | --- |
-| `GET` | `/board?owner=me\|all` | `pipeline.deal.read` |
-| `GET` | `/deals/{dealId}` | `pipeline.deal.read` |
-| `POST` | `/deals` | `pipeline.deal.manage` |
-| `PATCH` | `/deals/{dealId}` | `pipeline.deal.manage` |
-| `POST` | `/deals/{dealId}/move\|win\|lose\|reopen` | `pipeline.deal.manage` |
-| `POST` | `/deals/{dealId}/quotations/{quotationId}/link\|primary` | `pipeline.deal.manage` |
-| `GET` | `/owners` | `pipeline.deal.manage` |
-| `GET` | `/customers/{customerId}/summary?conversationId=` | `pipeline.deal.read` |
-| `POST` | `/triage/{conversationId}` (`create` \| `dismiss`) | `pipeline.deal.manage` |
+| Método      | Ruta                                                                      | Permiso                                           |
+| ----------- | ------------------------------------------------------------------------- | ------------------------------------------------- |
+| `GET`       | `/board?owner=me\|all`                                                    | `pipeline.deal.read`                              |
+| `GET`       | `/deals/{dealId}`                                                         | `pipeline.deal.read`                              |
+| `POST`      | `/deals`                                                                  | `pipeline.deal.manage`                            |
+| `PATCH`     | `/deals/{dealId}`                                                         | `pipeline.deal.manage`                            |
+| `POST`      | `/deals/{dealId}/move\|win\|lose\|reopen`                                 | `pipeline.deal.manage`                            |
+| `POST`      | `/deals/{dealId}/quotations/{quotationId}/link\|primary`                  | `pipeline.deal.manage`                            |
+| `GET`       | `/owners`                                                                 | `pipeline.deal.manage`                            |
+| `GET`       | `/customers/{customerId}/summary?conversationId=`                         | `pipeline.deal.read`                              |
+| `POST`      | `/triage/{conversationId}` (`create` \| `dismiss`)                        | `pipeline.deal.manage`                            |
 | `GET`/`PUT` | `/settings/stages`, `/settings/loss-reasons`, `/settings/dismiss-reasons` | `pipeline.deal.read` / `pipeline.settings.manage` |
 
 Toda escritura sobre un negocio lleva `version` (412 si cambió) y devuelve el negocio completo. Un negocio
@@ -4721,24 +4760,24 @@ EF no modela índices por expresión), `IX_chatbot_versions_chatbot_number` (1, 
 
 **Rutas** bajo `/api/v1/tenants/{tenantId}/automations` (§4.4):
 
-| Método | Ruta | Permiso |
-| --- | --- | --- |
-| `GET` | `/chatbots?search=` | `automations.chatbot.read` |
-| `POST` | `/chatbots` (`source.kind`: `blank` \| `template` con `templateId` y `parameters` \| `duplicate` con `chatbotId`) | `automations.chatbot.manage` |
-| `GET` | `/chatbots/{chatbotId}` (el editor: borrador, versión publicada, validación, conexiones elegibles, variables) | `automations.chatbot.read` |
-| `PUT` | `/chatbots/{chatbotId}` (nombre, disparador, palabras clave, conexiones) | `automations.chatbot.manage` |
-| `PUT` | `/chatbots/{chatbotId}/draft` (`{ flow, layout }`) | `automations.chatbot.manage` |
-| `POST` | `/chatbots/{chatbotId}/validate` | `automations.chatbot.read` |
-| `POST` | `/chatbots/{chatbotId}/publish\|pause\|resume` | `automations.chatbot.manage` |
-| `POST` | `/chatbots/{chatbotId}/duplicate` | `automations.chatbot.manage` |
-| `DELETE` | `/chatbots/{chatbotId}` | `automations.chatbot.manage` |
-| `POST` | `/chatbots/{chatbotId}/save-as-template` | `automations.chatbot.manage` |
-| `GET` | `/templates` (del sistema y del tenant) | `automations.chatbot.read` |
-| `DELETE` | `/templates/{templateId}` (sólo las del tenant; una del sistema es 404) | `automations.chatbot.manage` |
-| `GET` | `/chatbots/{chatbotId}/export` | `automations.chatbot.manage` |
-| `POST` | `/chatbots/import` (`{ name, export, connectionMap }`) | `automations.chatbot.manage` |
-| `GET` | `/connections` (las conexiones que el editor ofrece y qué chatbot ocupa cada una) | `automations.chatbot.read` |
-| `GET` | `/external-apis` (las conexiones «API externa» del tenant, para mapear al importar) | `automations.chatbot.read` |
+| Método   | Ruta                                                                                                              | Permiso                      |
+| -------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `GET`    | `/chatbots?search=`                                                                                               | `automations.chatbot.read`   |
+| `POST`   | `/chatbots` (`source.kind`: `blank` \| `template` con `templateId` y `parameters` \| `duplicate` con `chatbotId`) | `automations.chatbot.manage` |
+| `GET`    | `/chatbots/{chatbotId}` (el editor: borrador, versión publicada, validación, conexiones elegibles, variables)     | `automations.chatbot.read`   |
+| `PUT`    | `/chatbots/{chatbotId}` (nombre, disparador, palabras clave, conexiones)                                          | `automations.chatbot.manage` |
+| `PUT`    | `/chatbots/{chatbotId}/draft` (`{ flow, layout }`)                                                                | `automations.chatbot.manage` |
+| `POST`   | `/chatbots/{chatbotId}/validate`                                                                                  | `automations.chatbot.read`   |
+| `POST`   | `/chatbots/{chatbotId}/publish\|pause\|resume`                                                                    | `automations.chatbot.manage` |
+| `POST`   | `/chatbots/{chatbotId}/duplicate`                                                                                 | `automations.chatbot.manage` |
+| `DELETE` | `/chatbots/{chatbotId}`                                                                                           | `automations.chatbot.manage` |
+| `POST`   | `/chatbots/{chatbotId}/save-as-template`                                                                          | `automations.chatbot.manage` |
+| `GET`    | `/templates` (del sistema y del tenant)                                                                           | `automations.chatbot.read`   |
+| `DELETE` | `/templates/{templateId}` (sólo las del tenant; una del sistema es 404)                                           | `automations.chatbot.manage` |
+| `GET`    | `/chatbots/{chatbotId}/export`                                                                                    | `automations.chatbot.manage` |
+| `POST`   | `/chatbots/import` (`{ name, export, connectionMap }`)                                                            | `automations.chatbot.manage` |
+| `GET`    | `/connections` (las conexiones que el editor ofrece y qué chatbot ocupa cada una)                                 | `automations.chatbot.read`   |
+| `GET`    | `/external-apis` (las conexiones «API externa» del tenant, para mapear al importar)                               | `automations.chatbot.read`   |
 
 Toda escritura sobre un chatbot existente lleva `If-Match` (428 sin él, 412 si es viejo), menos duplicar y guardar como plantilla. Es **un solo**
 `version` compartido entre `PUT /chatbots/{id}` y `PUT …/draft`: guardar el borrador lo mueve y el formulario de ajustes
@@ -4757,7 +4796,7 @@ tiene que mandar el que le devolvió el último guardado, y al revés.
   (`BotAttendance.IsAttending`: corrida viva y nadie humano tomó la conversación; una conversación que no existe no atiende). Una
   corrida viva que un asesor ya tomó no bloquea (spec 2026-11-03, D-7).
 - **Exportar e importar.** El export lleva el borrador (flujo y layout), nombre, descripción, disparador, palabras clave y
-las «API externa» que usa. El cuerpo de
+  las «API externa» que usa. El cuerpo de
   `POST /import` tiene un tope propio de 1 MB, para que un export con flujo y layout en sus topes se pueda volver a
   importar. `connectionMap` (≤ 50 pares) cambia las conexiones de «API externa» del tenant de origen por las del destino.
 - **Plantillas del sistema.** `welcome-menu-handoff` y `outside-hours` son JSON embebidos en
@@ -4783,11 +4822,11 @@ el disparador es `Keyword` sin palabras.
 
 **Gramáticas.** Hay dos, y no son la misma:
 
-- *Referencia a variable* (`{cliente.firstName}`, `{data[0].id}`): nombre, y luego `.nombre` o `[n]`. Es lo que lee el
+- _Referencia a variable_ (`{cliente.firstName}`, `{data[0].id}`): nombre, y luego `.nombre` o `[n]`. Es lo que lee el
   motor (`TemplateText`, `JsonPath.Select`). El validador la detecta con un patrón algo más laxo (`VariableToken`, que acepta
   `{_x}` y `{a..b}`), así que hay referencias que pasan sin aviso y el motor deja **vacías** en tiempo de ejecución: un texto
   con `{` que no es variable se queda tal cual.
-- *Ruta del mapeo de la respuesta* (`mapping.from`, P2-R36): además de la anterior, `$` (el cuerpo entero), `$[0]`, `$.data`,
+- _Ruta del mapeo de la respuesta_ (`mapping.from`, P2-R36): además de la anterior, `$` (el cuerpo entero), `$[0]`, `$.data`,
   `[0].id` y `data.items[0].id`. Existe porque Clasic responde arreglos en la raíz (`[].id` en el Anexo C). `$` no nombra una
   variable: no vale como referencia.
 
@@ -4885,14 +4924,14 @@ nuevo), así que el despliegue va en un momento tranquilo.
 
 Opciones, todas bajo `Automations:Workers` (`AutomationsWorkerOptions`, con defaults en código; `appsettings.json` los repite):
 
-| Clave | Default | Qué hace |
-| --- | --- | --- |
-| `InboxPollSeconds` | 1 | El tick del worker del inbox |
-| `InboxBatchSize` | 20 | Filas por pasada (una por `ClaimAsync`) |
-| `AbandonSweepMinutes` | 10 | Cada cuánto se abandonan corridas viejas y se purga el inbox y `http_calls` |
-| `InboxRetentionDays` | 7 | Días que se conserva una fila procesada del inbox |
-| `HttpCallRetentionDays` | 30 | Días que se conserva una fila de `http_calls` |
-| `SimulationSweepMinutes` | 10 | Cada cuánto se borran simulaciones vencidas |
+| Clave                    | Default | Qué hace                                                                    |
+| ------------------------ | ------- | --------------------------------------------------------------------------- |
+| `InboxPollSeconds`       | 1       | El tick del worker del inbox                                                |
+| `InboxBatchSize`         | 20      | Filas por pasada (una por `ClaimAsync`)                                     |
+| `AbandonSweepMinutes`    | 10      | Cada cuánto se abandonan corridas viejas y se purga el inbox y `http_calls` |
+| `InboxRetentionDays`     | 7       | Días que se conserva una fila procesada del inbox                           |
+| `HttpCallRetentionDays`  | 30      | Días que se conserva una fila de `http_calls`                               |
+| `SimulationSweepMinutes` | 10      | Cada cuánto se borran simulaciones vencidas                                 |
 
 `GET /runs?chatbotId=&from=&to=` (`automations.chatbot.read`) lista las corridas de un chatbot con `started_at` en `[from, to)`
 (**`to` es exclusivo**); sin rango, los últimos 7 días, y `from` > `to` es 422 `automations.run.range_invalid` (código nuevo, no
@@ -5007,7 +5046,6 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
 
    Dos filtros de `GET /customers` (responde `{ "items": [...], "totalCount": n }`, no `data`/`total`) que el flujo usa tal
    como están, y que no se «arreglan» en Clasic:
-
    - **`document`** (igualdad exacta sobre el documento, 0 o 1 elemento) es el que busca al cliente por cédula.
      `identificationNumber` es la búsqueda del admin y casa por **subcadena**: con «1» el bot leería el cliente, las
      direcciones y la orden de otra persona.
@@ -5015,18 +5053,19 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
      responde **400 a propósito**: QEP manda `telefono = ''` cuando la conversación no tiene `wa_id`, y si Clasic ignorara el
      filtro vacío el bot leería un cliente cualquiera y aceptaría la política en su nombre. Ese 400 sale por `error` del bloque
      «Buscar cliente por teléfono» hacia el asesor.
+
 2. **Módulo `automations` del tenant Clasic**, desde la [consola de operador](#consola-de-operador) (el SQL de respaldo está
    en [Módulos por tenant](#módulos-por-tenant)). Va **antes** que la conexión: el proveedor «API externa» sólo sale en el
    catálogo de Integraciones con `automations` activo, y `automations` exige `messaging`.
 3. **Conexión «API externa»**, desde Integraciones del tenant Clasic:
 
-   | Campo | Valor |
-   | --- | --- |
-   | Nombre | `API de Clasic` |
-   | URL base (`baseUrl`) | `https://api-clasic.qcode.co` |
-   | Header (`authHeader`) | `x-api-key` |
-   | Ruta de prueba (`testPath`) | `/failures` (D-K10) |
-   | Clave (`apiKey`) | la de `CLASIC_BOT_API_KEY` |
+   | Campo                       | Valor                         |
+   | --------------------------- | ----------------------------- |
+   | Nombre                      | `API de Clasic`               |
+   | URL base (`baseUrl`)        | `https://api-clasic.qcode.co` |
+   | Header (`authHeader`)       | `x-api-key`                   |
+   | Ruta de prueba (`testPath`) | `/failures` (D-K10)           |
+   | Clave (`apiKey`)            | la de `CLASIC_BOT_API_KEY`    |
 
    La ruta de prueba tiene que ser una **protegida**: `/services`, `/departments/*` y `/health/*` son públicas en Clasic y
    «probarían» bien con cualquier clave; `/customers` a secas devuelve todos los clientes, y `testPath` no admite query.
@@ -5061,6 +5100,7 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
 
    Responde `201` y el id del chatbot, que queda en `Draft` y sin conexión de WhatsApp. Un `409` es que el tenant ya tiene un
    chatbot que se llama «Clasic». Borra `import.json` e `import-response.json` al terminar: no se commitean.
+
 5. **Revisar en el editor.** El bloque «Registrar cliente nuevo» manda `departmentId = 5` y `cityId = 5001000` (Antioquia,
    Medellín, los ids de `departments.json`/`cities.json` de Clasic) para todo cliente nuevo: la ciudad que escribe el
    cliente viaja como texto en `addressDescription` («Ciudad: …») y un agente la confirma por teléfono, porque una lista de
@@ -5069,7 +5109,7 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
    encontró la conexión. Todavía **no** se publica: la conexión de WhatsApp de Clasic nace en el corte (paso 7). Antes del corte,
    guarda un respaldo: «Exportar», en el menú «⋯» del editor, baja el borrador como `.json` (con el nombre del chatbot).
 6. **Simular contra la API real, antes del corte.** En el simulador del editor, con «Llamar a la API de verdad» (`liveHttp:
-   true`), recorre el camino de un cliente que ya existe en Clasic hasta el resumen. **Crea una orden de verdad:** usa la
+true`), recorre el camino de un cliente que ya existe en Clasic hasta el resumen. **Crea una orden de verdad:** usa la
    cédula de un cliente de prueba de Clasic y avísale a Clasic para que la anule. Dos cosas que conviene saber: el simulador
    llama con `{telefono}` = `3000000000`, así que mira antes que `GET /customers?phone=3000000000` responda
    `{"items":[],"totalCount":0}`: con la lista vacía el bot pide la política igual y «Acepto» no guarda nada; si existiera un
@@ -5425,18 +5465,19 @@ atributos) viaja a Shopify.
   (`freight_tax_rate_missing`, …). El grupo Comprador es **informativo**: nunca toca el pedido ni el cliente (D17). Una fila
   importada antes de este cambio, sin versión aplicada, toma como base el `payload` que tenía y la proyección del pedido de
   ahora (D6): para esos pedidos nada cuenta como «lo tocó QEP», y una nota nueva de Shopify se aplica sin conflicto.
+
 - **El cambio** (`shopify.order_edits`; el spec dice `order_changes` y la API, «changes», D1) se crea en
   `ShopifyOrderIngestion.ApplyAsync`, después del espejo y antes de la reacción de pago y cancelación (§6.3), y un snapshot con
   `cancelled_at` no calcula cambio: manda la cancelación (D7). Un pedido tiene a lo sumo un cambio abierto; el siguiente
   snapshot lo reemplaza (`Superseded`). Estados:
 
-  | Estado | Cuándo |
-  | --- | --- |
-  | `Blocked` | el pedido no es editable (`order_not_editable`), su estado de pago no está en `editPaymentStatuses` (`payment_status_not_allowed`) o una línea no empareja con una variante (`product_unmatched`, D5: nunca se aplica a medias) |
-  | `Pending` | se puede aplicar y la tienda está en `editSync = Manual`; o la tienda es `Automatic` y el cambio tiene algún grupo en conflicto (spec §3: el conflicto se ve en la bandeja y lo decide una persona); o Quotations rechazó la aplicación automática con otra regla, que queda en `statusReason` (por ejemplo `order.order.store_pickup`) |
-  | `Applied` | se aplicó: solo (`Automatic`, sólo si todos sus grupos son `Apply` o `Informative`) o porque alguien lo aceptó |
-  | `Rejected` / `Reviewed` | alguien lo rechazó, o marcó como revisado uno bloqueado; los dos adoptan el snapshot como versión aplicada sin tocar el pedido (D9), así que el siguiente diff no vuelve a proponerlo |
-  | `Superseded` | llegó otro snapshot del mismo pedido |
+  | Estado                  | Cuándo                                                                                                                                                                                                                                                                                                                                  |
+  | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `Blocked`               | el pedido no es editable (`order_not_editable`), su estado de pago no está en `editPaymentStatuses` (`payment_status_not_allowed`) o una línea no empareja con una variante (`product_unmatched`, D5: nunca se aplica a medias)                                                                                                         |
+  | `Pending`               | se puede aplicar y la tienda está en `editSync = Manual`; o la tienda es `Automatic` y el cambio tiene algún grupo en conflicto (spec §3: el conflicto se ve en la bandeja y lo decide una persona); o Quotations rechazó la aplicación automática con otra regla, que queda en `statusReason` (por ejemplo `order.order.store_pickup`) |
+  | `Applied`               | se aplicó: solo (`Automatic`, sólo si todos sus grupos son `Apply` o `Informative`) o porque alguien lo aceptó                                                                                                                                                                                                                          |
+  | `Rejected` / `Reviewed` | alguien lo rechazó, o marcó como revisado uno bloqueado; los dos adoptan el snapshot como versión aplicada sin tocar el pedido (D9), así que el siguiente diff no vuelve a proponerlo                                                                                                                                                   |
+  | `Superseded`            | llegó otro snapshot del mismo pedido                                                                                                                                                                                                                                                                                                    |
 
   Aplicar baja por `IShopifyOrderWriter.ApplyEditAsync` → `IExternalOrderWriter.ApplyEditAsync` → `Order.ApplyExternalEdit`, con
   los precios de Shopify (`ShopifyPricing`, sin descuentos de catálogo), historial sin autor (una entrada por grupo) y auditoría
@@ -5447,6 +5488,7 @@ atributos) viaja a Shopify.
   editable» lo deja `Blocked` y otra regla lo deja `Pending` con el código en `statusReason`. Un `Pending` que quedó de `Manual`
   (o de un 412) se aplica sólo cuando ese mismo snapshot vuelve a llegar (webhook o conciliación): pasar la tienda a
   `Automatic` no aplica los pendientes que ya había.
+
 - **Lo que corrige el asesor viaja a Shopify.** `PUT …/shopify/orders/{id}/corrections` escribe el pedido de QEP con el
   `QuotationsDbContext` **enrolado en la transacción de Shopify** (`ShopifyOrderCorrectionWriter`) y, en la misma transacción,
   encola el envío en `shopify.order_pushes` con sólo los grupos que cambiaron (`ShippingAddress`, `Note`, `Attributes`). Un
@@ -5507,15 +5549,15 @@ atributos) viaja a Shopify.
   ya leyó el valor viejo, su `Sent` choca y el envío vuelve a salir con el último. Por la misma carrera, una corrección puede
   recibir un 412 si el worker cerró el envío entre la lectura y el guardado; reintentar funciona.
 
-| Ruta (`/api/v1/tenants/{tenantId}/shopify`) | Permiso | Qué |
-| --- | --- | --- |
-| `GET /changes?status=&connectionId=&page=&pageSize=` | `quotations.order.read` | «Cambios por revisar», más nuevos primero; sin `status`, `Pending` y `Blocked`; `pageSize` ≤ 50 |
-| `GET /orders/{id}/changes` | `quotations.order.read` | los cambios de una fila del espejo, todos los estados (404 `shopify.order.not_found`) |
+| Ruta (`/api/v1/tenants/{tenantId}/shopify`)                 | Permiso                   | Qué                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /changes?status=&connectionId=&page=&pageSize=`        | `quotations.order.read`   | «Cambios por revisar», más nuevos primero; sin `status`, `Pending` y `Blocked`; `pageSize` ≤ 50                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `GET /orders/{id}/changes`                                  | `quotations.order.read`   | los cambios de una fila del espejo, todos los estados (404 `shopify.order.not_found`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `POST /changes/{changeId}/accept` \| `/reject` \| `/review` | `quotations.order.manage` | 404 `shopify.edit.not_found`; 409 `shopify.edit.not_open`; `review` de un `Pending` 422 `shopify.edit.not_blocked`; `accept` que ya no se puede aplicar deja el cambio `Blocked` y responde 422 `shopify.edit.order_not_editable` \| `payment_status_not_allowed` \| `product_unmatched` (D16); otra regla del pedido responde 422 con el código de Quotations y el cambio sigue abierto; pedido inexistente 404 `shopify.order.not_found`; tienda borrada 422 `shopify.store.not_operational`; el pedido cambió entre el cálculo y la escritura, 412 `concurrency.conflict`. Un 409 sobre un cambio que un webhook acaba de reemplazar es «recarga el cambio» |
-| `GET /qep-orders/{qepOrderId}` | `quotations.order.read` | el panel de Shopify del detalle del pedido: `canEdit`, `editBlockedReason` (`NotImported`, `Cancelled`, `Archived`, `Invoiced`, `Prepared`, D20), `shippingAddressSupported`, los atributos, el último envío y el cambio abierto (404 `shopify.order.not_found` si el pedido no vino de Shopify) |
-| `PUT /orders/{id}/corrections` | `quotations.order.manage` | `If-Match` con la versión del **pedido de QEP**; sin él 428 `precondition.if_match_required`, versión vieja 412, fila no importada 422 `shopify.order.not_imported`, pedido no editable 422 `order.order.not_editable`, recogida con dirección 422 `order.order.store_pickup`, dirección fuera de Colombia 422 `shopify.order.address_not_supported`, cuerpo inválido 422 `validation.failed` con `errors`; la respuesta trae `shopifySync` (`Queued` \| `Held` \| `NothingToSend`) |
-| `POST /orders/{id}/push` | `quotations.order.manage` | suelta el envío retenido del pedido (`Held` → `Pending`) y responde el panel; conexión aún no operativa 422 `shopify.store.not_operational`; sin envío retenido 409 `shopify.push.nothing_held`; fila o pedido inexistente 404 `shopify.order.not_found`; una corrección a la vez 412 |
-| `POST /stores/{connectionId}/pushes/release` | `quotations.order.manage` | suelta todos los envíos retenidos de la tienda y responde `{ "released": n }`; conexión de otro tenant o inexistente 403 `authorization.denied`; no operativa 422 `shopify.store.not_operational`. Mismo permiso que «Sincronizar ahora» de la tienda: lo hace quien corrige pedidos |
+| `GET /qep-orders/{qepOrderId}`                              | `quotations.order.read`   | el panel de Shopify del detalle del pedido: `canEdit`, `editBlockedReason` (`NotImported`, `Cancelled`, `Archived`, `Invoiced`, `Prepared`, D20), `shippingAddressSupported`, los atributos, el último envío y el cambio abierto (404 `shopify.order.not_found` si el pedido no vino de Shopify)                                                                                                                                                                                                                                                                                                                                                               |
+| `PUT /orders/{id}/corrections`                              | `quotations.order.manage` | `If-Match` con la versión del **pedido de QEP**; sin él 428 `precondition.if_match_required`, versión vieja 412, fila no importada 422 `shopify.order.not_imported`, pedido no editable 422 `order.order.not_editable`, recogida con dirección 422 `order.order.store_pickup`, dirección fuera de Colombia 422 `shopify.order.address_not_supported`, cuerpo inválido 422 `validation.failed` con `errors`; la respuesta trae `shopifySync` (`Queued` \| `Held` \| `NothingToSend`)                                                                                                                                                                            |
+| `POST /orders/{id}/push`                                    | `quotations.order.manage` | suelta el envío retenido del pedido (`Held` → `Pending`) y responde el panel; conexión aún no operativa 422 `shopify.store.not_operational`; sin envío retenido 409 `shopify.push.nothing_held`; fila o pedido inexistente 404 `shopify.order.not_found`; una corrección a la vez 412                                                                                                                                                                                                                                                                                                                                                                          |
+| `POST /stores/{connectionId}/pushes/release`                | `quotations.order.manage` | suelta todos los envíos retenidos de la tienda y responde `{ "released": n }`; conexión de otro tenant o inexistente 403 `authorization.denied`; no operativa 422 `shopify.store.not_operational`. Mismo permiso que «Sincronizar ahora» de la tienda: lo hace quien corrige pedidos                                                                                                                                                                                                                                                                                                                                                                           |
 
 **Límite conocido** (sin resolver a propósito). Dos snapshots del mismo pedido que tocan el mismo grupo y llegan intercalados
 por milisegundos —B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A falla—
@@ -5564,16 +5606,16 @@ sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`
 
 **Configuración.**
 
-| Clave | Dónde vive en prod | Qué |
-| --- | --- | --- |
-| `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
-| `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
-| `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
-| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers,read_products` | Lo que pide la autorización (`write_orders` desde el 2026-11-14, `read_products` desde el 2026-11-17) |
-| `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
-| `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
-| `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
-| `Shopify:Webhook:MaxBodyBytes`, `DeliveryPollSeconds` | defaults del código (`ShopifyWebhookOptions`: 1 MiB y 15 s); se pisan por configuración si hace falta | Tope del cuerpo (413) y sondeo del worker |
+| Clave                                                 | Dónde vive en prod                                                                                    | Qué                                                                                                   |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `Shopify:App:ClientId`                                | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID`                                                              | Client ID de la app en el Dev Dashboard                                                               |
+| `Shopify:App:ClientSecret`                            | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET`                                     | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code`                             |
+| `Shopify:App:ApiVersion`                              | ConfigMap, `2026-10`                                                                                  | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`)                                                  |
+| `Shopify:App:Scopes`                                  | ConfigMap, `read_orders,write_orders,read_customers,read_products`                                    | Lo que pide la autorización (`write_orders` desde el 2026-11-14, `read_products` desde el 2026-11-17) |
+| `Shopify:App:AllowedRedirectOrigins:N`                | ConfigMap, `https://qep.qcode.co`                                                                     | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`)       |
+| `Shopify:App:WebhookCallbackUrl`                      | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify`                                            | Lo que el enlace registra en cada tienda                                                              |
+| `Shopify:Reconcile:IntervalMinutes`                   | ConfigMap, `10`                                                                                       | Periodo de la conciliación                                                                            |
+| `Shopify:Webhook:MaxBodyBytes`, `DeliveryPollSeconds` | defaults del código (`ShopifyWebhookOptions`: 1 MiB y 15 s); se pisan por configuración si hace falta | Tope del cuerpo (413) y sondeo del worker                                                             |
 
 En `Production`, `ShopifyAppOptionsValidator` exige con `ValidateOnStart` `ClientId`, `ClientSecret`,
 `WebhookCallbackUrl` (https) y al menos un origen; un `ClientId` o `ClientSecret` que llega como `#{…}#` (la variable
@@ -5589,12 +5631,12 @@ volver a abrir la app desde su Shopify para concederlo, y después alguien los s
 **Productos desde Shopify (spec 2026-11-17).** Traer el catálogo de una tienda a Catalog, mantenerlo con los webhooks y medir
 cuánto ya tiene par en QEP. Rutas (BFF, todas revalidan tenant, permiso, módulo y conexión con 403):
 
-| Ruta | Permiso | Qué |
-| --- | --- | --- |
+| Ruta                                                                                                | Permiso                          | Qué                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST …/shopify/stores/{connectionId}/products/import` `{ mode: "All" \| "Missing", redirectUri? }` | `integrations.connection.manage` | 202 `{ importId }`; 409 `shopify.products.import_running`; 422 `shopify.store.not_operational`, `shopify.products.company_required` o `shopify.products.scope_missing` (con `reauthorizeUrl`, `null` sin `redirectUri`) |
-| `GET …/shopify/stores/{connectionId}/products/import` | `integrations.connection.read` | La última importación (contadores e issues, hasta 50) o `null` |
-| `GET …/shopify/stores/{connectionId}/products/coverage?redirectUri=` | `integrations.connection.read` | `{ shopifyVariants, matched, catalogEmpty, missingSample }`, consultado en el momento; 503 `shopify.store.sync_unavailable` si Shopify no responde |
-| `DELETE …/shopify/products/{productId}/link` | `integrations.connection.manage` | 204: quita los vínculos del producto en cualquier tienda del tenant y lo deja propio de QEP; 404 `shopify.products.link_not_found` |
+| `GET …/shopify/stores/{connectionId}/products/import`                                               | `integrations.connection.read`   | La última importación (contadores e issues, hasta 50) o `null`                                                                                                                                                          |
+| `GET …/shopify/stores/{connectionId}/products/coverage?redirectUri=`                                | `integrations.connection.read`   | `{ shopifyVariants, matched, catalogEmpty, missingSample }`, consultado en el momento; 503 `shopify.store.sync_unavailable` si Shopify no responde                                                                      |
+| `DELETE …/shopify/products/{productId}/link`                                                        | `integrations.connection.manage` | 204: quita los vínculos del producto en cualquier tienda del tenant y lo deja propio de QEP; 404 `shopify.products.link_not_found`                                                                                      |
 
 La importación la corre `ShopifyProductImportWorker` (cola `shopify.product_imports`, lease de 2 min, 4 intentos, timbre
 `shopify_products`), página por página. Cuando termina `Done`, la tienda queda con `products_synced_at` y desde ahí los
@@ -5610,12 +5652,12 @@ el canje guarde el scope nuevo; el siguiente enlace o probador los registra.
 configura en cinco pasos (`company`, `advisor`, `buyers`, `products`, `history`) con una sola lectura que dice qué falta. Rutas
 (todas revalidan tenant, permiso, módulo y conexión con 403):
 
-| Ruta | Permiso | Qué |
-| --- | --- | --- |
-| `GET …/shopify/stores/{connectionId}/setup?redirectUri=` | `integrations.connection.manage` | `ShopifySetupDto`: los cinco pasos con `status`, `blockedBy` y `missing`, el `openStep`, la tienda con `settings` (el cuerpo del `PUT`, con su `version`), la empresa elegida y la sugerida, las empresas activas, el asesor, los compradores, los productos, el historial, `waiting` y `stats`. Crea la tienda si el módulo no la tenía |
+| Ruta                                                                                                                                                                                                | Permiso                                                                    | Qué                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET …/shopify/stores/{connectionId}/setup?redirectUri=`                                                                                                                                            | `integrations.connection.manage`                                           | `ShopifySetupDto`: los cinco pasos con `status`, `blockedBy` y `missing`, el `openStep`, la tienda con `settings` (el cuerpo del `PUT`, con su `version`), la empresa elegida y la sugerida, las empresas activas, el asesor, los compradores, los productos, el historial, `waiting` y `stats`. Crea la tienda si el módulo no la tenía                                                                                                                                                            |
 | `POST …/shopify/stores/{connectionId}/setup/company` (`If-Match`) `{ companyId?, name?, taxId?, documentType?, country?, cityId?, cityName?, address?, phone?, email?, chargesVat?, bankAccount? }` | `integrations.connection.manage` (y `companies.company.manage` para crear) | Sin `companyId` crea la empresa por Companies (sus `errors`, su 403, la siembra de tasas) y la asigna: 201 `{ companyId, storeVersion }`. Con `companyId` sólo asigna: 200. 412 `concurrency.conflict` antes de crear si la versión no es la actual; si la asignación pierde después de crear, el 412 trae `details.companyId` y el reintento lo manda. 422 `shopify.store.billing_account_not_found`; 503 `shopify.store.sync_unavailable` si no hay moneda (ni cuenta, ni perfil, ni la guardada) |
-| `POST …/shopify/stores/{connectionId}/products/coverage/accept` | `integrations.connection.manage` | 204: «Seguir así», el paso `products` queda hecho con la cobertura que hay |
-| `POST …/shopify/stores/{connectionId}/sync?source=setup` | `quotations.order.manage` | La respuesta de siempre; además la tienda guarda el resumen de la corrida (`history.lastRun`). Otro `source` es 422 `errors.source` |
+| `POST …/shopify/stores/{connectionId}/products/coverage/accept`                                                                                                                                     | `integrations.connection.manage`                                           | 204: «Seguir así», el paso `products` queda hecho con la cobertura que hay                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `POST …/shopify/stores/{connectionId}/sync?source=setup`                                                                                                                                            | `quotations.order.manage`                                                  | La respuesta de siempre; además la tienda guarda el resumen de la corrida (`history.lastRun`). Otro `source` es 422 `errors.source`                                                                                                                                                                                                                                                                                                                                                                 |
 
 - **El perfil de la tienda** (`shopProfile`) es un campo **interno** de la conexión de Integrations: un JSON con el correo, el
   correo de contacto, la moneda, si los precios incluyen impuestos y la dirección de facturación de `ShopQuery`. Lo escriben el
@@ -5676,6 +5718,7 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    Shopify, cada tenant nuevo ve esa tarjeta rota, y pasa igual si `develop` llega a `main` por otra razón (un hotfix,
    otra feature). Por eso el frontend de Shopify se despliega junto con el backend, no después. La alternativa, que
    decide el owner, es sacar `shopify` de `DefaultForNewTenants` hasta que exista el frontend.
+
 3. La app en el Dev Dashboard de Shopify, la verificación con una tienda de desarrollo y el primer tenant piloto: los
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
@@ -5684,18 +5727,19 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    worker de envíos (`ShopifyOrderPushWorker`) entra con el backend, y `Shopify:App:Scopes` pasa a
    `read_orders,write_orders,read_customers` en el ConfigMap.
 
-   **Antes del ConfigMap, la app.** En el Dev Dashboard de Shopify, publica (*release*) una versión de la app cuyos scopes
+   **Antes del ConfigMap, la app.** En el Dev Dashboard de Shopify, publica (_release_) una versión de la app cuyos scopes
    pidan `write_orders`. `CompleteShopifyInstall` exige ahora `write_orders` en lo que Shopify concede: si la versión
    publicada de la app no lo pide, toda instalación nueva o reenlace falla con `integrations.shopify.scopes_missing` en
    cuanto el ConfigMap llega a producción. El orden es: versión de la app con `write_orders`, después el ConfigMap.
 
    Quedan por verificar contra Shopify real:
 
-   | # | Qué | Cómo se cierra |
-   | --- | --- | --- |
-   | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits` |
+   | #    | Qué                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Cómo se cierra                                                                                                                                                                                             |
+   | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit)                                                                                                                                                                                                                                                                                                                                | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits`                                                                                                       |
    | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`, y que el `orders/updated` de vuelta salga como eco. Además: (a) el teléfono de ida y vuelta: si Shopify guarda en E.164 el teléfono nacional que QEP mandó, el eco tiene que salir igual (QEP compara sin el indicativo de país, `ShopifyOrderProjection.SamePhone`); (b) que `note: null` borre la nota en Shopify y no se ignore (si la ignora, mandar `""`) | Corregir una ciudad en QEP, ver el envío `Sent` y la dirección en Shopify, y que no aparezca un cambio; mirar el teléfono que quedó en Shopify; borrar la nota del cliente en QEP y verla vacía en Shopify |
-   | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata |
+   | V-13 | Que las instalaciones existentes tengan `write_orders`                                                                                                                                                                                                                                                                                                                                                                                                         | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata                                                                                                |
+
 5. **Productos desde Shopify (spec 2026-11-17).** Migraciones aditivas, sin backfill: `AddProductExternalSource` (Catalog) y
    `AddProductSync` (Shopify: `product_links`, `product_imports`, `product_import_issues` y `stores.products_synced_at`). El
    worker de importaciones (`ShopifyProductImportWorker`) entra con el backend, y `Shopify:App:Scopes` pasa a
@@ -5708,12 +5752,13 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 
    Quedan por verificar contra Shopify real (§9):
 
-   | Qué | Cómo se cierra |
-   | --- | --- |
-   | `productsCount(limit: null)` devuelve el total de activos y borradores | Importar una tienda de desarrollo y comparar `total` con su lista de productos |
-   | `featuredMedia.preview.image.url(transform:)` entrega un JPG de hasta 2048×2048 | Mirar el archivo que quedó en Storage para un producto con imagen |
-   | El filtro `product_status` de `productVariants` (la cobertura) deja fuera los archivados | Archivar un producto y ver que la cobertura no lo cuente |
-   | Una tienda con variantes sin SKU y con `taxesIncluded = false` | Importarla: códigos `shp-{id}` y precios con IVA sumado si la empresa cobra IVA y la moneda es COP |
+   | Qué                                                                                      | Cómo se cierra                                                                                     |
+   | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+   | `productsCount(limit: null)` devuelve el total de activos y borradores                   | Importar una tienda de desarrollo y comparar `total` con su lista de productos                     |
+   | `featuredMedia.preview.image.url(transform:)` entrega un JPG de hasta 2048×2048          | Mirar el archivo que quedó en Storage para un producto con imagen                                  |
+   | El filtro `product_status` de `productVariants` (la cobertura) deja fuera los archivados | Archivar un producto y ver que la cobertura no lo cuente                                           |
+   | Una tienda con variantes sin SKU y con `taxesIncluded = false`                           | Importarla: códigos `shp-{id}` y precios con IVA sumado si la empresa cobra IVA y la moneda es COP |
+
 6. **Asistente de la tienda (spec 2026-11-17 onboarding).** Una sola migración, **aditiva**, sin backfill: `AddStoreSetup`
    (Shopify: cuatro columnas nulas en `shopify.stores`, `products_coverage`, `products_coverage_accepted_at`,
    `setup_history_ran_at` y `setup_history_summary`). Un pod viejo las ignora. El perfil de la tienda no tiene migración: es un
@@ -5722,11 +5767,11 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 
    Quedan por verificar contra una tienda de desarrollo:
 
-   | Qué | Cómo se cierra |
-   | --- | --- |
-   | `shop.billingAddress` (empresa, ciudad, `provinceCode` de Colombia, `countryCodeV2`, teléfono) llega como lo lee `ShopQuery` | Enlazar la tienda y mirar la sugerencia del `GET …/setup` |
-   | `shop.contactEmail` existe y es el correo que el comercio ve como de contacto | El mismo `GET …/setup`: `company.suggested.email` |
-   | `productVariants(first: 1, query: "taxable:true")` distingue una tienda con variantes gravadas de una sin | Marcar todas las variantes como no gravadas y ver `suggestedChargesVat: false`; marcar una y ver `true` |
+   | Qué                                                                                                                          | Cómo se cierra                                                                                          |
+   | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+   | `shop.billingAddress` (empresa, ciudad, `provinceCode` de Colombia, `countryCodeV2`, teléfono) llega como lo lee `ShopQuery` | Enlazar la tienda y mirar la sugerencia del `GET …/setup`                                               |
+   | `shop.contactEmail` existe y es el correo que el comercio ve como de contacto                                                | El mismo `GET …/setup`: `company.suggested.email`                                                       |
+   | `productVariants(first: 1, query: "taxable:true")` distingue una tienda con variantes gravadas de una sin                    | Marcar todas las variantes como no gravadas y ver `suggestedChargesVat: false`; marcar una y ver `true` |
 
 ### Integración con Siigo
 
@@ -5864,15 +5909,15 @@ respuestas. Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
 **Lo que se mira en las primeras facturas reales** (no hay empresa de pruebas: se resuelve con ellas, y con el interruptor
 apagado ninguna puede salir mal sin que se vea):
 
-| | Qué | Cómo se cierra |
-| --- | --- | --- |
-| V-1 | Límite de peticiones de Siigo | Mirar los 429 en las primeras facturas |
-| V-2 | Redondeo por ítem con descuento y cuándo conviene `price` y cuándo `taxed_price` | Comparar el total de Siigo (`siigoTotal`) con el del pedido |
-| V-3 | Documento del consumidor final | Facturar un pedido de consumidor final y ver que Siigo lo acepta |
-| V-5 | Cuánto recuerda Siigo un `Idempotency-Key` | Decide si 24 h para `Unknown` es corto o largo |
-| V-6 | Si una factura electrónica exige `fiscal_responsibilities` y `vat_responsible` en el cliente, y el formato de `person_type` | Mirar el rechazo con un cliente persona jurídica |
-| V-7 | Código y texto de `invalid_total_payments` con y sin retenciones; base mínima (UVT) y redondeo de cada retención; ReteIVA y autorretención; borrado de una factura sin emitir por API | Con la primera factura real sin emitir (`stamp.send = false`) |
-| V-8 | Cuándo exige Siigo la bodega en un ítem y si un servicio la rechaza | Facturar un producto con control de inventario y un servicio |
+|     | Qué                                                                                                                                                                                   | Cómo se cierra                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| V-1 | Límite de peticiones de Siigo                                                                                                                                                         | Mirar los 429 en las primeras facturas                           |
+| V-2 | Redondeo por ítem con descuento y cuándo conviene `price` y cuándo `taxed_price`                                                                                                      | Comparar el total de Siigo (`siigoTotal`) con el del pedido      |
+| V-3 | Documento del consumidor final                                                                                                                                                        | Facturar un pedido de consumidor final y ver que Siigo lo acepta |
+| V-5 | Cuánto recuerda Siigo un `Idempotency-Key`                                                                                                                                            | Decide si 24 h para `Unknown` es corto o largo                   |
+| V-6 | Si una factura electrónica exige `fiscal_responsibilities` y `vat_responsible` en el cliente, y el formato de `person_type`                                                           | Mirar el rechazo con un cliente persona jurídica                 |
+| V-7 | Código y texto de `invalid_total_payments` con y sin retenciones; base mínima (UVT) y redondeo de cada retención; ReteIVA y autorretención; borrado de una factura sin emitir por API | Con la primera factura real sin emitir (`stamp.send = false`)    |
+| V-8 | Cuándo exige Siigo la bodega en un ítem y si un servicio la rechaza                                                                                                                   | Facturar un producto con control de inventario y un servicio     |
 
 ### Contratos de servicio (cobros recurrentes)
 
@@ -5890,18 +5935,18 @@ el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca 
 
 **Rutas** (`/api/v1/tenants/{tenantId}/billing`, con `X-Tenant-Id`):
 
-| Método | Ruta | Permiso | Qué hace |
-| --- | --- | --- | --- |
-| `GET` / `PUT` | `/customers/{customerId}/profile` | read / manage | Perfil de cobro: canal (`WhatsApp` o `Email`) y encargado. Sin `If-Match`: la última escritura gana |
-| `GET` | `/assignees` | manage | Miembros activos que pueden ser encargados |
-| `GET` / `POST` | `/services` | read / manage | Lista paginada con resumen por moneda / crea el servicio (y su perfil si el cliente no tiene). `description` es opcional: se recorta, en blanco es `null`, tope 1000 (422 `billing.service.description_too_long`) |
-| `GET` | `/services/preview-charges` | manage | Cuántos cobros nacerían con esa fecha y ciclo, sin escribir |
-| `GET` / `PUT` | `/services/{serviceId}` | read / manage | Detalle con cobros e historial de precios (`priceChanges`) / edita nombre, descripción, precio y moneda (`If-Match`). `description` reemplaza a la guardada: `null`, en blanco o ausente la borra, y nunca exige motivo. Cambiar el precio o la moneda exige `priceChangeReason` (422 `billing.service.price_reason_required` sin él) y deja una fila en `billing.service_price_changes` |
-| `POST` | `/services/{serviceId}/pause`, `/resume`, `/cancel` | manage | Transiciones de estado (`If-Match`); cancelar cancela los cobros `Pending` |
-| `GET` | `/charges`, `/charges/{chargeId}` | read | Cobros con cliente, encargado y último aviso |
-| `POST` / `PUT` | `/charges/{chargeId}/pay`, `/charges/{chargeId}/payment` | manage | Marca pagado / corrige el pago |
-| `GET` / `PUT` | `/settings` | manage | Conexión de WhatsApp con la que se avisa (`whatsAppConnectionId`) |
-| `GET` / `POST` | `/import/template`, `/import/preview`, `/import` | manage | Importación desde Excel |
+| Método         | Ruta                                                     | Permiso       | Qué hace                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET` / `PUT`  | `/customers/{customerId}/profile`                        | read / manage | Perfil de cobro: canal (`WhatsApp` o `Email`) y encargado. Sin `If-Match`: la última escritura gana                                                                                                                                                                                                                                                                                      |
+| `GET`          | `/assignees`                                             | manage        | Miembros activos que pueden ser encargados                                                                                                                                                                                                                                                                                                                                               |
+| `GET` / `POST` | `/services`                                              | read / manage | Lista paginada con resumen por moneda / crea el servicio (y su perfil si el cliente no tiene). `description` es opcional: se recorta, en blanco es `null`, tope 1000 (422 `billing.service.description_too_long`)                                                                                                                                                                        |
+| `GET`          | `/services/preview-charges`                              | manage        | Cuántos cobros nacerían con esa fecha y ciclo, sin escribir                                                                                                                                                                                                                                                                                                                              |
+| `GET` / `PUT`  | `/services/{serviceId}`                                  | read / manage | Detalle con cobros e historial de precios (`priceChanges`) / edita nombre, descripción, precio y moneda (`If-Match`). `description` reemplaza a la guardada: `null`, en blanco o ausente la borra, y nunca exige motivo. Cambiar el precio o la moneda exige `priceChangeReason` (422 `billing.service.price_reason_required` sin él) y deja una fila en `billing.service_price_changes` |
+| `POST`         | `/services/{serviceId}/pause`, `/resume`, `/cancel`      | manage        | Transiciones de estado (`If-Match`); cancelar cancela los cobros `Pending`                                                                                                                                                                                                                                                                                                               |
+| `GET`          | `/charges`, `/charges/{chargeId}`                        | read          | Cobros con cliente, encargado y último aviso                                                                                                                                                                                                                                                                                                                                             |
+| `POST` / `PUT` | `/charges/{chargeId}/pay`, `/charges/{chargeId}/payment` | manage        | Marca pagado / corrige el pago                                                                                                                                                                                                                                                                                                                                                           |
+| `GET` / `PUT`  | `/settings`                                              | manage        | Conexión de WhatsApp con la que se avisa (`whatsAppConnectionId`)                                                                                                                                                                                                                                                                                                                        |
+| `GET` / `POST` | `/import/template`, `/import/preview`, `/import`         | manage        | Importación desde Excel                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Generación por período.** Cada período genera su propio cobro aunque el anterior siga sin pagar; marcar pagado no genera nada. Un
 cobro nace cuando `due_date <= hoy del tenant + 5`. Las fechas son `firstDueDate + k × cycleMonths` con el día del ancla (31 ene →
@@ -6014,20 +6059,20 @@ Con el módulo apagado, toda ruta responde 403.
 que no es del tenant, 404. Todo `PUT` de un ticket, de un tipo o de los ajustes exige `If-Match` con la `version` (sin él, `428
 precondition.if_match_required`; vieja, `412 concurrency.conflict`).
 
-| Método y ruta | Política | Qué hace |
-| --- | --- | --- |
-| `GET /tickets` | `support.ticket.view` | Bandeja paginada con el resumen del tenant (`SupportTicketPageDto`) |
-| `POST /tickets` | `support.ticket.manage` | Alta manual (`201` + `Location`, `SupportTicketDetailDto`) |
-| `GET /tickets/{ticketId}` | `support.ticket.view` | Detalle con la traza y las transiciones permitidas |
-| `PUT /tickets/{ticketId}/status` · `/assignee` · `/type` · `/customer` | `support.ticket.manage` | Cambia estado, responsable, tipo o cliente |
-| `POST /tickets/{ticketId}/take` · `/extension` | `support.ticket.manage` | «Asignármelo» y la prórroga del plazo (fase 4a, `If-Match`) |
-| `GET /assignees` | `support.ticket.view` | Miembros activos que pueden ser responsables (tienen `manage`) |
-| `GET /ticket-types` | `support.ticket.view` | Todos los tipos, también los inactivos (el selector los marca), para el ticket |
-| `GET` · `POST /settings/ticket-types` | `support.settings.manage` | Los mismos tipos para la tabla de ajustes, y alta de uno |
-| `PUT /settings/ticket-types/{typeId}` | `support.settings.manage` | Edita un tipo (`If-Match`) |
-| `DELETE /settings/ticket-types/{typeId}` | `support.settings.manage` | Borra un tipo que ningún ticket usa (fase 4a, `If-Match`, `204`) |
-| `PUT /settings/ticket-types/order` | `support.settings.manage` | Reordena todos los tipos |
-| `GET /settings` · `PUT /settings` | `support.settings.view` · `support.settings.manage` | Umbral de «por vencer» (con `ETag`) |
+| Método y ruta                                                          | Política                                            | Qué hace                                                                       |
+| ---------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `GET /tickets`                                                         | `support.ticket.view`                               | Bandeja paginada con el resumen del tenant (`SupportTicketPageDto`)            |
+| `POST /tickets`                                                        | `support.ticket.manage`                             | Alta manual (`201` + `Location`, `SupportTicketDetailDto`)                     |
+| `GET /tickets/{ticketId}`                                              | `support.ticket.view`                               | Detalle con la traza y las transiciones permitidas                             |
+| `PUT /tickets/{ticketId}/status` · `/assignee` · `/type` · `/customer` | `support.ticket.manage`                             | Cambia estado, responsable, tipo o cliente                                     |
+| `POST /tickets/{ticketId}/take` · `/extension`                         | `support.ticket.manage`                             | «Asignármelo» y la prórroga del plazo (fase 4a, `If-Match`)                    |
+| `GET /assignees`                                                       | `support.ticket.view`                               | Miembros activos que pueden ser responsables (tienen `manage`)                 |
+| `GET /ticket-types`                                                    | `support.ticket.view`                               | Todos los tipos, también los inactivos (el selector los marca), para el ticket |
+| `GET` · `POST /settings/ticket-types`                                  | `support.settings.manage`                           | Los mismos tipos para la tabla de ajustes, y alta de uno                       |
+| `PUT /settings/ticket-types/{typeId}`                                  | `support.settings.manage`                           | Edita un tipo (`If-Match`)                                                     |
+| `DELETE /settings/ticket-types/{typeId}`                               | `support.settings.manage`                           | Borra un tipo que ningún ticket usa (fase 4a, `If-Match`, `204`)               |
+| `PUT /settings/ticket-types/order`                                     | `support.settings.manage`                           | Reordena todos los tipos                                                       |
+| `GET /settings` · `PUT /settings`                                      | `support.settings.view` · `support.settings.manage` | Umbral de «por vencer» (con `ETag`)                                            |
 
 **Siembra perezosa.** Tenancy no avisa cuando se prende un módulo, así que la fila `support.tenant_settings` del tenant nace en su
 primer acceso (`SupportProvisioner`, `INSERT … ON CONFLICT (tenant_id) DO NOTHING RETURNING`): sólo quien la inserta siembra los
@@ -6147,18 +6192,18 @@ plantilla del sistema `SupportReply`.
 
 **Rutas nuevas**, bajo `/api/v1/tenants/{tenantId}/support`. Toda acción que cambia el ticket exige `If-Match`.
 
-| Método y ruta | Política | Qué hace |
-| --- | --- | --- |
-| `GET /conversations/{conversationId}/tickets` | `support.ticket.view` | Los tickets de la conversación y los del mismo cliente por otros canales, con `CanCreate` y su motivo |
-| `POST /conversations/{conversationId}/tickets` | `support.ticket.manage` | Abre un ticket desde la conversación (exige `messaging`; `201`) |
-| `GET /conversations/{conversationId}/unclassified` | `support.ticket.view` | Entrantes sin clasificar con sus tickets candidatos |
-| `POST /conversations/{conversationId}/unclassified/{messageId}/assign` | `support.ticket.manage` | Lo asigna a uno (`{ ticketId, version }`) |
-| `POST /conversations/{conversationId}/unclassified/{messageId}/dismiss` | `support.ticket.manage` | «De ninguno» |
-| `GET /tickets/{ticketId}/messages?before=&take=` | `support.ticket.view` | Mensajes vinculados, del más nuevo al más viejo (50, hasta 100) |
-| `POST /tickets/{ticketId}/messages/{messageId}/pin` · `/release` | `support.ticket.manage` | Fija o suelta un mensaje (`If-Match`) |
-| `PUT /tickets/{ticketId}/follow-thread` | `support.ticket.manage` | Prende o apaga «Seguir el hilo» (`{ follow }`, `If-Match`) |
-| `GET /tickets/{ticketId}/reply-options` | `support.ticket.view` | Qué canal puede usar el asesor y qué va a pasar (texto o plantilla) |
-| `POST /tickets/{ticketId}/replies` | `support.ticket.manage` | Responde (`If-Match`; `201` con la fila, también si quedó `Failed`) |
+| Método y ruta                                                           | Política                | Qué hace                                                                                              |
+| ----------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `GET /conversations/{conversationId}/tickets`                           | `support.ticket.view`   | Los tickets de la conversación y los del mismo cliente por otros canales, con `CanCreate` y su motivo |
+| `POST /conversations/{conversationId}/tickets`                          | `support.ticket.manage` | Abre un ticket desde la conversación (exige `messaging`; `201`)                                       |
+| `GET /conversations/{conversationId}/unclassified`                      | `support.ticket.view`   | Entrantes sin clasificar con sus tickets candidatos                                                   |
+| `POST /conversations/{conversationId}/unclassified/{messageId}/assign`  | `support.ticket.manage` | Lo asigna a uno (`{ ticketId, version }`)                                                             |
+| `POST /conversations/{conversationId}/unclassified/{messageId}/dismiss` | `support.ticket.manage` | «De ninguno»                                                                                          |
+| `GET /tickets/{ticketId}/messages?before=&take=`                        | `support.ticket.view`   | Mensajes vinculados, del más nuevo al más viejo (50, hasta 100)                                       |
+| `POST /tickets/{ticketId}/messages/{messageId}/pin` · `/release`        | `support.ticket.manage` | Fija o suelta un mensaje (`If-Match`)                                                                 |
+| `PUT /tickets/{ticketId}/follow-thread`                                 | `support.ticket.manage` | Prende o apaga «Seguir el hilo» (`{ follow }`, `If-Match`)                                            |
+| `GET /tickets/{ticketId}/reply-options`                                 | `support.ticket.view`   | Qué canal puede usar el asesor y qué va a pasar (texto o plantilla)                                   |
+| `POST /tickets/{ticketId}/replies`                                      | `support.ticket.manage` | Responde (`If-Match`; `201` con la fila, también si quedó `Failed`)                                   |
 
 **Seguimiento del hilo.** Los entrantes no se empujan desde la ingesta: `SupportThreadFollowWorker` lee por sondeo, con
 `Support:Workers` en `appsettings.json` y defaults en código: `Enabled` (verdadero si falta: el worker se registra o no al arrancar),
@@ -6209,29 +6254,29 @@ una sola lista, `SupportChannelReasons`
 (`Modules.Support.Application/ISupportReplyChannels.cs`). Los que vienen de Mensajería son copia de `SupportReplyReasons`, amarrada por
 `SupportFailureCodeParityTests`. El frontend traduce por esta lista.
 
-| Código | Cuándo | Dónde se ve |
-| --- | --- | --- |
-| `window_closed` | La ventana de 24 h está cerrada | Respuesta, PIN, `reply-options` |
-| `contact_blocked` | El contacto está bloqueado | Respuesta, `reply-options` |
-| `template_not_approved` | La conexión no tiene aprobada «Aviso de respuesta» | Respuesta, `reply-options` |
-| `template_text_invalid` | El texto no cabe en un parámetro de Meta | Respuesta |
-| `recipient_invalid` | El nombre o el radicado no caben en la plantilla | Respuesta |
-| `text_invalid` | El texto no cumple la regla del canal (tope de Instagram) | Respuesta, PIN |
-| `connection_unavailable` | La conexión está pausada, borrada o pide atención | Respuesta, PIN, `reply-options` |
-| `conversation_not_found` | La conversación ya no existe | Respuesta, PIN |
-| `attachment_unavailable` | El adjunto no está disponible para esa conversación | Respuesta |
-| `channel_unsupported` | Instagram no tiene plantillas | Respuesta |
-| `customer_not_found` | Abrir la conversación chocó con un cliente borrado | Respuesta |
-| `send_failed` | El canal intentó y no salió | Respuesta, PIN |
-| `no_conversation` | El ticket no tiene conversación | `reply-options` |
-| `messaging_disabled` | Mensajería está apagada en el tenant | `reply-options`, ficha de la conversación |
-| `no_mobile` | La foto no tiene celular para la plantilla | `reply-options` |
-| `no_email` | La foto no tiene correo | `reply-options` |
-| `no_author` | Ningún miembro activo puede firmar el envío por Mensajería (plan F11) | PIN |
-| `portal_only` | Un anónimo sólo se responde por la página de consulta | `reply-options` |
-| `portal_unavailable` | La página de consulta sólo responde a anónimos | `reply-options` |
-| `no_permission` | Quien mira no tiene `support.ticket.manage` (ya existía como literal; ahora vive en la lista) | Ficha de la conversación |
-| `send_pending` | «Reenviar PIN» reclamó el envío y todavía no sabe cómo terminó; si el proceso muere en el medio, queda así | PIN |
+| Código                   | Cuándo                                                                                                     | Dónde se ve                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `window_closed`          | La ventana de 24 h está cerrada                                                                            | Respuesta, PIN, `reply-options`           |
+| `contact_blocked`        | El contacto está bloqueado                                                                                 | Respuesta, `reply-options`                |
+| `template_not_approved`  | La conexión no tiene aprobada «Aviso de respuesta»                                                         | Respuesta, `reply-options`                |
+| `template_text_invalid`  | El texto no cabe en un parámetro de Meta                                                                   | Respuesta                                 |
+| `recipient_invalid`      | El nombre o el radicado no caben en la plantilla                                                           | Respuesta                                 |
+| `text_invalid`           | El texto no cumple la regla del canal (tope de Instagram)                                                  | Respuesta, PIN                            |
+| `connection_unavailable` | La conexión está pausada, borrada o pide atención                                                          | Respuesta, PIN, `reply-options`           |
+| `conversation_not_found` | La conversación ya no existe                                                                               | Respuesta, PIN                            |
+| `attachment_unavailable` | El adjunto no está disponible para esa conversación                                                        | Respuesta                                 |
+| `channel_unsupported`    | Instagram no tiene plantillas                                                                              | Respuesta                                 |
+| `customer_not_found`     | Abrir la conversación chocó con un cliente borrado                                                         | Respuesta                                 |
+| `send_failed`            | El canal intentó y no salió                                                                                | Respuesta, PIN                            |
+| `no_conversation`        | El ticket no tiene conversación                                                                            | `reply-options`                           |
+| `messaging_disabled`     | Mensajería está apagada en el tenant                                                                       | `reply-options`, ficha de la conversación |
+| `no_mobile`              | La foto no tiene celular para la plantilla                                                                 | `reply-options`                           |
+| `no_email`               | La foto no tiene correo                                                                                    | `reply-options`                           |
+| `no_author`              | Ningún miembro activo puede firmar el envío por Mensajería (plan F11)                                      | PIN                                       |
+| `portal_only`            | Un anónimo sólo se responde por la página de consulta                                                      | `reply-options`                           |
+| `portal_unavailable`     | La página de consulta sólo responde a anónimos                                                             | `reply-options`                           |
+| `no_permission`          | Quien mira no tiene `support.ticket.manage` (ya existía como literal; ahora vive en la lista)              | Ficha de la conversación                  |
+| `send_pending`           | «Reenviar PIN» reclamó el envío y todavía no sabe cómo terminó; si el proceso muere en el medio, queda así | PIN                                       |
 
 **Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
 la pantalla lo sube con la sesión de subida de Mensajería
@@ -6271,16 +6316,16 @@ la versión vigente no esté publicada (`ResolveAsync`).
 **Rutas públicas** (relativas al grupo). Los limitadores son por IP del visitante (`RemoteIpAddress`, ya corregida por `X-Real-IP` detrás
 del ingress) y cada uno tiene su propia cubeta.
 
-| Método y ruta | Cuerpo | Éxito | Turnstile | Límite por IP |
-| --- | --- | --- | --- | --- |
-| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país, `legal`: los tres documentos vigentes y el texto de caracterización (abajo), y `organization`, la empresa que responde | No | 60 / min |
-| `GET /consult` | — | `{ tenantName, logoUrl, accentColor, organization }` para dibujar la página de consulta; `accentColor` y `organization` son los de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
-| `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
-| `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
-| `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
-| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` y `clientRequestId` opcionales | `201` `{ number, pin, receivedAt, dueOn, termBusinessDays, termExtended, termIsLegal, successMessage, pinEmailed, consultUrl }` | Sí (no en un reintento, abajo) | 5 / 10 min |
-| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, radicación, plazo (`termIsLegal`, `termBusinessDays`, `termExtended`) y respuestas | Sí | 10 / min |
-| `POST /tickets/resend-pin` | `{ number, turnstileToken }` | `202` vacío, siempre | Sí | 5 / 10 min |
+| Método y ruta                                             | Cuerpo                                                                                 | Éxito                                                                                                                                                                                                      | Turnstile                      | Límite por IP |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------- |
+| `GET /form`                                               | —                                                                                      | Configuración, tipos publicados, campos por variante, tipos de documento por país, `legal`: los tres documentos vigentes y el texto de caracterización (abajo), y `organization`, la empresa que responde  | No                             | 60 / min      |
+| `GET /consult`                                            | —                                                                                      | `{ tenantName, logoUrl, accentColor, organization }` para dibujar la página de consulta; `accentColor` y `organization` son los de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No                             | 60 / min      |
+| `GET /geography/departments` · `/departments/{id}/cities` | —                                                                                      | Departamentos y ciudades de Colombia                                                                                                                                                                       | No                             | 60 / min      |
+| `POST /attachments`                                       | `{ name, mimeType, sizeBytes }`                                                        | `201` `{ fileId, uploadKey, uploadUrl, headers }`                                                                                                                                                          | No                             | 20 / 10 min   |
+| `POST /attachments/{fileId}/complete`                     | `{ uploadKey }`                                                                        | `200` `{ status }`: `available` o `rejected`                                                                                                                                                               | No                             | 20 / 10 min   |
+| `POST /tickets`                                           | El radicado, con `attachments: [{ fileId, uploadKey }]` y `clientRequestId` opcionales | `201` `{ number, pin, receivedAt, dueOn, termBusinessDays, termExtended, termIsLegal, successMessage, pinEmailed, consultUrl }`                                                                            | Sí (no en un reintento, abajo) | 5 / 10 min    |
+| `POST /tickets/lookup`                                    | `{ number, pin, turnstileToken }`                                                      | `200` radicado, tipo, estado, radicación, plazo (`termIsLegal`, `termBusinessDays`, `termExtended`) y respuestas                                                                                           | Sí                             | 10 / min      |
+| `POST /tickets/resend-pin`                                | `{ number, turnstileToken }`                                                           | `202` vacío, siempre                                                                                                                                                                                       | Sí                             | 5 / 10 min    |
 
 **Documentos legales del portal** (spec 2026-11-15). `GET /form` trae en `legal` los tres documentos vigentes del tenant, cada uno
 **saneado otra vez al servirlo** (`ISupportHtmlSanitizer`, lista blanca `p br strong em u s h2 h3 h4 ul ol li blockquote hr` y `a` con
@@ -6358,11 +6403,11 @@ un radicado nuevo; la clave no se audita ni va a la traza, y el reintento cuenta
 v7, por ejemplo) es `422 validation.failed` con `errors.ClientRequestId`. **El portal nunca tiene dos radicados en vuelo** y pinta sólo la
 última respuesta: un reintento de un anónimo rota el PIN, así que el PIN de una respuesta anterior ya no sirve.
 
-| El PIN del primer intento | `pin` del reintento | `pinEmailed` |
-| --- | --- | --- |
-| Salió por correo (`last_sent_channel = Email`, sin fallo) | `null`: no se vuelve a mostrar ni a mandar | `true` |
-| El correo del primer intento todavía no se anotó, y el PIN se emitió hace 10 minutos o menos (en vuelo) | `null`: un PIN nuevo invalidaría el que va en el correo | `true` |
-| No salió por ningún canal (anónimo, `send_failed`, `send_pending`), o el correo sigue sin anotarse más de 10 minutos después del PIN (el proceso murió entre confirmar y anotar) | Uno **nuevo**; el anterior deja de servir. Sólo en la respuesta, sin correo | `false` |
+| El PIN del primer intento                                                                                                                                                        | `pin` del reintento                                                         | `pinEmailed` |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------ |
+| Salió por correo (`last_sent_channel = Email`, sin fallo)                                                                                                                        | `null`: no se vuelve a mostrar ni a mandar                                  | `true`       |
+| El correo del primer intento todavía no se anotó, y el PIN se emitió hace 10 minutos o menos (en vuelo)                                                                          | `null`: un PIN nuevo invalidaría el que va en el correo                     | `true`       |
+| No salió por ningún canal (anónimo, `send_failed`, `send_pending`), o el correo sigue sin anotarse más de 10 minutos después del PIN (el proceso murió entre confirmar y anotar) | Uno **nuevo**; el anterior deja de servir. Sólo en la respuesta, sin correo | `false`      |
 
 **Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
 corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
@@ -6387,13 +6432,13 @@ reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su r
 `ticket_access`: el ticket queda creado pase lo que pase con el envío, y la `version` del `201` sigue valiendo para el siguiente
 `If-Match`. Sale aunque el formulario del tenant no esté publicado: la página de consulta no depende de él (owner, 2026-11-15).
 
-| Ticket | Canal (`last_sent_channel`) | Qué sale |
-| --- | --- | --- |
-| Del formulario, con solicitante | `Email` | El correo de apertura al correo de la foto. El PIN además viaja en la respuesta del radicado |
-| Del formulario, anónimo | — | Nada: el PIN sólo se ve en la respuesta del radicado |
-| Manual con canal `Email` | `Email` | El correo de apertura al correo de la foto |
-| Manual con canal `WhatsAppTemplate` o `Thread`, sin conversación | — | **Nada** (owner, 2026-11-15): mandar a un celular nuevo pide elegir conexión y no cabe en el alta. El PIN se emite igual |
-| Desde una conversación, o manual que ya vinculó una (si su canal no es `Email`) | `Thread` | Texto por el hilo, sólo con la ventana de 24 h abierta; cerrada, nada (`window_closed`). No hay plantilla de apertura (F24) |
+| Ticket                                                                          | Canal (`last_sent_channel`) | Qué sale                                                                                                                    |
+| ------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Del formulario, con solicitante                                                 | `Email`                     | El correo de apertura al correo de la foto. El PIN además viaja en la respuesta del radicado                                |
+| Del formulario, anónimo                                                         | —                           | Nada: el PIN sólo se ve en la respuesta del radicado                                                                        |
+| Manual con canal `Email`                                                        | `Email`                     | El correo de apertura al correo de la foto                                                                                  |
+| Manual con canal `WhatsAppTemplate` o `Thread`, sin conversación                | —                           | **Nada** (owner, 2026-11-15): mandar a un celular nuevo pide elegir conexión y no cabe en el alta. El PIN se emite igual    |
+| Desde una conversación, o manual que ya vinculó una (si su canal no es `Email`) | `Thread`                    | Texto por el hilo, sólo con la ventana de 24 h abierta; cerrada, nada (`window_closed`). No hay plantilla de apertura (F24) |
 
 El texto por el hilo, tuteando: `Registramos tu caso {radicado} ({tipo}). Fecha límite de respuesta: {fecha}. Consulta su estado en
 {enlace} con la clave {pin}.` La fecha va en el formato regional del tenant y, si el tipo no tiene término, dice `sin fecha límite`. El
@@ -6418,7 +6463,7 @@ si sale `available`, mandar el par al radicar.
 - **Límites** (`SupportPublicAttachmentRules`): hasta **3** archivos por ticket, **10 MB** cada uno, nombre simple de hasta 260 y sólo
   **PDF, JPEG, PNG y WebP** (`.pdf`, `.jpg`, `.jpeg`, `.png`, `.webp`; `application/pdf`, `image/jpeg`, `image/png`, `image/webp`).
   `image/jpg`, que no es un tipo registrado pero algunos navegadores mandan, se toma como `image/jpeg`. Abrir fuera de eso es `422
-  validation.failed` con el campo (`Name`, `MimeType`, `SizeBytes`); cuatro o un par repetido al radicar, con `Attachments`. La lista es
+validation.failed` con el campo (`Name`, `MimeType`, `SizeBytes`); cuatro o un par repetido al radicar, con `Attachments`. La lista es
   un subconjunto de la de Storage (`SupportAttachmentParityTests`).
 - **Sin Word ni Excel mientras `Storage:ClamAv:Enabled` esté apagado en producción** (owner, 2026-11-15): un adjunto anónimo con macros
   lo abre un asesor. Sumar un tipo de Office exige prender ClamAV primero.
@@ -6432,7 +6477,7 @@ si sale `available`, mandar el par al radicar.
 - **`uploadKey`** es un GUID aleatorio (v4) que sólo recibe quien abrió la sesión y que Storage guarda como `OwnerId` del archivo. Completar
   y radicar exigen el par `(fileId, uploadKey)` del mismo tenant: otra clave, un id que no existe, un archivo sin subir o en cuarentena
   responden lo mismo, `422 support.public.attachment_invalid`. Completar antes de que termine el `PUT` es `428
-  support.public.attachment_not_uploaded`. Un archivo `rejected` no es un error de la llamada: la página avisa antes de radicar.
+support.public.attachment_not_uploaded`. Un archivo `rejected` no es un error de la llamada: la página avisa antes de radicar.
 - Los adjuntos se insertan en `support.ticket_attachments` en la misma transacción del ticket. El único `IX_ticket_attachments_file`
   impide que dos radicaciones reclamen el mismo archivo y se traduce por nombre al mismo 422; la radicación entera se deshace.
 - **Lo que nadie reclama se purga.** El barrido de staging de Storage borra, pasada la retención (`Storage:StagingRetentionHours`, 24
@@ -6448,20 +6493,20 @@ si sale `available`, mandar el par al radicar.
   no es del ticket, `404 support.attachment.not_found`.
 - **Los archivos `SupportTicket` no se ven desde la consola de Storage.** Son dueño de sistema (`SystemOwnedFiles`): `GET /files` no
   los lista, cada ruta por id de `/files/{fileId}` (descarga, publicación, metadatos, completar, cancelar, borrar) responde `404
-  storage.file.not_found` aunque el miembro tenga todo `storage.file.*`, y `POST /files` con `ownerType: SupportTicket` es `422
-  storage.file.owner_type_invalid`. Tampoco los ven Catalog (foto de producto) ni Quotations (adjunto de pedido). Sólo llegan por las
+storage.file.not_found` aunque el miembro tenga todo `storage.file.*`, y `POST /files` con `ownerType: SupportTicket` es `422
+storage.file.owner_type_invalid`. Tampoco los ven Catalog (foto de producto) ni Quotations (adjunto de pedido). Sólo llegan por las
   rutas de Soporte.
 
 **Rutas de la consola** (fase 3), bajo `/api/v1/tenants/{tenantId}/support`:
 
-| Método y ruta | Política | Qué hace |
-| --- | --- | --- |
-| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) y la empresa que responde (`organization_required`, `organization_inactive` → `422 support.form.organization_required` / `organization_inactive`). La respuesta trae `organization` (la elegida, con `isActive`) y `organizationOptions` (las activas del tenant, por nombre: el selector no necesita `companies.company.read`); el cuerpo del `PUT` suma `organizationCompanyId` (`null` = sin empresa) |
-| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`). Al final, `variables: [{ name, label, example }]`, las que el editor puede insertar |
-| `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view` | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja |
-| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada y con sus variables sin resolver; la respuesta es lo guardado. Una variable que no está en la lista es `422 support.legal_document.unknown_variable` |
-| `GET /tickets/{ticketId}/legal-acceptances/{kind}` | `support.ticket.view` | La foto de lo que el solicitante aceptó: HTML servido, pregunta, URL, caracterización e IP. Sin fila, `404 support.legal_acceptance.not_found` |
-| `GET /tickets/{ticketId}/attachments/{attachmentId}/download` | `support.ticket.view` | URL firmada del adjunto (arriba) |
+| Método y ruta                                                            | Política                                            | Qué hace                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET` · `PUT /settings/public-form`                                      | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) y la empresa que responde (`organization_required`, `organization_inactive` → `422 support.form.organization_required` / `organization_inactive`). La respuesta trae `organization` (la elegida, con `isActive`) y `organizationOptions` (las activas del tenant, por nombre: el selector no necesita `companies.company.read`); el cuerpo del `PUT` suma `organizationCompanyId` (`null` = sin empresa) |
+| `GET /settings/legal-documents`                                          | `support.settings.view`                             | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`). Al final, `variables: [{ name, label, example }]`, las que el editor puede insertar                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view`                             | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión)    | `support.settings.manage`                           | Publica la versión `n+1` del tipo, saneada y con sus variables sin resolver; la respuesta es lo guardado. Una variable que no está en la lista es `422 support.legal_document.unknown_variable`                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `GET /tickets/{ticketId}/legal-acceptances/{kind}`                       | `support.ticket.view`                               | La foto de lo que el solicitante aceptó: HTML servido, pregunta, URL, caracterización e IP. Sin fila, `404 support.legal_acceptance.not_found`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `GET /tickets/{ticketId}/attachments/{attachmentId}/download`            | `support.ticket.view`                               | URL firmada del adjunto (arriba)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 `{kind}` ∈ `privacy-notice`, `anonymous-notice`, `terms` (otro es `404 support.legal_documents.kind_not_found`); en los cuerpos viaja como
 `PrivacyNotice`, `AnonymousNotice`, `Terms`. El detalle del ticket trae `legalAcceptances` (`kind`, `version`, `acceptedAt`, `visitorIp`, sin el
@@ -6472,11 +6517,11 @@ punto fijo del saneador, así que los bytes no cambian y la prueba guardada no s
 
 **Configuración** `Support:PublicForm` (`appsettings.json`, defaults en código):
 
-| Clave | Default | Para qué |
-| --- | --- | --- |
-| `BaseUrl` | `https://soporte.lulocrm.com` | Arma el enlace de consulta (`{BaseUrl}/{slug}/consultar?radicado=SOP-…`, sin PIN) |
-| `Hostname` | `soporte.lulocrm.com` | El hostname que Turnstile tiene que reportar; se exige sólo en `Production` |
-| `AllowedOrigins` | vacía | Orígenes exactos de la página para la política CORS `support-public` (sin credenciales, `GET` y `POST`, sólo `Content-Type`) |
+| Clave            | Default                       | Para qué                                                                                                                     |
+| ---------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `BaseUrl`        | `https://soporte.lulocrm.com` | Arma el enlace de consulta (`{BaseUrl}/{slug}/consultar?radicado=SOP-…`, sin PIN)                                            |
+| `Hostname`       | `soporte.lulocrm.com`         | El hostname que Turnstile tiene que reportar; se exige sólo en `Production`                                                  |
+| `AllowedOrigins` | vacía                         | Orígenes exactos de la página para la política CORS `support-public` (sin credenciales, `GET` y `POST`, sólo `Content-Type`) |
 
 `AllowedOrigins` sigue las reglas de `Cors:AllowedOrigins`: https exacto, sin comodín, ruta ni barra final; `http://localhost[:puerto]`
 sólo en `Development` (`appsettings.Development.json` trae `http://localhost:4322`, el puerto fijo del portal `qep-frontend-support` en
@@ -6527,14 +6572,14 @@ nunca salen al solicitante.
 se acepta bajo `/api/v1/hubs/`, plan N1). Mismo transporte que el de Mensajería: sólo WebSocket con `skipNegotiation: true` y sesión por
 cookie. Al conectar, sin claim de tenant o sin membresía activa la conexión se aborta; el endpoint no exige módulo (lo exige cada tópico).
 
-| Qué | Valor |
-| --- | --- |
-| Métodos | `Subscribe(topic)` (no devuelve nada; repetirlo no duplica), `Unsubscribe(topic)` (nunca falla), `SetPresence(topic, state)` con `state` ∈ `composing`, `none` |
+| Qué                | Valor                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Métodos            | `Subscribe(topic)` (no devuelve nada; repetirlo no duplica), `Unsubscribe(topic)` (nunca falla), `SetPresence(topic, state)` con `state` ∈ `composing`, `none`                                                                                                                                                                                                                                                                                                           |
 | Tópicos de Soporte | `support` (la bandeja) y `support:ticket:{ticketId}` (un detalle, el id en minúsculas, formato `D`). Exigen el módulo `support` y `support.ticket.read` o `support.ticket.manage`; un ticket, además, del tenant. `SetPresence` sólo en un ticket al que **esa conexión** ya se suscribió y con `manage`. Lo demás —tópico mal formado, sin autorizador, más de 50 por conexión, estado desconocido— es `HubException` con `support.realtime.topic_forbidden` (owner O3) |
-| Eventos | `supportTicketChanged { ticketId }` a los suscritos al ticket y a la bandeja; `presenceChanged { topic, members: [{ memberId, name, state }] }` a cada conexión del ticket **sin su propio miembro** (lista vacía: nadie más escribe). Suscribirse a un ticket manda enseguida la foto de la presencia sólo a esa conexión |
-| Grupo | `{tenantId}:{topic}`: el tenant es siempre el de la conexión, nunca uno que mande el cliente |
-| Fanout | `pg_notify('qep_realtime', …)` después del commit (`PgRealtimePublisher`, conexión con pool); cada pod tiene un `RealtimeEventsListener` en `LISTEN qep_realtime` con conexión propia sin pool (la misma regla de `ConnectionStrings:QepDatabaseListener`) que entrega los avisos **en orden** a sus conexiones. Dos `LISTEN` por pod mientras Mensajería no se mude |
-| Presencia | Valkey, clave `qep:rt:presence:{tenantId}:{topic}` (área `Valkey:Areas:Presence`), una entrada por **conexión** (`{memberId}:{connectionId}`) que vale 45 s; la clave expira a los 60 s y la pantalla renueva cada 20 s. Sin Valkey, memoria del pod. `RealtimePresenceSweeper` relee cada 5 s lo que el pod entregó no vacío, así una entrada de un pod caído desaparece a los ≤ 50 s |
+| Eventos            | `supportTicketChanged { ticketId }` a los suscritos al ticket y a la bandeja; `presenceChanged { topic, members: [{ memberId, name, state }] }` a cada conexión del ticket **sin su propio miembro** (lista vacía: nadie más escribe). Suscribirse a un ticket manda enseguida la foto de la presencia sólo a esa conexión                                                                                                                                               |
+| Grupo              | `{tenantId}:{topic}`: el tenant es siempre el de la conexión, nunca uno que mande el cliente                                                                                                                                                                                                                                                                                                                                                                             |
+| Fanout             | `pg_notify('qep_realtime', …)` después del commit (`PgRealtimePublisher`, conexión con pool); cada pod tiene un `RealtimeEventsListener` en `LISTEN qep_realtime` con conexión propia sin pool (la misma regla de `ConnectionStrings:QepDatabaseListener`) que entrega los avisos **en orden** a sus conexiones. Dos `LISTEN` por pod mientras Mensajería no se mude                                                                                                     |
+| Presencia          | Valkey, clave `qep:rt:presence:{tenantId}:{topic}` (área `Valkey:Areas:Presence`), una entrada por **conexión** (`{memberId}:{connectionId}`) que vale 45 s; la clave expira a los 60 s y la pantalla renueva cada 20 s. Sin Valkey, memoria del pod. `RealtimePresenceSweeper` relee cada 5 s lo que el pod entregó no vacío, así una entrada de un pod caído desaparece a los ≤ 50 s                                                                                   |
 
 Avisan crear (consola, conversación y formulario público), estado, responsable, tipo, cliente, fijar, soltar, seguir el hilo, responder,
 nota, clasificar y «De ninguno», y el worker del hilo. Un aviso que falla se registra y no deshace la escritura. La fusión y el borrado de
@@ -6544,13 +6589,13 @@ clientes **no** avisan (owner O5): la pantalla los ve al releer.
 ticket: no sube `version` ni cambia el `ETag`, no escribe `ticket_events`, no sale en eventos de integración y **nunca** aparece en
 `public/support`. Rutas, bajo `/api/v1/tenants/{tenantId}/support`:
 
-| Ruta | Permiso | Qué hace |
-| --- | --- | --- |
-| `GET /tickets/{ticketId}/notes?before=&take=` | `support.ticket.view` | Página del más nuevo al más viejo (`SupportTicketNotesDto`); `take` 1–100, 50 por defecto; `before` es el cursor de `next` |
-| `POST /tickets/{ticketId}/notes` | `support.ticket.manage` | `{ clientId, text, fileIds }` sin `If-Match` → `201 SupportTicketNoteDto`. Texto de 1 a 4 096 recortado, sin caracteres de control salvo salto de línea y tabulador; hasta 5 archivos |
-| `POST /tickets/{ticketId}/notes/attachments` | `support.ticket.manage` | `{ name, mimeType, sizeBytes }` → `201 { fileId, uploadUrl, headers }`; mismos límites que el formulario público (10 MB, PDF/JPEG/PNG/WebP) |
-| `POST /tickets/{ticketId}/notes/attachments/{fileId}/complete` | `support.ticket.manage` | `{ status }` (`available` o `rejected`) |
-| `GET /tickets/{ticketId}/notes/{noteId}/files/{fileId}/download` | `support.ticket.view` | `{ url }` firmada 5 minutos; audita `support.ticket.attachment_downloaded` |
+| Ruta                                                             | Permiso                 | Qué hace                                                                                                                                                                              |
+| ---------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /tickets/{ticketId}/notes?before=&take=`                    | `support.ticket.view`   | Página del más nuevo al más viejo (`SupportTicketNotesDto`); `take` 1–100, 50 por defecto; `before` es el cursor de `next`                                                            |
+| `POST /tickets/{ticketId}/notes`                                 | `support.ticket.manage` | `{ clientId, text, fileIds }` sin `If-Match` → `201 SupportTicketNoteDto`. Texto de 1 a 4 096 recortado, sin caracteres de control salvo salto de línea y tabulador; hasta 5 archivos |
+| `POST /tickets/{ticketId}/notes/attachments`                     | `support.ticket.manage` | `{ name, mimeType, sizeBytes }` → `201 { fileId, uploadUrl, headers }`; mismos límites que el formulario público (10 MB, PDF/JPEG/PNG/WebP)                                           |
+| `POST /tickets/{ticketId}/notes/attachments/{fileId}/complete`   | `support.ticket.manage` | `{ status }` (`available` o `rejected`)                                                                                                                                               |
+| `GET /tickets/{ticketId}/notes/{noteId}/files/{fileId}/download` | `support.ticket.view`   | `{ url }` firmada 5 minutos; audita `support.ticket.attachment_downloaded`                                                                                                            |
 
 El `clientId` es el id de la nota: el reintento del mismo autor en el mismo ticket recibe la nota guardada (aun con el ticket ya cerrado);
 el mismo `clientId` en otro ticket o de otro autor, o la carrera que pierde, es `409 concurrency.conflict`. Errores: `422 validation.failed`
@@ -6575,12 +6620,12 @@ Plan `docs/superpowers/plans/2026-11-15-support-phase-4a-management-and-deadline
 ajustes de gestión y la prórroga del plazo. Todas las escrituras de ticket auditan en la misma transacción y avisan por el hub después
 de confirmar; un cambio que no cambia nada no sube `version`, no audita y no avisa.
 
-| Método y ruta | Permiso | Cuerpo | Respuesta |
-| --- | --- | --- | --- |
-| `POST /tickets` (cambia) | `support.ticket.manage` | `CreateTicketRequest` + `anonymous` (`bool?`, null = `false`) | `201 SupportTicketDetailDto`; `issuedPin` sólo si es anónimo |
-| `DELETE /settings/ticket-types/{typeId}` (`If-Match`) | `support.settings.manage` | — | `204`; 404, 412, `422 support.ticket_type.in_use`, 428 |
-| `POST /tickets/{ticketId}/take` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto`; 404, 412, 422, 428 |
-| `POST /tickets/{ticketId}/extension` (`If-Match`) | `support.ticket.manage` | `{ businessDays, reason }` | `SupportTicketDetailDto`; 404, 412, 422, 428 |
+| Método y ruta                                         | Permiso                   | Cuerpo                                                        | Respuesta                                                    |
+| ----------------------------------------------------- | ------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `POST /tickets` (cambia)                              | `support.ticket.manage`   | `CreateTicketRequest` + `anonymous` (`bool?`, null = `false`) | `201 SupportTicketDetailDto`; `issuedPin` sólo si es anónimo |
+| `DELETE /settings/ticket-types/{typeId}` (`If-Match`) | `support.settings.manage` | —                                                             | `204`; 404, 412, `422 support.ticket_type.in_use`, 428       |
+| `POST /tickets/{ticketId}/take` (`If-Match`)          | `support.ticket.manage`   | —                                                             | `SupportTicketDetailDto`; 404, 412, 422, 428                 |
+| `POST /tickets/{ticketId}/extension` (`If-Match`)     | `support.ticket.manage`   | `{ businessDays, reason }`                                    | `SupportTicketDetailDto`; 404, 412, 422, 428                 |
 
 **Alta manual anónima.** Con `anonymous: true`, `customerId` y `requester` tienen que venir `null` y `replyChannel` tiene que ser
 `Portal`; si no, `422 validation.failed` en `CustomerId`, `Requester` o `ReplyChannel`. Sin anónimo, `Portal` también es
@@ -6606,14 +6651,14 @@ término + prórroga + pausas desde la radicación, así una pausa posterior o u
 los días de prórroga y recalcula con el término nuevo). `businessDays` va de 1 a 365 y `reason` de 1 a 1 000 caracteres recortado
 (si no, `422 validation.failed` en `BusinessDays` o `Reason`). Las reglas del dominio, en este orden:
 
-| Código (422) | Cuándo |
-| --- | --- |
-| `support.ticket.not_editable` | El ticket está `Resolved` o `Closed` |
-| `support.ticket.extension_already_used` | Ya se prorrogó |
-| `support.ticket.extension_no_term` | El tipo no tiene término |
-| `support.ticket.extension_clock_stopped` | El reloj está detenido (`WaitingOnCustomer`) |
-| `support.ticket.extension_overdue` | Hoy (fecha local del tenant) es posterior al vencimiento; el mismo día del vencimiento todavía se puede |
-| `support.ticket.extension_too_long` | `businessDays` es mayor que el término del ticket |
+| Código (422)                             | Cuándo                                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `support.ticket.not_editable`            | El ticket está `Resolved` o `Closed`                                                                    |
+| `support.ticket.extension_already_used`  | Ya se prorrogó                                                                                          |
+| `support.ticket.extension_no_term`       | El tipo no tiene término                                                                                |
+| `support.ticket.extension_clock_stopped` | El reloj está detenido (`WaitingOnCustomer`)                                                            |
+| `support.ticket.extension_overdue`       | Hoy (fecha local del tenant) es posterior al vencimiento; el mismo día del vencimiento todavía se puede |
+| `support.ticket.extension_too_long`      | `businessDays` es mayor que el término del ticket                                                       |
 
 El detalle trae en `clock` la prórroga hecha (`extension: { businessDays, reason, extendedAt }`) y `maxExtensionBusinessDays`: el
 término si hoy se puede prorrogar, `null` si no; con eso la pantalla muestra u oculta «Prorrogar» sin repetir las reglas. La traza
@@ -6653,9 +6698,9 @@ default 0`, `extension_reason varchar(1000)`, `extended_at timestamptz`, el CHEC
 Spec `docs/superpowers/specs/2026-11-16-support-anonymous-pin-reissue-design.md`. Un anónimo no tiene correo ni hilo, así que
 «Reenviar PIN» del portal nunca le manda nada; si perdió el PIN o quedó bloqueado, el asesor le genera uno nuevo desde la consola.
 
-| Método y ruta | Permiso | Cuerpo | Respuesta |
-| --- | --- | --- | --- |
-| `POST /tickets/{ticketId}/pin` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto` con `issuedPin` y `consultUrl`; 403, 404, 412, `422 support.ticket.pin_not_anonymous`, 428 |
+| Método y ruta                               | Permiso                 | Cuerpo | Respuesta                                                                                                           |
+| ------------------------------------------- | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| `POST /tickets/{ticketId}/pin` (`If-Match`) | `support.ticket.manage` | —      | `SupportTicketDetailDto` con `issuedPin` y `consultUrl`; 403, 404, 412, `422 support.ticket.pin_not_anonymous`, 428 |
 
 - Sólo anónimos: un ticket con solicitante o cliente usa el reenvío público. Vale en cualquier estado, cerrado incluido.
 - **Desbloquea** la consulta: pone en cero los fallos y quita el bloqueo (el reenvío público sigue sin desbloquear). El PIN viejo deja
@@ -6674,24 +6719,24 @@ Plan `docs/superpowers/plans/2026-11-15-support-phase-4b-formal-reply-survey-rep
 §10). Cuatro piezas: la respuesta formal en PDF, la encuesta de satisfacción de cada resolución, el cierre automático de los tickets
 resueltos y el reporte de Soporte.
 
-| Método y ruta | Permiso | Cuerpo | Respuesta |
-| --- | --- | --- | --- |
-| `POST /tickets/{ticketId}/replies` (cambia) | `support.ticket.manage` | + `formal: { decision, signerTitle, annexes[] }` | `201`; 422 `support.reply.formal_organization_required`, `formal_signer_required`, `document_render_failed` |
-| `GET /tickets/{ticketId}/reply-options` (cambia) | `support.ticket.view` | — | + `formal` (sugerida, motivo de bloqueo, motivo del hilo, conexiones con la plantilla) |
-| `GET /tickets/{ticketId}/replies/{replyId}/document` | `support.ticket.view` | — | URL firmada de 5 minutos; 404 `support.reply.document_not_found` |
-| `GET` / `PUT /settings` (cambia) | `support.settings.view` / `support.settings.manage` | + `formalNextStep`, `surveyEnabled`, `autoCloseBusinessDays` | + los mismos y el rango del cierre |
-| `POST` / `PUT /settings/ticket-types…` (cambia) | `support.settings.manage` | + `formalNextStep` | + `formalNextStep` |
-| `GET /reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | `support.ticket.view` | — | `SupportReportDto` |
+| Método y ruta                                        | Permiso                                             | Cuerpo                                                       | Respuesta                                                                                                   |
+| ---------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `POST /tickets/{ticketId}/replies` (cambia)          | `support.ticket.manage`                             | + `formal: { decision, signerTitle, annexes[] }`             | `201`; 422 `support.reply.formal_organization_required`, `formal_signer_required`, `document_render_failed` |
+| `GET /tickets/{ticketId}/reply-options` (cambia)     | `support.ticket.view`                               | —                                                            | + `formal` (sugerida, motivo de bloqueo, motivo del hilo, conexiones con la plantilla)                      |
+| `GET /tickets/{ticketId}/replies/{replyId}/document` | `support.ticket.view`                               | —                                                            | URL firmada de 5 minutos; 404 `support.reply.document_not_found`                                            |
+| `GET` / `PUT /settings` (cambia)                     | `support.settings.view` / `support.settings.manage` | + `formalNextStep`, `surveyEnabled`, `autoCloseBusinessDays` | + los mismos y el rango del cierre                                                                          |
+| `POST` / `PUT /settings/ticket-types…` (cambia)      | `support.settings.manage`                           | + `formalNextStep`                                           | + `formalNextStep`                                                                                          |
+| `GET /reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | `support.ticket.view`                               | —                                                            | `SupportReportDto`                                                                                          |
 
 Todas bajo `/api/v1/tenants/{tenantId}/support`. Las públicas, bajo `/api/v1/public/support/{tenantSlug}` (CORS `support-public`, sin
 credenciales, `no-store`, exentas de CSRF por el prefijo, todas con el limitador de la consulta):
 
-| Método y ruta | Cuerpo | Respuesta |
-| --- | --- | --- |
-| `POST /tickets/lookup` (cambia) | como antes | + `survey: { canRate, rating, options }` (null sin resolución); cada respuesta formal trae `documentUrl` (10 minutos) y `documentFileName` |
-| `POST /tickets/rating` | `{ number, pin, turnstileToken, rating, comment }` | lo mismo que la consulta; 422 `support.public.lookup_failed`, `support.survey.closed`, `support.survey.already_answered` |
-| `POST /surveys/lookup` | `{ token }` | `SupportPublicSurveyDto`; 404 `support.survey.not_found` |
-| `POST /surveys/answer` | `{ token, rating, comment }` | `SupportPublicSurveyDto`; 404, 422 `closed` / `already_answered` / `validation.failed` |
+| Método y ruta                   | Cuerpo                                             | Respuesta                                                                                                                                  |
+| ------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /tickets/lookup` (cambia) | como antes                                         | + `survey: { canRate, rating, options }` (null sin resolución); cada respuesta formal trae `documentUrl` (10 minutos) y `documentFileName` |
+| `POST /tickets/rating`          | `{ number, pin, turnstileToken, rating, comment }` | lo mismo que la consulta; 422 `support.public.lookup_failed`, `support.survey.closed`, `support.survey.already_answered`                   |
+| `POST /surveys/lookup`          | `{ token }`                                        | `SupportPublicSurveyDto`; 404 `support.survey.not_found`                                                                                   |
+| `POST /surveys/answer`          | `{ token, rating, comment }`                       | `SupportPublicSurveyDto`; 404, 422 `closed` / `already_answered` / `validation.failed`                                                     |
 
 **Los ajustes del `PUT /settings` son opcionales, salvo el umbral.** El frontend publicado manda sólo `{ dueSoonBusinessDays }`, así que
 `formalNextStep`, `surveyEnabled` y `autoCloseBusinessDays` ausentes (o `null`) conservan lo guardado; el rango 1–30 del cierre se valida
@@ -6699,7 +6744,7 @@ sólo si llega. Para borrar el «siguiente paso» se manda vacío (`""`). La mis
 `PUT /settings/ticket-types/{id}`, aunque el resto de ese cuerpo reemplace el tipo entero: el frontend publicado no manda el campo, y
 editar un tipo no le borra su siguiente paso.
 
-**Respuesta formal.** Una respuesta normal con `formal` en el cuerpo, en cualquier tipo y estado (el tipo sólo la *sugiere*, con
+**Respuesta formal.** Una respuesta normal con `formal` en el cuerpo, en cualquier tipo y estado (el tipo sólo la _sugiere_, con
 `requiresFormalResponse`). `text` es el mensaje del canal; `formal.decision` (1 a 20 000 caracteres, con saltos de línea) es el análisis y
 la decisión del PDF; `formal.signerTitle` (1 a 120) es el cargo; `formal.annexes`, de 0 a 10 textos de hasta 200, se imprimen como lista.
 `formal` y `uploadId` no van juntos. **Firma el responsable del ticket**, no quien envía: sin responsable, `422
@@ -6713,10 +6758,10 @@ plantilla «Respuesta formal» con el PDF de encabezado; por correo, adjunto; po
 
 **Plantillas.** Dos tipos nuevos de `MessageTemplateKind`, aprovisionados **por conexión** como «Aviso de respuesta»:
 
-| Plantilla | Tipo y nombre | Aprovisionar | Borrador |
-| --- | --- | --- | --- |
-| Respuesta formal | `SupportFormalReply`, `qep_soporte_formal` (`UTILITY`, encabezado de documento) | `POST …/template-management/support-formal-reply` | `GET …/support-formal-reply/draft` |
-| Encuesta | `SupportSurvey`, `qep_soporte_encuesta` (`UTILITY`, tres botones fijos `Buena`, `Regular`, `Mala`) | `POST …/template-management/support-survey` | `GET …/support-survey/draft` |
+| Plantilla        | Tipo y nombre                                                                                      | Aprovisionar                                      | Borrador                           |
+| ---------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------- |
+| Respuesta formal | `SupportFormalReply`, `qep_soporte_formal` (`UTILITY`, encabezado de documento)                    | `POST …/template-management/support-formal-reply` | `GET …/support-formal-reply/draft` |
+| Encuesta         | `SupportSurvey`, `qep_soporte_encuesta` (`UTILITY`, tres botones fijos `Buena`, `Regular`, `Mala`) | `POST …/template-management/support-survey`       | `GET …/support-survey/draft`       |
 
 Las rutas cuelgan de `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}` y piden `messaging.template.manage`. El tenant
 edita el texto (cuerpo opcional `{ body }`), no los botones: Soporte lee el toque por su texto. Una plantilla aprobada no se edita:
@@ -6759,13 +6804,13 @@ resolución son los días hábiles después de la radicación hasta la última r
 
 **Workers** (sección `Support:Workers`, defaults en código; `Support:Workers:Enabled` en `false` los apaga):
 
-| Worker | Clave | Default | Qué hace |
-| --- | --- | --- | --- |
-| `SupportSurveyWorker` | `SurveyIntervalSeconds` | 30 | Sin timbres, cada cuánto mira la cola `support_survey` |
-| | `SurveyBatchSize` | 5 | Encuestas por reclamo; cada una renueva su reclamo de 2 minutos antes de mandarse |
-| | `SurveyCommentWindowHours` | 24 | La ventana del comentario, desde el toque |
-| | `SurveyAnswerLookbackDays` | 14 | Hasta cuándo se buscan toques de una encuesta mandada |
-| `SupportAutoCloseWorker` | `AutoCloseIntervalMinutes` | 15 | Cada cuánto revisa los tickets Resueltos |
+| Worker                   | Clave                      | Default | Qué hace                                                                          |
+| ------------------------ | -------------------------- | ------- | --------------------------------------------------------------------------------- |
+| `SupportSurveyWorker`    | `SurveyIntervalSeconds`    | 30      | Sin timbres, cada cuánto mira la cola `support_survey`                            |
+|                          | `SurveyBatchSize`          | 5       | Encuestas por reclamo; cada una renueva su reclamo de 2 minutos antes de mandarse |
+|                          | `SurveyCommentWindowHours` | 24      | La ventana del comentario, desde el toque                                         |
+|                          | `SurveyAnswerLookbackDays` | 14      | Hasta cuándo se buscan toques de una encuesta mandada                             |
+| `SupportAutoCloseWorker` | `AutoCloseIntervalMinutes` | 15      | Cada cuánto revisa los tickets Resueltos                                          |
 
 **Migraciones:** `Support` `AddSupportFormalNextStep`, `Support` `AddSupportReplyDocuments`, `Messaging`
 `AddSupportFormalAndSurveyTemplateKinds`, `Support` `AddSupportSurveys` y `Support` `AddSupportAutoCloseAndSurveyIndexes` (los índices
@@ -6773,13 +6818,13 @@ parciales de los recorridos del cierre automático y de la encuesta). Las cinco 
 
 ##### Despliegue (fase 4b)
 
-| Migración | Pods viejos durante el rollout |
-| --- | --- |
-| `AddSupportFormalNextStep` | Ignoran las columnas. |
-| `AddSupportReplyDocuments` | Una respuesta que borra un pod viejo se lleva su documento por la cascada. |
-| `AddSupportFormalAndSurveyTemplateKinds` | Ver abajo: no aprovisionar las plantillas nuevas mientras quede un pod viejo. |
-| `AddSupportSurveys` | Una resolución que hace un pod viejo no pide encuesta (aceptado: no hay relleno al arrancar). |
-| `AddSupportAutoCloseAndSurveyIndexes` | Ignoran los índices: son parciales sobre `support.tickets` (`IX_tickets_resolved_auto_close`) y `support.ticket_surveys` (`IX_ticket_surveys_awaiting_comment`, `…_awaiting_rating`, `…_comment_message`, `…_rating_message`), con `CREATE INDEX` simple (no `CONCURRENTLY`): bloquean las escrituras de esas tablas mientras se construyen, que en tablas de este tamaño es un instante. Aditiva. |
+| Migración                                | Pods viejos durante el rollout                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AddSupportFormalNextStep`               | Ignoran las columnas.                                                                                                                                                                                                                                                                                                                                                                              |
+| `AddSupportReplyDocuments`               | Una respuesta que borra un pod viejo se lleva su documento por la cascada.                                                                                                                                                                                                                                                                                                                         |
+| `AddSupportFormalAndSurveyTemplateKinds` | Ver abajo: no aprovisionar las plantillas nuevas mientras quede un pod viejo.                                                                                                                                                                                                                                                                                                                      |
+| `AddSupportSurveys`                      | Una resolución que hace un pod viejo no pide encuesta (aceptado: no hay relleno al arrancar).                                                                                                                                                                                                                                                                                                      |
+| `AddSupportAutoCloseAndSurveyIndexes`    | Ignoran los índices: son parciales sobre `support.tickets` (`IX_tickets_resolved_auto_close`) y `support.ticket_surveys` (`IX_ticket_surveys_awaiting_comment`, `…_awaiting_rating`, `…_comment_message`, `…_rating_message`), con `CREATE INDEX` simple (no `CONCURRENTLY`): bloquean las escrituras de esas tablas mientras se construyen, que en tablas de este tamaño es un instante. Aditiva. |
 
 - **Los tipos nuevos de plantilla se guardan por nombre.** Un pod viejo (o el código de antes, tras un rollback) no conoce
   `SupportFormalReply` ni `SupportSurvey` en `message_templates.kind`: EF los lee con `Enum.Parse` y falla. En una conexión que ya tenga
@@ -6824,11 +6869,11 @@ misma respuesta: `401 external.auth.invalid_key`.
 
 **Endpoints** (todos bajo `/api/v1/external/whatsapp`):
 
-| Método y ruta | Devuelve |
-| --- | --- |
-| `GET /connections` | Los números que la clave puede usar: `id`, nombre y teléfono |
+| Método y ruta                               | Devuelve                                                                                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /connections`                          | Los números que la clave puede usar: `id`, nombre y teléfono                                                                         |
 | `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría, `header` (`null` o `{ "type": "image" \| "video" \| "document" }`) y parámetros |
-| `POST /messages` | `201` al enviar, `200` si es un reintento de un envío ya hecho |
+| `POST /messages`                            | `201` al enviar, `200` si es un reintento de un envío ya hecho                                                                       |
 
 Cuerpo de `POST /messages`, en un archivo, porque PowerShell rompe las comillas dobles al pasarlas a un `.exe`:
 
@@ -6893,26 +6938,26 @@ una conversación bloqueada rechaza cualquier categoría.
 texto para personas y pueden cambiar: decide por `code`. En un `422 validation.failed`, `detail` es un texto fijo y lo que hay que corregir
 viene por campo en `errors`.
 
-| Status | `code` | Cuándo |
-| --- | --- | --- |
-| 401 | `external.auth.invalid_key` | Clave ausente, malformada, desconocida, revocada, vencida o de un tenant no activo |
-| 403 | `external.auth.scope_missing` | La clave no tiene el scope |
-| 403 | `external.connection_not_allowed` | Número fuera de la clave o de otro tenant |
-| 403 | `tenancy.module_not_enabled` | `developer` o `messaging` apagados |
-| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro cuerpo (destino, plantilla, idioma, parámetros o `header`) |
-| 422 | `validation.failed` | Con el mapa `errors` |
-| 422 | `messaging.template.not_available` | Plantilla inexistente, no aprobada o no enviable |
-| 422 | `messaging.template.parameters_mismatch` | Parámetros que no coinciden |
-| 422 | `messaging.template.header_mismatch` | Falta el encabezado, sobra o es de otro tipo; `detail` dice cuál pide la plantilla |
-| 422 | `messaging.connection_unavailable` | La conexión está pausada, necesita atención o Meta rechazó sus credenciales |
-| 422 | `messaging.templates.unavailable` | Meta no contestó la lista de plantillas; reintentar es seguro |
-| 422 | `messaging.channel_unsupported` | La conexión es de Instagram: no tiene plantillas |
-| 422 | `external.recipient_blocked` | Contacto bloqueado |
-| 422 | `external.recipient_opted_out` | Plantilla `MARKETING` a quien no la acepta |
-| 422 | `external.recipient_inactive` | Plantilla `MARKETING` a un cliente inactivo |
-| 422 | `external.message_rejected` | Meta rechazó con certeza; el mismo `idempotencyKey` reenvía |
-| 429 | `external.rate_limited` | Límite de QEP o de Meta, con `Retry-After` |
-| 502 | `external.send_unconfirmed` | No se sabe si salió |
+| Status | `code`                                   | Cuándo                                                                                     |
+| ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 401    | `external.auth.invalid_key`              | Clave ausente, malformada, desconocida, revocada, vencida o de un tenant no activo         |
+| 403    | `external.auth.scope_missing`            | La clave no tiene el scope                                                                 |
+| 403    | `external.connection_not_allowed`        | Número fuera de la clave o de otro tenant                                                  |
+| 403    | `tenancy.module_not_enabled`             | `developer` o `messaging` apagados                                                         |
+| 409    | `external.idempotency_key_reused`        | Mismo `idempotencyKey` con otro cuerpo (destino, plantilla, idioma, parámetros o `header`) |
+| 422    | `validation.failed`                      | Con el mapa `errors`                                                                       |
+| 422    | `messaging.template.not_available`       | Plantilla inexistente, no aprobada o no enviable                                           |
+| 422    | `messaging.template.parameters_mismatch` | Parámetros que no coinciden                                                                |
+| 422    | `messaging.template.header_mismatch`     | Falta el encabezado, sobra o es de otro tipo; `detail` dice cuál pide la plantilla         |
+| 422    | `messaging.connection_unavailable`       | La conexión está pausada, necesita atención o Meta rechazó sus credenciales                |
+| 422    | `messaging.templates.unavailable`        | Meta no contestó la lista de plantillas; reintentar es seguro                              |
+| 422    | `messaging.channel_unsupported`          | La conexión es de Instagram: no tiene plantillas                                           |
+| 422    | `external.recipient_blocked`             | Contacto bloqueado                                                                         |
+| 422    | `external.recipient_opted_out`           | Plantilla `MARKETING` a quien no la acepta                                                 |
+| 422    | `external.recipient_inactive`            | Plantilla `MARKETING` a un cliente inactivo                                                |
+| 422    | `external.message_rejected`              | Meta rechazó con certeza; el mismo `idempotencyKey` reenvía                                |
+| 429    | `external.rate_limited`                  | Límite de QEP o de Meta, con `Retry-After`                                                 |
+| 502    | `external.send_unconfirmed`              | No se sabe si salió                                                                        |
 
 **`external.send_unconfirmed` significa «no sé si salió».** Meta pudo haber aceptado el mensaje aunque no lo confirmó. Repetir el mismo
 `idempotencyKey` repite el `502` y **no** reenvía; decidir si se manda otro exige un `idempotencyKey` nuevo, y esa decisión es del sistema externo.
@@ -6990,20 +7035,20 @@ un reverso: el agregado `HandlingUnit`, su tabla y sus rutas llegan con el corte
 
 **Rutas** (bajo `/api/v1/tenants/{tenantId}/wms`). **IK** exige el header `Idempotency-Key`; **SK** deriva la clave en el servidor.
 
-| Ruta | Permiso | Idempotencia |
-| --- | --- | --- |
-| `GET /stock` | `wms.stock.read` | — |
-| `GET /stock/summary` | `wms.stock.read` | — |
-| `GET /stock/movements` | `wms.stock.read` | — |
-| `POST /stock/export` | `wms.stock.export` | — (entrega por correo) |
-| `POST /stock/movements/{id}/reverse` | `wms.adjustment.approve` | IK |
-| `GET /adjustments` | `wms.document.read` | — |
-| `POST /adjustments` | `wms.adjustment.propose` | IK |
-| `POST /adjustments/{id}/approve` | `wms.adjustment.approve` | — (versión) |
-| `POST /adjustments/{id}/reject` | `wms.adjustment.approve` | — (versión) |
-| `POST /adjustments/{id}/post` | `wms.adjustment.approve` | SK: `adjustment:{id}:post:{version}`; el header se ignora |
-| `POST /imports/initial-balances/preview` | `wms.adjustment.propose` | — (no escribe saldos) |
-| `POST /imports/initial-balances/commit` | `wms.adjustment.propose` | IK |
+| Ruta                                     | Permiso                  | Idempotencia                                              |
+| ---------------------------------------- | ------------------------ | --------------------------------------------------------- |
+| `GET /stock`                             | `wms.stock.read`         | —                                                         |
+| `GET /stock/summary`                     | `wms.stock.read`         | —                                                         |
+| `GET /stock/movements`                   | `wms.stock.read`         | —                                                         |
+| `POST /stock/export`                     | `wms.stock.export`       | — (entrega por correo)                                    |
+| `POST /stock/movements/{id}/reverse`     | `wms.adjustment.approve` | IK                                                        |
+| `GET /adjustments`                       | `wms.document.read`      | —                                                         |
+| `POST /adjustments`                      | `wms.adjustment.propose` | IK                                                        |
+| `POST /adjustments/{id}/approve`         | `wms.adjustment.approve` | — (versión)                                               |
+| `POST /adjustments/{id}/reject`          | `wms.adjustment.approve` | — (versión)                                               |
+| `POST /adjustments/{id}/post`            | `wms.adjustment.approve` | SK: `adjustment:{id}:post:{version}`; el header se ignora |
+| `POST /imports/initial-balances/preview` | `wms.adjustment.propose` | — (no escribe saldos)                                     |
+| `POST /imports/initial-balances/commit`  | `wms.adjustment.propose` | IK                                                        |
 
 **`Idempotency-Key`.** Sin header en una ruta IK: 428 `wms.idempotency_key_required`. Misma clave y mismo cuerpo: la respuesta guardada
 con **200** (aunque el original fuera 201). Misma clave con otro cuerpo: 409 `wms.idempotency_key_reused`. El `request_hash` sale del DTO
@@ -7015,14 +7060,14 @@ postear un ajuste propuesto hace tiempo con fecha física. La ventana es la que 
 
 **Workers** (opciones `Wms:Workers:*`, validadas al arrancar; un cero o un negativo tumba el arranque):
 
-| Worker | Qué hace | Opciones (por defecto) |
-| --- | --- | --- |
-| `BalanceChangePublisher` | Vacía `wms.balance_change_queue` y publica `wms.balance.changed.v1` al outbox | `BalanceChangePublishSeconds` (10) |
-| `BalanceReconciliationWorker` | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige**. Con dos pods, un candado por bodega evita la fila repetida | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30) |
-| `PartitionMaintenanceWorker` | Asegura la partición del mes actual y la del siguiente de `stock_movements` | `PartitionSweepHours` (24) |
-| `WmsHousekeepingWorker` | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`) | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
-| `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`) | — |
-| `TaskLeaseSweeper` | Devuelve al pool (o a su asignado) las tareas con el lease vencido; toma las filas con `FOR UPDATE SKIP LOCKED`, así dos pods reparten trabajo | `TaskLeaseSweepSeconds` (60; de 10 a 600) |
+| Worker                                    | Qué hace                                                                                                                                                                                 | Opciones (por defecto)                                                                   |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `BalanceChangePublisher`                  | Vacía `wms.balance_change_queue` y publica `wms.balance.changed.v1` al outbox                                                                                                            | `BalanceChangePublishSeconds` (10)                                                       |
+| `BalanceReconciliationWorker`             | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige**. Con dos pods, un candado por bodega evita la fila repetida | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30)                           |
+| `PartitionMaintenanceWorker`              | Asegura la partición del mes actual y la del siguiente de `stock_movements`                                                                                                              | `PartitionSweepHours` (24)                                                               |
+| `WmsHousekeepingWorker`                   | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`)                                             | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
+| `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`)                                                                                                                            | —                                                                                        |
+| `TaskLeaseSweeper`                        | Devuelve al pool (o a su asignado) las tareas con el lease vencido; toma las filas con `FOR UPDATE SKIP LOCKED`, así dos pods reparten trabajo                                           | `TaskLeaseSweepSeconds` (60; de 10 a 600)                                                |
 
 `WorkerStartupSeconds` (30) retrasa la primera pasada de los tres workers del ledger y del barrido de tareas: con un intervalo largo y un
 despliegue por commit, el pod se reiniciaría antes de que el temporizador cumpliera.
@@ -7070,31 +7115,31 @@ cancelar nunca mueve stock: sólo la confirmación de una línea, que escribe un
 **Supervisor** (bajo `/api/v1/tenants/{tenantId}/wms`). Las acciones llevan `version` (412 `concurrency.conflict`), responden la tarea
 sin `events` y se auditan.
 
-| Ruta | Permiso | Cuerpo / idempotencia |
-| --- | --- | --- |
-| `POST /tasks` | `wms.task.manage` | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
-| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | — |
-| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué |
-| `GET /tasks/assignees?warehouseId&type` | `wms.task.manage` | Membresías activas con el permiso del tipo |
-| `GET /tasks/{id}` | `wms.document.read` | La única respuesta con `events` |
-| `POST /tasks/{id}/publish`, `/unassign` | `wms.task.manage` | `{ version }` |
-| `POST /tasks/{id}/hold` | `wms.task.manage` | `{ version, reason? }` |
-| `POST /tasks/{id}/assign` | `wms.task.manage` | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress` |
-| `POST /tasks/{id}/priority` | `wms.task.manage` | `{ priority, urgent, version }` |
-| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel` | `wms.task.manage` | `{ reason, version }` |
+| Ruta                                                                | Permiso             | Cuerpo / idempotencia                                                                                                                                                                                 |
+| ------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /tasks`                                                       | `wms.task.manage`   | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
+| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | —                                                                                                                                                                                                     |
+| `GET /tasks/summary?warehouseId`                                    | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué                                                                                                                          |
+| `GET /tasks/assignees?warehouseId&type`                             | `wms.task.manage`   | Membresías activas con el permiso del tipo                                                                                                                                                            |
+| `GET /tasks/{id}`                                                   | `wms.document.read` | La única respuesta con `events`                                                                                                                                                                       |
+| `POST /tasks/{id}/publish`, `/unassign`                             | `wms.task.manage`   | `{ version }`                                                                                                                                                                                         |
+| `POST /tasks/{id}/hold`                                             | `wms.task.manage`   | `{ version, reason? }`                                                                                                                                                                                |
+| `POST /tasks/{id}/assign`                                           | `wms.task.manage`   | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress`                                                                                                                           |
+| `POST /tasks/{id}/priority`                                         | `wms.task.manage`   | `{ priority, urgent, version }`                                                                                                                                                                       |
+| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel`                 | `wms.task.manage`   | `{ reason, version }`                                                                                                                                                                                 |
 
 **Operario.** La ruta exige `wms.document.read` y el handler, además, el permiso del tipo.
 
-| Ruta | Cuerpo | Respuesta |
-| --- | --- | --- |
-| `GET /tasks/mine?warehouseId` | — | `{ current, assigned }` |
-| `POST /tasks/next` | `{ warehouseId, deviceId }` | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso |
-| `POST /tasks/{id}/claim` | `{ deviceId }` | 200. Sólo admite la asignada a quien llama o su propio reclamo vencido; lo demás, 422 `wms.task.not_offered` |
-| `POST /tasks/{id}/heartbeat` | `{ leaseToken }` | 200 `{ leaseExpiresAt }` |
-| `POST /tasks/{id}/unclaim` | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`) | 200 |
-| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200 |
-| `POST /tasks/{id}/lines/{lineId}/short` (IK) | `{ leaseToken, quantityFound, lotId?, incidentType, note?, photoFileIds?, occurredAt, deviceId }` | 200 la tarea |
-| `POST /tasks/{id}/lines/{lineId}/count` (IK) | `{ leaseToken, locationId, lotId?, quantityCounted, occurredAt, deviceId }` | 200 la tarea |
+| Ruta                                           | Cuerpo                                                                                                  | Respuesta                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `GET /tasks/mine?warehouseId`                  | —                                                                                                       | `{ current, assigned }`                                                                                      |
+| `POST /tasks/next`                             | `{ warehouseId, deviceId }`                                                                             | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso               |
+| `POST /tasks/{id}/claim`                       | `{ deviceId }`                                                                                          | 200. Sólo admite la asignada a quien llama o su propio reclamo vencido; lo demás, 422 `wms.task.not_offered` |
+| `POST /tasks/{id}/heartbeat`                   | `{ leaseToken }`                                                                                        | 200 `{ leaseExpiresAt }`                                                                                     |
+| `POST /tasks/{id}/unclaim`                     | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`)                                | 200                                                                                                          |
+| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200                                                                                                          |
+| `POST /tasks/{id}/lines/{lineId}/short` (IK)   | `{ leaseToken, quantityFound, lotId?, incidentType, note?, photoFileIds?, occurredAt, deviceId }`       | 200 la tarea                                                                                                 |
+| `POST /tasks/{id}/lines/{lineId}/count` (IK)   | `{ leaseToken, locationId, lotId?, quantityCounted, occurredAt, deviceId }`                             | 200 la tarea                                                                                                 |
 
 `short` confirma lo encontrado hacia el destino planeado, cierra la línea como `Short` y deja la novedad en la misma transacción y con
 la misma `Idempotency-Key`; nunca ajusta stock. `count` sólo existe para el tipo `Count` (permiso `wms.count.perform`); `confirm` y
@@ -7127,14 +7172,14 @@ Spec `docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md` §8;
 Una **novedad** (`Incident`) es algo que el operario o el sistema encontró distinto de lo esperado. Catálogo cerrado en T2:
 `ShortMove`, `LocationMismatch`, `UnreadableLabel`, `CountVariance` y `SyncConflict`.
 
-| Ruta | Permiso | Cuerpo | Respuesta |
-| --- | --- | --- | --- |
-| `GET /incidents?warehouseId&status&type&page&pageSize` | `wms.document.read` | — | página de novedades (BFF: códigos, nombres y producto ya resueltos) |
-| `GET /incidents/{id}` | `wms.document.read` | — | la ficha, con `allowedResolutions`, `canBeRejected`, evidencia e historia |
-| `POST /incidents` (IK) | `wms.document.read` + permiso de algún tipo de tarea | `{ warehouseId, type, locationId?, variantId?, lotId?, quantity?, rawCode?, note, photoFileIds?, sourceTaskId?, occurredAt, deviceId }` | 201 la ficha (200 si se repite la clave). Sólo `UnreadableLabel` y `LocationMismatch` |
-| `POST /incidents/{id}/review` | `wms.discrepancy.resolve` | `{ version }` | la ficha |
-| `POST /incidents/{id}/resolve` (SK) | `wms.discrepancy.resolve` | `{ version, resolution, note? }` | `{ batchId?, createdTaskIds }` |
-| `POST /incidents/{id}/reject` | `wms.discrepancy.resolve` | `{ version, note }` | la ficha |
+| Ruta                                                   | Permiso                                              | Cuerpo                                                                                                                                  | Respuesta                                                                             |
+| ------------------------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `GET /incidents?warehouseId&status&type&page&pageSize` | `wms.document.read`                                  | —                                                                                                                                       | página de novedades (BFF: códigos, nombres y producto ya resueltos)                   |
+| `GET /incidents/{id}`                                  | `wms.document.read`                                  | —                                                                                                                                       | la ficha, con `allowedResolutions`, `canBeRejected`, evidencia e historia             |
+| `POST /incidents` (IK)                                 | `wms.document.read` + permiso de algún tipo de tarea | `{ warehouseId, type, locationId?, variantId?, lotId?, quantity?, rawCode?, note, photoFileIds?, sourceTaskId?, occurredAt, deviceId }` | 201 la ficha (200 si se repite la clave). Sólo `UnreadableLabel` y `LocationMismatch` |
+| `POST /incidents/{id}/review`                          | `wms.discrepancy.resolve`                            | `{ version }`                                                                                                                           | la ficha                                                                              |
+| `POST /incidents/{id}/resolve` (SK)                    | `wms.discrepancy.resolve`                            | `{ version, resolution, note? }`                                                                                                        | `{ batchId?, createdTaskIds }`                                                        |
+| `POST /incidents/{id}/reject`                          | `wms.discrepancy.resolve`                            | `{ version, note }`                                                                                                                     | la ficha                                                                              |
 
 - **Resoluciones.** `Accept` (`ShortMove`, `LocationMismatch`, `UnreadableLabel`; no mueve nada) y `AcceptIntoStock` (`SyncConflict` con algo
   encontrado y una línea de origen con destino: repite el movimiento de la línea por lo encontrado, con el supervisor como actor, una
@@ -7179,10 +7224,10 @@ dotnet test --no-build
 
 ### Pruebas en dos niveles
 
-| Nivel | Comando | Cuándo |
-| --- | --- | --- |
-| Rápido: sólo lo que cambió la rama | `.\scripts\test-feature.ps1` | Antes de mergear a `develop` |
-| Completo: todos los proyectos | `.\scripts\run-all-tests.ps1` | De noche, o antes de llevar `develop` a `main` |
+| Nivel                              | Comando                       | Cuándo                                         |
+| ---------------------------------- | ----------------------------- | ---------------------------------------------- |
+| Rápido: sólo lo que cambió la rama | `.\scripts\test-feature.ps1`  | Antes de mergear a `develop`                   |
+| Completo: todos los proyectos      | `.\scripts\run-all-tests.ps1` | De noche, o antes de llevar `develop` a `main` |
 
 ```powershell
 .\scripts\test-feature.ps1                 # compara contra develop
@@ -7262,7 +7307,7 @@ request (`QuotationsApiHarness.StatementsOfAsync`): cuenta exactamente los spans
 transversales del stub de auth (estado del tenant y módulos). El presupuesto es el conteo medido redondeado hacia arriba al
 múltiplo de 5: un techo contra regresiones, no una meta.
 
-| Ruta | Prueba | Medido (2026-11-17) | Presupuesto |
-| --- | --- | --- | --- |
-| `GET /quotations/{id}` (dos líneas, cuenta de cobro) | `RequestQueryBudgetApiTests` (Quotations) | 24 | 25 |
-| `GET /orders/{id}` (convertido de esa cotización) | `RequestQueryBudgetApiTests` (Quotations) | 24 | 25 |
+| Ruta                                                 | Prueba                                    | Medido (2026-11-17) | Presupuesto |
+| ---------------------------------------------------- | ----------------------------------------- | ------------------- | ----------- |
+| `GET /quotations/{id}` (dos líneas, cuenta de cobro) | `RequestQueryBudgetApiTests` (Quotations) | 24                  | 25          |
+| `GET /orders/{id}` (convertido de esa cotización)    | `RequestQueryBudgetApiTests` (Quotations) | 24                  | 25          |

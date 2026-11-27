@@ -12,7 +12,7 @@ namespace Modules.Messaging.UnitTests;
 /// <summary>
 /// Every kind migration rebuilds <c>CK_message_templates_kind</c> from a literal list. The task notice migration was written on a branch that
 /// did not know <c>AppointmentReminder</c> yet, so its list silently dropped it: the compiler cannot see it and the model snapshot still
-/// looked right. These tests pin the migration lists to the enum and to the DbContext CHECK.
+/// looked right. These tests pin the latest migration list (HR birthday notice) to the enum and to the DbContext CHECK.
 /// </summary>
 public sealed class MessageTemplateKindCheckMigrationTests
 {
@@ -21,20 +21,20 @@ public sealed class MessageTemplateKindCheckMigrationTests
             .Single(operation => operation.Name == "CK_message_templates_kind").Sql;
 
     [Fact]
-    public void TheTaskNoticeMigrationCheckEqualsTheDbContextCheck()
+    public void TheHrBirthdayNoticeMigrationCheckEqualsTheDbContextCheck()
     {
         using var context = new MessagingDbContextFactory().CreateDbContext([]);
         var model = context.GetService<IDesignTimeModel>().Model;
         var modelSql = model.FindEntityType(typeof(MessageTemplate))!.GetCheckConstraints()
             .Single(constraint => constraint.Name == "CK_message_templates_kind").Sql;
 
-        Assert.Equal(modelSql, AddedCheck(new AddTaskNoticeTemplateKind(), up: true));
+        Assert.Equal(modelSql, AddedCheck(new AddHrBirthdayNoticeTemplateKind(), up: true));
     }
 
     [Fact]
-    public void TheTaskNoticeMigrationCheckListsEveryKind()
+    public void TheHrBirthdayNoticeMigrationCheckListsEveryKind()
     {
-        var sql = AddedCheck(new AddTaskNoticeTemplateKind(), up: true);
+        var sql = AddedCheck(new AddHrBirthdayNoticeTemplateKind(), up: true);
 
         foreach (var name in Enum.GetNames<MessageTemplateKind>())
         {
@@ -43,10 +43,10 @@ public sealed class MessageTemplateKindCheckMigrationTests
     }
 
     [Fact]
-    public void RollingBackTheTaskNoticeMigrationRestoresTheAppointmentReminderCheck()
+    public void RollingBackTheHrBirthdayNoticeMigrationRestoresTheTaskNoticeCheck()
     {
-        var down = AddedCheck(new AddTaskNoticeTemplateKind(), up: false);
-        var previous = AddedCheck(new AddAppointmentReminderTemplateKind(), up: true);
+        var down = AddedCheck(new AddHrBirthdayNoticeTemplateKind(), up: false);
+        var previous = AddedCheck(new AddTaskNoticeTemplateKind(), up: true);
 
         Assert.Equal(previous, down);
     }

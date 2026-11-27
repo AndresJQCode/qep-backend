@@ -240,6 +240,13 @@ public static class MessagingErrorCodes
     /// <summary>Agenda: existe una <c>qep_agenda_recordatorio</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
     public const string TemplateAppointmentReminderConflict = "messaging.template.appointment_reminder_conflict";
 
+    /// <summary>HR birthday notices: the connection already has its live birthday notice template, or two provisionings raced on
+    /// <c>UX_message_templates_hr_birthday_notice</c>.</summary>
+    public const string TemplateHrBirthdayNoticeExists = "messaging.template.hr_birthday_notice_exists";
+
+    /// <summary>HR birthday notices: a <c>qep_cumpleanos_equipo</c> created outside QEP has another body or an incompatible shape.</summary>
+    public const string TemplateHrBirthdayNoticeConflict = "messaging.template.hr_birthday_notice_conflict";
+
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
 
