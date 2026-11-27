@@ -1156,7 +1156,7 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
 
                     b.ToTable("employee_activity", "hr", t =>
                         {
-                            t.HasCheckConstraint("CK_employee_activity_action", "action IN ('EmployeeCreated','EmployeeImported','PersonalDataUpdated','PaymentUpdated','SalaryCreated','SalaryRewritten','AssignmentCreated','ContractRenewed','ContractConvertedToIndefinite','ContractTypeChanged','ContractTerminated','EmployeeDeactivated','EmployeeReincorporated','DocumentAttached','MedicalExamRecorded','MedicalExamUpdated','MedicalExamDeleted','ExitExamNotAttended')");
+                            t.HasCheckConstraint("CK_employee_activity_action", "action IN ('EmployeeCreated','EmployeeImported','PersonalDataUpdated','PaymentUpdated','SalaryCreated','SalaryRewritten','AssignmentCreated','ContractRenewed','ContractConvertedToIndefinite','ContractTypeChanged','ContractTerminated','EmployeeDeactivated','EmployeeReincorporated','DocumentAttached','MedicalExamRecorded','MedicalExamUpdated','MedicalExamDeleted','ExitExamNotAttended','AssignmentRewritten','AssignmentDeleted')");
 
                             t.HasCheckConstraint("CK_employee_activity_category", "category IN ('Personal','Lifecycle','Payment','Salary','Assignment','Contract','Medical')");
                         });

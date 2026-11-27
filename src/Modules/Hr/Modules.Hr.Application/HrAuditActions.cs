@@ -17,6 +17,8 @@ public static class HrAuditActions
     public const string ContractSalaryCreated = "hr.contract.salary_created";
     public const string ContractSalaryRewritten = "hr.contract.salary_rewritten";
     public const string ContractAssignmentCreated = "hr.contract.assignment_created";
+    public const string ContractAssignmentRewritten = "hr.contract.assignment_rewritten";
+    public const string ContractAssignmentDeleted = "hr.contract.assignment_deleted";
     public const string ContractRenewed = "hr.contract.renewed";
     public const string ContractConvertedToIndefinite = "hr.contract.converted_to_indefinite";
     public const string ContractTypeChanged = "hr.contract.type_changed";
