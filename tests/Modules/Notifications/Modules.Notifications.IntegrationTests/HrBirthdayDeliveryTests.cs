@@ -45,6 +45,17 @@ public sealed class HrBirthdayDeliveryTests
     }
 
     [Fact]
+    public async Task BlankRecipientNameFallsBackToEquipo()
+    {
+        await using var rig = await Rig.StartAsync();
+        await rig.SeedAsync(HrBirthdayDeliveryChannels.WhatsApp, recipient: rig.Recipient with { DisplayName = " 	 " });
+
+        await rig.RunAsync(T0);
+
+        Assert.Equal("equipo", Assert.Single(rig.WhatsApp.Sends).RecipientName);
+    }
+
+    [Fact]
     public async Task NoLeadSendsADashAndNadie()
     {
         await using var rig = await Rig.StartAsync();

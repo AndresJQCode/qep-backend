@@ -56,7 +56,8 @@ public static class HrBirthdayWhatsAppText
             }
         }
 
-        return Count(total);
+        // A single person whose name alone is too long: the name, cut to fit, is better than «1 persona».
+        return total == 1 ? Truncate(names[0], maxLength) : Count(total);
     }
 
     /// <summary>«viernes 4 de diciembre», or <see cref="NoDate"/> when there is none. Written by hand: the host may run without ICU.</summary>
@@ -65,5 +66,9 @@ public static class HrBirthdayWhatsAppText
             ? $"{Days[(int)value.DayOfWeek]} {value.Day.ToString(CultureInfo.InvariantCulture)} de {Months[value.Month - 1]}"
             : NoDate;
 
-    private static string Count(int total) => $"{total.ToString(CultureInfo.InvariantCulture)} personas";
+    private static string Count(int total) =>
+        total == 1 ? "1 persona" : $"{total.ToString(CultureInfo.InvariantCulture)} personas";
+
+    private static string Truncate(string name, int maxLength) =>
+        name.Length <= maxLength ? name : maxLength <= 1 ? "…" : name[..(maxLength - 1)].TrimEnd() + "…";
 }

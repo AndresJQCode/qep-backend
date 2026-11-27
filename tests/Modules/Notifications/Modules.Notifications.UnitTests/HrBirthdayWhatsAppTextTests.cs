@@ -42,6 +42,16 @@ public sealed class HrBirthdayWhatsAppTextTests
         Assert.Equal("3 personas", HrBirthdayWhatsAppText.Names([new string('x', 60), "Luis"], 3, 30));
 
     [Fact]
+    public void ASingleLongNameIsTruncated()
+    {
+        var text = HrBirthdayWhatsAppText.Names([new string('x', 60)], 1, 30);
+
+        Assert.Equal(30, text.Length);
+        Assert.EndsWith("…", text, StringComparison.Ordinal);
+        Assert.Equal("1 persona", HrBirthdayWhatsAppText.Names([], 1, 30));
+    }
+
+    [Fact]
     public void TheDateIsSpanishWithoutYearAndNullIsADash()
     {
         Assert.Equal("viernes 4 de diciembre", HrBirthdayWhatsAppText.Date(new DateOnly(2026, 12, 4)));

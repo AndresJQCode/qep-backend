@@ -197,7 +197,8 @@ internal sealed partial class HrBirthdayDeliveryProcessor(
                     delivery.SentByMemberId,
                     ClientId: delivery.Id,
                     recipient.PhoneE164!,
-                    recipient.DisplayName,
+                    // Meta rejects an empty variable: a member without a visible name is greeted as the team.
+                    string.IsNullOrWhiteSpace(recipient.DisplayName) ? "equipo" : recipient.DisplayName,
                     HrBirthdayWhatsAppText.Names(digest.Today, digest.TodayTotal, HrBirthdayWhatsAppText.MaxNamesLength),
                     HrBirthdayWhatsAppText.Date(digest.UpcomingDate),
                     HrBirthdayWhatsAppText.Names(digest.Upcoming, digest.UpcomingTotal, HrBirthdayWhatsAppText.MaxNamesLength)),
