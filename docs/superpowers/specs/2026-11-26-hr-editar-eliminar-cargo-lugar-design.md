@@ -1,7 +1,7 @@
 # Editar y eliminar registros de «Cargo y lugar de trabajo» (Hr)
 
 Tarjeta: <https://trello.com/c/W4Ijr9DW>. Desbloquea <https://trello.com/c/0dhhZPZV> (frontend).
-Verificado sobre `develop` en `4dc94b00c` y, tras la revisión independiente, en `5e370555b`. Estado: **por aprobar**.
+Verificado sobre `develop` en `4dc94b00c` y, tras la revisión independiente, en `5e370555b`. Estado: **aprobado** por el owner el 2026-11-26.
 
 ## Para qué
 
@@ -12,8 +12,12 @@ Un registro mal cargado hoy no se puede corregir: sólo se agrega otro posterior
 Del owner (2026-11-26):
 
 - Un registro que ya rigió en una nómina `Approved` o `Closed` **no se edita ni se elimina**. Primero se reabre el período.
+- Un período `Liquidated` se puede aprobar con las etiquetas de cargo y lugar guardadas al liquidar (reliquidar las
+  refresca): sólo `Approved` y `Closed` bloquean (opción (a), ver «`Liquidated` y la huella»).
+- Se aprueban las seis propuestas siguientes y cada punto de «Arquitectura», incluidos el cambio de
+  `MultiReplicaInventory.cs` y la migración del inbox de Storage.
 
-Propuestas que se aprueban con este documento:
+Propuestas, aprobadas por el owner con este documento:
 
 1. La fecha de vigencia se puede editar, salvo la del primer registro (es el inicio del contrato).
 2. El primer registro se edita pero no se elimina.
@@ -88,9 +92,8 @@ edición o un borrado marcan `sourceChanged` sólo si cambian esos dos datos par
 el área, un centro por otro de la misma clase o un registro que no rige ese día no lo marca, y el cálculo guardado sigue
 siendo correcto. Lo que sí queda viejo son las etiquetas que el resultado guarda al liquidar (cargo y «centro - sede»,
 `LiquidatePeriod`), que salen así al aprobar. Bloquear sólo `Approved` y `Closed` es sano para el cálculo. Para las
-etiquetas queda una **decisión pendiente del owner**: (a) aceptar que un `Liquidated` se apruebe con las etiquetas de su
-liquidación (reliquidar las refresca), que es lo que este diseño supone; o (b) bloquear también `Liquidated` con
-resultado del empleado.
+etiquetas, el owner eligió (2026-11-26) la opción (a): un `Liquidated` se aprueba con las etiquetas de su liquidación
+(reliquidar las refresca); no se bloquea `Liquidated` con resultado del empleado.
 
 **Rastro.** Dos acciones nuevas en el historial de actividad (`AssignmentRewritten`, `AssignmentDeleted`, categoría
 `Assignment`), con etiqueta, cambios antes y después, y auditoría `hr.contract.assignment_rewritten` y
@@ -181,7 +184,7 @@ en la vista de colas de la plataforma ni en Grafana. Una falla sólo se ve en el
   documento laboral válido.
 - **D. Borrar tras la transacción y sólo registrar el fallo.** Deja huérfanos.
 
-## Arquitectura (requiere tu autorización)
+## Arquitectura (autorizada por el owner el 2026-11-26)
 
 Cada cambio, uno por uno:
 
@@ -204,7 +207,7 @@ No agrega referencias entre módulos: Bootstrapper ya referencia Hr y Storage (`
 ## Fuera de alcance
 
 - `AddAssignment` y el salario no miran la nómina: sus reglas no cambian. En particular, «Editar» salario reescribe un
-  monto que ya usó una nómina `Approved` o `Closed` sin revisarlo; se sigue en una tarjeta aparte.
+  monto que ya usó una nómina `Approved` o `Closed` sin revisarlo; se sigue en <https://trello.com/c/N8gsCU6N>.
 - `DeleteMedicalExam` y los demás caminos que sueltan un PDF (reemplazarlo o quitarlo) siguen como hoy: el archivo queda
   en R2. Se sigue en <https://trello.com/c/HguYDih9>, que puede reusar este evento y `IHrDocumentReferences`.
 - Una aprobación de nómina simultánea con la edición puede ganar por milisegundos; no se agrega candado.
