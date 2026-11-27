@@ -49,6 +49,18 @@ public sealed class AssignmentRecord : IEffectiveDated
 
     public DateTimeOffset CreatedAt { get; private set; }
 
+    public AssignmentEntry ToEntry() => new(EffectiveDate, PositionId, AreaId, SiteId, WorkplaceId);
+
+    /// <summary>Reescribe fecha, cargo, área, sede y centro. Las reglas de vecinos las revisa el contrato antes.</summary>
+    internal void Rewrite(AssignmentEntry entry)
+    {
+        EffectiveDate = entry.EffectiveDate;
+        PositionId = entry.PositionId;
+        AreaId = entry.AreaId;
+        SiteId = entry.SiteId;
+        WorkplaceId = entry.WorkplaceId;
+    }
+
     internal void SetDocument(DocumentRef? document)
     {
         DocumentFileId = document?.FileId;
