@@ -92,6 +92,17 @@ public sealed class MessageMappingTests
     public void AnImportedUnsupportedMessageDoesNotAskThePersonToResend(int code, bool imported, string expected) =>
         Assert.Equal(expected, MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Unsupported, details: UnsupportedDetails(code), imported: imported), TenantId, Names, NoTargets).UnsupportedReason);
 
+    // Así quedó en messaging.messages el borrado del contacto (type "revoke" de Meta, 2026-11-23): sin errors.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AMessageTheContactDeletedSaysSo(bool imported) =>
+        Assert.Equal(
+            "Se eliminó este mensaje.",
+            MessageMapping.ToDto(
+                Row(MessageDirection.Inbound, MessageKind.Unsupported, details: """{"type": "revoke", "errors": null}""", imported: imported),
+                TenantId, Names, NoTargets).UnsupportedReason);
+
     // Sin motivo conocido la burbuja dibuja la etiqueta del kind, que ya existe en el frontend.
     [Theory]
     [InlineData("""{"type":"unsupported","errors":[{"code":999999}]}""")]
