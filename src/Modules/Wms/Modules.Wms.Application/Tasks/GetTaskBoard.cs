@@ -13,9 +13,13 @@ public sealed class GetTaskBoardHandler(
     IWarehouseRepository warehouses,
     IWarehouseTaskRepository tasks,
     IIncidentRepository incidents,
-    IWmsMemberDirectory members)
+    IWmsMemberDirectory members,
+    IClock clock)
     : IQueryHandler<GetTaskBoardQuery, TaskBoardDto>
 {
+    /// <summary>«Sin avance hace X minutos» (B4): el umbral es decisión del agente, por confirmar con el owner.</summary>
+    public static readonly TimeSpan StalledAfter = TimeSpan.FromMinutes(15);
+
     public async Task<TaskBoardDto> HandleAsync(GetTaskBoardQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
@@ -35,6 +39,9 @@ public sealed class GetTaskBoardHandler(
         var working = await tasks.ListInProgressAsync(query.TenantId, query.WarehouseId, cancellationToken);
         var claimedAt = await tasks.FindClaimedAtAsync(
             query.TenantId, [.. working.Select(task => task.Id)], cancellationToken);
+        var progressAt = await tasks.FindLastProgressAtAsync(
+            query.TenantId, [.. working.Select(task => task.Id)], cancellationToken);
+        var now = clock.UtcNow;
 
         // M1: una consulta de asignadas y una de elegibles por permiso (el de cada tipo distinto y wms.document.read, que exige toda
         // ruta de tareas; nunca una por tarea). Sin wms.document.read tampoco puede reclamar su asignada.
@@ -79,7 +86,9 @@ public sealed class GetTaskBoardHandler(
                         task.Number,
                         task.Type.ToString(),
                         claimedAt.TryGetValue(task.Id, out var since) ? since : null,
-                        task.LastActivityAt))
+                        task.LastActivityAt,
+                        progressAt.TryGetValue(task.Id, out var progress) ? progress : null,
+                        progressAt.TryGetValue(task.Id, out var last) && now - last >= StalledAfter))
                     .OrderBy(worker => worker.Name, StringComparer.InvariantCultureIgnoreCase)
                     .ThenBy(worker => worker.TaskNumber, StringComparer.Ordinal),
             ],

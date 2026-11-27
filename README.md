@@ -7002,7 +7002,7 @@ sin `events` y se auditan.
 | --- | --- | --- |
 | `POST /tasks` | `wms.task.manage` | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
 | `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | — |
-| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué |
+| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué. Cada fila de `operators` trae `lastProgressAt` (último reclamo, reanudación o línea confirmada, con faltante o cancelada; el latido no cuenta) y `stalled` (sin avance hace 15 minutos o más, calculado por el servidor; no hay tope automático: el supervisor suelta o reasigna) |
 | `GET /tasks/assignees?warehouseId&type` | `wms.task.manage` | Membresías activas con el permiso del tipo |
 | `GET /tasks/{id}` | `wms.document.read` | La única respuesta con `events` |
 | `POST /tasks/{id}/publish`, `/unassign` | `wms.task.manage` | `{ version }` |

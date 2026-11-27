@@ -188,6 +188,34 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return claims.ToDictionary(value => value.TaskId, value => value.At);
     }
 
+    private static readonly TaskEventKind[] ProgressKinds =
+    [
+        TaskEventKind.Claimed,
+        TaskEventKind.LeaseResumed,
+        TaskEventKind.LineConfirmed,
+        TaskEventKind.LineShort,
+        TaskEventKind.LineCancelled,
+    ];
+
+    public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindLastProgressAtAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken)
+    {
+        if (taskIds.Count == 0)
+        {
+            return new Dictionary<Guid, DateTimeOffset>();
+        }
+
+        var ids = taskIds.ToArray();
+        // RecordedAt, no OccurredAt: una confirmación que llega tarde desde el celular es avance desde que el servidor la recibe.
+        var progress = await dbContext.Set<WarehouseTaskEvent>()
+            .AsNoTracking()
+            .Where(value => value.TenantId == tenantId && ids.Contains(value.TaskId) && ProgressKinds.Contains(value.Kind))
+            .GroupBy(value => value.TaskId)
+            .Select(group => new { TaskId = group.Key, At = group.Max(value => value.RecordedAt) })
+            .ToListAsync(cancellationToken);
+        return progress.ToDictionary(value => value.TaskId, value => value.At);
+    }
+
     public async Task<IReadOnlyList<WarehouseTask>> ListInProgressAsync(
         Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
     {

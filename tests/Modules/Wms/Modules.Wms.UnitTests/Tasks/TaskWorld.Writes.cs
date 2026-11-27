@@ -26,6 +26,9 @@ internal sealed partial class TaskWorld
     /// <summary>Cuántas veces se pidió la lista de elegibles de un permiso.</summary>
     public int PermissionLookups { get; set; }
 
+    /// <summary>Cuántas veces se pidió el último avance: el tablero lo pide una sola vez para todas las tareas en curso.</summary>
+    public int ProgressReads { get; set; }
+
     public List<(string Action, IReadOnlyDictionary<string, string?> Fields)> Audit { get; } = [];
 
     /// <summary>La que devuelve «la mejor candidata».</summary>
@@ -363,6 +366,17 @@ internal sealed partial class TaskWorld
                 .ToDictionary(
                     task => task.Id,
                     task => task.Events.Where(value => value.Kind == TaskEventKind.Claimed).Max(value => value.OccurredAt)));
+
+        public Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindLastProgressAtAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken)
+        {
+            world.ProgressReads++;
+            TaskEventKind[] kinds =
+                [TaskEventKind.Claimed, TaskEventKind.LeaseResumed, TaskEventKind.LineConfirmed, TaskEventKind.LineShort, TaskEventKind.LineCancelled];
+            return Task.FromResult<IReadOnlyDictionary<Guid, DateTimeOffset>>(world.Tasks
+                .Where(task => taskIds.Contains(task.Id) && task.Events.Any(value => kinds.Contains(value.Kind)))
+                .ToDictionary(task => task.Id, task => task.Events.Where(value => kinds.Contains(value.Kind)).Max(value => value.RecordedAt)));
+        }
 
         public Task<WarehouseTaskPage> ListAsync(
             Guid tenantId,
