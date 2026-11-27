@@ -402,6 +402,51 @@ public sealed class ForeignCityOperatorApiTests
         Assert.Equal(1, byCity!.Total);
     }
 
+    // Como en CityOperatorApiTests: el stub le quita los operator.* a un tenant que no es el operador, así que lo corta la
+    // política; el 403 va antes que el 422 (cuerpo inválido) y el 404 (id desconocido).
+    [Fact]
+    public async Task ANonOperatorTenantIs403OnForeignReadAndWriteRoutesEvenWithThePermissions()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        var otherTenantId = Guid.CreateVersion7();
+        using var client = StubClient(factory, OperatorSubjectId, otherTenantId, ReadAndManage);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var otherBase = $"/api/v1/tenants/{otherTenantId}/operator/cities/foreign";
+
+        var read = await client.GetAsync($"{otherBase}/unresolved/{Guid.CreateVersion7()}", cancellationToken);
+        var write = await client.PostAsJsonAsync(
+            $"{otherBase}/unresolved/{Guid.CreateVersion7()}/resolve", new { billingCityId = Guid.Empty }, cancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, read.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
+    }
+
+    [Fact]
+    public async Task ResolvingATextThatAlreadyHasALiveSynonymIs409AlreadyExists()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await ReportAsync(factory, Report("US", "Miamy"));
+        var rowId = await RowIdAsync(factory, "US", "Miamy");
+        var miamiId = await BillingCityIdAsync(factory, "US", "09", "1");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<GeographyDbContext>().Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO geography.foreign_city_synonyms
+                    (id, country_code, normalized_text, display_text, billing_city_id, created_by, created_at, updated_by, updated_at, version)
+                VALUES ({Guid.CreateVersion7()}, 'US', 'MIAMY', 'Miamy', {miamiId}, {OperatorSubjectId}, {Seen}, {OperatorSubjectId}, {Seen}, 1)
+                """, cancellationToken);
+        }
+
+        var response = await client.PostAsJsonAsync($"{Base}/unresolved/{rowId}/resolve", new { billingCityId = miamiId }, cancellationToken);
+
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "geography.synonym.already_exists");
+        Assert.Equal(1, await SynonymCountAsync(factory));
+    }
+
     private static async Task<ForeignCitySynonymDto> ResolvedSynonymAsync(QepApiFactory factory, HttpClient client, string text)
     {
         await ReportAsync(factory, Report("US", text));
