@@ -83,6 +83,12 @@ internal static class WarehouseTaskModel
         // El barrido de leases vencidos.
         task.HasIndex(value => value.LeaseExpiresAt, "IX_tasks_lease").HasFilter("status = 'InProgress'");
         task.HasIndex(value => new { value.TenantId, value.SourceType, value.SourceId }, "IX_tasks_source");
+        // Los conteos del tablero (por estado y abiertas por tipo) salen sólo del índice; ListAssignedOpenAsync lo usa para acotar
+        // por bodega y estado, pero sí lee la tabla para traer el asignado (revisión T1, M4).
+        task.HasIndex(value => new { value.TenantId, value.WarehouseId, value.Status, value.Type }, "IX_tasks_board");
+        // El listado del supervisor: la página sale del índice en el orden de ListAsync.
+        task.HasIndex(value => new { value.TenantId, value.WarehouseId, value.CreatedAt, value.Number }, "IX_tasks_list")
+            .IsDescending(false, false, true, true);
 
         task.HasOne<Warehouse>()
             .WithMany()
@@ -177,6 +183,8 @@ internal static class WarehouseTaskModel
         history.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(18, 6);
         history.Property(value => value.Detail).HasColumnName("detail").HasMaxLength(WarehouseTask.ReasonMaxLength);
         history.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        // El default sólo existe para el rollout: un pod viejo inserta sin la columna. El código nuevo siempre la escribe.
+        history.Property(value => value.RecordedAt).HasColumnName("recorded_at").HasDefaultValueSql("now()");
         history.HasIndex(value => new { value.TaskId, value.OccurredAt }, "IX_task_events_task");
     }
 }

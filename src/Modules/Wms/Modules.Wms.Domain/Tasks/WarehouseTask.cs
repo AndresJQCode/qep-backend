@@ -166,11 +166,15 @@ public sealed class WarehouseTask
         Version++;
     }
 
-    /// <summary>La saca del pool; conserva a quién está asignada.</summary>
+    /// <summary>La saca del pool; conserva a quién está asignada y borra el reclamo que haya quedado de un lease vencido.</summary>
     public void Hold(Guid by, string? reason, DateTimeOffset now)
     {
         EnsureStatus("hold", WarehouseTaskStatus.Ready, WarehouseTaskStatus.Assigned);
         var detail = OptionalReason(reason);
+
+        // B1: un reclamo que quedó de un lease vencido no sobrevive a la retención. Al publicar otra vez, una confirmación tardía de
+        // antes ya no la reanuda ni conserva el token (DA-35).
+        ClearClaim();
         Status = WarehouseTaskStatus.Planned;
         ReleasedAt = null;
         Version++;
@@ -240,7 +244,7 @@ public sealed class WarehouseTask
         }
 
         Version++;
-        MarkCancelled(detail, by, now);
+        MarkCancelled(detail, by, now, now);
     }
 
     /// <summary>Si era la última línea abierta, la tarea se cierra.</summary>
@@ -257,7 +261,7 @@ public sealed class WarehouseTask
         line.Cancel(detail);
         Version++;
         Record(TaskEventKind.LineCancelled, by, now, lineId: lineId, detail: detail);
-        CloseIfFinished(by, now, detail);
+        CloseIfFinished(by, now, now, detail);
     }
 
     /// <summary>Toma la tarea: cualquiera si está en el pool, sólo el asignado si está asignada. El lease es nuevo, salvo que la misma
@@ -307,6 +311,20 @@ public sealed class WarehouseTask
         Renew(now);
     }
 
+    /// <summary>Quien ya tiene la tarea en curso la vuelve a pedir («siguiente» o «reclamar»): renueva el lease con el mismo token, sin
+    /// evento ni versión, como el latido. Vale también con el lease vencido mientras el barrido no haya pasado: sigue en curso y nadie
+    /// más pudo tomarla.</summary>
+    public void RenewClaim(Guid memberId, DateTimeOffset now)
+    {
+        EnsureStatus("claim", WarehouseTaskStatus.InProgress);
+        if (ClaimedByMemberId != memberId)
+        {
+            throw new InvalidOperationException($"Task {Id} is in progress for another member.");
+        }
+
+        Renew(now);
+    }
+
     /// <summary>El operario devuelve la tarea al pool; deja de estar asignada si lo estaba a él. Conserva su antigüedad.</summary>
     public void Unclaim(Guid memberId, Guid leaseToken, TaskUnclaimReason reason, DateTimeOffset now)
     {
@@ -339,7 +357,7 @@ public sealed class WarehouseTask
     /// <summary>Confirma parte o todo de una línea. Con un lease reanudable, reanuda la tarea antes: la mercancía ya se movió en el
     /// piso. El llamador responde antes el lease perdido (<see cref="CheckLease"/>) y la línea inexistente
     /// (<see cref="FindLine"/>).</summary>
-    /// <param name="occurredAt">Cuándo se escaneó, dentro de la ventana del ledger; sin él, <paramref name="now"/>. Es la fecha de
+    /// <param name="occurredAt">Cuándo se escaneó, dentro de la ventana del ledger y no más de 5 minutos antes de la publicación de la tarea; sin él, <paramref name="now"/>. Es la fecha de
     /// los hechos que la confirmación deja en la historia y la de cierre (DA-36); el lease y la actividad usan
     /// <paramref name="now"/>.</param>
     /// <param name="memberIsBusy">La persona ya tiene otra tarea en curso: una confirmación tardía se anota sin reanudar ésta, que
@@ -382,12 +400,21 @@ public sealed class WarehouseTask
         var scannedAt = (occurredAt ?? now).ToUniversalTime();
         LedgerEntryRules.EnsureOccurredAtInWindow(scannedAt, now);
 
+        // B2: un escaneo muy anterior a la publicación es imposible (sin publicar, a la creación); la holgura es la del reloj del
+        // ledger, para que un celular atrasado no se quede con un 422 permanente. Mismo código que la ventana del ledger.
+        if (scannedAt < (ReleasedAt ?? CreatedAt).AddMinutes(-LedgerEntryRules.ClockToleranceMinutes))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.MovementOccurredAtOutOfRange,
+                "La fecha del escaneo no puede ser anterior a la publicación de la tarea por más de 5 minutos.");
+        }
+
         // Después de validar: una confirmación rechazada no reanuda nada.
         var staysReleased = lease == LeaseCheck.Resumable && memberIsBusy;
         if (lease == LeaseCheck.Resumable && !memberIsBusy)
         {
             Status = WarehouseTaskStatus.InProgress;
-            Record(TaskEventKind.LeaseResumed, memberId, scannedAt, deviceId: device);
+            Record(TaskEventKind.LeaseResumed, memberId, scannedAt, deviceId: device, recordedAt: now);
         }
 
         line.Confirm(quantity);
@@ -401,8 +428,8 @@ public sealed class WarehouseTask
         }
 
         Version++;
-        Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity);
-        CloseIfFinished(memberId, scannedAt);
+        Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity, recordedAt: now);
+        CloseIfFinished(memberId, scannedAt, now);
         return line;
     }
 
@@ -416,7 +443,7 @@ public sealed class WarehouseTask
     /// <summary>Sin líneas abiertas la tarea se cierra: <c>Done</c> si alguna quedó <c>Done</c>, <c>Cancelled</c> si se cancelaron
     /// todas. <paramref name="cancelReason"/> sólo falta al confirmar, donde siempre queda al menos una <c>Done</c> si no hay abiertas.
     /// </summary>
-    private void CloseIfFinished(Guid by, DateTimeOffset now, string? cancelReason = null)
+    private void CloseIfFinished(Guid by, DateTimeOffset now, DateTimeOffset recordedAt, string? cancelReason = null)
     {
         if (_lines.Exists(line => line.Status == TaskLineStatus.Open))
         {
@@ -428,20 +455,20 @@ public sealed class WarehouseTask
             Status = WarehouseTaskStatus.Done;
             CompletedAt = now;
             ClearClaim();
-            Record(TaskEventKind.Completed, by, now);
+            Record(TaskEventKind.Completed, by, now, recordedAt: recordedAt);
             return;
         }
 
-        MarkCancelled(cancelReason ?? throw new InvalidOperationException($"Task {Id} has no confirmed line."), by, now);
+        MarkCancelled(cancelReason ?? throw new InvalidOperationException($"Task {Id} has no confirmed line."), by, now, recordedAt);
     }
 
-    private void MarkCancelled(string reason, Guid by, DateTimeOffset now)
+    private void MarkCancelled(string reason, Guid by, DateTimeOffset now, DateTimeOffset recordedAt)
     {
         Status = WarehouseTaskStatus.Cancelled;
         CancelledAt = now;
         CancelReason = reason;
         ClearClaim();
-        Record(TaskEventKind.Cancelled, by, now, detail: reason);
+        Record(TaskEventKind.Cancelled, by, now, detail: reason, recordedAt: recordedAt);
     }
 
     /// <summary>Extiende el lease desde <paramref name="now"/> y marca la actividad.</summary>
@@ -525,6 +552,7 @@ public sealed class WarehouseTask
         string? deviceId = null,
         Guid? lineId = null,
         decimal? quantity = null,
-        string? detail = null) =>
-        _events.Add(WarehouseTaskEvent.Record(TenantId, Id, kind, memberId, deviceId, lineId, quantity, detail, at));
+        string? detail = null,
+        DateTimeOffset? recordedAt = null) =>
+        _events.Add(WarehouseTaskEvent.Record(TenantId, Id, kind, memberId, deviceId, lineId, quantity, detail, at, recordedAt ?? at));
 }

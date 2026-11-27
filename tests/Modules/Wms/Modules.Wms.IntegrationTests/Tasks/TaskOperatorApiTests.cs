@@ -77,6 +77,32 @@ public sealed class TaskOperatorApiTests
     private static Task<long> TaskMovementsAsync(PostgreSqlContainer database) =>
         ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements WHERE document_type = 'Task'");
 
+    // B3: la historia va en el orden del servidor y la confirmación tardía conserva su hora de escaneo.
+    [Fact]
+    public async Task TheHistoryFollowsTheServerOrderAndKeepsTheScanTime()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var task = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        var scanned = DateTimeOffset.UtcNow;
+        await ExecuteAsync(database, "UPDATE wms.tasks SET lease_expires_at = now() - interval '1 minute' WHERE id = @id", ("id", task.Id));
+        var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
+        await sweeper.RunOnceAsync(DateTimeOffset.UtcNow, Ct);
+
+        var response = await ConfirmRawAsync(
+            floor.Client, task.Id, task.Lines[0].Id, ConfirmBody(task, task.LeaseToken!.Value, 4, occurredAt: scanned));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var events = (await GetAsync(floor.Setup.Manager, task.Id)).Events;
+        Assert.Equal(
+            ["Created", "Published", "Claimed", "LeaseExpired", "LeaseResumed", "LineConfirmed", "Completed"],
+            events.Select(value => value.Kind));
+        Assert.True(events[4].OccurredAt < events[3].OccurredAt);
+    }
+
     [Fact]
     public async Task NextReturnsTheTaskClaimedWithALeaseTokenAndRepeatingItIsTheSame()
     {
@@ -197,7 +223,160 @@ public sealed class TaskOperatorApiTests
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal("wms.task.lease_lost", await CodeOfAsync(response));
+        Assert.False(await ResumableOfAsync(response));
         Assert.Equal(0L, await TaskMovementsAsync(database));
+    }
+
+    [Fact]
+    public async Task TheSameKeyWithAnotherBodyOnConfirmIs409()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var task = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        var key = Guid.NewGuid().ToString();
+        var first = await ConfirmRawAsync(
+            floor.Client, task.Id, task.Lines[0].Id, ConfirmBody(task, task.LeaseToken!.Value, 2), key);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        var second = await ConfirmRawAsync(
+            floor.Client, task.Id, task.Lines[0].Id, ConfirmBody(task, task.LeaseToken!.Value, 3), key);
+
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        Assert.Equal("wms.idempotency_key_reused", await CodeOfAsync(second));
+        Assert.Equal(1L, await TaskMovementsAsync(database));
+        Assert.Equal(2m, (await GetAsync(floor.Setup.Manager, task.Id)).Lines[0].QuantityConfirmed);
+    }
+
+    [Fact]
+    public async Task AHeldAndRepublishedTaskRejectsALateConfirmation()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var task = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
+        await sweeper.RunOnceAsync(DateTimeOffset.UtcNow.AddMinutes(16), Ct);
+        var held = await ActionAsync(
+            floor.Setup.Manager, task.Id, "hold", new { version = (await GetAsync(floor.Setup.Manager, task.Id)).Version });
+        await ActionAsync(floor.Setup.Manager, task.Id, "publish", new { version = held.Version });
+
+        var response = await ConfirmRawAsync(
+            floor.Client, task.Id, task.Lines[0].Id, ConfirmBody(task, task.LeaseToken!.Value, 4));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("wms.task.lease_lost", await CodeOfAsync(response));
+        Assert.False(await ResumableOfAsync(response));
+        Assert.Equal(0L, await TaskMovementsAsync(database));
+        var after = await GetAsync(floor.Setup.Manager, task.Id);
+        Assert.Equal("Ready", after.Status);
+        Assert.Null(after.ClaimedByMemberId);
+    }
+
+    private const string ExpireLeaseSql = "UPDATE wms.tasks SET lease_expires_at = now() - interval '1 minute' WHERE id = @id";
+
+    [Fact]
+    public async Task NextAfterTheLeaseExpiredWithoutASweepRenewsItWithTheSameToken()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var first = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        await ExecuteAsync(database, ExpireLeaseSql, ("id", first.Id));
+
+        var again = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+
+        Assert.Equal((first.Id, first.LeaseToken, first.Version), (again.Id, again.LeaseToken, again.Version));
+        Assert.True(again.LeaseExpiresAt > DateTimeOffset.UtcNow.AddMinutes(10));
+    }
+
+    [Fact]
+    public async Task ClaimingMyOwnExpiredTaskWithoutASweepRenewsTheLease()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var first = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        await ExecuteAsync(database, ExpireLeaseSql, ("id", first.Id));
+
+        var response = await ActionRawAsync(floor.Client, first.Id, "claim", new { deviceId = "zebra-01" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var again = await ReadAsync<TaskDto>(response);
+        Assert.Equal((first.LeaseToken, first.Version), (again.LeaseToken, again.Version));
+        Assert.True(again.LeaseExpiresAt > DateTimeOffset.UtcNow.AddMinutes(10));
+    }
+
+    // Fija el comportamiento de hoy: CheckLease es Valid mientras la tarea esté InProgress, aunque el lease ya haya vencido.
+    [Fact]
+    public async Task AHeartbeatAfterTheLeaseExpiredWithoutASweepRenewsIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var first = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        await ExecuteAsync(database, ExpireLeaseSql, ("id", first.Id));
+
+        var response = await ActionRawAsync(floor.Client, first.Id, "heartbeat", new { leaseToken = first.LeaseToken });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var lease = await ReadAsync<TaskLeaseDto>(response);
+        Assert.True(lease.LeaseExpiresAt > DateTimeOffset.UtcNow.AddMinutes(10));
+    }
+
+    [Fact]
+    public async Task AHeartbeatAfterTheSweepIs409Resumable()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var first = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        await ExecuteAsync(database, ExpireLeaseSql, ("id", first.Id));
+        var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
+        await sweeper.RunOnceAsync(DateTimeOffset.UtcNow, Ct);
+
+        var response = await ActionRawAsync(floor.Client, first.Id, "heartbeat", new { leaseToken = first.LeaseToken });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("wms.task.lease_lost", await CodeOfAsync(response));
+        Assert.True(await ResumableOfAsync(response));
+        var resumed = await ActionAsync(floor.Client, first.Id, "claim", new { deviceId = "zebra-01" });
+        Assert.Equal(first.LeaseToken, resumed.LeaseToken);
+    }
+
+    // Soltar tras el barrido no se reanuda: sólo una confirmación trae un hecho físico. Responde 409 y la app puede retomar con claim.
+    [Fact]
+    public async Task AnUnclaimAfterTheSweepIs409Resumable()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var first = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        await ExecuteAsync(database, ExpireLeaseSql, ("id", first.Id));
+        var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
+        await sweeper.RunOnceAsync(DateTimeOffset.UtcNow, Ct);
+
+        var response = await ActionRawAsync(
+            floor.Client, first.Id, "unclaim", new { leaseToken = first.LeaseToken, reason = "ShiftEnd" });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("wms.task.lease_lost", await CodeOfAsync(response));
+        Assert.True(await ResumableOfAsync(response));
+        Assert.Equal("Ready", (await GetAsync(floor.Setup.Manager, first.Id)).Status);
     }
 
     [Fact]

@@ -109,6 +109,11 @@ public interface IWarehouseRepository
 
     Task<Location?> GetLocationAsync(Guid tenantId, LocationId id, CancellationToken ct);
 
+    /// <summary>El código de cada ubicación pedida del tenant, sin rastreo y sin cargar la bodega: para componer respuestas que corren
+    /// con filas bloqueadas. La que no existe en el tenant no viene.</summary>
+    Task<IReadOnlyDictionary<LocationId, string>> FindLocationCodesAsync(
+        Guid tenantId, IReadOnlyCollection<LocationId> ids, CancellationToken ct);
+
     Task<Location?> GetVirtualLocationAsync(Guid tenantId, WarehouseId warehouseId, LocationRole role, CancellationToken ct);
 
     void RemoveLocation(Location location);

@@ -33,22 +33,20 @@ public sealed class OperatorTaskGuard(IExecutionContext executionContext, WmsAut
     {
         ArgumentNullException.ThrowIfNull(task);
         var lease = task.CheckLease(memberId, leaseToken);
-        return lease == LeaseCheck.Lost ? throw LeaseLost() : lease;
+        return lease == LeaseCheck.Lost ? throw new TaskLeaseLostException(resumable: false) : lease;
     }
 
     /// <summary>Sólo el reclamo vigente: latir y soltar no reanudan nada (sólo una confirmación trae un hecho físico que no se puede
-    /// descartar).</summary>
+    /// descartar). Si no, 409 con <c>resumable</c>.</summary>
     public static void EnsureActiveLease(WarehouseTask task, Guid memberId, Guid leaseToken)
     {
         ArgumentNullException.ThrowIfNull(task);
-        if (task.CheckLease(memberId, leaseToken) != LeaseCheck.Valid)
+        var lease = task.CheckLease(memberId, leaseToken);
+        if (lease != LeaseCheck.Valid)
         {
-            throw LeaseLost();
+            throw new TaskLeaseLostException(resumable: lease == LeaseCheck.Resumable);
         }
     }
-
-    private static ResourceConflictException LeaseLost() =>
-        new(WmsErrorCodes.TaskLeaseLost, "Esta tarea ya no es tuya.");
 }
 
 internal static class TaskMemberLocks

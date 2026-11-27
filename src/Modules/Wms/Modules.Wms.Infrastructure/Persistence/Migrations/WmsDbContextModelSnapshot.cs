@@ -957,8 +957,13 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_tasks_tenant_number");
 
+                    b.HasIndex(new[] { "TenantId", "WarehouseId", "Status", "Type" }, "IX_tasks_board");
+
                     b.HasIndex(new[] { "LeaseExpiresAt" }, "IX_tasks_lease")
                         .HasFilter("status = 'InProgress'");
+
+                    b.HasIndex(new[] { "TenantId", "WarehouseId", "CreatedAt", "Number" }, "IX_tasks_list")
+                        .IsDescending(false, false, true, true);
 
                     b.HasIndex(new[] { "TenantId", "ClaimedByMemberId" }, "IX_tasks_member_in_progress")
                         .IsUnique()
@@ -1023,6 +1028,12 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)")
                         .HasColumnName("quantity");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at")
+                        .HasDefaultValueSql("now()");
 
                     b.Property<Guid>("TaskId")
                         .HasColumnType("uuid")

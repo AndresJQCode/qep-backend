@@ -18,10 +18,21 @@ internal sealed partial class TaskWorld
     /// <summary>Las membresías que pueden hacer una tarea.</summary>
     public HashSet<Guid> Eligible { get; } = [Member];
 
+    /// <summary>Las membresías que pueden hacer una tarea pero ya no tienen <c>wms.document.read</c>, que exige toda ruta de tareas.
+    /// </summary>
+    public HashSet<Guid> WithoutDocumentRead { get; } = [];
+
+    /// <summary>Cuántas veces se pidió la lista de elegibles de un permiso.</summary>
+    public int PermissionLookups { get; set; }
+
     public List<(string Action, IReadOnlyDictionary<string, string?> Fields)> Audit { get; } = [];
 
     /// <summary>La que devuelve «la mejor candidata».</summary>
     public Guid? Candidate { get; set; }
+
+    /// <summary>Lo que pasa con una tarea justo antes de que el repositorio la entregue al cargarla: el barrido o un supervisor que
+    /// actúan entre la lectura y el bloqueo de quien la reclama.</summary>
+    public Action<WarehouseTask>? OnLoadTask { get; set; }
 
     public IExecutionContext Context() => new FakeContext(this);
 
@@ -130,7 +141,13 @@ internal sealed partial class TaskWorld
         public Task<WarehouseTask?> GetAsync(Guid tenantId, Guid id, CancellationToken cancellationToken)
         {
             world.Log.Add("load-task");
-            return Task.FromResult(Find(tenantId, id));
+            var task = Find(tenantId, id);
+            if (task is not null)
+            {
+                world.OnLoadTask?.Invoke(task);
+            }
+
+            return Task.FromResult(task);
         }
 
         public Task<WarehouseTask?> GetWithEventsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
@@ -165,6 +182,17 @@ internal sealed partial class TaskWorld
             Guid tenantId, Guid warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<WarehouseTask>>(
                 [.. world.Tasks.Where(task => task.Status == WarehouseTaskStatus.InProgress)]);
+
+        public Task<IReadOnlyList<AssignedTaskRef>> ListAssignedOpenAsync(
+            Guid tenantId, Guid warehouseId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AssignedTaskRef>>(
+            [
+                .. world.Tasks
+                    .Where(task => task.Status is WarehouseTaskStatus.Planned or WarehouseTaskStatus.Assigned
+                        && task.AssignedMemberId is not null)
+                    .OrderBy(task => task.Number, StringComparer.Ordinal)
+                    .Select(task => new AssignedTaskRef(task.Id, task.Number, task.Type, task.AssignedMemberId!.Value)),
+            ]);
 
         public Task<IReadOnlyList<TaskStatusCount>> CountByStatusAsync(
             Guid tenantId, Guid warehouseId, CancellationToken cancellationToken) =>

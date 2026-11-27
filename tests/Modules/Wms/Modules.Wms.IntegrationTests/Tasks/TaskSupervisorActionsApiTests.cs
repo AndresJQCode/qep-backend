@@ -165,6 +165,72 @@ public sealed class TaskSupervisorActionsApiTests
     }
 
     [Fact]
+    public async Task TheBoardListsAssignmentsTheAssigneeCanNoLongerPerform()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var (worker, client) = await SeedOperatorAsync(factory);
+        var (advisor, advisorClient) = await SeedOperatorAsync(factory, SecondOperatorSubject, ["advisor"]);
+        using var _w = client;
+        using var _a = advisorClient;
+        // Sembradas por el dominio: la API ya no deja asignar a quien no tiene el permiso, que es justo el caso de perderlo después.
+        var orphan = NewMove(s, s.BinA, destination, assignTo: advisor);
+        await SaveAsync(factory, orphan, NewMove(s, s.BinA, destination, assignTo: worker));
+
+        var board = await s.Manager.GetFromJsonAsync<TaskBoardDto>($"{TasksUrl()}/summary?warehouseId={s.WarehouseId}", Ct);
+
+        Assert.NotNull(board);
+        var stale = Assert.Single(board.StaleAssignments);
+        Assert.Equal((orphan.Id, orphan.Number, advisor, "Caller"), (stale.TaskId, stale.TaskNumber, stale.MemberId, stale.Name));
+    }
+
+    // Una membresía suspendida no hace nada, aunque su rol conserve el permiso: su asignada queda sin dueño que la reclame.
+    [Fact]
+    public async Task TheBoardListsAssignmentsOfASuspendedMember()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var (worker, client) = await SeedOperatorAsync(factory);
+        using var _w = client;
+        var orphan = NewMove(s, s.BinA, destination, assignTo: worker);
+        await SaveAsync(factory, orphan);
+        await ExecuteAsync(database, "UPDATE tenancy.memberships SET state = 'Suspended' WHERE id = @id", ("id", worker));
+
+        var board = await s.Manager.GetFromJsonAsync<TaskBoardDto>($"{TasksUrl()}/summary?warehouseId={s.WarehouseId}", Ct);
+
+        Assert.NotNull(board);
+        var stale = Assert.Single(board.StaleAssignments);
+        Assert.Equal((orphan.Id, worker), (stale.TaskId, stale.MemberId));
+    }
+
+    // Una asignada en Planned (todavía sin publicar) también cuenta: al publicarla nadie podría reclamarla.
+    [Fact]
+    public async Task TheBoardListsAPlannedAssignmentTheAssigneeCanNoLongerPerform()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var (advisor, advisorClient) = await SeedOperatorAsync(factory, SecondOperatorSubject, ["advisor"]);
+        using var _a = advisorClient;
+        var planned = NewMove(s, s.BinA, destination, publish: false, assignTo: advisor);
+        await SaveAsync(factory, planned);
+
+        var board = await s.Manager.GetFromJsonAsync<TaskBoardDto>($"{TasksUrl()}/summary?warehouseId={s.WarehouseId}", Ct);
+
+        Assert.NotNull(board);
+        var stale = Assert.Single(board.StaleAssignments);
+        Assert.Equal((planned.Id, advisor), (stale.TaskId, stale.MemberId));
+    }
+
+    [Fact]
     public async Task AssigneesOnlyListMembersWithThePermission()
     {
         var (database, factory) = await OpenAsync();

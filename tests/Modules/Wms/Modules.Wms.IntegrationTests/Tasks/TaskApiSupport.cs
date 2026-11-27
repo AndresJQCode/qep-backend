@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Wms.Application;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
 
@@ -66,6 +67,13 @@ internal static class TaskApiSupport
         var response = await client.GetAsync($"{TasksUrl()}/{taskId}", Ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return await ReadAsync<TaskDto>(response);
+    }
+
+    /// <summary>La extensión <c>resumable</c> de un 409 <c>wms.task.lease_lost</c> (§6.7).</summary>
+    public static async Task<bool> ResumableOfAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.GetProperty("resumable").GetBoolean();
     }
 
     public static async Task<T> ReadAsync<T>(HttpResponseMessage response)
