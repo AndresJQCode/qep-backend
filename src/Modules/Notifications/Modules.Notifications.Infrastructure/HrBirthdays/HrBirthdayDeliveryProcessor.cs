@@ -17,7 +17,7 @@ namespace Modules.Notifications.Infrastructure.HrBirthdays;
 /// regardless of the bell, and one failing never blocks the other (they are different rows). The checks, in order: a row whose attempts ran out
 /// is <c>Failed attempts_exhausted</c>; one past its <c>expires_at</c> (the end of the run date in the tenant's time zone) is <c>Skipped stale</c>,
 /// because a «Hoy» sent the next day would be wrong; the recipient is resolved only then (a call into another module) and an inactive or missing
-/// member is <c>Skipped member_inactive</c>; WhatsApp needs a phone and email needs an address, else <c>Skipped no_phone</c> / <c>no_email</c>.</para>
+/// member is <c>Skipped member_inactive</c>; a manager who lost <c>hr.employee.read</c> is <c>Skipped access_revoked</c>; WhatsApp needs a phone and email needs an address, else <c>Skipped no_phone</c> / <c>no_email</c>.</para>
 ///
 /// <para>Each row is isolated: one that throws is logged, keeps its claim (so it is retried after the lease, up to <see cref="MaxAttempts"/>)
 /// and never stops the others. The WhatsApp send is idempotent by <c>ClientId</c> (the delivery id), so a crash between the send and the save
@@ -27,6 +27,7 @@ namespace Modules.Notifications.Infrastructure.HrBirthdays;
 internal sealed partial class HrBirthdayDeliveryProcessor(
     NotificationsDbContext dbContext,
     ITaskNoticeRecipients recipients,
+    IHrBirthdayAccess access,
     IHrBirthdayWhatsApp whatsApp,
     IEmailChannel email,
     IOptions<NotificationsOptions> options,
@@ -41,10 +42,10 @@ internal sealed partial class HrBirthdayDeliveryProcessor(
     [LoggerMessage(EventId = 1, Level = LogLevel.Error, Message = "Sending birthday delivery {DeliveryId} failed; it is retried after the lease.")]
     private static partial void LogRowFailed(ILogger logger, Guid deliveryId, Exception exception);
 
-    [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Birthday delivery {DeliveryId} WhatsApp send threw; it is recorded as failed.")]
+    [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Birthday delivery {DeliveryId} WhatsApp send threw; it is retried or recorded as failed.")]
     private static partial void LogWhatsAppFailed(ILogger logger, Guid deliveryId, Exception exception);
 
-    [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Birthday delivery {DeliveryId} email send threw; it is recorded as failed.")]
+    [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Birthday delivery {DeliveryId} email send threw; it is retried or recorded as failed.")]
     private static partial void LogEmailFailed(ILogger logger, Guid deliveryId, Exception exception);
 
     /// <returns>How many rows this pass claimed. Internal for the tests.</returns>
@@ -141,6 +142,14 @@ internal sealed partial class HrBirthdayDeliveryProcessor(
             return;
         }
 
+        // The digest carries employee names: a manager whose HR access was revoked after the run enqueued it gets nothing.
+        if (!await access.CanReadEmployeesAsync(delivery.TenantId, delivery.MemberId, cancellationToken))
+        {
+            delivery.Skip(HrBirthdayDeliverySkipReasons.AccessRevoked, now);
+            await dbContext.SaveChangesAsync(CancellationToken.None);
+            return;
+        }
+
         // The checks above read another module and can take a while: confirm the row is still this pass's, and push the lease forward in the
         // same statement, right before sending. The email has no idempotency key, so this is what keeps a slow pass from mailing a member twice
         // when another replica took the row over meanwhile.
@@ -177,6 +186,23 @@ internal sealed partial class HrBirthdayDeliveryProcessor(
     private static DateTimeOffset ToMicroseconds(DateTimeOffset value) =>
         new(value.UtcTicks - (value.UtcTicks % 10), TimeSpan.Zero);
 
+    // A transient failure (the send threw, Meta or the provider answered with an error, the email channel threw) keeps the row Pending with its
+    // lease dropped, so the next pass tries again; the attempt was counted at claim time, so it ends at MaxAttempts. A permanent one (template not
+    // approved, connection unavailable or missing) is final at once: trying again cannot change it.
+    private static void FailOrRetry(HrBirthdayDelivery delivery, string code, DateTimeOffset now)
+    {
+        if (IsTransient(code) && delivery.Attempts < MaxAttempts)
+        {
+            delivery.Release();
+            return;
+        }
+
+        delivery.Fail(code, now);
+    }
+
+    private static bool IsTransient(string code) =>
+        code == "email_failed" || code.StartsWith("send_failed:", StringComparison.Ordinal);
+
     private async Task SendWhatsAppAsync(
         HrBirthdayDelivery delivery, TaskNoticeRecipient recipient, Digest digest, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -201,7 +227,7 @@ internal sealed partial class HrBirthdayDeliveryProcessor(
                     string.IsNullOrWhiteSpace(recipient.DisplayName) ? "equipo" : recipient.DisplayName,
                     HrBirthdayWhatsAppText.Names(digest.Today, digest.TodayTotal, HrBirthdayWhatsAppText.MaxNamesLength),
                     HrBirthdayWhatsAppText.Date(digest.UpcomingDate),
-                    HrBirthdayWhatsAppText.Names(digest.Upcoming, digest.UpcomingTotal, HrBirthdayWhatsAppText.MaxNamesLength)),
+                    HrBirthdayWhatsAppText.Upcoming(digest.Upcoming, digest.UpcomingTotal, digest.UpcomingDate, HrBirthdayWhatsAppText.MaxNamesLength)),
                 cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -222,7 +248,7 @@ internal sealed partial class HrBirthdayDeliveryProcessor(
                 delivery.MarkSent(now);
                 break;
             case TaskNoticeWhatsAppResult.Failed failed:
-                delivery.Fail(failed.Code, now);
+                FailOrRetry(delivery, failed.Code, now);
                 break;
         }
     }
@@ -249,7 +275,7 @@ internal sealed partial class HrBirthdayDeliveryProcessor(
         catch (Exception exception)
         {
             LogEmailFailed(logger, delivery.Id, exception);
-            delivery.Fail("email_failed", now);
+            FailOrRetry(delivery, "email_failed", now);
             return;
         }
 

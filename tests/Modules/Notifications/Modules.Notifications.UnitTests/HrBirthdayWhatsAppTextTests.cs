@@ -58,4 +58,12 @@ public sealed class HrBirthdayWhatsAppTextTests
         Assert.Equal("lunes 1 de marzo", HrBirthdayWhatsAppText.Date(new DateOnly(2027, 3, 1)));
         Assert.Equal("—", HrBirthdayWhatsAppText.Date(null));
     }
+
+    [Fact]
+    public void UpcomingWithoutALeadIsNeutralAndNeverNobody()
+    {
+        Assert.Equal("sin aviso anticipado", HrBirthdayWhatsAppText.Upcoming([], 0, null, Max));
+        Assert.Equal("nadie", HrBirthdayWhatsAppText.Upcoming([], 0, new DateOnly(2026, 12, 4), Max));
+        Assert.Equal("Ana", HrBirthdayWhatsAppText.Upcoming(["Ana"], 1, new DateOnly(2026, 12, 4), Max));
+    }
 }

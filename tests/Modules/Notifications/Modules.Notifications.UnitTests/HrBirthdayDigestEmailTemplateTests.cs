@@ -49,6 +49,15 @@ public sealed class HrBirthdayDigestEmailTemplateTests
     }
 
     [Fact]
+    public void NoUpcomingSectionWhenThereIsNoLead()
+    {
+        var message = HrBirthdayDigestEmailTemplate.Render("jefe@example.com", [(AnaId, "Ana Diaz")], 1, [], 0, null, BaseUrl);
+
+        Assert.DoesNotContain("Próximos", message.TextBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("nadie", message.HtmlBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NamesAreHtmlEncoded()
     {
         var message = Render(today: [(AnaId, "<b>Ana</b>")], upcoming: [(LuisId, "Luis & <i>Co</i>")]);

@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using Modules.Hr.Domain;
 
 namespace Modules.Hr.Application.BirthdayNotices;
@@ -60,9 +62,28 @@ public static class BirthdayDigest
     {
         var matching = employees
             .Where(employee => BirthdayCalendar.FallsOn(employee.BirthDate, day))
-            .OrderBy(employee => employee.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(employee => SortKey(employee.Name), StringComparer.Ordinal)
             .ThenBy(employee => employee.Id)
             .ToList();
         return (matching.Take(MaxNames).Select(employee => new BirthdayPerson(employee.Id, employee.Name)).ToList(), matching.Count);
+    }
+
+    /// <summary>
+    /// Accent-folded, lower-cased key: «Álvaro» sorts with the A names, not after «Zoe» as a plain code-point comparison would. Folded by
+    /// hand instead of with a culture comparer because the host may run without ICU, and the order must not depend on the machine.
+    /// </summary>
+    internal static string SortKey(string name)
+    {
+        var decomposed = name.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(decomposed.Length);
+        foreach (var character in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+            {
+                builder.Append(char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.ToString();
     }
 }
