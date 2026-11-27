@@ -68,6 +68,7 @@ data:
   Valkey__Areas__Presence: "true"
   Valkey__Areas__RateLimiting: "true"
   Valkey__Areas__Sessions: "true"
+  Valkey__Areas__Permissions: "true"
   # Authentication__Authority queda sin definir: por defecto toma el emisor propio de
   # Google (https://accounts.google.com) en QepServiceCollectionExtensions.AddAuthentication.
   # Sólo la audiencia (el client id de OAuth de Google) debe proveerse por entorno.
