@@ -2468,6 +2468,8 @@ public static class QepServiceCollectionExtensions
         // La consola de valores legales de Hr sabe qué nóminas ya se calcularon por este puerto (PayrollLayerTests.NoPayrollLayerReferencesHr):
         // Payroll expone sus períodos calculados y este adaptador los traduce al puerto de Hr.
         services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
+        // Editar y eliminar registros de cargo y lugar mira las nóminas congeladas del empleado por este puerto (spec 2026-11-26).
+        services.AddScoped<Modules.Hr.Application.IFrozenPayrollPeriods, FrozenPayrollPeriods>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
         services.AddScoped<Modules.Payroll.Application.IPayrollHolidayCalendar, PayrollHolidayCalendar>();
