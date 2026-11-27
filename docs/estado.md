@@ -535,10 +535,6 @@ ningún pod ni frontend viejo en producción. Nunca en la misma release que las 
 
 ## Defectos conocidos
 
-- **`develop` en rojo en `bef48e2b2`** (visto el 2026-11-26): el modelo de EF de Quotations no se construye (`No suitable
-  constructor was found for the type 'ProjectPhase'`) desde el merge del dominio de cotizaciones de proyecto
-  (`ab3b73cba`, `feature/cotizaciones-de-proyecto`). Fallan 28 pruebas de `QuotationsDbContextMappingTests` y
-  `CompositionRootTests.EveryDbContextThatMapsADoorbellTableHasTheInterceptor`. No llevar a `main` sin el mapeo.
 - `ValkeyGatewayTests.TheConnectedGaugeFollowsTheConnection` se cuelga una hora en la suite completa de
   `Bootstrapper.UnitTests` y cae con `TimeoutException` en `ValkeyTestServer.StartAsync` (dos de dos corridas el
   2026-11-26, sobre `c4df3c93e`); sola pasa. Causa sin identificar.
@@ -630,6 +626,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`ba090092e`) **el mapeo de EF de las cotizaciones de proyecto**
+  (`fix/project-quotations-mapping`, `4d713df95`: Tarea 4 del plan de cotizaciones de proyecto; migración aditiva
+  `AddProjectQuotations`, sin desplegar). Arregla el rojo de `develop` desde `ab3b73cba` (`No suitable constructor was
+  found for the type 'ProjectPhase'`); se borra de «Defectos conocidos». Pruebas sobre `5e370555b`: build sin avisos,
+  ArchitectureTests 354/354, Quotations.UnitTests 2544/2544.
 - 2026-11-26 — Mergeado a `develop` (`fa34522c0`, `--no-ff`, sin push) **área `Permissions` de Valkey** (`feature/valkey-permissions`, `c65ccd568`: sólo `Valkey__Areas__Permissions: "true"` en `k8s/prod-configMap.yaml`; owner). Decisión del owner con el histograma `qep.valkey.operation.duration` en producción (imagen 4933, ~10 h, 1 réplica): 95 de 9.144 operaciones pasaron el tope de 100 ms (1,04 %; `sessions` 1,39 %), las 95 terminaron bien (`late_error` 0) y bajo 2 s; de esas, 47 % bajo 250 ms y 95 % bajo 1 s, así que subir `OperationTimeoutMs` no las elimina y no se tocó. El 95 % de las operaciones `ok` responde bajo 25 ms. Se acepta ~1 % de respaldos (lectura a Postgres, límite por pod o presencia parcial en ese instante; ninguno rompe un request) en vez del criterio «0 fallbacks» del README; la causa de la cola lenta sigue sin identificar. Pruebas: `.\scripts	est-feature.ps1` en verde (ArchitectureTests 354/354). **Pendiente:** desplegar, un día con `area="permissions"`, y la Tarea 8 (`feature/replicas-dos`, `d92c3db8a`).
 
 - 2026-11-26 — Mergeado a `develop` (`bef48e2b2`, en `origin/develop`) **Shopify: parte de envío de pedidos de otros
