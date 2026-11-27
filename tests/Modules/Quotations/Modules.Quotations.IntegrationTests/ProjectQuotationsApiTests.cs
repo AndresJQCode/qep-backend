@@ -161,6 +161,107 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
             "quotation.project.service_invalid");
     }
 
+    // Cambiar de servicio quita la línea del anterior y agrega la del nuevo; quitarlo deja el proyecto sin línea. Las dos
+    // cosas quedan guardadas.
+    [Fact]
+    public async Task ChangingAndRemovingTheServiceIsPersisted()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var other = await CreateServiceAsync(setup.Client, setup.TenantId);
+        var created = await CreateProjectAsync(setup, Global(setup.ServiceId, 100_000m));
+        var first = Assert.Single(created.Items);
+
+        var changed = await ReadAsync(
+            await PutAsync(setup, created, Save(Global(other, 150_000m))), HttpStatusCode.OK);
+        var reloaded = await GetAsync(setup, created.Id);
+
+        foreach (var document in new[] { changed, reloaded })
+        {
+            Assert.Equal(other, document.Project!.ServiceVariantId);
+            var line = Assert.Single(document.Items);
+            Assert.NotEqual(first.Id, line.Id);
+            Assert.Equal((other, 1m, 150_000m), (line.VariantId, line.Quantity, line.UnitPrice));
+            Assert.Equal(150_000m, document.Total);
+        }
+
+        var withoutService = new ProjectScopeRequest(
+            null, "Global", 150_000m, null, [new ProjectItemRequest(LooseItem, "Soporte")], "COP");
+        var removed = await ReadAsync(await PutAsync(setup, reloaded, Save(withoutService)), HttpStatusCode.OK);
+        var after = await GetAsync(setup, created.Id);
+
+        foreach (var document in new[] { removed, after })
+        {
+            Assert.Null(document.Project!.ServiceVariantId);
+            Assert.Empty(document.Items);
+            Assert.Equal((150_000m, 0m), (document.Project.Total!.Value, document.Total));
+            Assert.False(document.CanBeConvertedToOrder);
+        }
+    }
+
+    // Spec §9: un servicio que se desactivó después no bloquea enviar ni convertir.
+    [Fact]
+    public async Task ADeactivatedServiceDoesNotBlockSendingOrConverting()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var account = await CreateAccountAsync(setup, "COP");
+        var created = await ReadAsync(
+            await PostAsync(setup, Create(setup, Global(setup.ServiceId, 100_000m)) with { BillingAccount = account }),
+            HttpStatusCode.Created);
+        var deactivated = await setup.Client.PostAsync(
+            $"/api/v1/tenants/{setup.TenantId}/catalog/products/{setup.ServiceId}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+        Assert.True(deactivated.IsSuccessStatusCode, $"{deactivated.StatusCode}");
+        var pdfFileId = await CreateAvailablePdfFileAsync(setup.Client, setup.Factory, setup.TenantId);
+
+        var sent = await ReadAsync(
+            await setup.Client.PostAsJsonAsync(
+                $"{QuotationUrl(setup, created.Id)}/send",
+                new SendQuotationRequest(pdfFileId),
+                TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+        var converted = await CallAsync(setup, sent, "convert");
+
+        Assert.Equal("Sent", sent.Status);
+        Assert.True(converted.IsSuccessStatusCode, await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var order = await converted.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        Assert.Equal(("Project", 100_000m), (order.Kind, order.Total));
+        Assert.Equal(setup.ServiceId, order.Project!.ServiceVariantId);
+    }
+
+    // §12-A: una empresa sin cuenta no devuelve el documento a la moneda del tenant.
+    [Fact]
+    public async Task ChoosingACompanyWithoutBankAccountKeepsTheDocumentCurrency()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var usd = await CreateAccountAsync(setup, "USD");
+        var created = await ReadAsync(
+            await PostAsync(setup, Create(setup, Global(setup.ServiceId, 100m, currency: "USD")) with { BillingAccount = usd }),
+            HttpStatusCode.Created);
+        var company = await CreateAccountAsync(setup, "COP");
+        var withoutAccount = new QuotationBillingAccountRequest(company.CompanyId, null, null, null);
+        var request = Save(Global(setup.ServiceId, 120.25m, currency: "USD"), withoutAccount);
+
+        var preview = await ReadAsync(
+            await setup.Client.PostAsJsonAsync(
+                $"{QuotationUrl(setup, created.Id)}/preview", request, TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+        var saved = await ReadAsync(await PutAsync(setup, created, request), HttpStatusCode.OK);
+
+        foreach (var document in new[] { preview, saved, await GetAsync(setup, created.Id) })
+        {
+            Assert.Equal(company.CompanyId, document.BillingAccount!.CompanyId);
+            Assert.Null(document.BillingAccount.BankName);
+            Assert.Equal(
+                ("USD", "USD", 120.25m, 120.25m),
+                (document.Currency, document.Project!.PricesCurrency, document.Project.Total!.Value, document.Total));
+        }
+    }
+
     [Fact]
     public async Task SavingWithAnAccountInAnotherCurrencyAppliesPricesTypedInIt()
     {
@@ -546,6 +647,12 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
         await AssertFieldErrorAsync(
             await setup.Client.GetAsync(
                 $"{QuotationsUrl(setup.TenantId)}?kind=Other", TestContext.Current.CancellationToken),
+            "kind");
+        await AssertFieldErrorAsync(
+            await setup.Client.PostAsync(
+                $"{QuotationsUrl(setup.TenantId)}/export?{ExportRange()}&kind=Other",
+                content: null,
+                TestContext.Current.CancellationToken),
             "kind");
 
         await DisableModuleAsync(setup.Factory, setup.TenantId, TenantModuleKeys.Projects);
