@@ -18,7 +18,7 @@ public sealed class ClaimTaskValidator : AbstractValidator<ClaimTaskCommand>
     public ClaimTaskValidator() => RuleFor(command => command.DeviceId).MustBeADeviceId();
 }
 
-/// <summary>Reclama una tarea concreta, desde «Mis tareas». Reclamar la que ya tiene en curso la devuelve sin cambios.</summary>
+/// <summary>Reclama una tarea concreta, desde «Mis tareas». Reclamar la que ya tiene en curso la devuelve con el lease renovado.</summary>
 public sealed class ClaimTaskHandler(
     IExecutionContext executionContext,
     WmsAuthorization authorization,
@@ -54,9 +54,16 @@ public sealed class ClaimTaskHandler(
         var current = await tasks.FindInProgressOfMemberAsync(command.TenantId, member, cancellationToken);
         if (current is not null)
         {
-            return current.Id == task.Id
-                ? await composer.ComposeAsync(task, member, withEvents: false, cancellationToken)
-                : throw new TaskMemberBusyException(current.Id);
+            if (current.Id != task.Id)
+            {
+                throw new TaskMemberBusyException(current.Id);
+            }
+
+            // M2: reclamar la que ya tiene en curso renueva el lease con el mismo token, como el latido.
+            task.RenewClaim(member, clock.UtcNow);
+            var renewed = await composer.ComposeAsync(task, member, withEvents: false, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return renewed;
         }
 
         task.Claim(member, command.DeviceId, clock.UtcNow);

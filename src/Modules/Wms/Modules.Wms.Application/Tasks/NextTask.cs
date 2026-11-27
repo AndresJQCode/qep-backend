@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
+using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.Application;
 
@@ -18,7 +19,8 @@ public sealed class NextTaskValidator : AbstractValidator<NextTaskCommand>
     public NextTaskValidator() => RuleFor(command => command.DeviceId).MustBeADeviceId();
 }
 
-/// <summary>«Siguiente tarea» (spec 2026-11-26 §6.8): la mejor elegible, ya reclamada. Repetirla devuelve la que tiene en curso.
+/// <summary>«Siguiente tarea» (spec 2026-11-26 §6.8): la mejor elegible, ya reclamada. Repetirla devuelve la que tiene en curso, con
+/// el lease renovado.
 /// </summary>
 public sealed class NextTaskHandler(
     IExecutionContext executionContext,
@@ -56,8 +58,17 @@ public sealed class NextTaskHandler(
                 throw new TaskMemberBusyException(current.Id);
             }
 
-            return new NextTaskResultDto(
-                await composer.ComposeAsync(current, member, withEvents: false, cancellationToken));
+            // M2: la fila se bloquea y se recarga antes de renovar (orden: operario → tarea). Si el barrido la venció en el medio, ya no
+            // está en curso y sigue el camino normal, que se la vuelve a dar con el mismo token (DA-34).
+            if (await tasks.LockAsync(command.TenantId, current.Id, cancellationToken)
+                && await tasks.GetAsync(command.TenantId, current.Id, cancellationToken) is { Status: WarehouseTaskStatus.InProgress } mine
+                && mine.ClaimedByMemberId == member)
+            {
+                mine.RenewClaim(member, clock.UtcNow);
+                var renewed = await composer.ComposeAsync(mine, member, withEvents: false, cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                return new NextTaskResultDto(renewed);
+            }
         }
 
         var now = clock.UtcNow;

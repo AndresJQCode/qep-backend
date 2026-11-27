@@ -369,17 +369,21 @@ public sealed class OperatorTaskHandlersTests
         Assert.DoesNotContain("save", world.Log);
     }
 
+    // M2: la que ya tiene en curso vuelve con el lease renovado, bajo el lock de la fila, aunque el barrido no haya pasado.
     [Fact]
-    public async Task NextReturnsTheTaskAlreadyInProgressInThatWarehouse()
+    public async Task NextRenewsTheTaskAlreadyInProgressInThatWarehouse()
     {
         var world = new TaskWorld();
         var (task, _) = ClaimedByCaller(world);
         world.Candidate = world.AddTask().Id;
+        world.Now = TaskWorld.Start.AddMinutes(20);
 
         var result = await NextAsync(world);
 
-        Assert.Equal((task.Id, task.LeaseToken), (result.Task!.Id, result.Task.LeaseToken));
-        Assert.DoesNotContain("candidate", world.Log);
+        Assert.Equal((task.Id, task.LeaseToken, 2L), (result.Task!.Id, result.Task.LeaseToken, result.Task.Version));
+        Assert.Equal(TaskWorld.Start.AddMinutes(35), result.Task.LeaseExpiresAt);
+        Assert.Equal(
+            ["begin", $"lock task-member:{TaskWorld.Member:D}", "lock-task", "load-task", "save"], world.Log);
     }
 
     [Fact]
@@ -416,15 +420,17 @@ public sealed class OperatorTaskHandlersTests
     }
 
     [Fact]
-    public async Task ClaimingTheTaskAlreadyInProgressReturnsItWithoutChanges()
+    public async Task ClaimingTheTaskAlreadyInProgressRenewsTheLeaseWithTheSameToken()
     {
         var world = new TaskWorld();
         var (task, _) = ClaimedByCaller(world);
+        world.Now = TaskWorld.Start.AddMinutes(20);
 
         var dto = await ClaimAsync(world, task.Id);
 
         Assert.Equal((task.LeaseToken, 2L), (dto.LeaseToken, dto.Version));
-        Assert.DoesNotContain("save", world.Log);
+        Assert.Equal(TaskWorld.Start.AddMinutes(35), dto.LeaseExpiresAt);
+        Assert.Contains("save", world.Log);
     }
 
     [Fact]

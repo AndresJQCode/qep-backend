@@ -307,6 +307,20 @@ public sealed class WarehouseTask
         Renew(now);
     }
 
+    /// <summary>Quien ya tiene la tarea en curso la vuelve a pedir («siguiente» o «reclamar»): renueva el lease con el mismo token, sin
+    /// evento ni versión, como el latido. Vale también con el lease vencido mientras el barrido no haya pasado: sigue en curso y nadie
+    /// más pudo tomarla.</summary>
+    public void RenewClaim(Guid memberId, DateTimeOffset now)
+    {
+        EnsureStatus("claim", WarehouseTaskStatus.InProgress);
+        if (ClaimedByMemberId != memberId)
+        {
+            throw new InvalidOperationException($"Task {Id} is in progress for another member.");
+        }
+
+        Renew(now);
+    }
+
     /// <summary>El operario devuelve la tarea al pool; deja de estar asignada si lo estaba a él. Conserva su antigüedad.</summary>
     public void Unclaim(Guid memberId, Guid leaseToken, TaskUnclaimReason reason, DateTimeOffset now)
     {

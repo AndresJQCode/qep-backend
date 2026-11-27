@@ -228,6 +228,31 @@ public sealed class WarehouseTaskLeaseTests
         Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
     }
 
+    // M2: pedir otra vez la tarea en curso renueva el lease con el mismo token, como el latido: sin versión ni evento.
+    [Fact]
+    public void RenewingMyClaimExtendsTheLeaseWithTheSameTokenWithoutVersionOrEvent()
+    {
+        var (task, token) = Claimed();
+        var events = task.Events.Count;
+
+        // Vencido pero sin barrer: sigue InProgress y nadie más pudo tomarlo.
+        task.RenewClaim(Member, Expired);
+
+        Assert.Equal((WarehouseTaskStatus.InProgress, token, 2L), (task.Status, task.LeaseToken!.Value, task.Version));
+        Assert.Equal(Expired.AddMinutes(15), task.LeaseExpiresAt);
+        Assert.Equal(Expired, task.LastActivityAt);
+        Assert.Equal(events, task.Events.Count);
+    }
+
+    [Fact]
+    public void OnlyTheClaimerRenewsATaskInProgress()
+    {
+        var (task, _) = Claimed();
+
+        Assert.Throws<InvalidOperationException>(() => task.RenewClaim(Other, Expired));
+        Assert.Throws<TaskTransitionException>(() => NewMove().RenewClaim(Member, Now));
+    }
+
     [Fact]
     public void AHeartbeatExtendsTheLeaseWithoutVersionOrEvent()
     {
