@@ -114,6 +114,7 @@ internal sealed partial class HrDocumentPurge(
             await objectStorage.DeleteAsync(variant.StorageKey, ct);
         }
 
+        resource.BeginHrDocumentPurge(now);
         resource.PurgeReleasedHrDocument(now);
         auditPublisher.PublishSystem(tenantId, "storage.file.purged", "file", resource.Id.ToString(), Reason, now);
         LogPurged(logger, fileId);

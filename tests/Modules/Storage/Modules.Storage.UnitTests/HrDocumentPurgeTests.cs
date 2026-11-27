@@ -105,6 +105,7 @@ public sealed class HrDocumentPurgeTests
         var product = world.Store.Add(NewFile(TenantId, FileOwnerType.Product));
         var foreign = world.Store.Add(NewFile(Guid.CreateVersion7()));
         var purged = world.Store.Add(NewFile(TenantId));
+        purged.BeginHrDocumentPurge(Now.AddDays(-1));
         purged.PurgeReleasedHrDocument(Now.AddDays(-1));
 
         await world.Purge.PurgeAsync(TenantId, [product.Id.Value, foreign.Id.Value, purged.Id.Value, Guid.CreateVersion7()], world.MarkProcessed, Ct);
