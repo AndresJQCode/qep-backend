@@ -188,6 +188,10 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ContractId");
 
+                    b.HasIndex("DocumentFileId")
+                        .HasDatabaseName("IX_assignment_records_document_file_id")
+                        .HasFilter("document_file_id IS NOT NULL");
+
                     b.HasIndex("PositionId");
 
                     b.HasIndex("SiteId");
@@ -235,6 +239,10 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ContractId");
+
+                    b.HasIndex("DocumentFileId")
+                        .HasDatabaseName("IX_contract_renewals_document_file_id")
+                        .HasFilter("document_file_id IS NOT NULL");
 
                     b.ToTable("contract_renewals", "hr");
                 });
@@ -503,6 +511,10 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CompanyId")
                         .HasDatabaseName("IX_employment_contracts_company_id");
+
+                    b.HasIndex("DocumentFileId")
+                        .HasDatabaseName("IX_employment_contracts_document_file_id")
+                        .HasFilter("document_file_id IS NOT NULL");
 
                     b.HasIndex("EmployeeId")
                         .IsUnique()
@@ -799,6 +811,10 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DocumentFileId")
+                        .HasDatabaseName("IX_medical_exams_document_file_id")
+                        .HasFilter("document_file_id IS NOT NULL");
+
                     b.HasIndex("EmployeeId", "ExamDate")
                         .HasDatabaseName("IX_medical_exams_employee_exam_date");
 
@@ -914,6 +930,10 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ContractId");
+
+                    b.HasIndex("DocumentFileId")
+                        .HasDatabaseName("IX_salary_records_document_file_id")
+                        .HasFilter("document_file_id IS NOT NULL");
 
                     b.ToTable("salary_records", "hr");
                 });

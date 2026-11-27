@@ -349,6 +349,11 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
             .HasFilter("status = 'Active'")
             .HasDatabaseName("IX_employment_contracts_employee_active");
         contract.HasIndex(value => value.CompanyId).HasDatabaseName("IX_employment_contracts_company_id");
+        // Spec 2026-11-26 («Referencias»): HrDocumentUsage busca por document_file_id en las cinco tablas antes de que Storage purgue un
+        // PDF. Parcial: la mayoría de las filas no tiene PDF. Igual en salary_records, assignment_records, contract_renewals y medical_exams.
+        contract.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_employment_contracts_document_file_id");
     }
 
     private static void ConfigureSalary(ModelBuilder modelBuilder)
@@ -366,6 +371,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         salary.Property(value => value.DocumentFileName).HasColumnName("document_file_name").HasMaxLength(255);
         salary.Property(value => value.CreatedAt).HasColumnName("created_at");
         salary.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        salary.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_salary_records_document_file_id");
     }
 
     private static void ConfigureAssignment(ModelBuilder modelBuilder)
@@ -388,6 +396,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         assignment.HasOne<Area>().WithMany().HasForeignKey(value => value.AreaId).OnDelete(DeleteBehavior.Restrict);
         assignment.HasOne<Site>().WithMany().HasForeignKey(value => value.SiteId).OnDelete(DeleteBehavior.Restrict);
         assignment.HasOne<Workplace>().WithMany().HasForeignKey(value => value.WorkplaceId).OnDelete(DeleteBehavior.Restrict);
+        assignment.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_assignment_records_document_file_id");
     }
 
     private static void ConfigureRenewal(ModelBuilder modelBuilder)
@@ -403,6 +414,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         renewal.Property(value => value.DocumentFileId).HasColumnName("document_file_id");
         renewal.Property(value => value.DocumentFileName).HasColumnName("document_file_name").HasMaxLength(255);
         renewal.Property(value => value.CreatedAt).HasColumnName("created_at");
+        renewal.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_contract_renewals_document_file_id");
     }
 
     // Spec 2026-11-23 §5.1. Own version (concurrency token) so that recording an exam never collides with a ficha edit. The unique
@@ -435,6 +449,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
             .IsUnique()
             .HasDatabaseName(MedicalExamUniqueIndex);
         exam.HasIndex(value => new { value.EmployeeId, value.ExamDate }).HasDatabaseName("IX_medical_exams_employee_exam_date");
+        exam.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_medical_exams_document_file_id");
     }
 
     // Spec 2026-11-23 §5.3: one row per terminated contract. Written in the same unit of work as the termination.

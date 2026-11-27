@@ -2653,6 +2653,9 @@ public static class QepServiceCollectionExtensions
         // Y los archivos de chatbot (spec 2026-11-18): en uso mientras los nombre un chatbot, una versión, una plantilla guardada o un
         // mensaje de la bandeja.
         services.AddScoped<IChatbotMediaReferences, ChatbotMediaReferences>();
+        // Y los PDF de empleados (spec 2026-11-26): en uso mientras los nombre una de las cinco tablas de Hr del tenant. Es obligatorio
+        // para la purga de Storage (HrDocumentPurge): sin él, el contenedor no se arma y nada se borra.
+        services.AddScoped<IHrDocumentReferences, HrDocumentReferences>();
         // Spec 2026-11-20: el PDF de un contrato o de un registro de RRHH sobre Storage (dueño HrDocument, sin pasar por sus handlers ni
         // sus permisos: lo autoriza hr.contract.manage). Hr no referencia Storage (HrLayerTests).
         services.AddScoped<Modules.Hr.Application.IHrDocumentStore, HrDocumentStore>();

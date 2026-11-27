@@ -45,6 +45,8 @@ public static class HrInfrastructureExtensions
         services.AddScoped<ILegalParameterTemplateBuilder, ClosedXmlLegalParameterTemplateBuilder>();
         // Spec 2026-11-26: el aviso a Storage del PDF de un registro de cargo y lugar eliminado, en el outbox de la plataforma.
         services.AddScoped<IHrDocumentReleases, HrDocumentReleasePublisher>();
+        // Y qué PDF nombra todavía Hr, para que Storage no purgue uno vivo (lo traduce HrDocumentReferences, en Bootstrapper).
+        services.AddScoped<IHrDocumentUsage, HrDocumentUsage>();
 
         // Spec 2026-11-23 §9: the daily reminder run. Options validated at start, as ServiceContractsOptions.
         services.AddOptions<HrOptions>().Bind(configuration.GetSection(HrOptions.SectionName)).ValidateOnStart();
