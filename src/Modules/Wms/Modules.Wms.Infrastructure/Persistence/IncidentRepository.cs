@@ -108,6 +108,16 @@ internal sealed class IncidentRepository(WmsDbContext dbContext) : IIncidentRepo
             .Distinct()
             .ToListAsync(cancellationToken);
 
+    public Task<bool> HasReportedVerifiedByAsync(
+        Guid tenantId, Guid countTaskId, Guid memberId, CancellationToken cancellationToken) =>
+        dbContext.Set<Incident>()
+            .AsNoTracking()
+            .AnyAsync(
+                incident => incident.TenantId == tenantId
+                    && incident.VerificationTaskId == countTaskId
+                    && incident.ReportedBy == memberId,
+                cancellationToken);
+
     // Como la numeración de ajustes y de tareas: el lock bloqueante va antes del conteo y vive hasta que la transacción confirme, así
     // dos reportes simultáneos numeran en serie. El índice único del número queda como último recurso.
     public async Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken)

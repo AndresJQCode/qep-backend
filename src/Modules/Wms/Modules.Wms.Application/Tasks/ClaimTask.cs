@@ -28,6 +28,7 @@ public sealed class ClaimTaskHandler(
     OperatorTaskGuard guard,
     IClock clock,
     WarehouseTaskDtoComposer composer,
+    IIncidentRepository incidents,
     IValidator<ClaimTaskCommand> validator)
     : ICommandHandler<ClaimTaskCommand, TaskDto>
 {
@@ -49,6 +50,7 @@ public sealed class ClaimTaskHandler(
         var task = await tasks.GetAsync(command.TenantId, command.TaskId, cancellationToken)
             ?? throw WmsNotFound.Task(command.TaskId);
         await guard.EnsureCanPerformAsync(command.TenantId, task, cancellationToken);
+        await CountSelfVerificationRule.EnsureNotReporterAsync(incidents, command.TenantId, task, member, cancellationToken);
 
         // Antes de reclamar: así el 409 dice cuál es la otra. El índice único es la última red, y no lo sabe.
         var current = await tasks.FindInProgressOfMemberAsync(command.TenantId, member, cancellationToken);

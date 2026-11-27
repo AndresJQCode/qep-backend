@@ -69,25 +69,6 @@ public sealed class TaskCountApiTests
     }
 
     [Fact]
-    public async Task TheSupervisorCanAssignTheCountToTheReporter()
-    {
-        var (database, factory) = await OpenAsync();
-        await using var _ = database;
-        using var __ = factory;
-        var shortage = await ArrangeShortageAsync(database, factory, reporterCounts: true);
-        using var _r = shortage.ReporterClient;
-        var count = await GetAsync(shortage.Setup.Manager, shortage.CountId);
-
-        var assigned = await ActionRawAsync(
-            shortage.Setup.Manager, shortage.CountId, "assign", new { memberId = shortage.Reporter, version = count.Version, reason = (string?)null });
-
-        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
-        var next = await NextRawAsync(shortage.ReporterClient, shortage.Setup.WarehouseId);
-        Assert.Equal(HttpStatusCode.OK, next.StatusCode);
-        Assert.Equal(shortage.CountId, (await ReadAsync<TaskDto>(next)).Id);
-    }
-
-    [Fact]
     public async Task TheCountDtoRevealsNothingExpected()
     {
         var (database, factory) = await OpenAsync();

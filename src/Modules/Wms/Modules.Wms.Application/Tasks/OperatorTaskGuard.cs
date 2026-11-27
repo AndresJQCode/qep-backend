@@ -41,6 +41,26 @@ public sealed class OperatorTaskGuard(IExecutionContext executionContext, WmsAut
     }
 }
 
+/// <summary>Decisión del owner, 2026-11-27 (decisión 33): nadie cuenta el <c>Count</c> que verifica una novedad que reportó. Ni lo
+/// recibe con <c>next</c>, ni lo reclama por id, ni el supervisor se lo asigna, ni lo cuenta con la acción <c>count</c> (defensa en
+/// profundidad). En una bodega de una persona el conteo espera y el supervisor resuelve la novedad a mano.</summary>
+internal static class CountSelfVerificationRule
+{
+    public static async Task EnsureNotReporterAsync(
+        IIncidentRepository incidents, Guid tenantId, WarehouseTask task, Guid memberId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(incidents);
+        ArgumentNullException.ThrowIfNull(task);
+        if (task.Type == WarehouseTaskType.Count
+            && await incidents.HasReportedVerifiedByAsync(tenantId, task.Id, memberId, cancellationToken))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentSelfResolution,
+                "Quien reportó la novedad no cuenta el conteo que la verifica: lo cuenta otra persona.");
+        }
+    }
+}
+
 internal static class TaskMemberLocks
 {
     /// <summary>La clave del lock bloqueante por operario: serializa dos peticiones de la misma persona. Va siempre antes que el

@@ -37,6 +37,7 @@ public sealed class OperatorTaskHandlersTests
                 Guard(world),
                 world.Clock(),
                 world.Composer(),
+                world.IncidentRepository(),
                 new ClaimTaskValidator())
             .HandleAsync(new ClaimTaskCommand(TaskWorld.Tenant, taskId, device), Ct);
 

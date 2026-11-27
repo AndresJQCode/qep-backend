@@ -92,7 +92,7 @@ public sealed class SupervisorTaskActionsTests
         var task = world.AddTask();
 
         var error = await Assert.ThrowsAsync<WmsDomainException>(() =>
-            new AssignTaskHandler(Runner(world), world.Members(), new AssignTaskValidator())
+            new AssignTaskHandler(Runner(world), world.Members(), world.IncidentRepository(), new AssignTaskValidator())
                 .HandleAsync(new AssignTaskCommand(TaskWorld.Tenant, task.Id, TaskWorld.OtherMember, 1, null), Ct));
 
         Assert.Equal(WmsErrorCodes.TaskAssigneeNotEligible, error.Code);

@@ -58,6 +58,7 @@ public sealed class CountTaskLineHandler(
     OperatorLineRunner runner,
     IVariantProfileRepository profiles,
     ILotRepository lots,
+    IIncidentRepository incidents,
     IValidator<CountTaskLineCommand> validator)
     : ICommandHandler<CountTaskLineCommand, TaskDto>
 {
@@ -93,6 +94,10 @@ public sealed class CountTaskLineHandler(
         {
             throw new TaskTransitionException(task.Status.ToString(), "count-line");
         }
+
+        // Decisión 33, defensa en profundidad: aunque el Count llegara a sus manos (lo tenía en curso antes de reportar), quien reportó
+        // la novedad que verifica no lo cuenta.
+        await CountSelfVerificationRule.EnsureNotReporterAsync(incidents, command.TenantId, task, member, cancellationToken);
 
         if (command.LocationId != line.FromLocationId.Value)
         {

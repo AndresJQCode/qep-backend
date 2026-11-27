@@ -42,6 +42,10 @@ public interface IIncidentRepository
     /// ajuste (DA-47).</summary>
     Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken);
 
+    /// <summary>Si esa membresía reportó alguna novedad que ese <c>Count</c> verifica (<c>verification_task_id</c>), en cualquier
+    /// estado: nadie cuenta el conteo de una novedad que reportó (decisión del owner, 2026-11-27). Sin rastreo.</summary>
+    Task<bool> HasReportedVerifiedByAsync(Guid tenantId, Guid countTaskId, Guid memberId, CancellationToken cancellationToken);
+
     /// <summary><c>NOV-{yyyyMMdd}-{NNNN}</c> por tenant y día, con lock bloqueante <c>incident-seq:{tenant}</c> de transacción; exige la
     /// transacción de <see cref="IWmsUnitOfWork.BeginTransactionAsync"/>.</summary>
     Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken);

@@ -211,6 +211,11 @@ internal sealed partial class TaskWorld
                     .Distinct(),
             ]);
 
+        public Task<bool> HasReportedVerifiedByAsync(
+            Guid tenantId, Guid countTaskId, Guid memberId, CancellationToken cancellationToken) =>
+            Task.FromResult(world.Incidents.Exists(incident =>
+                incident.TenantId == tenantId && incident.VerificationTaskId == countTaskId && incident.ReportedBy == memberId));
+
         public Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken) =>
             Task.FromResult($"NOV-{today:yyyyMMdd}-{world.Incidents.Count + 1:D4}");
     }
