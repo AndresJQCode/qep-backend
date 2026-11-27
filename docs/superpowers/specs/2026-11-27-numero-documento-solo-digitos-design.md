@@ -45,10 +45,25 @@ puntos y guiones, sin espacios.
 número nuevo de uno que vuelve sin cambios. Consecuencia aceptada: un pedido, cotización, perfil de
 comprador o «Tomar» de la tienda cuyo documento guardado ya traiga letras no se puede guardar
 —aunque lo editado sea otra cosa— hasta corregir el número. El 422 marca el campo del número para
-que la pantalla diga qué corregir.
-- Caminos que no son entrada de una persona: ingesta de Shopify (no trae documento), consumidor
-  final (`222222222222`), copia del documento del cliente en la venta del POS, adaptadores del
-  Bootstrapper que copian valores ya validados, y lectura (Siigo, Purchases, Reporting, Wms).
+que la pantalla diga qué corregir. La misma consecuencia alcanza a:
+
+- Aceptar una invitación vieja de distribuidor (o un `TaxId` de empresa mayorista) con letras en
+  NIT/CC/CE: falla con 422 hasta corregir el dato (`DistributorInvitationService` →
+  `Company.Create`, `SupplierLinking`, `WholesaleCustomerProvisioning`).
+- Convertir en pedido una cotización cuyo NIT de facturación viejo trae letras.
+- Importar por Excel una fila que actualiza por CUC y deja el documento vacío, cuando el cliente
+  guardado trae letras: esa fila sale como error de fila
+  (`customers.import.row.identification_number_not_numeric`) y el resto del archivo sigue.
+
+**Fuera del alcance, por no ser entrada de una persona:**
+
+- Ingesta de Shopify: sí puede traer documento, desde un atributo del checkout
+  (`ShopifyCustomerResolver.cs`). Con la regla nueva, un NIT/CC/CE con letras que venga de Shopify
+  hace que el cliente nazca incompleto (el aviso `customer_incomplete` que ya existe) en vez de
+  completo; nada falla.
+- Consumidor final (`222222222222`), copia del documento del cliente en la venta del POS,
+  adaptadores del Bootstrapper que copian valores ya validados, y lectura (Siigo, Purchases,
+  Reporting, Wms).
 - Importaciones que sólo **buscan** un empleado por documento (exámenes médicos, novedades de
   nómina): no escriben el número.
 - `qep-frontend`: se le entrega un prompt al terminar el backend.
