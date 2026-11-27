@@ -165,7 +165,7 @@ Tres tablas en el esquema `wms`. Los nombres de clase llevan prefijo `WarehouseT
 Índices y restricciones: `IX_tasks_tenant_number` único `(tenant_id, number)`; `IX_tasks_pool` `(tenant_id, warehouse_id, status)
 WHERE status IN ('Ready','Assigned')`; **`IX_tasks_member_in_progress` único `(tenant_id, claimed_by_member_id) WHERE status =
 'InProgress'`** (una tarea en curso por operario, DA-08); `IX_tasks_lease` `(lease_expires_at) WHERE status = 'InProgress'`;
-`IX_tasks_source` `(tenant_id, source_type, source_id)`. `CHECK` de `type`, `status`, `priority BETWEEN 1 AND 9`;
+`IX_tasks_source` `(tenant_id, source_type, source_id)`; `IX_tasks_board` `(tenant_id, warehouse_id, status, type)` (los conteos del tablero) e `IX_tasks_list` `(tenant_id, warehouse_id, created_at DESC, number DESC)` (el listado del supervisor), de la revisión de T1. `CHECK` de `type`, `status`, `priority BETWEEN 1 AND 9`;
 `CK_tasks_claim`: `status <> 'InProgress' OR (claimed_by_member_id, lease_token, lease_expires_at) todos no nulos`;
 `CK_tasks_assigned`: `status <> 'Assigned' OR assigned_member_id IS NOT NULL`; `CK_tasks_released`: `status NOT IN
 ('Ready','Assigned','InProgress') OR released_at IS NOT NULL`.
@@ -187,7 +187,7 @@ Las unidades logísticas (D-12) entran en T3 con `handling_unit_id` null y `CK (
 NULL)`: una línea «mover el palet entero» no nombra variante, porque el contenido son sus saldos. En T1 `variant_id` es obligatoria.
 
 **`wms.task_events`** (`WarehouseTaskEvent`, append-only): `id`, `tenant_id`, `task_id`, `kind`, `member_id` (null = sistema),
-`device_id`, `line_id` null, `quantity` null, `detail varchar(500)` null, `occurred_at`. Índice `(task_id, occurred_at)`. Es la
+`device_id`, `line_id` null, `quantity` null, `detail varchar(500)` null, `occurred_at` (la hora del hecho: la del escaneo en lo que deja una confirmación, DA-36) y `recorded_at` (la hora del servidor al guardarlo). La historia se ordena por `recorded_at`, luego por tipo (orden causal del enum) e id: así una confirmación tardía aparece después del vencimiento que la precedió en el servidor, con su hora de escaneo intacta. `recorded_at` nace `NOT NULL DEFAULT now()` para que un pod viejo que no la escribe siga insertando, y la migración la llena con `occurred_at` en las filas existentes. Índice `(task_id, occurred_at)`. Es la
 historia de la tarea y la fuente de los indicadores (§6.12); la aplicación sólo inserta.
 
 ### 6.2 Tipos de tarea
@@ -317,10 +317,15 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
 - **Reclamo** (`next` o `claim`): transición atómica a `InProgress` que fija `claimed_by_member_id`, `claimed_device_id`,
   `lease_token` nuevo y `lease_expires_at = now + lease del tipo`. Si la misma persona retoma desde el mismo celular su reclamo
   vencido, el token se conserva (DA-34).
+- **Pedir otra vez la tarea en curso** (`next` o `claim` de quien ya la tiene `InProgress`): el servidor bloquea la fila y le
+  renueva el lease con el mismo token, sin evento ni versión, como el latido. Vale también si el lease venció y el barrido todavía
+  no pasó: nadie más pudo tomarla. Nunca devuelve un `leaseExpiresAt` vencido.
 - **Latido:** la app lo manda cada 2 minutos mientras la tarea está en pantalla, y toda confirmación lo renueva. El lease no es de
   segundos: el operario camina, busca y habla.
 - **Fencing:** toda acción del operario sobre la tarea lleva el `leaseToken`. Si no coincide con el vigente, 409
-  `wms.task.lease_lost` y la app muestra «Esta tarea ya no es tuya».
+  `wms.task.lease_lost` con la extensión `resumable`: `true` si el lease venció y nadie más tomó la tarea (la app la pide otra vez
+  con `claim` y sigue; su cola vale si es el mismo celular, DA-34), `false` si la tiene otra persona, se la reasignaron, la
+  retuvieron o ya terminó. Con `false` la app muestra «Esta tarea ya no es tuya».
 - **Barrido** (`TaskLeaseSweeper`, cada `TaskLeaseSweepSeconds`, 60 por defecto): toma con `FOR UPDATE SKIP LOCKED` las `InProgress`
   con `lease_expires_at < now` y:
   - **sin stock en mano** (toda tarea de un paso, o de dos pasos con `taken = confirmed` en todas sus líneas) → `Ready`, o `Assigned`
@@ -332,15 +337,15 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
   `LeaseResumed`) y aplica la confirmación: la mercancía ya se movió en el piso y rechazarla dejaría el sistema mintiendo. Si otro la
   reclamó, el token cambió: 409 `wms.task.lease_lost`, y desde T2 la confirmación rechazada se registra como novedad `SYNC_CONFLICT`.
   Si quien confirma tarde ya tiene otra tarea en curso, la confirmación se aplica igual pero la vieja no vuelve a `InProgress` (DA-32).
-  Una tarea retenida (`hold`, vuelve a `Planned`) rechaza las confirmaciones tardías (DA-35).
+  Una tarea retenida (`hold`, vuelve a `Planned`) rechaza las confirmaciones tardías (DA-35), y retenerla borra el reclamo que haya quedado del lease vencido: después de retener y publicar, una confirmación de antes ya no la reanuda.
 - **Soltar** (`unclaim`): el operario devuelve la tarea con motivo (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`). Vuelve a `Ready`
-  (deja de estar asignada si lo estaba a él). Con stock en mano no se puede soltar: primero entrega lo que lleva.
+  (deja de estar asignada si lo estaba a él). Con stock en mano no se puede soltar: primero entrega lo que lleva. Repetir un `unclaim` que ya se aplicó (la app no recibió la respuesta) da 409 `wms.task.lease_lost` con `resumable: false`: la app lo trata como éxito, porque la tarea ya no es suya.
 
 ### 6.8 Concurrencia
 
 - **Siguiente tarea**, en la transacción del handler:
   1. `LockAsync("task-member:{memberId}")` (advisory bloqueante): dos toques seguidos del mismo operario se serializan.
-  2. Si el operario ya tiene una `InProgress` en esa bodega, se devuelve esa (repetir «siguiente» es idempotente). Si la tiene en
+  2. Si el operario ya tiene una `InProgress` en esa bodega, se bloquea esa fila (`LockAsync`), se le renueva el lease (§6.7) y se devuelve: repetir «siguiente» es idempotente. Si la tiene en
      otra bodega, 409 `wms.task.member_busy` con `{ taskId }` en las extensiones.
   3. Candidata con una sola sentencia:
 
@@ -383,7 +388,7 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
   `operation_receipts` devuelve la misma respuesta con 200 y el ledger guarda la misma clave en su lote.
 - La cola local (Room) es por usuario y por tarea, en orden FIFO. Si el servidor rechaza una operación, las siguientes de **esa** tarea
   se pausan y la app lo muestra; las de otras tareas siguen.
-- `occurredAt` es la hora del escaneo, dentro de la ventana del ledger (`[now − 30 días, now + 5 min]`). Es también la fecha de los
+- `occurredAt` es la hora del escaneo, dentro de la ventana del ledger (`[now − 30 días, now + 5 min]`) y no anterior a la publicación de la tarea (`released_at`, o `created_at` si nunca se publicó); un escaneo anterior es imposible y llega como 422 `wms.movement.occurred_at_out_of_range`. Es también la fecha de los
   eventos que la confirmación deja en `task_events` (`LeaseResumed`, `LineConfirmed`, `Completed`) y de `completed_at` (DA-36).
 - La doble lectura del mismo código es UX, no idempotencia: la app ignora el mismo código en menos de 1 s y el servidor no deja
   superar lo planeado (`wms.task.quantity_exceeds_remaining`).
@@ -393,7 +398,7 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
 Web (`qep-frontend`, corte W1), con `wms.task.manage` para actuar y `wms.document.read` para ver:
 
 - **Tablero por bodega:** conteo por estado (completo, incluidos los ceros: la pantalla no conoce el enum) y por tipo; operarios con
-  tarea en curso, desde cuándo y su última actividad; arriba, `NeedsRecovery` y novedades abiertas (desde T2).
+  tarea en curso, desde cuándo y su última actividad; arriba, `NeedsRecovery` y novedades abiertas (desde T2); arriba también las **asignaciones huérfanas** (`staleAssignments`): tareas `Planned` o `Assigned` asignadas a alguien que ya no está activo o perdió el permiso del tipo. Nadie más puede reclamarlas, así que el supervisor las reasigna.
 - **Sobre una tarea:** publicar / retener, asignar / quitar asignación / reasignar, cambiar prioridad y urgencia, cancelar con motivo,
   cancelar una línea con motivo. Todo con `version` y auditado.
 - **Selector de asignado:** las membresías activas con el permiso del tipo (`GET /tasks/assignees`).
@@ -445,7 +450,8 @@ TaskDto        { ...TaskSummaryDto, sourceType, sourceId, note, leaseToken, leas
                            quantityPlanned, quantityConfirmed, quantityRemaining, lineStatus, baseUom }],
                  events: [{ kind, memberId, memberName, deviceId, lineId, quantity, detail, occurredAt }] }
 TaskBoardDto   { warehouseId, byStatus: [{ status, count }], byType: [{ type, open }],
-                 operators: [{ memberId, name, taskId, taskNumber, type, since, lastActivityAt }] }
+                 operators: [{ memberId, name, taskId, taskNumber, type, since, lastActivityAt }],
+                 staleAssignments: [{ taskId, taskNumber, memberId, name }] }
 ```
 
 - `leaseToken` sólo viaja a quien tiene la tarea reclamada; para cualquier otro va `null` (nadie más puede firmar sus confirmaciones).
@@ -453,7 +459,12 @@ TaskBoardDto   { warehouseId, byStatus: [{ status, count }], byType: [{ type, op
   dibuja y cada byte cuenta con mala señal. El DTO lo dice en su comentario.
 - `byStatus` viaja completo, también en cero, y los nombres de miembro se resuelven en el servidor: la pantalla no conoce el enum ni
   Tenancy (regla BFF del `CLAUDE.md`).
-- Confirmar exige: lease válido (o reanudable, §6.7); línea `Open`; `fromLocationId` = el planeado (`wms.task.location_mismatch`);
+- `staleAssignments` viaja completa (sin paginar), en orden de número: la pantalla no puede saber si el asignado sigue activo ni qué
+  permisos tiene (Tenancy no es suyo), y sin esta lista una tarea asignada a quien ya no puede hacerla espera para siempre. Se arma
+  con una sola consulta de asignadas y una consulta de elegibles por permiso, no una por tarea.
+- `events` va en orden de `recorded_at` (hora del servidor), luego tipo e id; cada evento conserva su `occurredAt` (hora del
+  escaneo). `recordedAt` no viaja: ninguna pantalla lo dibuja.
+- Confirmar exige: lease válido (o reanudable, §6.7); `occurredAt` dentro de la ventana del ledger y no anterior a la publicación (`wms.movement.occurred_at_out_of_range`); línea `Open`; `fromLocationId` = el planeado (`wms.task.location_mismatch`);
   `toLocationId` = el planeado, o distinto con `overrideReason` si el tipo lo admite y la ubicación es física, de la misma bodega y
   admite almacenamiento (`wms.task.location_mismatch` / `wms.task.location_invalid`); `lotId` igual al de la línea si la línea lo fija
   (`wms.task.lot_mismatch`); `quantity ≤ remaining` (`wms.task.quantity_exceeds_remaining`). El movimiento: de
@@ -466,7 +477,7 @@ TaskBoardDto   { warehouseId, byStatus: [{ status, count }], byType: [{ type, op
 | --- | --- | --- |
 | `wms.task.not_found` | 404 | Tarea o línea que no existe en el tenant |
 | `wms.task.invalid_transition` | 422 | Acción que el estado no admite; extensiones `{ from, action }` (misma forma que `wms.document.invalid_transition`) |
-| `wms.task.lease_lost` | 409 | `leaseToken` que no es el vigente ni reanudable |
+| `wms.task.lease_lost` | 409 | `leaseToken` que no es el vigente ni reanudable; extensiones `{ resumable }` (§6.7) |
 | `wms.task.member_busy` | 409 | El operario ya tiene otra tarea en curso; extensiones `{ taskId }` |
 | `wms.task.assigned_to_other` | 422 | Reclamar una tarea asignada a otra persona |
 | `wms.task.assignee_not_eligible` | 422 | Asignar a una membresía inactiva o sin el permiso del tipo |
@@ -937,7 +948,11 @@ Después, sin orden fijo: traslados (WMS-F), conteo cíclico programado, devoluc
   - token viejo → 409 `wms.task.lease_lost`; confirmación tardía con el mismo token y sin otro dueño → se reanuda;
   - el barrido devuelve al pool y no toca las vigentes; dos barridos a la vez no se pisan;
   - 403 sin el permiso del tipo, 403 con otro tenant, nunca 404;
-  - auditoría de las acciones del supervisor y `task_events` de todas.
+  - auditoría de las acciones del supervisor y `task_events` de todas;
+  - otro tenant → 403 en toda ruta de tareas (operario, supervisor y lecturas); misma clave con otro cuerpo al confirmar → 409; retener
+    contra una confirmación tardía; reasignar en curso → 409 con `resumable: false`; lease vencido sin barrer: `next`/`claim` lo
+    renuevan y el latido también; después del barrido, el latido da 409 con `resumable: true`; la historia en orden del servidor con
+    la hora del escaneo; `staleAssignments` en el tablero.
 - **Arquitectura:** `WmsLayerTests` con el área `Tasks`; `MultiReplicaInventory` con el barrido; `CompositionRootTests` (handlers,
   permiso con forma y política).
 - **App:** JUnit + MockWebServer por cada fila de la tabla de errores de §6.11; Room y la cola con pruebas de reintento y pausa por
@@ -952,12 +967,12 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 
 | Id | Decisión del agente (por confirmar) | Alternativa | Si se revierte |
 | --- | --- | --- | --- |
-| DA-01 | El motor es un área nueva `Tasks` del módulo `Wms`, al nivel de las de proceso; cambia `WmsLayerTests` | Módulo aparte | Mover el área; nada del contrato HTTP cambia |
+| DA-01 | El motor es un área nueva `Tasks` del módulo `Wms`, al nivel de las de proceso; cambia `WmsLayerTests` **Aprobada (O-7, §13.1).** | Módulo aparte | Mover el área; nada del contrato HTTP cambia |
 | DA-02 | La recepción no es una tarea con lease: sigue siendo el documento colaborativo del spec de recepción y genera tareas | Una tarea `Receive` por documento | Envolver el `Receipt` en una tarea; la app cambiaría su lista |
 | DA-03 | El WMS recibe contra la orden de compra de `Purchases` (`Confirmed` o `Received`); no crea orden propia; la bodega se elige al recibir; las líneas sin variante no entran a stock | Orden de compra propia del WMS (WMS-C del spec de arquitectura) | Duplicar el maestro de compras |
-| DA-04 | El WMS no cambia el estado de la orden en Purchases; publica `wms.receipt.confirmed.v1` | Marcar `Received` desde el WMS | Un consumidor en Purchases |
-| DA-05 | Los pedidos llegan al WMS por liberación manual del supervisor | Automático con `quotations.order.created.v1` | Un consumidor que libera solo |
-| DA-06 | Al pasar a `Packed`, Quotations marca el pedido `Prepared` (evento + consumidor) | Marcarlo al despachar, o no tocarlo | Cambia el evento que se consume |
+| DA-04 | El WMS no cambia el estado de la orden en Purchases; publica `wms.receipt.confirmed.v1` **Revertida por el owner el 2026-11-26 (§13.1).** | Marcar `Received` desde el WMS | Un consumidor en Purchases |
+| DA-05 | Los pedidos llegan al WMS por liberación manual del supervisor **Revertida por el owner el 2026-11-26 (§13.1).** | Automático con `quotations.order.created.v1` | Un consumidor que libera solo |
+| DA-06 | Al pasar a `Packed`, Quotations marca el pedido `Prepared` (evento + consumidor) **Confirmada por el owner el 2026-11-26 (§13.1).** | Marcarlo al despachar, o no tocarlo | Cambia el evento que se consume |
 | DA-07 | Un cambio del pedido después de liberarlo se detecta por `version` al empacar y bloquea el cierre con `ORDER_CHANGED` | Congelar el pedido al liberar | Llamar `Prepare` antes |
 | DA-08 | Una sola tarea en curso por operario (índice único parcial) | Varias | Quitar el índice y la regla de `next` |
 | DA-09 | La app no muestra el pool: sólo «Siguiente tarea» y «Mis tareas» | Lista para escoger | Una ruta de listado para el operario |
@@ -966,7 +981,7 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-12 | Lease vencido sin stock en mano vuelve al pool; con stock en mano pasa a `NeedsRecovery` | Siempre recuperación manual | Regla del barrido |
 | DA-13 | Una confirmación tardía con el mismo token y sin otro dueño reanuda la tarea | Rechazarla siempre | Más novedades `SYNC_CONFLICT` |
 | DA-14 | Elegibilidad sólo por bodega, permiso del tipo y asignación; zonas, equipos y habilidades después | Desde T1 | Columnas y filtro aditivos |
-| DA-15 | Permiso nuevo `wms.task.manage` sólo en `admin`; ejecutar usa el permiso del proceso; los de salidas (`wms.outbound.manage`, `wms.pick.perform`, `wms.pack.perform`, `wms.shipment.dispatch`) nacen en T5–T7 | Un permiso por tipo desde ya | Más permisos |
+| DA-15 | Permiso nuevo `wms.task.manage` sólo en `admin`; ejecutar usa el permiso del proceso; los de salidas (`wms.outbound.manage`, `wms.pick.perform`, `wms.pack.perform`, `wms.shipment.dispatch`) nacen en T5–T7 **Aprobada (O-7, §13.1).** | Un permiso por tipo desde ya | Más permisos |
 | DA-16 | `Incident` reemplaza a `Discrepancy`; rutas `/incidents`; se resuelve con el permiso existente `wms.discrepancy.resolve` | Mantener `Discrepancy` sólo para recepción | Dos modelos de excepción |
 | DA-17 | Quien reporta no da de baja ni aprueba el ajuste de su propia novedad | Sin separación | Quitar `wms.incident.self_resolution` |
 | DA-18 | Un faltante nunca se ajusta en el piso: genera `Count` de verificación, y el ajuste sale del conteo como `Adjustment` propuesto | Ajuste inmediato | Un movimiento a `ADJUSTMENT` desde la tarea |
@@ -974,15 +989,15 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-20 | Roles nuevos `Packing` y `Handling`; `HANDLING` es una ubicación física de sistema por bodega | Usar `Shipping` para todo y mover directo a empaque | Sin rastro de la mercancía en el carro |
 | DA-21 | La reserva viaja con la mercancía hasta el despacho | Consumirla al tomar | Lo pickeado contaría como disponible |
 | DA-22 | Picking discreto (una tarea por pedido) | Cluster o batch | Agrupar pedidos en la tarea |
-| DA-23 | Cross-dock sólo contra pedidos en `Short`, apagado por defecto por bodega | Oportunista siempre | Más sorpresas en la asignación |
-| DA-24 | Despacho parcial no permitido por defecto | Permitido | Un parámetro por tenant |
+| DA-23 | Cross-dock sólo contra pedidos en `Short`, apagado por defecto por bodega **Confirmada por el owner el 2026-11-26 (§13.1).** | Oportunista siempre | Más sorpresas en la asignación |
+| DA-24 | Despacho parcial no permitido por defecto **Confirmada por el owner el 2026-11-26 (§13.1).** | Permitido | Un parámetro por tenant |
 | DA-25 | `Move` manual es el primer tipo de tarea (T1) y cubre el reabastecimiento manual | Empezar por putaway | T1 dependería de recepción |
 | DA-26 | T1 no valida disponibilidad al crear un `Move`; la valida el ledger al confirmar | Validar al crear | Una consulta de saldo más |
 | DA-27 | Las tareas no publican eventos de integración; auditoría sólo de acciones del supervisor | Auditar todo | Más volumen en `audit.entries` |
-| DA-28 | POS fuera de alcance | Que descuente | Un consumidor nuevo (O-5) |
+| DA-28 | POS fuera de alcance **Revertida por el owner el 2026-11-26 (§13.1).** | Que descuente | Un consumidor nuevo (O-5) |
 | DA-29 | Número de tarea `TSK-yyyyMMdd-NNNN` por tenant, con el lock de numeración de los ajustes | Secuencia global | Otro formato en pantalla |
 | DA-30 | Recepción no ciega (la app muestra lo esperado), como el supuesto P-7 del spec de recepción | Ciega por tenant | Un parámetro |
-| DA-31 | Sin plantillas de rol nuevas («Operario de bodega», «Supervisor de bodega»); el tenant arma sus roles | Plantillas de fábrica | `RoleTemplate` nuevos (sólo llegan a tenants nuevos) |
+| DA-31 | Sin plantillas de rol nuevas («Operario de bodega», «Supervisor de bodega»); el tenant arma sus roles **Revertida por el owner el 2026-11-26 (§13.1).** | Plantillas de fábrica | `RoleTemplate` nuevos (sólo llegan a tenants nuevos) |
 | DA-32 | Una confirmación tardía de quien ya tiene otra tarea en curso se aplica sin devolver la vieja a `InProgress` ni darle lease: queda donde está (`Ready` o `Assigned`) o se cierra si era lo último | 409 `wms.task.member_busy` | Mercancía ya movida que el sistema no registra |
 | DA-33 | «Siguiente tarea» no le vuelve a ofrecer a una persona lo que soltó con motivo `Skipped` en los últimos 15 minutos; si el supervisor se lo asigna después, sí. `claim` no cambia | Ofrecerlo de inmediato | Saltar devuelve la misma tarea |
 | DA-34 | La misma persona que retoma desde el mismo celular su reclamo vencido conserva el `leaseToken`: lo que dejó en cola sigue valiendo. Desde otro celular, o si otro la tuvo en medio, el token cambia | Token nuevo en cada reclamo | La cola offline se rechaza con `wms.task.lease_lost` |
@@ -1004,20 +1019,43 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-50 | (T2) `reported_at` es la hora del escaneo (`occurredAt`) en las novedades que vienen de la app y la del servidor en las del sistema. Las del operario no se auditan (quedan en `incident_events`); revisar, resolver y rechazar sí (`wms.incident.*`) | Hora del servidor; auditar todo | Indicadores que miden la sincronización |
 | DA-51 | (T2) Una novedad abierta (`Open`, `InReview`) con variante impide borrar la variante en Catalog (`CatalogVariantUsageChecker`): un `SyncConflict` puede escribir al ledger al resolverse | No contarlas | Un movimiento inmutable sobre una variante borrada |
 
+### 13.1 Revisión final de T1 y respuestas del owner (2026-11-26)
+
+**O-7.** El 2026-11-26 el owner delegó en el revisor final (Fable 5.2) las cuatro decisiones de arquitectura y contrato de T1:
+
+- El área `Tasks` en `WmsLayerTests` (DA-01): **aprobada**.
+- La entrada `Claimed` de `TaskLeaseSweeper` en `MultiReplicaInventory`: **aprobada**, con la cita corregida a `LockExpiredAsync`.
+- El permiso `wms.task.manage` (DA-15): **aprobado**; la prueba ancla de permisos se renombró (ya no lleva la cuenta en el
+  nombre). Unas plantillas de rol que traigan este permiso más adelante (O-6) necesitan una autorización nueva.
+- El contrato de §6.11: **aprobado con cambios**: M2 (`next`/`claim` renuevan el lease de quien ya tiene la tarea en curso, y
+  `wms.task.lease_lost` lleva `resumable`), B2 (`occurredAt` no anterior a la publicación) y la nota del `unclaim` repetido (409
+  con `resumable: false`, que la app trata como éxito). M3 queda pendiente del owner.
+
+La misma revisión agregó, sin cambiar rutas ni códigos: `staleAssignments` en el tablero (M1), DTOs compuestos sólo con las
+ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que borra el reclamo vencido (B1) y `recorded_at` en
+`task_events` para ordenar la historia (B3).
+
+**Respuestas del owner del 2026-11-26** (entradas para los cortes siguientes; ninguna cambia T1):
+
+| Pregunta | Respuesta | Decisión que cambia | Corte |
+| --- | --- | --- | --- |
+| O-1 | La recepción del WMS suma stock y marca la orden de compra `Received` sola; el «Recibir» manual de Purchases queda sólo para los tenants que no usan recepción | Revierte DA-04 | T3 |
+| O-2 | De dónde salen los pedidos y si la liberación y la asignación son automáticas por reglas o manuales se configura en el motor de tareas | Revierte DA-05 | T5 |
+| O-3 | El pedido pasa a `Prepared` al cerrar el empaque | Confirma DA-06 | T7 |
+| O-4 | Despacho parcial por tenant, apagado por defecto; cross-docking sólo para faltantes, por bodega, apagado por defecto | Confirma DA-24 (con parámetro por tenant) y DA-23 | T7, T8 |
+| O-5 | El POS descuenta stock, a través del inventario básico | Revierte DA-28 | Por definir |
+| O-6 | Plantillas de rol de fábrica «Supervisor de bodega» y «Operario de bodega», también para los tenants existentes cuando se prende el módulo | Revierte DA-31 | Por definir (necesita autorización, ver O-7) |
+
+**Pendientes del owner** (no se implementan sin respuesta):
+
+- **M3.** ¿`claim` admite sólo las tareas asignadas a quien reclama y su propio reclamo vencido, o cualquier tarea del pool? Hoy
+  admite cualquiera que esté en el pool (DA-09 sólo esconde el pool en la app).
+- **B4.** ¿Un reclamo tiene una edad máxima, aunque siga latiendo? Hoy un operario que deja la app abierta la conserva sin límite.
+- **B5.** ¿La numeración diaria `TSK-yyyyMMdd-NNNN` corta el día en hora de Colombia? Hoy corta en UTC.
+
 ## 14. Preguntas para el owner
 
-Por impacto. Ninguna bloquea T1.
-
-- **O-1.** ¿El WMS reemplaza el «Recibir» manual de Purchases cuando el módulo está prendido, y Purchases marca `Received` sola al
-  cerrarse la recepción en el WMS? (DA-03, DA-04; bloquea el alcance de T3.)
-- **O-2.** ¿Todo pedido abierto va a la bodega (liberación automática), o el supervisor elige cuáles? (DA-05; T5.)
-- **O-3.** ¿Cuándo cuenta un pedido como «preparado» para Quotations: al empacarlo o al despacharlo? ¿Debe el despacho cambiar algo
-  más en el pedido (guía, estado)? (DA-06; T7.)
-- **O-4.** ¿Se permite despachar parcial, y se activa cross-docking? (DA-23, DA-24; T7, T8.)
-- **O-5.** ¿Las ventas del POS deben descontar del inventario de la bodega? (DA-28.)
-- **O-6.** ¿Quién supervisa en cada empresa? Para decidir si conviene crear plantillas de rol de bodega (DA-31).
-- **O-7.** Autorizar los cambios de arquitectura de T1: el área `Tasks` en `WmsLayerTests`, la entrada del barrido en
-  `MultiReplicaInventory` y el contrato HTTP de §6.11 (decisión del owner del 2026-11-25).
+O-1 a O-7 se contestaron el 2026-11-26: ver §13.1. Siguen abiertas M3, B4 y B5 (§13.1).
 
 ## 15. Riesgos
 
