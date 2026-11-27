@@ -37,25 +37,13 @@ public sealed class OperatorTaskHandlersTests
                 Guard(world),
                 world.Clock(),
                 world.Composer(),
+                world.IncidentRepository(),
                 new ClaimTaskValidator())
             .HandleAsync(new ClaimTaskCommand(TaskWorld.Tenant, taskId, device), Ct);
 
     private static Task<TaskDto> ConfirmAsync(TaskWorld world, ConfirmTaskLineCommand command, string? key = "key-1") =>
         new ConfirmTaskLineHandler(
-                world.Context(),
-                world.Authorization,
-                world.Caller(),
-                world.UnitOfWork(),
-                new IdempotencyScope { Key = key },
-                world.ReceiptStore(),
-                world.Repository(),
-                world.Warehouses(),
-                Guard(world),
-                world.Ledger(),
-                world.Metrics,
-                world.Clock(),
-                world.Composer(),
-                new ConfirmTaskLineValidator())
+                world.LineRunner(key), world.Warehouses(), world.Ledger(), world.Clock(), new ConfirmTaskLineValidator())
             .HandleAsync(command, Ct);
 
     private static (WarehouseTask Task, ConfirmTaskLineCommand Command) ClaimedByCaller(

@@ -7021,6 +7021,12 @@ sin `events` y se auditan.
 | `POST /tasks/{id}/heartbeat` | `{ leaseToken }` | 200 `{ leaseExpiresAt }` |
 | `POST /tasks/{id}/unclaim` | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`) | 200 |
 | `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200 |
+| `POST /tasks/{id}/lines/{lineId}/short` (IK) | `{ leaseToken, quantityFound, lotId?, incidentType, note?, photoFileIds?, occurredAt, deviceId }` | 200 la tarea |
+| `POST /tasks/{id}/lines/{lineId}/count` (IK) | `{ leaseToken, locationId, lotId?, quantityCounted, occurredAt, deviceId }` | 200 la tarea |
+
+`short` confirma lo encontrado hacia el destino planeado, cierra la línea como `Short` y deja la novedad en la misma transacción y con
+la misma `Idempotency-Key`; nunca ajusta stock. `count` sólo existe para el tipo `Count` (permiso `wms.count.perform`); `confirm` y
+`short` sobre un `Count`, y `count` sobre un `Move`, responden 422 `wms.task.invalid_transition`.
 
 **Lease.** `claimedBy*`, `leaseExpiresAt` y `leaseToken` sólo viajan con la tarea `InProgress`, y `leaseToken` sólo a quien la tiene. El
 lease de `Move` dura 15 minutos; el latido y cada confirmación lo renuevan. Al vencer, el barrido devuelve la tarea y conserva quién la
@@ -7036,9 +7042,55 @@ detecta el índice único). 422 `wms.task.invalid_transition` (con `from` y `act
 `wms.uom.precision_exceeded` y `wms.lot.not_found` (404); al confirmar, los del ledger (`wms.stock.insufficient`,
 `wms.location.blocked`, `wms.lot.required`, `wms.movement.occurred_at_out_of_range`…) tal cual.
 
-Una variante con una línea abierta en una tarea sin terminar no se borra de Catalog.
+Una variante con una línea abierta en una tarea sin terminar, o con una novedad abierta, no se borra de Catalog.
 
-**Migraciones:** `Wms` `AddWarehouseTasks`, `AddTaskBoardIndexes` (índices del tablero y del listado) y `AddTaskEventRecordedAt` (`recorded_at` en `task_events`, el orden de la historia).
+#### Novedades y conteo de verificación (T2)
+
+Spec `docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md` §8; plan `docs/superpowers/plans/2026-11-26-wms-t2-novedades.md`.
+
+Una **novedad** (`Incident`) es algo que el operario o el sistema encontró distinto de lo esperado. Catálogo cerrado en T2:
+`ShortMove`, `LocationMismatch`, `UnreadableLabel`, `CountVariance` y `SyncConflict`.
+
+| Ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `GET /incidents?warehouseId&status&type&page&pageSize` | `wms.document.read` | — | página de novedades (BFF: códigos, nombres y producto ya resueltos) |
+| `GET /incidents/{id}` | `wms.document.read` | — | la ficha, con `allowedResolutions`, `canBeRejected`, evidencia e historia |
+| `POST /incidents` (IK) | `wms.document.read` + permiso de algún tipo de tarea | `{ warehouseId, type, locationId?, variantId?, lotId?, quantity?, rawCode?, note, photoFileIds?, sourceTaskId?, occurredAt, deviceId }` | 201 la ficha (200 si se repite la clave). Sólo `UnreadableLabel` y `LocationMismatch` |
+| `POST /incidents/{id}/review` | `wms.discrepancy.resolve` | `{ version }` | la ficha |
+| `POST /incidents/{id}/resolve` (SK) | `wms.discrepancy.resolve` | `{ version, resolution, note? }` | `{ batchId?, createdTaskIds }` |
+| `POST /incidents/{id}/reject` | `wms.discrepancy.resolve` | `{ version, note }` | la ficha |
+
+- **Resoluciones.** `Accept` (`ShortMove`, `LocationMismatch`, `UnreadableLabel`; no mueve nada) y `AcceptIntoStock` (`SyncConflict` con algo
+  encontrado y una línea de origen con destino: repite el movimiento de la línea por lo encontrado, con el supervisor como actor, una
+  sola llamada al ledger). Sólo `SyncConflict` se rechaza. `CountVariance` no se resuelve ni se rechaza a mano: la cierra su ajuste.
+  Quien reportó una novedad no la acepta en el stock (`wms.incident.self_resolution`).
+- **`SyncConflict`.** Una acción de línea (`confirm`, `short`, `count`) que llega con el lease perdido se rechaza con 409
+  `wms.task.lease_lost`, pero el hecho físico queda como novedad (se confirma antes del 409; quien nunca reclamó la tarea no deja
+  novedad). Reintentar con la misma clave no la duplica.
+- **El `Count` es a ciegas.** Un `ShortMove` o un `LocationMismatch` con ubicación y variante genera, en la misma transacción, un
+  `Count` de esa clave de stock (o se enlaza al que ya está abierto: `count-key`). Una variante de series no genera `Count`. El operario
+  no recibe lo esperado: la línea trae lo planeado en cero y el servidor lee el saldo al contar. Quien reportó el faltante no cuenta su
+  propio conteo: ni con `next`, ni reclamándolo por id, ni asignado por el supervisor, ni con `count` (`wms.incident.self_resolution`);
+  en una bodega de una persona el supervisor resuelve la novedad a mano. Sin diferencia, el sistema resuelve las novedades; con
+  diferencia, propone un ajuste `CountVariance` (nunca toca el ledger) que **no aprueba** quien contó ni quien reportó el faltante, y
+  contabilizar el ajuste resuelve la novedad `CountVariance` (rechazarlo la rechaza). Cancelar el `Count` desenlaza sus novedades, que
+  siguen abiertas.
+- **Códigos.** 404 `wms.incident.not_found`. 422 `wms.incident.self_resolution`, `wms.incident.resolution_not_allowed`,
+  `wms.incident.type_not_allowed`, `wms.incident.evidence_invalid`, `wms.incident.invalid`. 412 con la `version` vieja de una acción del
+  supervisor. Al contar, además, `wms.serial.required` y `wms.lot.required`. Al aprobar o contabilizar un ajuste de conteo,
+  422 `wms.adjustment.count_stale` (el saldo cambió desde el conteo: el ajuste se rechazó solo y se pidió un conteo nuevo).
+- **Tablero.** `GET /tasks/summary` trae `openIncidents` y lista el tipo `Count` aunque esté en cero.
+
+**Despliegue de T2.** Las dos migraciones (`AddIncidentsAndShortLines`, `AddCountTasks`) son **sólo de expansión** (tablas nuevas,
+una columna nula, `CHECK` que admiten más valores): un pod con el código de T1 sigue escribiendo filas válidas. Lo contrario no es seguro:
+T1 lee los enums por nombre y un pod de T1 que cargue una tarea `Count`, una línea `Short` o un evento `LineShort` lanza. Se despliega T2 como
+una sola versión (las migraciones corren bajo el candado de arranque antes de que el pod nuevo atienda; con `replicas: 1` el pod viejo
+sólo convive hasta que el nuevo está listo, y un `Count` dura 30 minutos, así que el barrido viejo no llega a ver uno). **No hay vuelta
+atrás a código anterior a T2 una vez que existe una tarea `Count` o una línea `Short`: se corrige hacia adelante** (el `Down` de
+`AddCountTasks` falla a propósito con esos datos). Desde T2 el barrido y el tablero ignoran los valores que el build no conoce, así que
+los cortes siguientes no repiten este problema.
+
+**Migraciones:** `Wms` `AddWarehouseTasks`, `AddTaskBoardIndexes` (índices del tablero y del listado), `AddTaskEventRecordedAt` (`recorded_at` en `task_events`, el orden de la historia), `AddIncidentsAndShortLines` (novedades, evidencia e historia; la línea `Short`) y `AddCountTasks` (el tipo `Count`, `task_lines.quantity_counted`) y `AddIncidentsTenantReportedIndex` (índice `(tenant_id, reported_at, number)` de la bandeja de novedades).
 
 ## Verificación
 

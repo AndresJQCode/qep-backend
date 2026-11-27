@@ -28,7 +28,7 @@ internal static class WarehouseTaskModel
         var task = modelBuilder.Entity<WarehouseTask>();
         task.ToTable("tasks", Schema, table =>
         {
-            table.HasCheckConstraint("CK_tasks_type", "type IN ('Move')");
+            table.HasCheckConstraint("CK_tasks_type", "type IN ('Move','Count')");
             table.HasCheckConstraint(
                 "CK_tasks_status", "status IN ('Planned','Ready','Assigned','InProgress','Done','Cancelled')");
             table.HasCheckConstraint("CK_tasks_priority", "priority BETWEEN 1 AND 9");
@@ -121,10 +121,11 @@ internal static class WarehouseTaskModel
         var line = modelBuilder.Entity<WarehouseTaskLine>();
         line.ToTable("task_lines", Schema, table =>
         {
-            table.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Cancelled')");
+            table.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Short','Cancelled')");
             table.HasCheckConstraint(
                 "CK_task_lines_quantity",
-                "quantity_planned > 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned");
+                "quantity_planned >= 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned"
+                + " AND (quantity_counted IS NULL OR quantity_counted >= 0)");
         });
         line.HasKey(value => value.Id);
         // El id lo pone el dominio: así EF inserta lo que aparece nuevo en la colección en vez de intentar actualizarlo.
@@ -144,6 +145,8 @@ internal static class WarehouseTaskModel
             .HasConversion(id => id!.Value.Value, value => new LocationId(value));
         line.Property(value => value.QuantityPlanned).HasColumnName("quantity_planned").HasPrecision(18, 6);
         line.Property(value => value.QuantityConfirmed).HasColumnName("quantity_confirmed").HasPrecision(18, 6);
+        // Nulo salvo en la línea de un Count que ya se contó (T2). Cero es una cuenta válida.
+        line.Property(value => value.QuantityCounted).HasColumnName("quantity_counted").HasPrecision(18, 6);
         // `status` es de la tarea: en la línea la columna se llama line_status (spec §6.1).
         line.Property(value => value.Status).HasColumnName("line_status").HasConversion<string>().HasMaxLength(EnumMaxLength);
         line.Property(value => value.CancelReason).HasColumnName("cancel_reason").HasMaxLength(WarehouseTask.ReasonMaxLength);

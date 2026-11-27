@@ -90,4 +90,48 @@ internal static class TaskApiSupport
         var memberId = await SeedCallerMembershipAsync(factory, subjectId: subjectId, roles: roles);
         return (memberId, CreateClient(factory, subjectId, TenantId, WmsPermissions.DocumentRead, WmsPermissions.PutawayPerform));
     }
+
+    /// <summary>Una persona de bodega con los permisos que se indiquen: su membresía en el tenant y un cliente con ellos.</summary>
+    public static async Task<(Guid MemberId, HttpClient Client)> SeedMemberAsync(
+        QepApiFactory factory, string subjectId, params string[] permissions)
+    {
+        var memberId = await SeedCallerMembershipAsync(factory, subjectId: subjectId);
+        return (memberId, CreateClient(factory, subjectId, TenantId, permissions));
+    }
+
+    /// <summary>Quien cuenta: ve documentos y tiene <c>wms.count.perform</c>, y nada más.</summary>
+    public static Task<(Guid MemberId, HttpClient Client)> SeedCounterAsync(
+        QepApiFactory factory, string subjectId = SecondOperatorSubject) =>
+        SeedMemberAsync(factory, subjectId, WmsPermissions.DocumentRead, WmsPermissions.CountPerform);
+
+    public static Task<HttpResponseMessage> NextRawAsync(HttpClient client, Guid warehouseId) =>
+        client.PostAsJsonAsync($"{TasksUrl()}/next", new { warehouseId, deviceId = "zebra-01" }, Ct);
+
+    public static async Task<HttpResponseMessage> CountRawAsync(
+        HttpClient client, Guid taskId, Guid lineId, object body, string? key = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{TasksUrl()}/{taskId}/lines/{lineId}/count")
+        {
+            Content = JsonContent.Create(body),
+        };
+        if (key is not null)
+        {
+            request.Headers.Add("Idempotency-Key", key);
+        }
+
+        return await client.SendAsync(request, Ct);
+    }
+
+    /// <summary>El cuerpo de <c>count</c>: lo que el operario contó en la ubicación.</summary>
+    public static object CountBody(
+        Guid token, Guid location, decimal counted, Guid? lotId = null, DateTimeOffset? occurredAt = null) =>
+        new
+        {
+            leaseToken = token,
+            locationId = location,
+            lotId,
+            quantityCounted = counted,
+            occurredAt = occurredAt ?? DateTimeOffset.UtcNow,
+            deviceId = "zebra-01",
+        };
 }

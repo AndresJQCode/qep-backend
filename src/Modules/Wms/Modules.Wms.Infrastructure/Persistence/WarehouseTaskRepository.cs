@@ -1,6 +1,8 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Control;
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
 using Modules.Wms.Domain.Warehousing;
 
@@ -79,7 +81,7 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
     {
         var id = new WarehouseId(warehouseId);
-        var counts = await OfTenant(tenantId)
+        var counts = await OfTenantKnown(tenantId)
             .Where(task => task.WarehouseId == id)
             .GroupBy(task => task.Status)
             .Select(group => new { Status = group.Key, Count = group.Count() })
@@ -87,11 +89,13 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return [.. counts.Select(value => new TaskStatusCount(value.Status, value.Count))];
     }
 
+    // «Abierta» es todo estado que no sea Done ni Cancelled: T2 (el tipo Count) no agrega ningún estado de tarea, así que esta lista y
+    // la de CatalogVariantUsageChecker no cambian. Un estado nuevo en el futuro obliga a revisar las dos.
     public async Task<IReadOnlyList<TaskTypeCount>> CountOpenByTypeAsync(
         Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
     {
         var id = new WarehouseId(warehouseId);
-        var counts = await OfTenant(tenantId)
+        var counts = await OfTenantKnown(tenantId)
             .Where(task => task.WarehouseId == id
                 && task.Status != WarehouseTaskStatus.Done
                 && task.Status != WarehouseTaskStatus.Cancelled)
@@ -99,6 +103,71 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .Select(group => new { Type = group.Key, Count = group.Count() })
             .ToListAsync(cancellationToken);
         return [.. counts.Select(value => new TaskTypeCount(value.Type, value.Count))];
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken)
+    {
+        if (taskIds.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var ids = taskIds.ToArray();
+        var rows = await dbContext.Set<WarehouseTask>()
+            .AsNoTracking()
+            .Where(task => task.TenantId == tenantId && ids.Contains(task.Id))
+            .Select(task => new { task.Id, task.Number })
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(row => row.Id, row => row.Number);
+    }
+
+    public async Task<Guid?> FindWarehouseOfAsync(Guid tenantId, Guid taskId, CancellationToken cancellationToken)
+    {
+        var warehouses = await dbContext.Set<WarehouseTask>()
+            .AsNoTracking()
+            .Where(task => task.TenantId == tenantId && task.Id == taskId)
+            .Select(task => task.WarehouseId)
+            .ToListAsync(cancellationToken);
+        return warehouses.Count == 0 ? null : warehouses[0].Value;
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, TaskLineFacts>> FindLineFactsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken)
+    {
+        if (lineIds.Count == 0)
+        {
+            return new Dictionary<Guid, TaskLineFacts>();
+        }
+
+        var ids = lineIds.ToArray();
+        var rows = await dbContext.Set<WarehouseTask>()
+            .AsNoTracking()
+            .Where(task => task.TenantId == tenantId)
+            .SelectMany(task => task.Lines)
+            .Where(line => ids.Contains(line.Id))
+            .Select(line => new { line.Id, line.ToLocationId, line.QuantityPlanned, line.QuantityConfirmed })
+            .ToListAsync(cancellationToken);
+
+        // Lo que otras novedades ya aceptaron en el stock sobre la misma línea también cuenta: sin esto, reenviar la acción con otra
+        // clave crea N conflictos que pasan el tope uno por uno y juntos mueven de más. Se suma de la tabla de novedades (la resolución
+        // vive ahí), no del ledger particionado.
+        var accepted = await dbContext.Set<Incident>()
+            .AsNoTracking()
+            .Where(incident => incident.TenantId == tenantId
+                && incident.SourceTaskLineId != null
+                && ids.Contains(incident.SourceTaskLineId.Value)
+                && incident.Status == IncidentStatus.Resolved
+                && incident.Resolution == IncidentResolution.AcceptIntoStock)
+            .GroupBy(incident => incident.SourceTaskLineId!.Value)
+            .Select(group => new { LineId = group.Key, Quantity = group.Sum(incident => incident.ActualQty ?? 0m) })
+            .ToListAsync(cancellationToken);
+        var acceptedByLine = accepted.ToDictionary(row => row.LineId, row => row.Quantity);
+        return rows.ToDictionary(
+            row => row.Id,
+            row => new TaskLineFacts(
+                row.ToLocationId?.Value,
+                row.QuantityPlanned - row.QuantityConfirmed - acceptedByLine.GetValueOrDefault(row.Id)));
     }
 
     public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
@@ -123,8 +192,11 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
     {
         var id = new WarehouseId(warehouseId);
-        return await WithLines(OfTenant(tenantId))
-            .Where(task => task.WarehouseId == id && task.Status == WarehouseTaskStatus.InProgress)
+        // Con líneas: una tarea con un estado de línea que este build no conoce tampoco se puede leer (ver KnownTaskValues).
+        return await WithLines(OfTenantKnown(tenantId))
+            .Where(task => task.WarehouseId == id
+                && task.Status == WarehouseTaskStatus.InProgress
+                && !task.Lines.Any(line => !KnownTaskValues.LineStatuses.Contains(line.Status)))
             .OrderBy(task => task.Number)
             .ToListAsync(cancellationToken);
     }
@@ -144,10 +216,47 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .ToListAsync(cancellationToken);
     }
 
+    // Sólo cuenta el Count con una línea abierta sobre exactamente esa clave. Lote nulo es «sin lote» (IS NOT DISTINCT FROM; el cast
+    // a uuid tipa el parámetro nulo). Sin FOR UPDATE: quien enlaza bloquea la fila después y vuelve a mirar su estado.
+    public async Task<Guid?> FindOpenCountAsync(
+        Guid tenantId,
+        Guid warehouseId,
+        Guid ownerId,
+        Guid locationId,
+        Guid variantId,
+        Guid? lotId,
+        StockStatus stockStatus,
+        CancellationToken cancellationToken)
+    {
+        var status = stockStatus.ToString();
+        var found = await dbContext.Database
+            .SqlQuery<Guid>(
+                $"""
+                SELECT t.id AS "Value" FROM wms.tasks t
+                JOIN wms.task_lines l ON l.task_id = t.id
+                WHERE t.tenant_id = {tenantId} AND t.warehouse_id = {warehouseId} AND t.owner_id = {ownerId}
+                  AND t.type = 'Count' AND t.status NOT IN ('Done','Cancelled')
+                  AND l.line_status = 'Open' AND l.from_location_id = {locationId} AND l.variant_id = {variantId}
+                  AND l.lot_id IS NOT DISTINCT FROM {lotId}::uuid AND l.stock_status = {status}
+                ORDER BY t.created_at, t.id
+                LIMIT 1
+                """)
+            .ToListAsync(cancellationToken);
+        return found.Count == 0 ? null : found[0];
+    }
+
     public Task<WarehouseTask?> FindInProgressOfMemberAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) =>
         WithLines(OfTenant(tenantId))
             .FirstOrDefaultAsync(
                 task => task.ClaimedByMemberId == memberId && task.Status == WarehouseTaskStatus.InProgress, cancellationToken);
+
+    public Task<bool> HasMemberClaimedAsync(Guid tenantId, Guid taskId, Guid memberId, CancellationToken cancellationToken) =>
+        dbContext.Set<WarehouseTaskEvent>()
+            .AsNoTracking()
+            .AnyAsync(
+                value => value.TenantId == tenantId && value.TaskId == taskId && value.MemberId == memberId
+                    && value.Kind == TaskEventKind.Claimed,
+                cancellationToken);
 
     // Los pesos (10 de urgente, un punto por cada 1200 s en el pool con tope 3, y los tramos del corte) repiten TaskPriority:
     // TaskCandidateQueryTests amarra las dos versiones y cambiar una sin la otra lo pone en rojo. SKIP LOCKED hace que dos operarios
@@ -166,6 +275,9 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
 
         // DA-33: lo que la persona saltó hace poco no se le vuelve a ofrecer, salvo que se lo hayan asignado. El FOR UPDATE sólo
         // bloquea la fila de la tarea: la subconsulta de la historia no bloquea nada.
+        // DA-45: tampoco se le ofrece el Count que verifica una novedad que ella misma reportó (no cuenta su propio faltante), salvo
+        // que el supervisor se lo haya asignado. Lee wms.incidents por nombre de columna (verification_task_id, reported_by): ver
+        // la regla sql-entre-modulos. La subconsulta tampoco bloquea nada.
         var candidates = await dbContext.Database
             .SqlQuery<Guid>(
                 $"""
@@ -178,6 +290,9 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
                         SELECT 1 FROM wms.task_events e
                         WHERE e.task_id = t.id AND e.kind = 'Unclaimed' AND e.detail = 'Skipped'
                           AND e.member_id = {memberId} AND e.occurred_at > {skippedSince}))
+                  AND (t.assigned_member_id = {memberId} OR NOT EXISTS (
+                        SELECT 1 FROM wms.incidents i
+                        WHERE i.verification_task_id = t.id AND i.reported_by = {memberId}))
                 ORDER BY (t.assigned_member_id IS NOT NULL) DESC,
                   (t.priority
                    + CASE WHEN t.urgent THEN 10 ELSE 0 END
@@ -203,11 +318,20 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
     {
         EnsureTransaction(nameof(LockExpiredAsync));
 
+        // Sólo lo que este build sabe materializar (KnownTaskValues): un pod más nuevo puede escribir un tipo, un origen o un estado de
+        // línea que éste no conoce, y una fila que lanza al cargarse deshace todo el lote en cada pasada. Esa fila se salta: la barre
+        // el build que la entiende.
+        var types = KnownTaskValues.TypeNames;
+        var sources = KnownTaskValues.SourceNames;
+        var lineStatuses = KnownTaskValues.LineStatusNames;
         return await dbContext.Database
             .SqlQuery<ExpiredTaskLease>(
                 $"""
                 SELECT t.tenant_id AS "TenantId", t.id AS "TaskId" FROM wms.tasks t
                 WHERE t.status = 'InProgress' AND t.lease_expires_at < {now}
+                  AND t.type = ANY({types}) AND t.source_type = ANY({sources})
+                  AND NOT EXISTS (
+                        SELECT 1 FROM wms.task_lines l WHERE l.task_id = t.id AND l.line_status <> ALL({lineStatuses}))
                 ORDER BY t.lease_expires_at
                 LIMIT {limit}
                 FOR UPDATE SKIP LOCKED
@@ -236,7 +360,7 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
     {
         var id = new WarehouseId(warehouseId);
-        return await OfTenant(tenantId)
+        return await OfTenantKnown(tenantId)
             .Where(task => task.WarehouseId == id
                 && (task.Status == WarehouseTaskStatus.Planned || task.Status == WarehouseTaskStatus.Assigned)
                 && task.AssignedMemberId != null)
@@ -244,6 +368,14 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .Select(task => new AssignedTaskRef(task.Id, task.Number, task.Type, task.AssignedMemberId!.Value))
             .ToListAsync(cancellationToken);
     }
+
+    // Para las lecturas del tablero: sólo las tareas con un tipo, un estado y un origen que este build sabe leer. Un pod más nuevo
+    // puede escribir otros durante un despliegue, y una sola fila que no se pueda materializar rompería el tablero entero. Es
+    // KnownTaskValues quien dice cuáles son; no quites el filtro.
+    private IQueryable<WarehouseTask> OfTenantKnown(Guid tenantId) =>
+        OfTenant(tenantId).Where(task => KnownTaskValues.Types.Contains(task.Type)
+            && KnownTaskValues.Statuses.Contains(task.Status)
+            && KnownTaskValues.Sources.Contains(task.SourceType));
 
     private IQueryable<WarehouseTask> OfTenant(Guid tenantId) =>
         dbContext.Set<WarehouseTask>().AsNoTracking().Where(task => task.TenantId == tenantId);

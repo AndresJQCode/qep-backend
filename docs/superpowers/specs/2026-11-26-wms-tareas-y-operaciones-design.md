@@ -745,6 +745,13 @@ depender de recepción ni de pedidos, y sirve desde el día uno para reabastecer
 
 ## 8. Novedades: modelo unificado (T2)
 
+> **Estado de T2 (2026-11-27).** Construido en la rama `feature/wms-t2-incidents` (backend), sin mergear: novedades `ShortMove`,
+> `LocationMismatch`, `UnreadableLabel`, `CountVariance` y `SyncConflict`; la línea `Short`; el tipo `Count` a ciegas con la acción
+> `count` y el ajuste `CountVariance`; el catálogo de uso de variante (DA-51). **Sigue sin aprobar el owner**: DA-38 a DA-51 y las
+> decisiones del agente del [plan](../plans/2026-11-26-wms-t2-novedades.md) esperan su respuesta antes del merge. Quedan fuera de
+> T2, como dice el plan, las resoluciones `ReturnToSupplier`, `WriteOff`, `Relocate`, `Count` y `Adjust`, `TASK_ABANDONED`, el
+> frontend y la app. Ante una discrepancia entre este documento y el código, gana el código.
+
 Una **novedad** registra que la realidad no coincidió con el plan, con lo necesario para decidir y para auditar. Reemplaza el
 `Discrepancy` del spec de arquitectura §9.3 (DA-16) y conserva su regla de los dos momentos: lo físico entra al ledger cuando se
 registra (en `Quarantine`, `Damaged` o `Blocked`), y la resolución genera el segundo movimiento.
@@ -806,7 +813,16 @@ ledger; spec de arquitectura §9.3).
    esperado), por otra persona que quien reportó si hay alguien elegible. Sin diferencia: cierra las novedades hijas. Con diferencia:
    propone un `Adjustment` (agregado existente, motivo `CountVariance`) que aprueba quien tenga `wms.adjustment.approve`.
 3. **Separación de funciones** (DA-17): quien reportó la novedad no resuelve con `WriteOff` ni aprueba el ajuste que sale de ella
-   (422 `wms.incident.self_resolution`).
+   (422 `wms.incident.self_resolution`). **Decisión del owner, 2026-11-27 (decisión 33):** nadie cuenta el `Count` de verificación
+   de una novedad que reportó: ni con `next`, ni reclamándolo por id, ni porque el supervisor se lo asigne (el `assign` falla), y la
+   acción `count` también lo rechaza (defensa en profundidad), siempre con 422 `wms.incident.self_resolution`. En una bodega de una
+   persona el `Count` espera y el supervisor resuelve la novedad a mano. Los reportantes que no pueden aprobar el ajuste salen de
+   toda novedad con `verification_task_id` igual al `Count` de origen, sin mirar su estado ni su padre.
+7. **El ajuste de un conteo sólo vale con el saldo que el conteo vio** (decisión del owner, 2026-11-27, H1). Al aprobar o
+   contabilizar un ajuste con `CountVariance`, si el saldo actual de la clave difiere de lo esperado que vio el conteo, el sistema
+   rechaza el ajuste y la `CountVariance` (nota «El saldo cambió desde el conteo TSK-…: había M y ahora hay K. Se pidió un conteo
+   nuevo.»), genera un `Count` nuevo de la misma clave (o enlaza el abierto), enlaza a él las novedades que verificaba el viejo,
+   guarda y responde 422 `wms.adjustment.count_stale`. Contabilizar bloquea los saldos en el orden del ledger y vuelve a leer.
 4. **La app no deja escribir códigos libres:** elige el tipo de la lista permitida para el paso y agrega nota y foto.
 5. **3PL:** toda novedad y ajuste de stock de un dueño `Client` queda filtrable por dueño para informarle (el portal es fase 6).
 6. Umbrales por valor no existen (no hay costeo en el WMS): la aprobación es por permiso, no por monto.
@@ -1015,6 +1031,7 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-46 | (T2) Al cerrar el `Count`: sin diferencia, sus novedades se resuelven `Accept` por el sistema; con diferencia nace una `CountVariance` (reportada por quien contó) con un `Adjustment` `CountVariance` propuesto, y las novedades verificadas se resuelven `Accept` apuntándola como padre. La `CountVariance` no tiene `resolve` manual: se resuelve al contabilizar el ajuste (`Accept` con su `batch_id`) o queda `Rejected` si el ajuste se rechaza | Dejar abiertas las hijas hasta el ajuste | El supervisor cierra cada hija a mano |
 | DA-47 | (T2) Separación de funciones (DA-17) ampliada: ni quien reportó las novedades verificadas ni quien contó aprueban el ajuste de la `CountVariance`; quien reportó tampoco resuelve con `AcceptIntoStock` (mueve stock). Se comparan membresías | Sólo quien reportó la novedad original; sólo `WriteOff` | Quitar esas comprobaciones |
 | DA-48 | (T2) `SyncConflict` se guarda en la transacción del handler, que se confirma con sólo la novedad antes de responder 409 `wms.task.lease_lost`; se deduplica por la `Idempotency-Key`. Aplica a `confirm`, `short` y `count`; no a latido ni a soltar. `raw_payload` no guarda el `leaseToken`. `AcceptIntoStock` repite el movimiento de la línea por `actualQty` con el supervisor como actor y documento `("Incident", id, lineId)`, sin tocar la tarea | Una transacción aparte; aplicar la confirmación al resolver reabriendo la tarea | Novedades duplicadas por reintento, o una tarea terminal que se edita |
+| DA-48a | (T2) decisión del agente, por confirmar: sólo quien tuvo el reclamo deja novedad. `SyncConflict` se guarda únicamente si la membresía tiene un hecho `Claimed` en la historia de esa tarea (también si la tarea ya es `Done` o `Cancelled`); para cualquier otra persona es el mismo 409 `wms.task.lease_lost` y no se guarda nada | Guardarla para cualquiera con el permiso del tipo | Inundar la bandeja con novedades falsas cambiando la `Idempotency-Key` |
 | DA-49 | (T2) `POST /incidents` admite sólo `UnreadableLabel` y `LocationMismatch` (esta genera `Count` si trae variante); la ruta pide `wms.document.read` y el handler el permiso de algún tipo de tarea. Evidencia: hasta 5 archivos `WmsEvidence` del tenant, en cualquier estado (pueden estar subiendo); si no, `wms.incident.evidence_invalid` | Cualquier tipo; exigir archivos ya disponibles | Una novedad sin conexión se rechazaría por una foto en camino |
 | DA-50 | (T2) `reported_at` es la hora del escaneo (`occurredAt`) en las novedades que vienen de la app y la del servidor en las del sistema. Las del operario no se auditan (quedan en `incident_events`); revisar, resolver y rechazar sí (`wms.incident.*`) | Hora del servidor; auditar todo | Indicadores que miden la sincronización |
 | DA-51 | (T2) Una novedad abierta (`Open`, `InReview`) con variante impide borrar la variante en Catalog (`CatalogVariantUsageChecker`): un `SyncConflict` puede escribir al ledger al resolverse | No contarlas | Un movimiento inmutable sobre una variante borrada |
@@ -1045,6 +1062,12 @@ ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que
 | O-4 | Despacho parcial por tenant, apagado por defecto; cross-docking sólo para faltantes, por bodega, apagado por defecto | Confirma DA-24 (con parámetro por tenant) y DA-23 | T7, T8 |
 | O-5 | El POS descuenta stock, a través del inventario básico | Revierte DA-28 | Por definir |
 | O-6 | Plantillas de rol de fábrica «Supervisor de bodega» y «Operario de bodega», también para los tenants existentes cuando se prende el módulo | Revierte DA-31 | Por definir (necesita autorización, ver O-7) |
+
+**Revisión final de T2 y respuestas del owner (2026-11-27):**
+
+- **Decisión 33** (nadie cuenta el `Count` de una novedad que reportó, también por `claim`, `assign` y `count`): ver §8.4 regla 3.
+- **H1** (el ajuste de un conteo se rechaza solo si el saldo cambió desde el conteo, 422 `wms.adjustment.count_stale`): ver §8.4
+  regla 7.
 
 **Pendientes del owner** (no se implementan sin respuesta):
 

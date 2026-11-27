@@ -1,3 +1,4 @@
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.Application;
@@ -10,6 +11,10 @@ public sealed record TaskTypeCount(WarehouseTaskType Type, int Count);
 
 /// <summary>Una tarea con el lease vencido, con su tenant para cargarla.</summary>
 public sealed record ExpiredTaskLease(Guid TenantId, Guid TaskId);
+
+/// <summary>Lo que <c>AcceptIntoStock</c> necesita de la línea de origen de una novedad: su destino (nulo si no tiene) y lo que todavía
+/// le falta por confirmar.</summary>
+public sealed record TaskLineFacts(Guid? ToLocationId, decimal Remaining);
 
 /// <summary>Una tarea abierta con asignado, lo justo para el tablero.</summary>
 public sealed record AssignedTaskRef(Guid TaskId, string Number, WarehouseTaskType Type, Guid AssignedMemberId);
@@ -59,6 +64,32 @@ public interface IWarehouseTaskRepository
     Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
         Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
 
+    /// <summary>El número de cada tarea del tenant que esté entre <paramref name="taskIds"/>; la que no existe no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
+
+    /// <summary>La bodega de esa tarea, sin cargarla ni rastrearla; <c>null</c> si no existe en el tenant. Para validar una tarea de origen
+    /// sin que el bloqueo que sigue reciba una copia vieja del contexto.</summary>
+    Task<Guid?> FindWarehouseOfAsync(Guid tenantId, Guid taskId, CancellationToken cancellationToken);
+
+    /// <summary>El destino (<c>ToLocationId</c>, nulo si la línea no tiene) y lo que falta por confirmar de cada línea, sin cargar la
+    /// tarea ni rastrearla: lo que la resolución <c>AcceptIntoStock</c> de una novedad necesita de la línea de origen. La línea que no
+    /// existe no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, TaskLineFacts>> FindLineFactsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken);
+
+    /// <summary>El id del <c>Count</c> abierto (ni <c>Done</c> ni <c>Cancelled</c>) que verifica esa clave; <c>null</c> si no hay
+    /// (DA-44). Sin bloqueo: quien lo va a enlazar lo bloquea después con <see cref="LockAsync"/> y vuelve a mirar su estado.</summary>
+    Task<Guid?> FindOpenCountAsync(
+        Guid tenantId,
+        Guid warehouseId,
+        Guid ownerId,
+        Guid locationId,
+        Guid variantId,
+        Guid? lotId,
+        StockStatus stockStatus,
+        CancellationToken cancellationToken);
+
     /// <summary>Sin rastreo.</summary>
     Task<IReadOnlyList<WarehouseTask>> ListInProgressAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);
 
@@ -69,6 +100,10 @@ public interface IWarehouseTaskRepository
     /// <summary>La tarea en curso de la membresía, en cualquier bodega, sin rastreo: para cambiarla se bloquea y se carga con
     /// <see cref="GetAsync"/>.</summary>
     Task<WarehouseTask?> FindInProgressOfMemberAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
+
+    /// <summary>Si la membresía reclamó alguna vez esa tarea (un hecho <c>Claimed</c> suyo en la historia), sin cargarla. Decide si una
+    /// acción con el lease perdido deja novedad.</summary>
+    Task<bool> HasMemberClaimedAsync(Guid tenantId, Guid taskId, Guid memberId, CancellationToken cancellationToken);
 
     /// <summary>La mejor tarea elegible que nadie tenga bloqueada, y la deja bloqueada por esta transacción (exige la de
     /// <see cref="IWmsUnitOfWork.BeginTransactionAsync"/>); <c>null</c> si no hay ninguna. El orden es el de

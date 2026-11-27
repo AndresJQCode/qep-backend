@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Control;
+using static Modules.Wms.IntegrationTests.Incidents.IncidentTestSupport;
 using static Modules.Wms.IntegrationTests.Tasks.TaskApiSupport;
 using static Modules.Wms.IntegrationTests.Tasks.TaskTestSupport;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
@@ -158,7 +160,9 @@ public sealed class TaskSupervisorActionsApiTests
         Assert.Equal(6, board.ByStatus.Count);
         Assert.Equal(1, board.ByStatus.Single(slice => slice.Status == "InProgress").Count);
         Assert.Equal(0, board.ByStatus.Single(slice => slice.Status == "Done").Count);
-        Assert.Equal(2, Assert.Single(board.ByType).Open);
+        // El tablero lista todos los tipos, también el que está en cero (T2 agrega Count).
+        Assert.Equal(2, board.ByType.Single(slice => slice.Type == "Move").Open);
+        Assert.Equal(0, board.ByType.Single(slice => slice.Type == "Count").Open);
         var working = Assert.Single(board.Operators);
         Assert.Equal((worker, claimed.Id), (working.MemberId, working.TaskId));
         Assert.NotNull(working.Since);
@@ -265,5 +269,55 @@ public sealed class TaskSupervisorActionsApiTests
 
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         }
+    }
+
+    [Fact]
+    public async Task TheBoardCountsOpenIncidents()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var other = await CreateWarehouseAsync(s.Manager, "MDE");
+        var supervisor = Guid.NewGuid();
+        var day = DateOnly.FromDateTime(DateTime.UtcNow);
+        await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.UnreadableLabel), day);
+        await NumberAndSaveAsync(
+            factory,
+            s,
+            number =>
+            {
+                var incident = NewIncident(s, number, IncidentType.SyncConflict);
+                incident.Review(supervisor, DateTimeOffset.UtcNow);
+                return incident;
+            },
+            day);
+        await NumberAndSaveAsync(
+            factory,
+            s,
+            number =>
+            {
+                var incident = NewIncident(s, number, IncidentType.SyncConflict);
+                incident.Reject(supervisor, "duplicada", DateTimeOffset.UtcNow);
+                return incident;
+            },
+            day);
+        await NumberAndSaveAsync(
+            factory,
+            s,
+            number =>
+            {
+                var incident = NewIncident(s, number, IncidentType.UnreadableLabel);
+                incident.Resolve(IncidentResolution.Accept, supervisor, null, null, DateTimeOffset.UtcNow);
+                return incident;
+            },
+            day);
+        await NumberAndSaveAsync(
+            factory, s, number => NewIncident(s, number, IncidentType.UnreadableLabel, warehouseId: other.Id), day);
+
+        var board = await s.Manager.GetFromJsonAsync<TaskBoardDto>($"{TasksUrl()}/summary?warehouseId={s.WarehouseId}", Ct);
+
+        Assert.NotNull(board);
+        Assert.Equal(2, board.OpenIncidents);
     }
 }

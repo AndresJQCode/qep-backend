@@ -28,14 +28,6 @@ public sealed class OperatorTaskGuard(IExecutionContext executionContext, WmsAut
         }
     }
 
-    /// <summary>El reclamo vigente o uno que una confirmación puede reanudar; si no, 409.</summary>
-    public static LeaseCheck EnsureLease(WarehouseTask task, Guid memberId, Guid leaseToken)
-    {
-        ArgumentNullException.ThrowIfNull(task);
-        var lease = task.CheckLease(memberId, leaseToken);
-        return lease == LeaseCheck.Lost ? throw new TaskLeaseLostException(resumable: false) : lease;
-    }
-
     /// <summary>Sólo el reclamo vigente: latir y soltar no reanudan nada (sólo una confirmación trae un hecho físico que no se puede
     /// descartar). Si no, 409 con <c>resumable</c>.</summary>
     public static void EnsureActiveLease(WarehouseTask task, Guid memberId, Guid leaseToken)
@@ -45,6 +37,26 @@ public sealed class OperatorTaskGuard(IExecutionContext executionContext, WmsAut
         if (lease != LeaseCheck.Valid)
         {
             throw new TaskLeaseLostException(resumable: lease == LeaseCheck.Resumable);
+        }
+    }
+}
+
+/// <summary>Decisión del owner, 2026-11-27 (decisión 33): nadie cuenta el <c>Count</c> que verifica una novedad que reportó. Ni lo
+/// recibe con <c>next</c>, ni lo reclama por id, ni el supervisor se lo asigna, ni lo cuenta con la acción <c>count</c> (defensa en
+/// profundidad). En una bodega de una persona el conteo espera y el supervisor resuelve la novedad a mano.</summary>
+internal static class CountSelfVerificationRule
+{
+    public static async Task EnsureNotReporterAsync(
+        IIncidentRepository incidents, Guid tenantId, WarehouseTask task, Guid memberId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(incidents);
+        ArgumentNullException.ThrowIfNull(task);
+        if (task.Type == WarehouseTaskType.Count
+            && await incidents.HasReportedVerifiedByAsync(tenantId, task.Id, memberId, cancellationToken))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentSelfResolution,
+                "Quien reportó la novedad no cuenta el conteo que la verifica: lo cuenta otra persona.");
         }
     }
 }

@@ -7,7 +7,7 @@ namespace Modules.Wms.Infrastructure.Persistence;
 /// <summary>
 /// El libro es historia inmutable: el usuario no se borra mientras algo suyo siga nombrado. Dos ids distintos, a propósito:
 /// <c>stock_movements.actor_id</c> y las columnas de las tareas (<c>tasks.created_by/assigned_member_id/claimed_by_member_id</c> y
-/// <c>task_events.member_id</c>) guardan la <b>membresía</b> (<c>WmsCaller.RequireAsync</c>) y
+/// <c>task_events.member_id</c>, <c>incidents.reported_by/resolved_by</c> e <c>incident_events.member_id</c>) guardan la <b>membresía</b> (<c>WmsCaller.RequireAsync</c>) y
 /// <c>adjustments.proposed_by/approved_by/rejected_by</c> guardan el <b>usuario</b> (<c>SubjectId</c>). Por eso la sonda
 /// resuelve las membresías del usuario, como <c>PosUserReferenceProbe</c>, y compara cada columna con su id.
 /// </summary>
@@ -35,6 +35,10 @@ internal sealed class WmsUserReferenceProbe(
                     WHERE created_by = ANY({membershipIds}) OR assigned_member_id = ANY({membershipIds})
                        OR claimed_by_member_id = ANY({membershipIds}))
                 OR EXISTS (SELECT 1 FROM wms.task_events WHERE member_id = ANY({membershipIds}))
+                OR EXISTS (
+                    SELECT 1 FROM wms.incidents
+                    WHERE reported_by = ANY({membershipIds}) OR resolved_by = ANY({membershipIds}))
+                OR EXISTS (SELECT 1 FROM wms.incident_events WHERE member_id = ANY({membershipIds}))
                 OR EXISTS (
                     SELECT 1 FROM wms.adjustments
                     WHERE proposed_by = {userId} OR approved_by = {userId} OR rejected_by = {userId})) AS "Value"

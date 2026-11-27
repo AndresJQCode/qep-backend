@@ -29,7 +29,9 @@ public sealed class PostAdjustmentHandler(
     WmsCaller caller,
     IWmsEventPublisher events,
     IWmsConfirmMetrics metrics,
-    AdjustmentDtoComposer composer)
+    AdjustmentDtoComposer composer,
+    IIncidentRepository incidents,
+    CountVarianceFreshness freshness)
     : ICommandHandler<PostAdjustmentCommand, AdjustmentDto>
 {
     public async Task<AdjustmentDto> HandleAsync(PostAdjustmentCommand command, CancellationToken cancellationToken)
@@ -62,12 +64,29 @@ public sealed class PostAdjustmentHandler(
         var entries = AdjustmentPosting.EntriesFor(adjustment, adjustmentLocation, occurredAt, MovementReason.Adjustment);
         var actorId = await caller.RequireAsync(command.TenantId, cancellationToken);
 
+        // Un ajuste de conteo sólo vale con el saldo que el conteo vio: si cambió se rechaza solo (422 count_stale, ya guardado). Con el
+        // saldo igual, se bloquean los saldos en el orden del ledger y se vuelve a mirar, para que nada cambie hasta el movimiento.
+        var variance = await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken);
+        if (variance is not null)
+        {
+            await freshness.EnsureFreshAsync(adjustment, variance, now, cancellationToken);
+            await freshness.LockBalancesAsync(
+                adjustment, variance, [.. entries.SelectMany(entry => new[] { entry.From, entry.To })], cancellationToken);
+        }
+
         // El ledger vuelve a validar la ventana de occurredAt: un ajuste propuesto hace 29 días puede estar fuera al contabilizarse.
         var posting = await ledger.PostAsync(
             new LedgerBatch(command.TenantId, Guid.CreateVersion7(), key, new LedgerActor(actorId, LedgerActorType.Human, null), entries),
             cancellationToken);
 
         adjustment.MarkPosted(posting.BatchId, now);
+
+        // La CountVariance que este ajuste cierra se resuelve en la misma transacción, con el lote del ledger.
+        if (variance is not null)
+        {
+            variance.ResolveByAdjustment(posting.BatchId, actorId, adjustment.Number, now);
+        }
+
         auditRecorder.Record(
             command.TenantId,
             executionContext.SubjectId,

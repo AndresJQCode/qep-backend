@@ -1369,6 +1369,31 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.ConfirmTaskLineCommand, Modules.Wms.Application.TaskDto>,
             Modules.Wms.Application.ConfirmTaskLineHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ShortTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ShortTaskLineHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CountTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CountTaskLineHandler>();
+        // Novedades (spec 2026-11-26 §8.5).
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListIncidentsQuery, Modules.Wms.Application.IncidentPageDto>,
+            Modules.Wms.Application.ListIncidentsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetIncidentQuery, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.GetIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ReportIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.ReportIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ReviewIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.ReviewIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ResolveIncidentCommand, Modules.Wms.Application.IncidentResolutionDto>,
+            Modules.Wms.Application.ResolveIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.RejectIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.RejectIncidentHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -2973,6 +2998,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wms.Application.IWmsGeographyReader, WmsGeographyReader>();
         // Tareas de bodega (spec 2026-11-26): nombres y permisos de las membresías.
         services.AddScoped<Modules.Wms.Application.IWmsMemberDirectory, WmsMemberDirectory>();
+        // Evidencia de novedades (spec 2026-11-26 §8.4, DA-49): archivos WmsEvidence del tenant, en cualquier estado.
+        services.AddScoped<Modules.Wms.Application.IWmsEvidenceLookup, WmsEvidenceLookup>();
 
         // Etiquetas de ubicación (RF-004, P-9): el servicio y la clave son los de Quotations:Pdf, que Wms no ve. Singleton con timeout propio,
         // como AddPdfRenderer: el default de HttpClient son 100 s y qcode-pdf corta la compilación a los 15. La fábrica va tipada con

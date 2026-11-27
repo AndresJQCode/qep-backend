@@ -45,6 +45,15 @@ namespace Bootstrapper;
 /// <c>wms.task_lines.variant_id</c> con <c>line_status = 'Open'</c>, unida a <c>wms.tasks</c> por el tenant, con estado
 /// <c>Planned</c>, <c>Ready</c>, <c>Assigned</c> o <c>InProgress</c> (como texto). Un estado de tarea nuevo que todavía pueda
 /// confirmar entra aquí. Amarra el esquema migrado <c>StockProbeTests.TheRealCheckerSeesAnOpenTaskLineAgainstTheMigratedSchema</c>.
+/// El corte T2 (el tipo <c>Count</c>) no agrega ningún estado de tarea, así que esa lista no cambia; la línea abierta de un
+/// <c>Count</c> cuenta como cualquier otra (<c>StockProbeTests.TheRealCheckerSeesAnOpenCountLineAgainstTheMigratedSchema</c>).
+///
+/// **Las novedades abiertas también cuentan** (spec WMS 2026-11-26, DA-51): <c>wms.incidents.variant_id</c> con estado <c>Open</c> o
+/// <c>InReview</c> (como texto), con <c>tenant_id</c> propio. Un <c>SyncConflict</c> abierto puede escribir en el ledger al
+/// resolverse con <c>AcceptIntoStock</c>, y una novedad no puede quedar apuntando a una variante que ya no existe. Una resuelta o
+/// rechazada no escribe nada. Renombrar esas columnas compila y rompe esta consulta con <c>42703</c>; la amarran
+/// <c>CatalogVariantUsageCheckerTests</c> (réplica a mano) y
+/// <c>StockProbeTests.TheRealCheckerSeesAnOpenIncidentAgainstTheMigratedSchema</c> (esquema migrado).
 /// </summary>
 internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVariantUsageChecker
 {
@@ -100,6 +109,10 @@ internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVa
             JOIN wms.tasks t ON t.id = tl.task_id
             WHERE t.tenant_id = {tenantId} AND t.status IN ('Planned', 'Ready', 'Assigned', 'InProgress')
               AND tl.line_status = 'Open' AND tl.variant_id = ANY({ids})
+            UNION
+            SELECT i.variant_id
+            FROM wms.incidents i
+            WHERE i.tenant_id = {tenantId} AND i.status IN ('Open', 'InReview') AND i.variant_id = ANY({ids})
             """).ToListAsync(cancellationToken);
 
         return used.ToHashSet();

@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Wms.Application;
 using Modules.Wms.Domain.Inventory;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
 using static Modules.Wms.IntegrationTests.WmsLedgerSeeding;
@@ -18,6 +20,35 @@ public sealed class StockQueryTests
         var response = await client.GetAsync($"{WmsUrl()}{path}", Ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return JsonDocument.Parse(await BodyAsync(response));
+    }
+
+    [Fact]
+    public async Task FindOnHandAsyncReadsTheExactKey()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        // Una variante sin control de lote y otra por lote: el ledger no admite las dos formas en la misma variante.
+        var lotVariant = await CreateVariantAsync(factory, "V2", null, [12]);
+        await SetTrackingAsync(s.Manager, lotVariant, "Lot");
+        var lot = await CreateLotAsync(factory, s, lotVariant, "L-1");
+        await StockAsync(factory, s, s.BinA, 10);
+        await StockAsync(factory, s, s.BinA, 4, lot, lotVariant);
+        await PostAsync(factory, Batch(s, Entry(s, s.Supplier, Available, s.BinA, StockStatus.Quarantine, 20)));
+        await using var scope = factory.Services.CreateAsyncScope();
+        var stock = scope.ServiceProvider.GetRequiredService<IStockReadQueries>();
+
+        StockKey Key(Guid variant, Guid? withLot, StockStatus status) => new(s.OwnerId, s.BinA, variant, withLot, status);
+
+        Assert.Equal(10m, await stock.FindOnHandAsync(s.TenantId, Key(s.VariantId, null, Available), Ct));
+        Assert.Equal(20m, await stock.FindOnHandAsync(s.TenantId, Key(s.VariantId, null, StockStatus.Quarantine), Ct));
+        Assert.Equal(0m, await stock.FindOnHandAsync(s.TenantId, Key(s.VariantId, null, StockStatus.Blocked), Ct));
+        Assert.Equal(0m, await stock.FindOnHandAsync(Guid.CreateVersion7(), Key(s.VariantId, null, Available), Ct));
+        Assert.Equal(4m, await stock.FindOnHandAsync(s.TenantId, Key(lotVariant, lot, Available), Ct));
+        // Lote nulo es «sin lote», no «cualquiera»: los 4 del lote no se cuentan como sueltos.
+        Assert.Equal(0m, await stock.FindOnHandAsync(s.TenantId, Key(lotVariant, null, Available), Ct));
+        Assert.Equal(0m, await stock.FindOnHandAsync(s.TenantId, Key(lotVariant, Guid.CreateVersion7(), Available), Ct));
     }
 
     [Fact]

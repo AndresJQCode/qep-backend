@@ -10,16 +10,7 @@ public sealed class SupervisorTaskActionsTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static SupervisorTaskRunner Runner(TaskWorld world) =>
-        new(
-            world.Context(),
-            world.Authorization,
-            world.Repository(),
-            world.UnitOfWork(),
-            world.Recorder(),
-            world.Clock(),
-            world.Caller(),
-            world.Composer());
+    private static SupervisorTaskRunner Runner(TaskWorld world) => world.SupervisorRunner();
 
     private static Task<TaskDto> CancelLineAsync(TaskWorld world, Guid taskId, Guid lineId, long version) =>
         new CancelTaskLineHandler(Runner(world), new CancelTaskLineValidator())
@@ -101,7 +92,7 @@ public sealed class SupervisorTaskActionsTests
         var task = world.AddTask();
 
         var error = await Assert.ThrowsAsync<WmsDomainException>(() =>
-            new AssignTaskHandler(Runner(world), world.Members(), new AssignTaskValidator())
+            new AssignTaskHandler(Runner(world), world.Members(), world.IncidentRepository(), new AssignTaskValidator())
                 .HandleAsync(new AssignTaskCommand(TaskWorld.Tenant, task.Id, TaskWorld.OtherMember, 1, null), Ct));
 
         Assert.Equal(WmsErrorCodes.TaskAssigneeNotEligible, error.Code);
@@ -169,14 +160,14 @@ public sealed class SupervisorTaskActionsTests
         claimed.Heartbeat(TaskWorld.Member, claimed.LeaseToken!.Value, TaskWorld.Start.AddMinutes(9));
         world.AddTask();
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
         Assert.Equal(
             [("Planned", 0), ("Ready", 1), ("Assigned", 0), ("InProgress", 1), ("Done", 0), ("Cancelled", 0)],
             board.ByStatus.Select(slice => (slice.Status, slice.Count)));
-        Assert.Equal([("Move", 2)], board.ByType.Select(slice => (slice.Type, slice.Open)));
+        Assert.Equal([("Move", 2), ("Count", 0)], board.ByType.Select(slice => (slice.Type, slice.Open)));
         var worker = Assert.Single(board.Operators);
         Assert.Equal(("Ana Operaria", claimed.Id, claimed.Number), (worker.Name, worker.TaskId, worker.TaskNumber));
         Assert.Equal(TaskWorld.Start.AddMinutes(1), worker.Since);
@@ -195,7 +186,7 @@ public sealed class SupervisorTaskActionsTests
         world.AddTask(assignTo: TaskWorld.Member);
         world.AddTask();
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
@@ -218,7 +209,7 @@ public sealed class SupervisorTaskActionsTests
         var lost = world.AddTask(assignTo: TaskWorld.OtherMember);
         world.AddTask(assignTo: TaskWorld.Member);
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 

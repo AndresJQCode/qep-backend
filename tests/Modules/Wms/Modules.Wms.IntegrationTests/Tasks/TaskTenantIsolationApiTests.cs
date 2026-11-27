@@ -44,6 +44,16 @@ public sealed class TaskTenantIsolationApiTests
             (HttpMethod.Post, $"{url}/{task.Id}/claim", new { deviceId = "zebra-01" }),
             (HttpMethod.Post, $"{url}/{task.Id}/heartbeat", new { leaseToken = token }),
             (HttpMethod.Post, $"{url}/{task.Id}/unclaim", new { leaseToken = token, reason = "ShiftEnd" }),
+            (HttpMethod.Post, $"{url}/{task.Id}/lines/{line}/short", new
+            {
+                leaseToken = token, quantityFound = 1, incidentType = "ShortMove", occurredAt = DateTimeOffset.UtcNow,
+                deviceId = "zebra-01",
+            }),
+            (HttpMethod.Post, $"{url}/{task.Id}/lines/{line}/count", new
+            {
+                leaseToken = token, locationId = s.BinA, quantityCounted = 1, occurredAt = DateTimeOffset.UtcNow,
+                deviceId = "zebra-01",
+            }),
             (HttpMethod.Post, $"{url}/{task.Id}/lines/{line}/confirm", new
             {
                 leaseToken = token, fromLocationId = s.BinA, toLocationId = task.Lines[0].ToLocationId, quantity = 1,

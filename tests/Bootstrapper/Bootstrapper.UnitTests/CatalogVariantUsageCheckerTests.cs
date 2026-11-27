@@ -146,6 +146,46 @@ public sealed class CatalogVariantUsageCheckerTests
         Assert.Equal(new HashSet<Guid> { planned, ready, assigned, inProgress }, used.ToHashSet());
     }
 
+    // DA-51: una novedad abierta (Open o InReview) todavía puede escribir en el ledger al resolverse (un SyncConflict aceptado en el
+    // stock), así que la variante no se borra. Una resuelta o rechazada ya no escribe nada.
+    [Fact]
+    public async Task AnOpenIncidentWithTheVariantCountsAsUse()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var open = Guid.CreateVersion7();
+        var inReview = Guid.CreateVersion7();
+        var otherTenant = Guid.CreateVersion7();
+        await AddIncidentAsync(database, TenantId, "Open", open);
+        await AddIncidentAsync(database, TenantId, "InReview", inReview);
+        await AddIncidentAsync(database, OtherTenantId, "Open", otherTenant);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId, [open, inReview, otherTenant], TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HashSet<Guid> { open, inReview }, used.ToHashSet());
+    }
+
+    [Fact]
+    public async Task AResolvedOrRejectedIncidentDoesNot()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var resolved = Guid.CreateVersion7();
+        var rejected = Guid.CreateVersion7();
+        await AddIncidentAsync(database, TenantId, "Resolved", resolved);
+        await AddIncidentAsync(database, TenantId, "Rejected", rejected);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId, [resolved, rejected], TestContext.Current.CancellationToken);
+
+        Assert.Empty(used);
+    }
+
     // Sin ids no consulta: ni siquiera hacen falta las tablas.
     [Fact]
     public async Task NoVariantsGiveNothingWithoutQuerying()
@@ -208,7 +248,11 @@ public sealed class CatalogVariantUsageCheckerTests
             CREATE TABLE wms.adjustment_lines (adjustment_id uuid NOT NULL REFERENCES wms.adjustments (id), variant_id uuid NOT NULL);
             CREATE TABLE wms.tasks (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, status text NOT NULL);
             CREATE TABLE wms.task_lines (task_id uuid NOT NULL REFERENCES wms.tasks (id), variant_id uuid NOT NULL, line_status text NOT NULL);
+            CREATE TABLE wms.incidents (tenant_id uuid NOT NULL, variant_id uuid, status text NOT NULL);
             """);
+
+    private static Task AddIncidentAsync(PostgreSqlContainer database, Guid tenantId, string status, Guid variantId) =>
+        ExecuteAsync(database, $"INSERT INTO wms.incidents (tenant_id, variant_id, status) VALUES ('{tenantId}', '{variantId}', '{status}');");
 
     private static async Task AddTaskLineAsync(
         PostgreSqlContainer database, Guid tenantId, string status, string lineStatus, Guid variantId)

@@ -62,7 +62,8 @@ public sealed record TaskLineDto(
     decimal QuantityConfirmed,
     decimal QuantityRemaining,
     string LineStatus,
-    string BaseUom);
+    string BaseUom,
+    decimal? QuantityCounted);
 
 public sealed record TaskEventDto(
     string Kind,
@@ -130,13 +131,16 @@ public sealed record TaskOperatorDto(
 public sealed record TaskStaleAssignmentDto(Guid TaskId, string TaskNumber, Guid MemberId, string Name);
 
 /// <summary>El tablero de una bodega (BFF, spec 2026-11-26 §6.10). <c>ByStatus</c> y <c>ByType</c> vienen completos, también en cero:
-/// la pantalla no conoce los enums. <c>StaleAssignments</c> viene completa: ver <see cref="TaskStaleAssignmentDto"/>.</summary>
+/// la pantalla no conoce los enums. <c>StaleAssignments</c> viene completa: ver <see cref="TaskStaleAssignmentDto"/>.
+/// <c>OpenIncidents</c> cuenta las novedades <c>Open</c> e <c>InReview</c> de la bodega (spec 2026-11-26 §8.5): la pantalla pinta el
+/// aviso sin pedir la bandeja.</summary>
 public sealed record TaskBoardDto(
     Guid WarehouseId,
     IReadOnlyList<TaskStatusSliceDto> ByStatus,
     IReadOnlyList<TaskTypeSliceDto> ByType,
     IReadOnlyList<TaskOperatorDto> Operators,
-    IReadOnlyList<TaskStaleAssignmentDto> StaleAssignments);
+    IReadOnlyList<TaskStaleAssignmentDto> StaleAssignments,
+    int OpenIncidents);
 
 public sealed record TaskAssigneeDto(Guid MemberId, string Name);
 
@@ -168,6 +172,31 @@ public sealed record ConfirmTaskLineRequest(
     Guid? LotId,
     decimal Quantity,
     string? OverrideReason,
+    DateTimeOffset? OccurredAt,
+    string? DeviceId) : IIdempotentRequest;
+
+/// <summary>Lo que el operario escaneó al no encontrar todo. <c>QuantityFound</c> va al destino planeado; para otro destino se
+/// confirma antes con motivo y se declara el faltante con 0 (DA-41). <c>IncidentType</c> es el nombre del tipo: <c>ShortMove</c> o
+/// <c>LocationMismatch</c>. <c>PhotoFileIds</c> son archivos <c>WmsEvidence</c> del tenant, en cualquier estado (una foto sin conexión
+/// puede estar subiendo todavía, DA-49): a lo sumo 5 distintos, o 422 <c>wms.incident.evidence_invalid</c>.</summary>
+public sealed record ShortTaskLineRequest(
+    Guid LeaseToken,
+    decimal QuantityFound,
+    Guid? LotId,
+    string? IncidentType,
+    string? Note,
+    DateTimeOffset? OccurredAt,
+    string? DeviceId,
+    IReadOnlyList<Guid>? PhotoFileIds = null) : IIdempotentRequest;
+
+/// <summary>Lo que el operario contó en la ubicación de la línea de un <c>Count</c>, a ciegas (DA-40): no recibe lo esperado y contar
+/// cero es válido. <c>LocationId</c> es la ubicación escaneada (tiene que ser la de la línea); <c>LotId</c> es el lote escaneado,
+/// obligatorio si la variante se controla por lote y la línea no lo fija. Ruta IK.</summary>
+public sealed record CountTaskLineRequest(
+    Guid LeaseToken,
+    Guid LocationId,
+    Guid? LotId,
+    decimal QuantityCounted,
     DateTimeOffset? OccurredAt,
     string? DeviceId) : IIdempotentRequest;
 
