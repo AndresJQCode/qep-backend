@@ -126,8 +126,7 @@ agregan, decisión del owner del 2026-11-26:
 | Tax ID | `50`, NIT de otro país |
 | NIF, NIE | `42`, documento de identificación extranjero |
 
-- El mapeo sale de los nombres de la tabla de Siigo. **Falta que lo confirme quien lleva la contabilidad** antes de
-  emitir a la DIAN.
+- El mapeo sale de los nombres de la tabla de Siigo. Lo confirmó contabilidad (respuesta del owner, 2026-11-27).
 - El documento viaja como el pasaporte hoy: sólo letras y dígitos ASCII, sin quitar dígito de verificación. El largo
   no se valida en QEP (Siigo admite de 1 a 20).
 - `customer_identification_type_unsupported` sigue existiendo para un documento sin tipo.

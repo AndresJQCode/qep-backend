@@ -323,7 +323,7 @@ exija, V-6).
 - Tipo de documento de QEP → `id_type` de Siigo, tabla fija en `SiigoIdentificationTypes`, con prueba: CC `13`, NIT `31`,
   CE `22`, TI `12`, PP/PA `41`, PEP `47`, RC `11`. Un tipo de QEP sin código es faltante, no se deduce. (El spec
   [`2026-11-26-siigo-ciudades-exterior-design.md`](2026-11-26-siigo-ciudades-exterior-design.md) agrega Tax ID `50` y NIF/NIE `42`,
-  por confirmar con quien lleva la contabilidad.)
+  confirmados por contabilidad el 2026-11-27.)
 - **NIT sin dígito de verificación y sólo con números**; Siigo acepta crear sin él. Cómo se limpia el documento cambió: mira
   la adición del 2026-11-25 en
   [`2026-11-25-siigo-telefono-indicativo-design.md`](2026-11-25-siigo-telefono-indicativo-design.md).
