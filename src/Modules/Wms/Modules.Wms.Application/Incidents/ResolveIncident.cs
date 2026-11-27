@@ -137,6 +137,13 @@ public sealed class ResolveIncidentHandler(
         Incident incident, Guid member, string key, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var lineId = incident.SourceTaskLineId;
+        // Serializa las resoluciones de una misma línea antes de leer lo que falta: dos novedades de la línea pasarían el tope a la vez.
+        // Orden de bloqueos (extiende la decisión 27): ... → task-line → saldos (ledger). Esta ruta no toma operario, tarea ni count-key.
+        if (lineId is { } lockedLine)
+        {
+            await unitOfWork.LockAsync($"task-line:{lockedLine:D}", cancellationToken);
+        }
+
         var facts = lineId is { } id
             ? await IncidentDtoComposer.ReadFactsAsync(tasks, profiles, incident, id, cancellationToken)
             : AcceptIntoStockFacts.None;

@@ -55,6 +55,21 @@ public sealed class AcceptIntoStockRulesApiTests
         return new Floor(s, destination, task, incident);
     }
 
+    // Otro conflicto sobre la misma línea (el mismo operario reenvía la acción con otra clave).
+    private static Task<Incident> AnotherConflictAsync(QepApiFactory factory, Floor floor, decimal found) =>
+        NumberAndSaveAsync(
+            factory,
+            floor.Setup,
+            number => NewIncident(
+                floor.Setup,
+                number,
+                IncidentType.SyncConflict,
+                new IncidentSubject(
+                    floor.Task.Id, floor.Task.Lines[0].Id, new LocationId(floor.Setup.BinA), floor.Setup.VariantId, null,
+                    StockStatus.Available, null, found),
+                reportedBy: Guid.CreateVersion7(),
+                operationKey: Guid.NewGuid().ToString()));
+
     private static async Task<IncidentDto> GetIncidentAsync(HttpClient client, Guid id)
     {
         var response = await client.GetAsync($"{WmsUrl()}/incidents/{id}", Ct);
@@ -127,6 +142,44 @@ public sealed class AcceptIntoStockRulesApiTests
         var floor = await ArrangeAsync(database, factory, found: 6);
 
         await AssertNotOfferedNorAcceptedAsync(database, floor);
+    }
+
+    [Fact]
+    public async Task ConflictsOnOneLineCannotTogetherMoveMoreThanItMisses()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeAsync(database, factory, found: 3);
+        var second = await AnotherConflictAsync(factory, floor, 3);
+
+        var first = await AcceptIntoStockAsync(floor.Setup.Manager, floor.Incident.Id);
+        var offered = await GetIncidentAsync(floor.Setup.Manager, second.Id);
+        var refused = await AcceptIntoStockAsync(floor.Setup.Manager, second.Id);
+
+        // 3 + 3 son 6 y a la línea le faltaban 5: la primera pasa y la segunda ya no se ofrece ni se acepta.
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.DoesNotContain("AcceptIntoStock", offered.AllowedResolutions);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        Assert.Equal("wms.incident.resolution_not_allowed", await CodeOfAsync(refused));
+        Assert.Equal(1L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements WHERE document_type = 'Incident'"));
+    }
+
+    [Fact]
+    public async Task TwoConcurrentResolvesOnOneLineMoveStockOnlyOnce()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeAsync(database, factory, found: 3);
+        var second = await AnotherConflictAsync(factory, floor, 3);
+
+        var responses = await Task.WhenAll(
+            AcceptIntoStockAsync(floor.Setup.Manager, floor.Incident.Id), AcceptIntoStockAsync(floor.Setup.Manager, second.Id));
+
+        Assert.DoesNotContain(responses, response => (int)response.StatusCode >= 500);
+        Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.OK));
+        Assert.Equal(1L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements WHERE document_type = 'Incident'"));
     }
 
     [Fact]

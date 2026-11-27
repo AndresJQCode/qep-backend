@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
 using Modules.Wms.Domain.Warehousing;
@@ -137,9 +138,26 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .Where(line => ids.Contains(line.Id))
             .Select(line => new { line.Id, line.ToLocationId, line.QuantityPlanned, line.QuantityConfirmed })
             .ToListAsync(cancellationToken);
+
+        // Lo que otras novedades ya aceptaron en el stock sobre la misma línea también cuenta: sin esto, reenviar la acción con otra
+        // clave crea N conflictos que pasan el tope uno por uno y juntos mueven de más. Se suma de la tabla de novedades (la resolución
+        // vive ahí), no del ledger particionado.
+        var accepted = await dbContext.Set<Incident>()
+            .AsNoTracking()
+            .Where(incident => incident.TenantId == tenantId
+                && incident.SourceTaskLineId != null
+                && ids.Contains(incident.SourceTaskLineId.Value)
+                && incident.Status == IncidentStatus.Resolved
+                && incident.Resolution == IncidentResolution.AcceptIntoStock)
+            .GroupBy(incident => incident.SourceTaskLineId!.Value)
+            .Select(group => new { LineId = group.Key, Quantity = group.Sum(incident => incident.ActualQty ?? 0m) })
+            .ToListAsync(cancellationToken);
+        var acceptedByLine = accepted.ToDictionary(row => row.LineId, row => row.Quantity);
         return rows.ToDictionary(
             row => row.Id,
-            row => new TaskLineFacts(row.ToLocationId?.Value, row.QuantityPlanned - row.QuantityConfirmed));
+            row => new TaskLineFacts(
+                row.ToLocationId?.Value,
+                row.QuantityPlanned - row.QuantityConfirmed - acceptedByLine.GetValueOrDefault(row.Id)));
     }
 
     public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(
