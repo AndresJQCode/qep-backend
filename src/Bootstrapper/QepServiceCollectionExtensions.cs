@@ -2504,6 +2504,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeState, TaskNoticeState>();
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeRecipients, TaskNoticeRecipients>();
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeWhatsApp, TaskNoticeWhatsAppSender>();
+        // HR birthday notices spec 2026-11-26 §5.3: the WhatsApp digest, through the approved HrBirthdayNotice template of Messaging.
+        services.AddScoped<Modules.Notifications.Application.IHrBirthdayWhatsApp, HrBirthdayWhatsAppSender>();
         services.AddScoped<
             IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
             Modules.Notifications.Application.ListInAppNotificationsHandler>();

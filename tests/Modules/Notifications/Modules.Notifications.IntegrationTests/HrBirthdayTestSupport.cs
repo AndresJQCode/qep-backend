@@ -94,6 +94,56 @@ internal static class HrBirthdayTestSupport
         return rows;
     }
 
+    /// <summary>The part of the digest a delivery row stores (names only), as the consumer writes it.</summary>
+    public static string PartsPayload(
+        IReadOnlyList<Person> today, int todayTotal, IReadOnlyList<Person> upcoming, int upcomingTotal, string? upcomingDate) =>
+        JsonSerializer.Serialize(new
+        {
+            today = today.Select(person => new { employeeId = person.EmployeeId, employeeName = person.EmployeeName }),
+            todayTotal,
+            upcoming = upcoming.Select(person => new { employeeId = person.EmployeeId, employeeName = person.EmployeeName }),
+            upcomingTotal,
+            upcomingDate,
+        });
+
+    /// <summary>A delivery row written the way the consumer leaves it, with a chosen state.</summary>
+    public static async Task<Guid> SeedDeliveryAsync(
+        string connectionString,
+        Guid tenantId,
+        Guid memberId,
+        string channel,
+        Guid? connectionId,
+        Guid sentByMemberId,
+        string payloadJson,
+        DateTimeOffset expiresAt,
+        string runDate = "2026-11-26",
+        int attempts = 0)
+    {
+        var id = Guid.CreateVersion7();
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO notifications.hr_birthday_deliveries
+                (id, tenant_id, member_id, run_date, channel, connection_id, sent_by_member_id, payload, status, attempts, expires_at, created_at)
+            VALUES (@id, @tenant, @member, CAST(@runDate AS date), @channel, @connection, @sentBy, CAST(@payload AS jsonb), 'Pending', @attempts, @expires, @created)
+            """,
+            connection);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("tenant", tenantId);
+        command.Parameters.AddWithValue("member", memberId);
+        command.Parameters.AddWithValue("runDate", runDate);
+        command.Parameters.AddWithValue("channel", channel);
+        command.Parameters.AddWithValue("connection", (object?)connectionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("sentBy", sentByMemberId);
+        command.Parameters.AddWithValue("payload", payloadJson);
+        command.Parameters.AddWithValue("attempts", attempts);
+        command.Parameters.AddWithValue("expires", expiresAt);
+        command.Parameters.AddWithValue("created", expiresAt.AddHours(-10));
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        return id;
+    }
+
     public static async Task ExecuteAsync(string connectionString, string sql, params (string Name, object Value)[] parameters)
     {
         await using var connection = new NpgsqlConnection(connectionString);
