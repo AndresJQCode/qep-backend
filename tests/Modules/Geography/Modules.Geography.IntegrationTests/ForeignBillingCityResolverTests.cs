@@ -16,6 +16,7 @@ public sealed class ForeignBillingCityResolverTests
     [Theory]
     [InlineData("US", " miámi ", "Us", "09", "1")]
     [InlineData("US", "MIAMI", "Us", "09", "1")]
+    [InlineData("us", " miámi ", "Us", "09", "1")] // el país llega como lo guardó el cliente: se normaliza aquí también
     [InlineData("EC", "Quito", "Ec", "20", "20075")] // la lista no se corrige: Quito queda en Pastaza
     public async Task AUniqueNameMatchesWhateverItsCaseAccentsOrSpaces(
         string country, string text, string siigoCountry, string state, string city)

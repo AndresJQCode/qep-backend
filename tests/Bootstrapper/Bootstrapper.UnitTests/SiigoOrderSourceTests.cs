@@ -89,13 +89,99 @@ public sealed class SiigoOrderSourceTests
     [Fact]
     public async Task ACityOutsideColombiaGetsNoDaneCode()
     {
-        var order = Order() with { BilledParty = Order().BilledParty with { Country = "ES" } };
+        var order = Order() with { BilledParty = Order().BilledParty with { Country = "ES", CityName = null } };
         var source = new SiigoOrderSource(new FakeInvoicing(order), new FakeGeography(), new FakeSplitter(null));
 
         var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
 
         Assert.Null(input!.BilledParty.CityCode);
         Assert.Null(input.BilledParty.StateCode);
+    }
+
+    private static ExternalInvoicingParty Foreign(string? country, string? cityName) =>
+        Order().BilledParty with { Country = country, CityName = cityName, CityId = null, DepartmentId = null };
+
+    [Fact]
+    public async Task AForeignCityInTheListTravelsWithTheSiigoCodes()
+    {
+        var geography = new FakeGeography();
+        geography.Foreign[("US", "Miami")] = new SiigoForeignCityLookup(true, new SiigoForeignCityCodes("Us", "09", "1"));
+        var source = new SiigoOrderSource(
+            new FakeInvoicing(Order() with { BilledParty = Foreign("US", " Miami ") }), geography, new FakeSplitter(null));
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        var party = input!.BilledParty;
+        Assert.Equal(("1", "09", "Us"), (party.CityCode, party.StateCode, party.SiigoCountryCode));
+        Assert.Null(party.UnlinkedCity);
+    }
+
+    [Fact]
+    public async Task ALowercaseCountryIsAskedInUppercase()
+    {
+        var geography = new FakeGeography();
+        var source = new SiigoOrderSource(
+            new FakeInvoicing(Order() with { BilledParty = Foreign(" us ", " Miami ") }), geography, new FakeSplitter(null));
+
+        await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(("US", "Miami"), Assert.Single(geography.Asked));
+    }
+
+    [Fact]
+    public async Task AForeignCityOutOfTheListIsUnlinkedAndReportable()
+    {
+        var geography = new FakeGeography();
+        geography.Foreign[("US", "Miamy")] = new SiigoForeignCityLookup(true, null);
+        var source = new SiigoOrderSource(
+            new FakeInvoicing(Order() with { BilledParty = Foreign("US", " Miamy ") }), geography, new FakeSplitter(null));
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        var party = input!.BilledParty;
+        Assert.Equal(new SiigoUnlinkedCity("US", "Miamy", Reportable: true), party.UnlinkedCity);
+        Assert.Equal((null, null, null), (party.CityCode, party.StateCode, party.SiigoCountryCode));
+    }
+
+    [Fact]
+    public async Task ACountryOutOfTheCatalogIsUnlinkedButNotReportable()
+    {
+        var geography = new FakeGeography();
+        geography.Foreign[("GD", "St. George's")] = new SiigoForeignCityLookup(false, null);
+        var source = new SiigoOrderSource(
+            new FakeInvoicing(Order() with { BilledParty = Foreign("GD", "St. George's") }), geography, new FakeSplitter(null));
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new SiigoUnlinkedCity("GD", "St. George's", Reportable: false), input!.BilledParty.UnlinkedCity);
+    }
+
+    [Fact]
+    public async Task AForeignPartyWithoutCityAsksNothing()
+    {
+        var geography = new FakeGeography();
+        var source = new SiigoOrderSource(
+            new FakeInvoicing(Order() with { BilledParty = Foreign("US", null) }), geography, new FakeSplitter(null));
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        var party = input!.BilledParty;
+        Assert.Empty(geography.Asked);
+        Assert.Null(party.UnlinkedCity);
+        Assert.Equal((null, null, null), (party.CityCode, party.StateCode, party.SiigoCountryCode));
+    }
+
+    [Fact]
+    public async Task AColombianPartyNeverAsksForForeignCodesNorCarriesASiigoCountry()
+    {
+        var geography = new FakeGeography();
+        var source = new SiigoOrderSource(new FakeInvoicing(Order()), geography, new FakeSplitter(null));
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        Assert.Empty(geography.Asked);
+        Assert.Null(input!.BilledParty.SiigoCountryCode);
+        Assert.Null(input.BilledParty.UnlinkedCity);
     }
 
     [Fact]
@@ -303,5 +389,16 @@ public sealed class SiigoOrderSourceTests
     {
         public Task<SiigoCityCodes?> FindCodesAsync(Guid cityId, CancellationToken cancellationToken) =>
             Task.FromResult<SiigoCityCodes?>(new SiigoCityCodes("11001", "11"));
+
+        public Dictionary<(string Country, string City), SiigoForeignCityLookup> Foreign { get; } = [];
+
+        public List<(string Country, string City)> Asked { get; } = [];
+
+        // Lo que no se configuró es un país del catálogo con una ciudad que no coincide.
+        public Task<SiigoForeignCityLookup> FindForeignCodesAsync(string countryCode, string cityText, CancellationToken cancellationToken)
+        {
+            Asked.Add((countryCode, cityText));
+            return Task.FromResult(Foreign.TryGetValue((countryCode, cityText), out var lookup) ? lookup : new SiigoForeignCityLookup(true, null));
+        }
     }
 }

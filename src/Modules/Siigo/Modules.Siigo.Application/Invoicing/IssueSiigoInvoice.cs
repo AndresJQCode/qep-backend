@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Siigo.Domain;
 using Modules.Tenancy.Application;
 
@@ -74,7 +75,9 @@ public sealed class IssueSiigoInvoiceHandler(
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
-    IValidator<IssueSiigoInvoiceCommand> validator) : ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>
+    IValidator<IssueSiigoInvoiceCommand> validator,
+    ISiigoForeignCityInbox foreignCities,
+    ILogger<IssueSiigoInvoiceHandler> logger) : ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>
 {
     public async Task<IReadOnlyList<SiigoInvoiceDto>> HandleAsync(IssueSiigoInvoiceCommand command, CancellationToken cancellationToken)
     {
@@ -182,6 +185,9 @@ public sealed class IssueSiigoInvoiceHandler(
         CancellationToken cancellationToken)
     {
         var context = await SiigoInvoiceSupport.LoadAsync(orders, settingsRepository, command.TenantId, command.OrderId, cancellationToken);
+        // Spec 2026-11-26: la ciudad del exterior sin vincular va a la bandeja del operador antes de armar (el armador la reporta como
+        // customer_city_unlinked y el pedido queda not_ready). Sólo aquí: ResumeAsync no carga el pedido ni anota.
+        await SiigoForeignCityAnnotation.AnnotateAsync(foreignCities, logger, command.TenantId, context.Input, cancellationToken);
         var overrides = (command.Payments ?? [])
             .Select(choice => new SiigoPaymentOverride(
                 SiigoInvoiceSupport.ParseKind(choice.Kind), choice.ProofId, choice.SiigoPaymentTypeId!.Trim()))

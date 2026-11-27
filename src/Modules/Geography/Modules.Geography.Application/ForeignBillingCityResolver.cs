@@ -23,8 +23,8 @@ public sealed record ForeignCityResolution(ForeignCityResolutionKind Kind, Billi
 /// <summary>Sólo lee. Lo llama Bootstrapper al armar el pedido para Siigo; global, sin IExecutionContext.</summary>
 public interface IForeignBillingCityResolver
 {
-    /// <summary><paramref name="countryCode"/> llega recortado y en mayúscula; <paramref name="cityText"/> es lo que escribió la
-    /// persona, sin normalizar.</summary>
+    /// <summary>Tanto <paramref name="countryCode"/> (el que guardó el cliente, tal cual) como <paramref name="cityText"/> (lo que escribió
+    /// la persona) llegan sin normalizar: el resolvedor recorta y pone en mayúscula el país antes de consultar.</summary>
     Task<ForeignCityResolution> ResolveAsync(string countryCode, string cityText, CancellationToken cancellationToken);
 }
 
@@ -38,6 +38,8 @@ public sealed class ForeignBillingCityResolver(
     public async Task<ForeignCityResolution> ResolveAsync(
         string countryCode, string cityText, CancellationToken cancellationToken)
     {
+        // El catálogo guarda el país en mayúscula: un «us» escrito a mano no puede quedar fuera de la lista.
+        countryCode = countryCode.Trim().ToUpperInvariant();
         if (!await cities.CountryExistsAsync(countryCode, cancellationToken))
         {
             return new ForeignCityResolution(ForeignCityResolutionKind.CountryNotInCatalog, null);

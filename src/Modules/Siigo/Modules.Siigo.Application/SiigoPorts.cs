@@ -172,6 +172,14 @@ public interface ISiigoVariantCatalog
 /// <summary>El número de un pedido y el nombre de su cliente, como los muestra <c>/orders</c>.</summary>
 public sealed record SiigoOrderLabel(string OrderNumber, string? CustomerName);
 
+/// <summary>Geography. Anota en la bandeja del operador una ciudad del exterior que no se pudo vincular (spec 2026-11-26). Escribe y
+/// puede fallar: quien llama no deja que eso tumbe la facturación. Lo llaman sólo la vista previa y la emisión; la disponibilidad no lo
+/// recibe.</summary>
+public interface ISiigoForeignCityInbox
+{
+    Task ReportAsync(Guid tenantId, Guid orderId, Invoicing.SiigoUnlinkedCity city, CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Quotations. El pedido tal como el armador de la factura lo necesita, y la marca de «facturado» una vez que Siigo la creó (spec
 /// 2026-11-18 §5.5). El adaptador (<c>SiigoOrderSource</c>, Bootstrapper) llena <see cref="Invoicing.SiigoInvoiceInput"/> desde el

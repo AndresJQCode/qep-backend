@@ -29,10 +29,7 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
         }
 
         var party = order.BilledParty;
-        // Sólo Colombia tiene códigos DANE: una ciudad de otro país queda sin código y el armador la reporta como faltante.
-        var codes = party is { IsFinalConsumer: false, CityId: { } cityId } && IsColombian(party.Country)
-            ? await geography.FindCodesAsync(cityId, cancellationToken)
-            : null;
+        var place = await PlaceOfAsync(party, cancellationToken);
         return new SiigoInvoiceInput(
             order.OrderId,
             order.OrderNumber,
@@ -60,10 +57,12 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
                 party.Identification,
                 party.Name,
                 party.Address,
-                codes?.CityCode,
-                codes?.StateCode,
+                place.CityCode,
+                place.StateCode,
                 party.Email,
-                PhoneOf(party)),
+                PhoneOf(party),
+                place.SiigoCountryCode,
+                place.UnlinkedCity),
             order.CompanyId,
             order.Version,
             order.AdvisorMembershipId,
@@ -90,6 +89,40 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
         Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
         (await invoicing.ListLabelsAsync(tenantId, orderIds, cancellationToken)).ToDictionary(
             label => label.Key, label => new SiigoOrderLabel(label.Value.OrderNumber, label.Value.CustomerName));
+
+    // Dónde se factura. Colombia: los códigos DANE de la ciudad por id. Otro país con ciudad escrita (spec 2026-11-26): se pregunta a la
+    // lista de Siigo (sólo lectura; anotar en la bandeja es de SiigoForeignCityInbox, que llaman la vista previa y la emisión). El país va
+    // recortado y en mayúscula, como lo guarda el catálogo. Otro país sin ciudad escrita: nada, y el armador dice customer_city_missing.
+    private async Task<Place> PlaceOfAsync(ExternalInvoicingParty party, CancellationToken cancellationToken)
+    {
+        if (party.IsFinalConsumer)
+        {
+            return Place.None;
+        }
+
+        if (IsColombian(party.Country))
+        {
+            var codes = party.CityId is { } cityId ? await geography.FindCodesAsync(cityId, cancellationToken) : null;
+            return codes is null ? Place.None : new Place(codes.CityCode, codes.StateCode, null, null);
+        }
+
+        if (string.IsNullOrWhiteSpace(party.CityName))
+        {
+            return Place.None;
+        }
+
+        var country = party.Country!.Trim().ToUpperInvariant();
+        var cityText = party.CityName.Trim();
+        var lookup = await geography.FindForeignCodesAsync(country, cityText, cancellationToken);
+        return lookup.Codes is { } found
+            ? new Place(found.CityCode, found.StateCode, found.CountryCode, null)
+            : new Place(null, null, null, new SiigoUnlinkedCity(country, cityText, lookup.CountryInCatalog));
+    }
+
+    private sealed record Place(string? CityCode, string? StateCode, string? SiigoCountryCode, SiigoUnlinkedCity? UnlinkedCity)
+    {
+        public static Place None { get; } = new(null, null, null, null);
+    }
 
     // Lo que no se puede partir viaja crudo: el armador del cliente decide si Siigo lo aceptaría.
     private SiigoPhone? PhoneOf(ExternalInvoicingParty party)

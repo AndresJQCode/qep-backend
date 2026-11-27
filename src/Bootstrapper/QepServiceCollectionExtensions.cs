@@ -2326,6 +2326,9 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
         services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
+        // Spec 2026-11-26: anotar en la bandeja del operador la ciudad del exterior sin vincular. Escribe; sólo la vista previa y la
+        // emisión lo reciben (la disponibilidad no).
+        services.AddScoped<ISiigoForeignCityInbox, SiigoForeignCityInbox>();
         // Spec 2026-11-21: enviar el PDF de la factura por WhatsApp. Siigo no ve Quotations: el puerto reenvía a su fachada.
         services.AddScoped<ISiigoInvoiceWhatsApp, SiigoInvoiceWhatsApp>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
