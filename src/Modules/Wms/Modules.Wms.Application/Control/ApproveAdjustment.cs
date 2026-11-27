@@ -16,7 +16,9 @@ public sealed class ApproveAdjustmentHandler(
     IWmsUnitOfWork unitOfWork,
     IWmsAuditRecorder auditRecorder,
     IClock clock,
-    AdjustmentDtoComposer composer)
+    AdjustmentDtoComposer composer,
+    IIncidentRepository incidents,
+    WmsCaller caller)
     : ICommandHandler<ApproveAdjustmentCommand, AdjustmentDto>
 {
     public async Task<AdjustmentDto> HandleAsync(ApproveAdjustmentCommand command, CancellationToken cancellationToken)
@@ -29,6 +31,15 @@ public sealed class ApproveAdjustmentHandler(
         await authorization.EnsureAsync(
             executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, adjustment.OwnerId.Value, adjustment.WarehouseId.Value, cancellationToken);
         WmsVersions.Ensure(adjustment.Version, command.Version);
+
+        // Un ajuste que propuso un conteo no lo aprueba quien contó ni quien reportó el faltante (DA-17, DA-47). Se comparan
+        // membresías (WmsCaller), nunca SubjectId. Sin novedad detrás, el ajuste se aprueba como siempre y no pide membresía.
+        if (await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken) is { } variance)
+        {
+            var member = await caller.RequireAsync(command.TenantId, cancellationToken);
+            variance.EnsureNotInvolvedInApproval(
+                member, await incidents.ListReportersOfChildrenAsync(command.TenantId, variance.Id, cancellationToken));
+        }
 
         var now = clock.UtcNow;
         adjustment.Approve(executionContext.SubjectId, now);

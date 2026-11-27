@@ -157,6 +157,60 @@ public sealed class IncidentLifecycleTests
     }
 
     [Fact]
+    public void PostingTheAdjustmentResolvesACountVarianceWithTheBatch()
+    {
+        var variance = Report(IncidentType.CountVariance);
+        var batch = Guid.CreateVersion7();
+
+        variance.ResolveByAdjustment(batch, Supervisor, "ADJ-20261126-0001", Now.AddMinutes(9));
+
+        Assert.Equal((IncidentStatus.Resolved, IncidentResolution.Accept, Supervisor, batch, 2L),
+            (variance.Status, variance.Resolution, variance.ResolvedBy, variance.BatchId, variance.Version));
+        Assert.Equal("Ajuste ADJ-20261126-0001 contabilizado.", variance.ResolutionNote);
+        Assert.Equal((IncidentEventKind.Resolved, (Guid?)Supervisor), (variance.Events[^1].Kind, variance.Events[^1].MemberId));
+    }
+
+    [Fact]
+    public void RejectingTheAdjustmentRejectsACountVarianceWithItsNote()
+    {
+        var variance = Report(IncidentType.CountVariance);
+
+        variance.RejectByAdjustment(Supervisor, " Se recontó ", Now.AddMinutes(9));
+
+        Assert.Equal((IncidentStatus.Rejected, Supervisor, "Se recontó"), (variance.Status, variance.ResolvedBy, variance.ResolutionNote));
+        Assert.Null(variance.Resolution);
+        Assert.Equal(IncidentEventKind.Rejected, variance.Events[^1].Kind);
+        Assert.Equal(
+            WmsErrorCodes.IncidentInvalid,
+            Assert.Throws<WmsDomainException>(() => Report(IncidentType.CountVariance).RejectByAdjustment(Supervisor, " ", Now)).Code);
+    }
+
+    [Fact]
+    public void OnlyACountVarianceIsClosedByItsAdjustmentAndOnlyWhileOpen()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => Report(IncidentType.ShortMove).ResolveByAdjustment(Guid.NewGuid(), Supervisor, "ADJ-1", Now));
+        Assert.Throws<InvalidOperationException>(() => Report(IncidentType.SyncConflict).RejectByAdjustment(Supervisor, "x", Now));
+        var closed = Report(IncidentType.CountVariance);
+        closed.ResolveByAdjustment(Guid.NewGuid(), Supervisor, "ADJ-1", Now);
+        Assert.Throws<InvalidTransitionException>(() => closed.RejectByAdjustment(Supervisor, "x", Now));
+    }
+
+    [Fact]
+    public void TheCounterAndTheReportersOfTheVerifiedIncidentsCannotApproveTheAdjustment()
+    {
+        var variance = Report(IncidentType.CountVariance);
+        var reporterOfTheShort = Guid.CreateVersion7();
+
+        var counter = Assert.Throws<WmsDomainException>(() => variance.EnsureNotInvolvedInApproval(Reporter, [reporterOfTheShort]));
+        var reporter = Assert.Throws<WmsDomainException>(() => variance.EnsureNotInvolvedInApproval(reporterOfTheShort, [reporterOfTheShort]));
+
+        Assert.Equal(WmsErrorCodes.IncidentSelfResolution, counter.Code);
+        Assert.Equal(WmsErrorCodes.IncidentSelfResolution, reporter.Code);
+        variance.EnsureNotInvolvedInApproval(Supervisor, [reporterOfTheShort]);
+    }
+
+    [Fact]
     public void AttachingAnAdjustmentOnlyFitsACountVariance()
     {
         var adjustment = Guid.CreateVersion7();

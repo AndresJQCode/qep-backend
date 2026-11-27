@@ -205,6 +205,59 @@ public sealed class Incident
         _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Resolved, null, resolution.ToString(), now, now));
     }
 
+    /// <summary>El ajuste de esta <c>CountVariance</c> se contabilizó: la novedad queda resuelta con <c>Accept</c> y el lote del ledger.
+    /// Sólo la cierra su ajuste (un supervisor no la resuelve a mano). <paramref name="by"/> es quien contabilizó.</summary>
+    public void ResolveByAdjustment(Guid batchId, Guid by, string adjustmentNumber, DateTimeOffset now)
+    {
+        EnsureCountVariance();
+        EnsureUnresolved("resolve");
+        Status = IncidentStatus.Resolved;
+        Resolution = IncidentResolution.Accept;
+        ResolvedBy = by;
+        ResolvedAt = now.ToUniversalTime();
+        ResolutionNote = Trimmed($"Ajuste {adjustmentNumber} contabilizado.", NoteMaxLength, "La nota de la resolución");
+        BatchId = batchId;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Resolved, by, IncidentResolution.Accept.ToString(), now, now));
+    }
+
+    /// <summary>Se rechazó el ajuste de esta <c>CountVariance</c>: la novedad se rechaza con el motivo del ajuste. Sólo ese tipo, y sólo
+    /// por su ajuste.</summary>
+    public void RejectByAdjustment(Guid by, string note, DateTimeOffset now)
+    {
+        EnsureCountVariance();
+        EnsureUnresolved("reject");
+        var trimmed = Trimmed(note, NoteMaxLength, "El motivo del rechazo")
+            ?? throw new WmsDomainException(WmsErrorCodes.IncidentInvalid, "El motivo del rechazo es obligatorio.");
+        Status = IncidentStatus.Rejected;
+        ResolvedBy = by;
+        ResolvedAt = now.ToUniversalTime();
+        ResolutionNote = trimmed;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Rejected, by, null, now, now));
+    }
+
+    /// <summary>Separación de funciones (DA-17, DA-47): quien contó, o quien reportó una de las novedades que este conteo cerró, no
+    /// aprueba el ajuste que su diferencia provocó. Se comparan membresías, nunca <c>SubjectId</c>.</summary>
+    public void EnsureNotInvolvedInApproval(Guid member, IReadOnlyCollection<Guid> reportersOfVerified)
+    {
+        ArgumentNullException.ThrowIfNull(reportersOfVerified);
+        EnsureCountVariance();
+        if (member != Guid.Empty && (member == ReportedBy || reportersOfVerified.Contains(member)))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentSelfResolution, "Quien contó o reportó el faltante no puede aprobar el ajuste que provocó.");
+        }
+    }
+
+    private void EnsureCountVariance()
+    {
+        if (Type != IncidentType.CountVariance)
+        {
+            throw new InvalidOperationException($"Only a {nameof(IncidentType.CountVariance)} is closed by its adjustment, not a {Type}.");
+        }
+    }
+
     /// <summary>El ajuste que propuso el conteo y que cerrará esta <c>CountVariance</c>. Sólo ese tipo lo lleva; se llama al nacer la
     /// novedad, antes de guardarla.</summary>
     public void AttachAdjustment(Guid adjustmentId)

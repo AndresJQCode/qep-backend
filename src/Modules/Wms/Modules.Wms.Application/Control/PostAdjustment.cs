@@ -29,7 +29,8 @@ public sealed class PostAdjustmentHandler(
     WmsCaller caller,
     IWmsEventPublisher events,
     IWmsConfirmMetrics metrics,
-    AdjustmentDtoComposer composer)
+    AdjustmentDtoComposer composer,
+    IIncidentRepository incidents)
     : ICommandHandler<PostAdjustmentCommand, AdjustmentDto>
 {
     public async Task<AdjustmentDto> HandleAsync(PostAdjustmentCommand command, CancellationToken cancellationToken)
@@ -68,6 +69,13 @@ public sealed class PostAdjustmentHandler(
             cancellationToken);
 
         adjustment.MarkPosted(posting.BatchId, now);
+
+        // La CountVariance que este ajuste cierra se resuelve en la misma transacción, con el lote del ledger.
+        if (await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken) is { } variance)
+        {
+            variance.ResolveByAdjustment(posting.BatchId, actorId, adjustment.Number, now);
+        }
+
         auditRecorder.Record(
             command.TenantId,
             executionContext.SubjectId,
