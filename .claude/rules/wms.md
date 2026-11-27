@@ -33,9 +33,34 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Los números de `TaskPriority` están repetidos en el SQL de `LockNextCandidateAsync`**; `TaskCandidateQueryTests` los amarra. Cambiar
   uno sin el otro lo pone en rojo. El mismo SQL excluye lo saltado leyendo `task_events` por nombre (`kind = 'Unclaimed'`,
   `detail = 'Skipped'`): renombrar un valor de `TaskEventKind` o de `TaskUnclaimReason` compila y rompe el filtro sin error.
-- **Un tipo de tarea nuevo necesita**: valor del enum, `CK_tasks_type` (migración), `TaskTypePermissions.For` y cada método de
-  `TaskTypePolicy`. **Un estado nuevo** entra en `CK_tasks_status`; si todavía puede confirmar, también en la lista de
-  `CatalogVariantUsageChecker`, y si es terminal, en la exclusión de `CountOpenByTypeAsync`.
+- **Un tipo de tarea nuevo necesita**: valor del enum, `CK_tasks_type` (migración), `TaskTypePermissions.For`, cada método de
+  `TaskTypePolicy` **y `ConfirmsByCount`** (con cuál de las dos acciones, `confirm`/`short` o `count`, cierra sus líneas; la otra
+  responde `wms.task.invalid_transition`). **Un estado nuevo** entra en `CK_tasks_status`; si todavía puede confirmar, también en la
+  lista de `CatalogVariantUsageChecker`, y si es terminal, en la exclusión de `CountOpenByTypeAsync`.
+- **Toda acción del operario sobre una línea pasa por `OperatorLineRunner`, y todo cierre de tarea por `TaskClosedNotifier`.** Un camino
+  nuevo que cierre una tarea sin pasar por ahí deja un `Count` cancelado con novedades enlazadas, o un conteo sin evaluar.
+- **Un `Count` es a ciegas**: lo esperado se calcula al contar (`FindOnHandAsync`) y no se guarda en la línea. Ningún campo de un DTO
+  del operario puede llevarlo, ni siquiera «para depurar». El conteo no escribe al ledger: propone un ajuste `CountVariance` y lo
+  contabiliza quien lo apruebe.
+- **La novedad nace en la transacción del hecho, con su clave.** La única excepción es `SyncConflict`, que se confirma sola antes del
+  409: no «arregles» el `SaveChangesAsync` antes del `throw` de `OperatorLineRunner`. Una novedad que cambia stock al resolverse
+  (`AcceptIntoStock`) hace **una** llamada al ledger y todo se deshace junto si falla.
+- **Orden de bloqueos con novedades: operario → su tarea → `count-key:` → el `Count` abierto → numeraciones (`incident-seq`,
+  `task-seq`, `adj-seq`) → saldos.** `TaskIncidentRecorder.LockVerificationAsync` toma el `count-key` y la fila del `Count` **antes**
+  de numerar la novedad: la acción `count` ya tiene la fila del `Count` y luego numera ajuste y novedad, así que enlazar después de
+  `incident-seq` es un deadlock. La acción `count` y el gancho `CountVerificationHook` **no toman `count-key:`**.
+- **Un tipo de novedad nuevo necesita**: valor del enum, fila en `IncidentCatalog` (`EveryTypeHasAnEntry` lo exige), `CK_incidents_type`
+  (migración) y, si mueve stock, su resolución en `ResolveIncidentHandler`. `CountVariance` nunca se resuelve ni se rechaza a mano:
+  la cierra su ajuste (`post` la resuelve, `reject` la rechaza). Separación de funciones: quien contó o reportó el faltante no aprueba
+  ese ajuste; se comparan **membresías** (`WmsCaller`), nunca `SubjectId`.
+- **El barrido y el tablero filtran por los valores que el build conoce (`KnownTaskValues`)**: no quites ese filtro, es lo que deja
+  desplegar el corte siguiente (una fila con un tipo, origen o estado de línea que este build no sabe leer lanzaría y el barrido
+  deshace todo su lote en cada pasada). Sin migración que lo cubra: `TaskForwardCompatibilityTests` quita los `CHECK` para probarlo.
+- **`GetValueOrDefault` sobre un diccionario de `Guid` devuelve `Guid.Empty`, no `null`**: una línea sin destino (la de un `Count`) se
+  leía como destino `00000000-…` y `resolve` respondía 404 `wms.location.not_found`. Usa `TryGetValue`.
+- **Un `Count` abierto no se ofrece a quien reportó la novedad que verifica** (DA-45): `LockNextCandidateAsync` lee `wms.incidents`
+  (`verification_task_id`, `reported_by`) por nombre de columna; renombrarlas compila y rompe el filtro. El supervisor puede
+  asignárselo y entonces sí lo recibe.
 - **La FK de `task_lines.lot_id` no mira tenant, dueño ni variante**: `CreateMoveTaskHandler` lo comprueba antes de guardar, como el
   ledger al confirmar.
 - **Los handlers que escriben al ledger abren la transacción con `await using var tx = await uow.BeginTransactionAsync(ct)`**: si `SaveChangesAsync` lanza `OperationReplayedException`, el `await using` deshace la transacción y el filtro relee el recibo; sin el `await using` la relectura corre sobre una transacción abortada y responde 500 donde tocaba 200. Y `Propose` la abre aunque no escriba movimientos: la numeración `ADJ-…` toma `pg_advisory_xact_lock` (bloqueante) y sin transacción no hay lock.

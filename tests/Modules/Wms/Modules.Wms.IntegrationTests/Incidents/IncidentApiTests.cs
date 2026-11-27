@@ -742,6 +742,98 @@ public sealed class IncidentApiTests
     }
 
     [Fact]
+    public async Task TwoConcurrentResolvesLeaveOneWinnerAndNoServerError()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.LocationMismatch));
+
+        var responses = await Task.WhenAll(
+            IncidentActionAsync(s.Manager, incident.Id, "resolve", new { version = 1, resolution = "Accept" }),
+            IncidentActionAsync(s.Manager, incident.Id, "resolve", new { version = 1, resolution = "Accept" }));
+
+        // La perdedora ve el candado del documento (409), el 200 guardado de la ganadora o la versión nueva (412/422); nunca un 5xx.
+        var codes = responses.Select(response => response.StatusCode).Order().ToList();
+        Assert.Equal(HttpStatusCode.OK, codes[0]);
+        Assert.All(codes, code => Assert.True(
+            code is HttpStatusCode.OK or HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed or HttpStatusCode.UnprocessableEntity,
+            $"A resolve answered {code}."));
+        var stored = await GetIncidentAsync(s.Manager, incident.Id);
+        Assert.Equal(("Resolved", 2L), (stored.Status, stored.Version));
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.incident.resolved", incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task ResolvingAndRejectingAConflictAtTheSameTimeNeverDoesBoth()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeConflictAsync(database, factory);
+        using var _c = floor.ReporterClient;
+        var supervisor = floor.Setup.Manager;
+
+        var responses = await Task.WhenAll(
+            IncidentActionAsync(supervisor, floor.Incident.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" }),
+            IncidentActionAsync(supervisor, floor.Incident.Id, "reject", new { version = 1, note = "duplicada" }));
+
+        Assert.All(responses, response => Assert.True((int)response.StatusCode < 500, $"A race answered {(int)response.StatusCode}."));
+        Assert.Contains(responses, response => response.StatusCode == HttpStatusCode.OK);
+        var stored = await GetIncidentAsync(supervisor, floor.Incident.Id);
+        // Stock sólo se mueve si ganó el resolve; si ganó el reject, no hay movimiento.
+        var movements = await IncidentMovementsAsync(database);
+        Assert.Equal(stored.Status == "Resolved" ? 1L : 0L, movements);
+        Assert.True(stored.Status is "Resolved" or "Rejected", stored.Status);
+        Assert.Equal(1, await CountAuditEntriesAsync(
+            factory, stored.Status == "Resolved" ? "wms.incident.resolved" : "wms.incident.rejected", floor.Incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task AFailureMovingTheStockRollsBackTheResolutionEntirely()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeConflictAsync(database, factory, found: 3);
+        using var _c = floor.ReporterClient;
+        var incident = floor.Incident;
+        var key = $"incident:{incident.Id}:resolve:1";
+        // El ledger rechaza el movimiento: no queda stock en el origen.
+        await ExecuteAsync(
+            database,
+            "UPDATE wms.stock_balances SET on_hand = 0 WHERE location_id = @location AND variant_id = @variant",
+            ("location", floor.Setup.BinA),
+            ("variant", floor.Setup.VariantId));
+
+        var failed = await IncidentActionAsync(
+            floor.Setup.Manager, incident.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, failed.StatusCode);
+        Assert.Equal("wms.stock.insufficient", await CodeOfAsync(failed));
+        var stored = await GetIncidentAsync(floor.Setup.Manager, incident.Id);
+        Assert.Equal(("Open", 1L, (string?)null), (stored.Status, stored.Version, stored.Resolution));
+        Assert.Equal(0, await CountAuditEntriesAsync(factory, "wms.incident.resolved", incident.Id.ToString()));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM wms.operation_receipts WHERE idempotency_key = @key", ("key", key)));
+        Assert.Equal(0L, await IncidentMovementsAsync(database));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM wms.incident_events WHERE incident_id = @id", ("id", incident.Id)));
+
+        // Sin un recibo a medias, el mismo resolve sale bien en cuanto hay stock.
+        await ExecuteAsync(
+            database,
+            "UPDATE wms.stock_balances SET on_hand = 10 WHERE location_id = @location AND variant_id = @variant",
+            ("location", floor.Setup.BinA),
+            ("variant", floor.Setup.VariantId));
+        var retried = await IncidentActionAsync(
+            floor.Setup.Manager, incident.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" });
+        Assert.Equal(HttpStatusCode.OK, retried.StatusCode);
+        Assert.Equal(1L, await IncidentMovementsAsync(database));
+    }
+
+    [Fact]
     public async Task AConflictFromACountCannotBeAcceptedIntoStock()
     {
         var (database, factory) = await OpenAsync();

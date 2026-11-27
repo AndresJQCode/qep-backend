@@ -1291,6 +1291,32 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
 25. (Block B) `resolve` takes the document lock `TryLockDocumentAsync(incident.Id)` like `post` of an adjustment: a second concurrent
     resolve of the same incident answers 409 `wms.document.busy` (or replays the winner's receipt through the SK filter).
 26. (Block B) An incident reported by the system (`ReportedBy = Guid.Empty`) never counts as a self-resolution.
+27. (Block C) The `count-key` lock and the open `Count` row are taken **before** `incident-seq` (not «right after `Incident.Report`»
+    as C3 wrote it): the `count` action already holds the `Count` row and then numbers the adjustment and the variance incident, so
+    linking after taking `incident-seq` is a deadlock. `EnsureVerificationAsync` is therefore two public methods of
+    `TaskIncidentRecorder`: `LockVerificationAsync` (before numbering) and `LinkVerificationAsync` (after `Report`, before `Add`).
+28. (Block C) A `LocationMismatch` reported by `POST /incidents` has no `stock_status` (decision 21); the `Count` it generates counts
+    `Available`.
+29. (Block C) `Incident.LinkVerification` and `AttachAdjustment` run at creation and do not bump `version`; `UnlinkVerification`,
+    `ResolveBySystem`, `ResolveByAdjustment` and `RejectByAdjustment` do. `LinkVerification` takes an optional task number for the
+    history detail; `UnlinkVerification` records the number of the cancelled `Count`.
+30. (Block C) The hook matches the incidents a `Count` verifies to its counted line by location, variant and status (not lot: the
+    scan may fill the lot). A system resolution is `Accept` with a note («Verificada por TSK-…: sin diferencia.» or «…: ver NOV-…»),
+    `ResolvedBy = Guid.Empty`, history event without member.
+31. (Block C) The `CountVariance` incident: `ReportedBy` is the counter's membership, `reportedAt` the scan time, `operation_key` the
+    count's key, no `deviceId`, note «Conteo TSK-…: contó N y el sistema tenía M.». Its adjustment carries the task number as note
+    and `source = "count"` plus `taskNumber` in the `wms.adjustment.proposed` audit.
+32. (Block C) Posting the adjustment resolves the `CountVariance` with `Accept`, the batch and the posting membership; rejecting it
+    rejects the incident with the adjustment's note.
+33. (Block C) The DA-45 filter (reporter not offered their own `Count`) is in `LockNextCandidateAsync` only; `POST /tasks/{id}/claim`
+    by id does not apply it (the plan names only `next`). Pending the owner.
+34. (Block C) Forward compatibility covers the sweeper (`LockExpiredAsync`) and the board reads (`CountByStatusAsync`,
+    `CountOpenByTypeAsync`, `ListInProgressAsync`, `ListAssignedOpenAsync`); `ListInProgressAsync` also skips tasks with a line
+    status this build does not know. `ListAsync`/`GetAsync` are not filtered (a supervisor reading a row this build cannot read still fails).
+35. (Block C) `CountVerificationHook` is registered in `WmsInfrastructureExtensions` next to `TaskClosedNotifier` (where A1 registered
+    the notifier), and `CountTaskLineHandler` in `QepServiceCollectionExtensions` with the other task handlers.
+36. (Block C) A `SyncConflict` left by a `count` with a lost lease has `allowedResolutions = []` (a `Count` line has no destination)
+    and can only be rejected.
 
 ## Deviations
 
@@ -1309,3 +1335,24 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
   `GET /incidents/{id}` uses `GetWithEventsAsync` (no tracking). New unit test `IncidentRoutesTests` (route table with policies).
 - **B4:** `resolve` reads the line destination with the narrow query (decision 22) instead of `tasks.GetAsync`. Added the unit test
   `EnsureCanResolveAnswersLikeResolveAndChangesNothing` and the route table cases for `review`, `resolve` and `reject`.
+
+### Block C
+
+- **C1:** the board lists the new type `Count` at zero, so two existing assertions changed (`SupervisorTaskActionsTests.
+  TheBoardListsEveryStatusAndTypeEvenAtZero`, `TaskSupervisorActionsApiTests`): `ByType` is `[Move, Count]`, not `[Move]`.
+- **C2:** none. `FindOpenCountAsync` only counts a `Count` with an `Open` line on the key.
+- **C3:** decision 27 (lock order) replaces the single `EnsureVerificationAsync`. Existing test `ShortWithTwoFoundMovesTwoAndClosesTheTask`
+  now asserts a verification task instead of `null`. Unit doubles (`TaskWorld`) gained profile, task numbering and the new recorder
+  dependencies.
+- **C4:** the new `count` cases live in `TaskCountRecordingApiTests` (a second class; the C3 cases are in `TaskCountApiTests`). Fixed a
+  Block B defect found here: `resolve` and the incident DTO read a line destination with `GetValueOrDefault`, which gives
+  `Guid.Empty` (not `null`) for a line without destination, so a conflict from a `count` answered 404 `wms.location.not_found`
+  instead of 422 `resolution_not_allowed`; both now use `TryGetValue` (`AConflictFromACountCannotBeAcceptedIntoStock` pins it).
+- **C5:** none. `Incident.EnsureNotInvolvedInApproval` carries the separation-of-duties rule (unit tested).
+- **C6:** `KnownTaskValues` holds the names (SQL) and the values (LINQ) of the four enums; EF translated the converted enum arrays,
+  so no raw SQL was needed for the board reads.
+- **C7:** `AddCountTasks` and `AddIncidentsAndShortLines` were added to the README migrations list together (Block A did not).
+  Closed the three extra gaps from Block B: `TwoConcurrentResolvesLeaveOneWinnerAndNoServerError`,
+  `ResolvingAndRejectingAConflictAtTheSameTimeNeverDoesBoth` and `AFailureMovingTheStockRollsBackTheResolutionEntirely` (integration:
+  the ledger refuses the movement because the source has no stock). They characterize behavior that was already correct, so they
+  were green on first run (no RED).

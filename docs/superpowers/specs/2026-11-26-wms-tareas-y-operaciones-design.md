@@ -745,6 +745,13 @@ depender de recepción ni de pedidos, y sirve desde el día uno para reabastecer
 
 ## 8. Novedades: modelo unificado (T2)
 
+> **Estado de T2 (2026-11-27).** Construido en la rama `feature/wms-t2-incidents` (backend), sin mergear: novedades `ShortMove`,
+> `LocationMismatch`, `UnreadableLabel`, `CountVariance` y `SyncConflict`; la línea `Short`; el tipo `Count` a ciegas con la acción
+> `count` y el ajuste `CountVariance`; el catálogo de uso de variante (DA-51). **Sigue sin aprobar el owner**: DA-38 a DA-51 y las
+> decisiones del agente del [plan](../plans/2026-11-26-wms-t2-novedades.md) esperan su respuesta antes del merge. Quedan fuera de
+> T2, como dice el plan, las resoluciones `ReturnToSupplier`, `WriteOff`, `Relocate`, `Count` y `Adjust`, `TASK_ABANDONED`, el
+> frontend y la app. Ante una discrepancia entre este documento y el código, gana el código.
+
 Una **novedad** registra que la realidad no coincidió con el plan, con lo necesario para decidir y para auditar. Reemplaza el
 `Discrepancy` del spec de arquitectura §9.3 (DA-16) y conserva su regla de los dos momentos: lo físico entra al ledger cuando se
 registra (en `Quarantine`, `Damaged` o `Blocked`), y la resolución genera el segundo movimiento.
