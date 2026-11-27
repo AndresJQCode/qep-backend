@@ -2,6 +2,9 @@
 
 Tarjeta: <https://trello.com/c/W4Ijr9DW>. Desbloquea <https://trello.com/c/0dhhZPZV> (frontend).
 Verificado sobre `develop` en `4dc94b00c` y, tras la revisión independiente, en `5e370555b`. Estado: **aprobado** por el owner el 2026-11-26.
+Corrección del 2026-11-26, decidida por el owner tras la revisión del Bloque 2 (opción (a)): la purga marca el archivo como no
+disponible y confirma antes de la segunda pregunta y de R2 (ver «Por cada id» y «Ventana residual»). Verificada sobre
+`feature/hr-assignment-edit` en `1697035fd`.
 
 ## Para qué
 
@@ -129,18 +132,100 @@ infraestructura de otro). Esperas entre intentos: 5 s, 30 s y 5 min, y desde ah�
 falla se registra en `Warning` con el id del mensaje y el intento, y en `Error` desde el intento 3 (`ErrorAfterAttempts`,
 el primero que deja la espera de 5 min por delante). Un payload mal formado se registra y se marca sin efecto.
 
-Por cada id:
+**Por qué el candado solo no alcanza** (revisión del Bloque 2, verificado en `1697035fd`). Hr adjunta con lecturas
+simples: `HrDocumentAttachment.ResolveAsync` → `HrDocumentStore.CompleteAsync` → `StorageSystemUploads.CompleteAsync` y
+`FindAvailableAsync`, que leen la fila por `IFileResourceRepository.GetAsync` sin candado. En Postgres un `SELECT` simple
+no espera a un `FOR UPDATE`, así que:
 
-1. Carga el recurso por id **y** tenant, con candado de fila. Si no existe, no es `HrDocument` o no está `Available`, lo
-   salta (y lo registra si es de otro dueño): sólo purga archivos `HrDocument`.
-2. Vuelve a preguntar a `IHrDocumentReferences` por ese archivo, bajo el candado y justo antes de borrar. Si lo usan, lo
-   deja.
-3. Borra el objeto de R2, lo marca `Purged` (`FileResource.PurgeReleasedHrDocument`, nuevo, exige `HrDocument` y
-   `Available`) y audita `storage.file.purged` como el sistema.
+- un `fileId` soltado se podía adjuntar a otro registro mientras Storage lo purgaba, y el registro quedaba con un PDF
+  borrado;
+- si R2 borraba y el guardado fallaba, la fila seguía `Available` sin objeto hasta el reintento (5 s a 5 min); un adjunto
+  en ese rato pasaba y el reintento, al ver la referencia, conservaba una fila sin objeto.
 
-El inbox se marca en el mismo `SaveChanges` que el último archivo. Primero R2 y después la base, como
-`ProductImageReleaseProcessor`: borrar una clave que no existe no falla, así que un guardado fallido sólo repite el
-borrado.
+**Por cada id** (decisión del owner del 2026-11-26, opción (a)): primero se marca el archivo como no disponible y se
+confirma; después se vuelve a preguntar y sólo entonces se borra en R2. La purga sigue siendo inmediata, sin espera de
+gracia (la opción (b) se descartó).
+
+1. **Candado y filtro.** Carga el recurso por id **y** tenant con `FOR UPDATE`. Si no existe, no es `HrDocument` o su
+   estado no es `Available` ni `Deleted`, lo salta (y lo registra si es de otro dueño). `Available` sigue al paso 2;
+   `Deleted` es la marca de esta purga (paso 3) que dejó un intento anterior o otra réplica, y sigue al paso 4 en la misma
+   transacción.
+2. **Primera pregunta.** Pregunta a `IHrDocumentReferences` por ese archivo. Si lo usan, lo deja sin marcar y cierra la
+   transacción.
+3. **Marca confirmada.** Si no, `FileResource.BeginHrDocumentPurge` (nuevo: exige `HrDocument` y `Available`; deja
+   `Deleted`, `DeletedAt` y `UpdatedAt`) y **confirma**. Desde ese commit, todo adjunto que lea Storage recibe 422
+   `hr.file.not_found` (abajo). Vuelve a tomar el candado en una transacción nueva y relee: si ya no está `Deleted` (otra
+   réplica lo terminó o lo devolvió), lo salta.
+4. **Segunda pregunta, con la marca ya confirmada.** Pregunta otra vez, bajo el candado:
+   - **No lo usan:** borra el objeto de R2 y después cada variante, lo deja `Purged` (`FileResource.PurgeReleasedHrDocument`,
+     que ahora exige `HrDocument` y `Deleted`) y audita `storage.file.purged` (`hr_document_released`) como el sistema.
+   - **Lo usan y el objeto sigue en R2** (`IObjectStorage.StatAsync(StorageKey)` no es nulo): lo devuelve a `Available`
+     (`FileResource.RestoreHrDocument`, nuevo: exige `HrDocument` y `Deleted`; deja `Available`, `DeletedAt` nulo y
+     `UpdatedAt`) y lo registra en `Warning`: un adjunto se cruzó con la marca.
+   - **Lo usan y el objeto ya no está:** un intento anterior lo borró de R2 y no alcanzó a guardar. Devolverlo dejaría una
+     fila `Available` sin objeto, así que lo deja `Purged`, audita igual y lo registra en `Error` con el id del archivo y el
+     tenant: es el riesgo residual materializado (ver «Ventana residual»).
+
+   El objeto principal se borra antes que las variantes, así que si `StatAsync` lo encuentra no se borró nada. Un PDF no
+   tiene variantes (`FileResource.Publish` y el generador de variantes son sólo de imágenes); el orden importa si algún día
+   las tiene.
+
+**Transacciones (regla R1 del plan).** Cada id cierra todas sus transacciones antes del siguiente: una si se salta o se
+conserva en el paso 2, dos si se marca (la de la marca y la de la decisión). El inbox se marca con el **último** guardado
+del **último** id, sea cual sea. Una excepción en la segunda transacción la revierte; la marca ya confirmada queda, y el
+mensaje sin marcar vuelve cuando vence su reclamo.
+
+**Reintentos.** Todo intento que encuentre la fila `Deleted` retoma en el paso 4, que no depende de lo que hizo el anterior:
+
+| El intento anterior se cortó… | La fila queda | El reintento |
+| --- | --- | --- |
+| tras confirmar la marca, antes de la segunda pregunta | `Deleted`, objeto en R2 | paso 4 completo |
+| en R2 (falla del borrado) | `Deleted`, objeto en R2 | paso 4; si nadie lo usa, borra |
+| tras borrar en R2, en el guardado | `Deleted`, sin objeto | sin uso: borra de nuevo (una clave que no existe no falla) y `Purged`; con uso: `Purged` y `Error` |
+| en el guardado de la devolución | `Deleted`, objeto en R2 | lo devuelve |
+
+En ningún caso queda una fila `Available` sin objeto: la única transición a `Available` pasa por `StatAsync` bajo el
+candado, y nadie borra el objeto sin tener antes la fila `Deleted` confirmada.
+
+**Por qué `Deleted` y sin migración.** `FileResourceStatus.Deleted` ya existe, se persiste por nombre (`HasConversion<string>()`,
+`character varying(20)`) y no tiene restricción de valores en la base: no hace falta migración ni un valor nuevo del enum.
+Hoy nada más actúa sobre un `HrDocument` `Deleted`, verificado en `1697035fd`:
+
+- ningún trabajo purga archivos `Deleted` (la «ventana de retención» que menciona `SoftDeleteFile` no está implementada);
+- `FileResourceRepository.SearchAsync` lo oculta de la consola; `UnreferencedFileCandidates` excluye `Deleted` y sólo barre
+  `MessageTemplate` y `ChatbotMedia`; `StagingCleanupProcessor` sólo toca `PendingUpload` y `Available` de `SupportTicket` y
+  `PaymentProof`;
+- `SoftDeleteFile` responde 404 a un dueño de sistema (`SystemOwnedFileGuard`), y `MessagingTemplateImageStore`,
+  `TenantLogoStorage` y `TemplateHeaderImageReleaseProcessor` filtran por su propio dueño;
+- no hay cálculo de cuota sobre `storage.file_resources`.
+
+Así que un `HrDocument` `Deleted` sólo puede ser la marca de esta purga. Para que siga siéndolo, `FileResource.SoftDelete`
+rechaza un `HrDocument` (`storage.file.invalid_state`, como `RequireHrDocument`): un camino futuro que suelte un PDF de Hr
+(<https://trello.com/c/HguYDih9>) tiene que pasar por este evento, y la regla `rrhh` lo dice.
+
+**Qué ve Hr.** Con la fila `Deleted`, `StorageSystemUploads.CompleteAsync` cae en su rama `default` (`NotFound`),
+`HrDocumentStore` devuelve `HrDocumentState.NotFound` y `HrDocumentAttachment` lanza 422 `hr.file.not_found`
+(`HrErrorCodes.FileNotFound`), el mismo de un archivo que no existe. No es código nuevo ni cambio del contrato HTTP. La
+descarga de un registro que nombra un archivo marcado (sólo pasa en la devolución del paso 4, por milisegundos) responde
+lo que hoy responde `GetHrFileDownloadUrl` sin archivo disponible (`HrNotFound.File`).
+
+**Auditoría y eventos.** Sólo `storage.file.purged` (`hr_document_released`), en la transacción que deja el archivo
+`Purged`. La marca y la devolución no se auditan: `storage.file.deleted` diría que el archivo se borró cuando puede volver,
+y no existe una acción de devolución; quedan en el log (`Information` la marca, `Warning` la devolución). Storage no
+publica eventos en esta purga.
+
+**Ventana residual (aceptada por el owner).** La marca no cierra un adjunto que **ya leyó el archivo como `Available`
+antes de que se confirmara la marca** y que **confirma su registro de Hr después de la pregunta que decidió borrar**.
+En el código: la última lectura de Storage del adjunto es `FindAvailableAsync` dentro de `HrDocumentStore.CompleteAsync`;
+después Hr sigue con el caso de uso (cargar el empleado, validar, `AssignmentPayrollGuard` donde aplica) y confirma
+`HrDbContext` en su propia transacción. Si esa lectura ocurrió antes del commit de la marca y el commit de Hr no es visible
+para la consulta de `IHrDocumentUsage` del paso 4 (Read Committed: cada sentencia ve lo confirmado al empezar), el paso 4
+borra y el registro queda nombrando un PDF purgado. Si la falla del guardado traslada la decisión a un reintento, aplica
+igual con la pregunta del reintento: el objeto ya no está, la fila queda `Purged` y el `Error` del log lo delata. Lo que
+dura la ventana es lo que tarde el caso de uso de Hr entre esa lectura y su commit (del orden de milisegundos a décimas
+de segundo), y sólo con un `fileId` que Hr acaba de soltar. Un adjunto que lee después del commit de la marca recibe
+`hr.file.not_found`; uno que confirma antes de la primera pregunta conserva el archivo; uno que confirma entre las dos
+preguntas lo devuelve a `Available`.
 
 **Worker.** `HrDocumentReleaseWorker` (nuevo) escucha `DoorbellQueues.Outbox` con
 `DoorbellQueues.SafetyNet(DoorbellQueues.Outbox)` y `DoorbellPolling`, como `ChatbotMediaReleaseWorker`; sin
@@ -197,7 +282,8 @@ Cada cambio, uno por uno:
 3. **Evento entre módulos.** Hr publica `hr.employee.documents-released.v1` en el outbox de plataforma y Storage lo
    consume.
 4. **Storage.** `ClaimedOutboxConsumer`, `StorageInboxClaims`, `HrDocumentReleaseProcessor`, `HrDocumentReleaseWorker`,
-   `FileResource.PurgeReleasedHrDocument` y la migración del inbox.
+   `FileResource.PurgeReleasedHrDocument`, `BeginHrDocumentPurge` y `RestoreHrDocument` (y `SoftDelete`, que rechaza un
+   `HrDocument`) y la migración del inbox.
 5. **`tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs`** cambia (entrada del worker), y
    `.\scripts\test-feature.ps1` lo va a avisar como «Requiere autorización del owner».
 6. **Contrato HTTP.** Las dos rutas y los dos campos de `AssignmentRecordDto`, que se aprueban con este documento.
@@ -216,12 +302,18 @@ No agrega referencias entre módulos: Bootstrapper ya referencia Hr y Storage (`
 
 - **Unitarias de dominio:** vecinos, primer registro, contrato terminado y `canDelete` sin mutar.
 - **Unitarias de aplicación:** rango alcanzado al editar y al eliminar, bloqueo por nómina, aviso del PDF y actividad.
-- **Unitarias de Storage (procesador con dobles):** purga; conserva si la referencia aparece en la segunda pregunta;
-  salta otro dueño, otro tenant y lo que no está `Available`; no marca si R2 o la pregunta fallan; payload mal formado;
-  nivel del log según el intento.
+- **Unitarias de Storage (procesador con dobles):** purga; conserva sin marcar si la referencia aparece en la primera
+  pregunta; la marca se confirma antes de la segunda pregunta y de R2; devuelve a `Available` si la referencia aparece en
+  la segunda y el objeto sigue; `Purged` con `Error` si aparece y el objeto ya no está; un guardado fallido tras borrar en
+  R2 deja la fila `Deleted`; el reintento retoma desde cada punto de la tabla «Reintentos»; salta otro dueño, otro tenant y
+  lo que no está `Available` ni `Deleted`; no marca el mensaje si R2 o la pregunta fallan; payload mal formado; nivel del
+  log según el intento. Dominio: las dos transiciones nuevas, `PurgeReleasedHrDocument` exige `Deleted` y `SoftDelete`
+  rechaza un `HrDocument`.
 - **Integración:** las dos rutas y sus códigos (incluido `hr.assignment.workplace_other_company` con su `errors`), el
   puerto de Payroll contra el esquema migrado, las tres migraciones y el consumidor contra Storage real (borra, conserva
-  con referencia, reintenta tras una falla de R2 con `attempts` y `claimed_until`, y dos réplicas no purgan dos veces).
+  con referencia, un adjunto por `IStorageSystemUploads.CompleteAsync` con la marca confirmada no encuentra el archivo,
+  reintenta tras una falla de R2 con `attempts` y `claimed_until` y la fila `Deleted` entretanto, y dos réplicas no purgan
+  dos veces).
 - **Composición:** resuelve `IHrDocumentReferences` del host real, comprueba que es `HrDocumentReferences` y la corre
   contra el esquema migrado con un PDF en cada una de las cinco tablas. `MultiReplicaInventoryTests` cubre el worker.
 
@@ -231,7 +323,8 @@ No agrega referencias entre módulos: Bootstrapper ya referencia Hr y Storage (`
 - `README.md`: las rutas, el evento y el consumidor de Storage.
 - Regla nueva `.claude/rules/rrhh.md`, con su fila en la tabla de `CLAUDE.md`: una tabla de Hr que guarde un
   `document_file_id` entra en `IHrDocumentUsage` y en la prueba de composición, o un PDF que todavía usa se purga al
-  soltarlo desde otro registro.
+  soltarlo desde otro registro. Además: un `HrDocument` sólo pasa a `Deleted` por la marca de `HrDocumentPurge`
+  (`SoftDelete` lo rechaza); un camino nuevo que suelte un PDF publica `hr.employee.documents-released.v1`.
 - `docs/estado.md`, en `develop`, al mergear.
 
 `sql-entre-modulos` no cambia: el adaptador no lee columnas de otro módulo por nombre.

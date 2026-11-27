@@ -37,6 +37,7 @@
 3. Un empleado que no tiene resultado en una nómina aprobada (excluido o dado de alta después) no queda bloqueado por ella. (Task 2, `AnEmployeeWithoutAResultIsNotListed`)
 4. Eliminar un registro intermedio que deja a sus vecinos iguales: `DELETE` responde `hr.assignment.unchanged` y la ficha ya decía `canDelete: false`, sin haber mutado el agregado. (Task 1, `CanRemoveAssignmentAnswersWithoutMutating`; Task 5, `DeletingAMiddleRecordThatLeavesEqualNeighboursIs422`)
 5. El mismo `fileId` en otro registro o en un examen médico: eliminar un registro no purga el PDF. (Task 7, `EachOfTheFiveTablesKeepsItsFile`; Task 9, `AReferencedHrDocumentIsKept`)
+6. Ninguna fila `Available` sin objeto: la marca `Deleted` se confirma antes de la segunda pregunta y de R2, un adjunto posterior recibe `hr.file.not_found`, y sólo se devuelve a `Available` si `StatAsync` encuentra el objeto. (Task 9b, `TheMarkIsCommittedBeforeTheSecondQuestionAndR2`, `AFailedSaveAfterR2LeavesTheFileDeleted`, `AMarkedFileIsResumedAtTheSecondQuestion`, `AnAttachAfterTheMarkDoesNotFindTheFile`)
 
 ## Bloques
 
@@ -44,7 +45,8 @@
 | --- | --- | --- | --- |
 | 1 — Hr: reglas, nómina y rutas | 1–5 | — | `HrIntegrationEvents.DocumentsReleased`, `IHrDocumentReleases` publicando en el outbox, rutas y DTO listos |
 | 2 — Storage: purga del PDF | 6–9 | Bloque 1 (nombre del evento para la paridad; la migración de índices de Hr va después de la de actividad del Bloque 1) | consumidor, puertos y adaptador registrados; `MultiReplicaInventory` al día |
-| 3 — Documentos y cierre | 10–12 | Bloques 1 y 2 | README, regla `rrhh`, `.\scripts\test-feature.ps1` en verde, insumos para Trello y el frontend |
+| 2b — Corrección de la purga | 9b | Bloque 2 (`1697035fd`) | la marca `Deleted` confirmada antes de R2 (decisión (a) del owner, 2026-11-26) |
+| 3 — Documentos y cierre | 10–12 | Bloques 1, 2 y 2b | README, regla `rrhh`, `.\scripts\test-feature.ps1` en verde, insumos para Trello y el frontend |
 
 Una revisión por bloque al terminarlo (Opus, sólo ese bloque). Al final, una revisión de toda la rama por un subagente de **solo lectura** (Opus) sin el contexto de los implementadores, como exige el `CLAUDE.md` del repo.
 
@@ -75,6 +77,7 @@ Una revisión por bloque al terminarlo (Opus, sólo ese bloque). Al final, una r
 | `…Storage.Infrastructure/Persistence/StorageInboxMessage.cs`, `StorageDbContext.cs`, `StorageInboxClaims.cs` (nuevo), `Messaging/ClaimedOutboxConsumer.cs` (nuevo), migración `*_AddStorageInboxClaims.cs` | reclamo del inbox | 8 |
 | `…Storage.Infrastructure/HrDocuments/` (nuevo): `HrDocumentPurge.cs`, `HrDocumentPurgeStore.cs`, `HrDocumentReleaseProcessor.cs`, `HrDocumentReleaseWorker.cs`; `StorageInfrastructureExtensions.cs` | consumidor | 9 |
 | `tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs` | worker + fábrica (autorizado por el owner) | 9 |
+| `…Storage.Domain/FileResource.cs`, `…Storage.Infrastructure/HrDocuments/HrDocumentPurge.cs` y `HrDocumentPurgeStore.cs` (comentarios) | marca, devolución y purga en dos transacciones | 9b |
 | `README.md`, `CLAUDE.md`, `.claude/rules/rrhh.md` (nueva), `docs/superpowers/specs/2026-11-20-rrhh-fase-1-design.md` | documentos | 10 |
 
 ---
@@ -348,6 +351,8 @@ Reglas (spec «Vecinos»), en este orden: contrato activo (`ContractNotActive`);
 
 ## Task 9: el consumidor, el worker y el inventario
 
+> **Corregida por Task 9b.** Lo de «Por id» de `HrDocumentPurge` (una sola transacción, R2 bajo el candado con la fila `Available`) es lo que se construyó en `1697035fd` y deja la carrera con el adjunto que encontró la revisión del Bloque 2. Lo vigente es Task 9b.
+
 **Files:** `HrDocuments/HrDocumentPurgeStore.cs`, `HrDocumentPurge.cs`, `HrDocumentReleaseProcessor.cs`, `HrDocumentReleaseWorker.cs` (nuevos, namespace `Modules.Storage.Infrastructure.HrDocuments`); `StorageInfrastructureExtensions.cs`; `tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs`. Pruebas: `tests/Modules/Storage/Modules.Storage.UnitTests/HrDocumentPurgeTests.cs`, `HrDocumentReleaseProcessorTests.cs` (nuevas) y `tests/Modules/Storage/Modules.Storage.IntegrationTests/HrDocumentReleaseTests.cs` (nueva).
 
 **Consumes:** Tasks 6–8.
@@ -398,14 +403,136 @@ Sin prueba de «sin adaptador»: en `Development` el host arma el contenedor con
 
 ---
 
+# Bloque 2b — Corrección de la purga (Task 9b)
+
+Sobre `1697035fd`. Decisión del owner del 2026-11-26, opción (a): spec «PDF del registro eliminado», párrafos «Por qué el candado solo no alcanza», «Por cada id», «Transacciones», «Reintentos», «Por qué `Deleted` y sin migración», «Qué ve Hr», «Auditoría y eventos» y «Ventana residual». Léelos antes de empezar. Un implementador, una revisión del bloque al terminar. Sin migración: si crees que hace falta una o un valor nuevo de `FileResourceStatus`, para y avisa.
+
+## Task 9b: marcar `Deleted` y confirmar antes de R2
+
+**Files:** `src/Modules/Storage/Modules.Storage.Domain/FileResource.cs`; `src/Modules/Storage/Modules.Storage.Infrastructure/HrDocuments/HrDocumentPurge.cs`; `HrDocumentPurgeStore.cs` (sólo comentarios: la interfaz no cambia, `LockAsync` ya abre una transacción nueva después de un `SaveAsync`); `tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs` (sólo si se mueve la línea que cita la evidencia, `HrDocumentPurgeStore.cs:43`: el mismo texto con la línea real; es la entrada ya autorizada). Pruebas: `tests/Modules/Storage/Modules.Storage.UnitTests/FileResourceTests.cs`, `HrDocumentPurgeTests.cs` y `tests/Modules/Storage/Modules.Storage.IntegrationTests/HrDocumentReleaseTests.cs`.
+
+**Produces:**
+- `public void FileResource.BeginHrDocumentPurge(DateTimeOffset occurredAt)` — `RequireHrDocument()`, `RequireStatus(Available)`; deja `Deleted`, `DeletedAt` y `UpdatedAt`.
+- `public void FileResource.RestoreHrDocument(DateTimeOffset occurredAt)` — `RequireHrDocument()`, `RequireStatus(Deleted)`; deja `Available`, `DeletedAt = null` y `UpdatedAt`.
+- `FileResource.PurgeReleasedHrDocument` pasa a `RequireStatus(Deleted)`.
+- `FileResource.SoftDelete` lanza `storage.file.invalid_state` para un `HrDocument`, antes de su comprobación de hoy.
+- Comentario de las cuatro, con la regla del spec (un `HrDocument` sólo pasa a `Deleted` por la marca de `HrDocumentPurge`).
+- `HrDocumentPurge.PurgeOneAsync`, mismo método y misma firma de `PurgeAsync`, con el orden del spec:
+  1. `LockAsync`; `null` → `LogMissing`; otro dueño → `LogNotAnHrDocument`; estado distinto de `Available` y `Deleted` → `LogNotAvailable` (mensaje: «is {Status}, neither Available nor marked for purge»). En todos, vuelve sin más (el lazo guarda).
+  2. `Available`: `FindReferencedAsync(tenantId, [id])`; si lo usan → `LogKept` y vuelve. Si no: `BeginHrDocumentPurge(now)`, `LogMarked`, `await store.SaveAsync(ct)` (confirma la marca), `LockAsync` otra vez; si ahora es `null` o no está `Deleted` → `LogNotAvailable` y vuelve.
+  3. `Deleted` (llegada directa o tras la marca): `FindReferencedAsync` otra vez. Sin uso → `DeleteAsync(StorageKey)`, `DeleteAsync` de cada variante (en ese orden, como hoy), `PurgeReleasedHrDocument(now)`, `PublishSystem(…, "storage.file.purged", …, Reason, now)`, `LogPurged`. Con uso → `objectStorage.StatAsync(resource.StorageKey, ct)`: no nulo → `RestoreHrDocument(now)` y `LogRestored`; nulo → `PurgeReleasedHrDocument(now)`, la misma auditoría y `LogPurgedWhileReferenced`.
+  - El lazo de `PurgeAsync` no cambia: `markProcessed()` antes del `SaveAsync` del último id, y el `catch` llama `AbandonAsync` y relanza.
+- Logs nuevos (`[LoggerMessage]`, como los de hoy): `LogMarked` (`Information`, «HR document {FileId} marked for purge»), `LogRestored` (`Warning`, «HR document {FileId} was attached again after it was marked for purge; it is available again»), `LogPurgedWhileReferenced` (`Error`, «HR document {FileId} of tenant {TenantId} is used by Hr but its object was already deleted from R2; it is purged»).
+- **Comentarios que hoy prometen de más** (se corrigen en este task):
+  - `HrDocumentPurge`, `<summary>`: el segundo punto pasa a decir que la primera pregunta va bajo el candado; que si nadie lo usa se marca `Deleted` y se confirma, de modo que un adjunto que lea Storage después recibe `hr.file.not_found`; que la segunda pregunta va con la marca confirmada y que sólo se devuelve a `Available` si el objeto sigue en R2. El tercer punto deja de decir «un guardado fallido sólo repite el borrado» y dice que un guardado fallido tras R2 deja la fila `Deleted`, nunca `Available` sin objeto. Un punto nuevo nombra la ventana residual del spec con sus dos condiciones (leyó `Available` antes del commit de la marca; Hr confirma después de la pregunta que decidió) y que en el reintento aparece como `LogPurgedWhileReferenced`. R1: «cada archivo cierra sus transacciones (dos si se marca)».
+  - El comentario de la segunda pregunta en `PurgeOneAsync` («un registro que adjuntó el mismo PDF después del aviso lo retiene») se reemplaza: la retiene sólo un registro confirmado antes de esa pregunta; el que se confirme después, si leyó antes de la marca, es la ventana residual.
+  - `HrDocumentPurgeStore`: el `<summary>` (`LockAsync` abre la transacción, `SaveAsync` o `AbandonAsync` la cierran; un archivo puede usar dos) y el comentario de la clase («el candado se sostiene mientras se pregunta a Hr y se borran los objetos»: ahora, el de la segunda transacción; el candado no frena al adjunto de Hr, que lee sin él; lo frena la marca).
+  - `FileResource.PurgeReleasedHrDocument`: «después de la segunda pregunta… y de borrar los objetos» con la marca `Deleted` ya confirmada.
+
+### Step 1: RED del dominio (compilación)
+
+```csharp
+// FileResourceTests (NewHrDocument ya existe; sumar un helper MarkedHrDocument() = NewHrDocument() + BeginHrDocumentPurge)
+[Fact] public void BeginHrDocumentPurgeMarksAnAvailableHrDocumentDeleted()   // Status Deleted, DeletedAt == now, UpdatedAt == now
+[Fact] public void BeginHrDocumentPurgeRequiresAnAvailableHrDocument()       // NewHrDocument(available: false) y NewProductImage() → "storage.file.invalid_state"
+[Fact] public void RestoreHrDocumentReturnsAMarkedHrDocumentToAvailable()    // Status Available, DeletedAt null, UpdatedAt == now
+[Fact] public void RestoreHrDocumentRequiresAMarkedHrDocument()             // Available, Purged y un ProductImage SoftDelete-ado → "storage.file.invalid_state"
+[Fact] public void PurgeReleasedHrDocumentMarksAMarkedHrDocumentPurged()     // reemplaza …MarksAnAvailableHrDocumentPurged: MarkedHrDocument() → Purged, DeletedAt == now
+[Fact] public void PurgeReleasedHrDocumentRequiresTheMark()                  // reemplaza …RequiresAvailable: NewHrDocument() (Available) → "storage.file.invalid_state"
+[Fact] public void SoftDeleteRejectsAnHrDocument()                           // NewHrDocument().SoftDelete → "storage.file.invalid_state"; Status sigue Available
+```
+
+`dotnet build tests/Modules/Storage/Modules.Storage.UnitTests -nologo -v q` → `CS1061` por `BeginHrDocumentPurge` y `RestoreHrDocument` (literal al reporte). Implementa sólo el dominio y `HrDocumentPurge` lo justo para compilar: hasta Step 3, `PurgeOneAsync` llama `BeginHrDocumentPurge(now)` inmediatamente antes de `PurgeReleasedHrDocument(now)`, sin guardar en medio (conserva el comportamiento de `1697035fd`, para que Step 2 falle por aserción y no por compilación), y el `purged` de `AnotherOwnerAnotherTenantOrNotAvailableIsSkipped` se arma con `BeginHrDocumentPurge` + `PurgeReleasedHrDocument`. GREEN: `dotnet test tests/Modules/Storage/Modules.Storage.UnitTests --filter "FullyQualifiedName~FileResourceTests"`.
+
+Commit: `fix(storage): mark an HR document for purge before purging it`.
+
+### Step 2: RED de la purga (aserción, sin contenedores)
+
+Dobles de `HrDocumentPurgeTests`:
+- `InMemoryPurgeStore` suma `Func<FileResource, bool>? FailSaveWhen`: si algún archivo bloqueado lo cumple, `SaveAsync` lanza `InvalidOperationException("The commit failed.")` **sin** anotar `SavedStatuses` (la transacción no se confirmó), y `Action<int>? BeforeLock` (recibe el número de `LockAsync`, para simular otra réplica entre la marca y el segundo candado).
+- `RecordingObjectStorage` suma `HashSet<string> Missing` y `StatAsync`: `null` si la clave está en `Missing` o ya en `Deleted`; si no, un `StoredObject` cualquiera. Anota `SavesWhenDeleted` (el `Store.Saves` de cada `DeleteAsync`).
+- `QueuedReferences` suma `List<int> SavesWhenAsked`.
+- Un `RecordingLogger<HrDocumentPurge>` mínimo que anote `(LogLevel, mensaje)` (calco del de `HrDocumentReleaseProcessorTests`).
+
+Pruebas nuevas; cada una tiene que fallar contra `1697035fd` (más el Step 1):
+
+```csharp
+[Fact] public async Task TheMarkIsCommittedBeforeTheSecondQuestionAndR2()
+// archivo sin uso: SavedStatuses[id] == [Deleted, Purged]; References.Asked.Count == 2; SavesWhenAsked == [0, 1];
+// Objects.SavesWhenDeleted == [1]; SavesAtMark == 1; Store.Saves == 2. Hoy: [Purged] y una sola pregunta.
+[Fact] public async Task AReferenceInTheSecondQuestionRestoresTheFile()
+// Respond() y luego Respond(id): SavedStatuses == [Deleted, Available]; DeletedAt null; Objects.Deleted vacío; sin auditoría;
+// logger con un Warning; Marks == 1. Hoy: lo purga (una pregunta, respuesta vacía).
+[Fact] public async Task AFailedSaveAfterR2LeavesTheFileDeleted()
+// FailSaveWhen = f => f.Status == Purged: la excepción sube; SavedStatuses == [Deleted]; Objects.Deleted contiene StorageKey;
+// Abandons == 1. Hoy: SavedStatuses sin entrada (la fila «sigue Available» sin objeto).
+[Theory]
+[InlineData(false, false)] // tras la marca, antes de la segunda pregunta o con falla de R2: objeto presente, sin uso → borra y Purged
+[InlineData(true, false)]  // tras borrar en R2 con guardado fallido: objeto ausente, sin uso → DeleteAsync igual (idempotente) y Purged
+[InlineData(false, true)]  // objeto presente, con uso → RestoreHrDocument
+[InlineData(true, true)]   // objeto ausente, con uso → Purged, auditoría y un Error en el logger
+public async Task AMarkedFileIsResumedAtTheSecondQuestion(bool objectMissing, bool referenced)
+// archivo ya MarkedHrDocument(); References.Asked.Count == 1 (no hay primera pregunta ni nueva marca); SavedStatuses[id] tiene un solo
+// estado (Purged o Available, según el caso); Marks == 1, con el único guardado. Hoy: lo salta como «no Available».
+[Fact] public async Task AMarkFinishedByAnotherReplicaIsSkipped()
+// BeforeLock(2) lo deja Purged (Begin + Purge en el doble): una sola pregunta, sin Delete ni auditoría, Saves == 2. Hoy: no hay segundo candado.
+```
+
+Pruebas de hoy que cambian (esperado nuevo, en la misma corrida):
+- `AnUnreferencedHrDocumentIsDeletedPurgedAndAudited`: `Store.Saves == 2`, `SavesAtMark == 1`, `References.Asked` con dos `[id]`; el orden de `Objects.Deleted` no cambia.
+- `AReferenceThatAppearsUnderTheLockKeepsTheFile` → renombrar `AReferenceInTheFirstQuestionKeepsTheFileUnmarked`: `SavedStatuses == [Available]`, una pregunta, `LocksHeldWhenAsked == [1]`. Ya pasa hoy: es guarda de regresión, no RED.
+- `AnotherOwnerAnotherTenantOrNotAvailableIsSkipped`: suma un `PendingScan` (o `Quarantined`) `HrDocument`. Saves y marca como hoy, más ese id.
+- `AFailingR2OrReferenceQueryMarksNothing`: falla de R2 → `SavedStatuses == [Deleted]`, `Saves == 1`, `Abandons == 1`, `Marks == 0`, `Status == Deleted`; falla de la pregunta (en la primera) → como hoy: `Saves == 0`, `Available`.
+- `EachFileIsSavedBeforeTheNextOne`: `first` → `[Deleted, Purged]`, `second` → `[Deleted]`, `Saves == 3`, `Abandons == 1`, `Marks == 0`.
+- Corrige los `<summary>` de la clase y de `InMemoryPurgeStore` («por eso la purga borra en R2 antes de tocar el estado» ya no es la razón: la marca confirmada lo es).
+
+RED unitario: `dotnet test tests/Modules/Storage/Modules.Storage.UnitTests --filter "FullyQualifiedName~HrDocumentPurgeTests"` → las cinco nuevas (las ocho filas) en rojo por aserción; salida literal al reporte.
+
+Integración, en este mismo step y antes de Step 3:
+
+```csharp
+// HrDocumentReleaseTests
+[Fact] public async Task AnAttachAfterTheMarkDoesNotFindTheFile()
+// IHrDocumentReferences = ProbingReferences (nuevo doble, registrado con fábrica para recibir el IServiceScopeFactory del host): en cada llamada
+// abre un scope y llama IStorageSystemUploads.CompleteAsync(tenant, fileId, FileOwnerType.HrDocument, tenant), anota el Outcome y responde vacío.
+// Outcomes == [Available, NotFound] (antes y después del commit de la marca); la fila termina Purged.
+// RED contra Step 1: Outcomes == [Available] (una sola pregunta, y el SELECT del adjunto no espera al FOR UPDATE).
+// AnR2FailureIsRetriedWithItsClaim (cambia): tras la falla, Status == "Deleted" (hoy "Available") y, entretanto,
+// IStorageSystemUploads.CompleteAsync de ese archivo → SystemUploadOutcome.NotFound; lo demás igual.
+```
+
+`AReferencedHrDocumentIsKept`, `AReleasedHrDocumentIsPurged` y `TwoReplicasPurgeOnce` no cambian de aserciones (el primero queda conservado en la primera pregunta, sin marca).
+
+RED de integración, con las precauciones de Global Constraints: `dotnet test tests/Modules/Storage/Modules.Storage.IntegrationTests --filter "FullyQualifiedName~HrDocumentReleaseTests.AnAttachAfterTheMarkDoesNotFindTheFile|FullyQualifiedName~HrDocumentReleaseTests.AnR2FailureIsRetriedWithItsClaim"` → las dos en rojo por aserción (literal al reporte).
+
+### Step 3: implementar
+
+`PurgeOneAsync` como en **Produces**, los tres logs y los comentarios corregidos. Sin tocar `HrDocumentReleaseProcessor`, el worker, el registro ni el reclamo.
+
+### Step 4: GREEN unitario
+
+`dotnet test tests/Modules/Storage/Modules.Storage.UnitTests --filter "FullyQualifiedName~HrDocumentPurgeTests|FullyQualifiedName~FileResourceTests|FullyQualifiedName~HrDocumentReleaseProcessorTests"`.
+
+### Step 5: GREEN de integración
+
+La corrida filtrada de Step 2 y, al cerrar, la clase completa `--filter "FullyQualifiedName~HrDocumentReleaseTests"`; después `dotnet test tests/Modules/Storage/Modules.Storage.UnitTests` y `dotnet test tests/ArchitectureTests/ArchitectureTests`.
+
+### Step 6: commit
+
+`fix(storage): commit the purge mark before deleting an HR document from R2`. El reporte del bloque lleva el RED y el GREEN literales de los Steps 1, 2 y 5, y si cambió la evidencia de `MultiReplicaInventory`.
+
+**Revisión del Bloque 2b** (Opus): contra los párrafos del spec citados arriba; en particular, que no exista camino a `Available` sin `StatAsync` bajo el candado, que nada borre en R2 sin la marca confirmada, R1 (cada id cierra sus transacciones, la marca del inbox con el último guardado) y que los comentarios no prometan más que la ventana residual.
+
+---
+
 # Bloque 3 — Documentos y cierre (Tasks 10–12)
 
 ## Task 10: documentos
 
 **Files:** `README.md`, `CLAUDE.md`, `.claude/rules/rrhh.md` (nueva), `docs/superpowers/specs/2026-11-20-rrhh-fase-1-design.md`.
 
-- [ ] **Step 1: README.** En «API implementada», una subsección «RRHH: editar y eliminar cargo y lugar de trabajo» con las dos rutas, el cuerpo, `If-Match`, `canEdit`/`canDelete` y la tabla de códigos del spec. En «Biblioteca de archivos (Cloudflare R2)», un párrafo «PDF de RRHH liberados» calcado del de fotos de producto: el evento, `HrDocumentReleaseWorker`, consumidor `storage.hr-document-release`, reclamo con `attempts`/`claimed_until`, la segunda pregunta bajo el candado, `storage.file.purged` / `hr_document_released`, purga inmediata sin gracia y sin métrica de cola (sólo log).
-- [ ] **Step 2: regla `rrhh`.** `.claude/rules/rrhh.md` con `paths` `src/Modules/Hr/**`, `src/Bootstrapper/HrDocumentReferences.cs` y `tests/Modules/Hr/**`, y la regla del spec: una tabla de Hr que guarde un `document_file_id` entra en `IHrDocumentUsage` y en `HrDocumentReferencesTests`, o un PDF que todavía usa se purga al soltarlo desde otro registro. Su fila en la tabla «Reglas por módulo» del `CLAUDE.md`.
+- [ ] **Step 1: README.** En «API implementada», una subsección «RRHH: editar y eliminar cargo y lugar de trabajo» con las dos rutas, el cuerpo, `If-Match`, `canEdit`/`canDelete` y la tabla de códigos del spec. En «Biblioteca de archivos (Cloudflare R2)», un párrafo «PDF de RRHH liberados» calcado del de fotos de producto: el evento, `HrDocumentReleaseWorker`, consumidor `storage.hr-document-release`, reclamo con `attempts`/`claimed_until`, la primera pregunta bajo el candado, la marca `Deleted` confirmada antes de la segunda pregunta y de R2 (un adjunto posterior recibe `hr.file.not_found`), la devolución a `Available` sólo con el objeto presente, la ventana residual del spec (y su `Error` en el log), `storage.file.purged` / `hr_document_released`, purga inmediata sin gracia y sin métrica de cola (sólo log).
+- [ ] **Step 2: regla `rrhh`.** `.claude/rules/rrhh.md` con `paths` `src/Modules/Hr/**`, `src/Bootstrapper/HrDocumentReferences.cs` y `tests/Modules/Hr/**`, y la regla del spec: una tabla de Hr que guarde un `document_file_id` entra en `IHrDocumentUsage` y en `HrDocumentReferencesTests`, o un PDF que todavía usa se purga al soltarlo desde otro registro; y un `HrDocument` sólo pasa a `Deleted` por la marca de `HrDocumentPurge` (`SoftDelete` lo rechaza), así que un camino nuevo que suelte un PDF publica `hr.employee.documents-released.v1`. Su fila en la tabla «Reglas por módulo» del `CLAUDE.md`.
 - [ ] **Step 3: spec de fase 1.** En la línea 201 de `2026-11-20-rrhh-fase-1-design.md`, que también se edita y se elimina un registro de cargo y lugar, con enlace al spec de hoy.
 - [ ] **Step 4: commit** `docs(hr): document assignment edits and released HR documents`
 
@@ -445,7 +572,8 @@ Errores:
 - 428 precondition.if_match_required; 412 concurrency.conflict.
 Reglas que la pantalla debe reflejar: la fecha del primer registro no se edita y el primero no se elimina; el historial de actividad trae
 AssignmentRewritten («Cargo y lugar de trabajo editado») y AssignmentDeleted («Cargo y lugar de trabajo eliminado»).
-Ojo: eliminar un registro con PDF borra el PDF de forma permanente y de inmediato (no hay papelera).
+Ojo: eliminar un registro con PDF borra el PDF de forma permanente y de inmediato (no hay papelera). Adjuntar a otro registro un PDF recién
+soltado responde 422 hr.file.not_found (código que ya existe): hay que subirlo de nuevo.
 Decisiones pendientes del owner para el frontend: el texto de la confirmación de «Eliminar» cuando el registro tiene PDF.
 ```
 
@@ -454,4 +582,4 @@ Decisiones pendientes del owner para el frontend: el texto de la confirmación d
 ## Self-review (hecho al escribir el plan)
 
 - **Cobertura del spec:** propuestas 1–3 y vecinos → Task 1; 4 (contrato terminado) → Tasks 1 y 5; 5 (salario) fuera; 6 (archivados) → Task 5; contrato HTTP y errores → Task 5; `canEdit`/`canDelete` → Task 3; nómina y `Liquidated` (a) → Tasks 2 y 5; rastro → Task 4; evento, referencias, consumidor, worker, sin gracia → Tasks 5–9; las tres migraciones → Tasks 4, 7 y 8; arquitectura 1–6 → Tasks 2, 5, 6, 7, 9; documentos → Task 10; pruebas del spec → repartidas arriba.
-- **Nombres nuevos que no están en el spec** (decididos aquí): `FrozenPayrollPeriod`/`IFrozenPayrollPeriods`, `PayrollFrozenPeriod`/`IPayrollFrozenPeriods`, `FrozenPayrollPeriods` (Bootstrapper), `AssignmentPayrollGuard`, `AssignmentRewriteRequest`, `RewriteAssignmentCommand`, `RemoveAssignmentCommand`, `HrIntegrationEvents`, `IHrDocumentReleases`, `HrDocumentReleasePublisher`, `IHrDocumentPurgeStore`, `HrDocumentPurge`, `IHrDocumentReleaseProcessor`, motivo `hr_document_released` y las dos etiquetas del historial.
+- **Nombres nuevos que no están en el spec** (decididos aquí): `FrozenPayrollPeriod`/`IFrozenPayrollPeriods`, `PayrollFrozenPeriod`/`IPayrollFrozenPeriods`, `FrozenPayrollPeriods` (Bootstrapper), `AssignmentPayrollGuard`, `AssignmentRewriteRequest`, `RewriteAssignmentCommand`, `RemoveAssignmentCommand`, `HrIntegrationEvents`, `IHrDocumentReleases`, `HrDocumentReleasePublisher`, `IHrDocumentPurgeStore`, `HrDocumentPurge`, `IHrDocumentReleaseProcessor`, motivo `hr_document_released` y las dos etiquetas del historial. Task 9b (los métodos de dominio están en el spec): logs `LogMarked`, `LogRestored`, `LogPurgedWhileReferenced`; dobles `ProbingReferences` y `RecordingLogger<HrDocumentPurge>`; ganchos `FailSaveWhen`, `BeforeLock`, `Missing`, `SavesWhenDeleted`, `SavesWhenAsked`; helper `MarkedHrDocument()`.
