@@ -14,6 +14,21 @@ public static class CityText
     public const int MaxLength = 120;
 
     /// <summary>
+    /// Recorta a <paramref name="max"/> sin partir un par sustituto y sin dejar un espacio al final: una llave
+    /// normalizada es única por su texto, y "A " y "A" no pueden ser dos llaves.
+    /// </summary>
+    public static string Truncate(string value, int max)
+    {
+        if (value.Length <= max)
+        {
+            return value;
+        }
+
+        var length = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
+        return value[..length].TrimEnd();
+    }
+
+    /// <summary>
     /// Recorta, quita las marcas diacríticas, pasa a mayúsculas invariantes y colapsa todo espacio
     /// interno (espacios, tabs, saltos de línea) en uno solo. Sólo agrega coincidencias respecto de la
     /// normalización anterior (D-C1).

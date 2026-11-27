@@ -26,6 +26,12 @@ public sealed record ExternalInvoicingProof(Guid ProofId, decimal Amount);
 /// A quién se le factura, ya resuelto con la precedencia de <see cref="OrderBilledParty.SourceFor"/>: consumidor final, la parte de
 /// facturación del pedido o la ficha del cliente, con lo que falte de la primera tomado de la segunda (spec 2026-11-18 §6.2). Lleva
 /// datos del cliente: el <c>ToString</c> no los escribe.
+/// <para>
+/// <c>CityId</c>, <c>DepartmentId</c>, <c>Country</c> y <paramref name="CityName"/> salen <b>juntos</b> de la misma fuente: de la parte
+/// de facturación si ésta declara ciudad (<c>CityId</c> o <c>CityName</c>) o país (no en blanco), y si no, de la ficha del cliente.
+/// Así una parte extranjera sin ciudad no hereda la ciudad de otra ficha (el armador dice <c>customer_city_missing</c>). Los textos
+/// van recortados y un blanco es <c>null</c>; el consumidor final lleva <c>CityName</c> nulo.
+/// </para>
 /// </summary>
 public sealed record ExternalInvoicingParty(
     bool IsFinalConsumer,
@@ -38,7 +44,8 @@ public sealed record ExternalInvoicingParty(
     Guid? DepartmentId,
     string? Country,
     string? Email,
-    string? Phone)
+    string? Phone,
+    string? CityName = null)
 {
     public override string ToString() => "ExternalInvoicingParty { }";
 }

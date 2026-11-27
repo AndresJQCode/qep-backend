@@ -1605,6 +1605,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteCitySynonymCommand, bool>, DeleteCitySynonymHandler>();
         services.AddScoped<ICommandHandler<RetryCitySynonymCorrectionsCommand, CitySynonymDto>, RetryCitySynonymCorrectionsHandler>();
         services.AddScoped<ICommandHandler<RunCityBackfillCommand, CityBackfillResultDto>, RunCityBackfillHandler>();
+        // Spec 2026-11-26: las lecturas de la consola de ciudades del exterior, con la misma doble capa. Sin el registro de un
+        // handler su ruta responde 500; los validadores entran por el escaneo de ensamblado.
+        services.AddScoped<IQueryHandler<ListBillingCountriesQuery, IReadOnlyList<BillingCountryDto>>, ListBillingCountriesHandler>();
+        services.AddScoped<IQueryHandler<SearchBillingCitiesQuery, IReadOnlyList<BillingCityRefDto>>, SearchBillingCitiesHandler>();
+        services.AddScoped<IQueryHandler<ListUnresolvedForeignCitiesQuery, UnresolvedForeignCityPageDto>, ListUnresolvedForeignCitiesHandler>();
+        services.AddScoped<IQueryHandler<GetUnresolvedForeignCityQuery, UnresolvedForeignCityDetailDto>, GetUnresolvedForeignCityHandler>();
+        services.AddScoped<IQueryHandler<ListForeignCitySynonymsQuery, ForeignCitySynonymPageDto>, ListForeignCitySynonymsHandler>();
+        // Las escrituras: confirmar, descartar, restaurar, corregir y borrar.
+        services.AddScoped<ICommandHandler<ResolveUnresolvedForeignCityCommand, ForeignCitySynonymDto>, ResolveUnresolvedForeignCityHandler>();
+        services.AddScoped<UnresolvedForeignCityTriage>();
+        services.AddScoped<ICommandHandler<DiscardUnresolvedForeignCityCommand, UnresolvedForeignCityListItemDto>, DiscardUnresolvedForeignCityHandler>();
+        services.AddScoped<ICommandHandler<RestoreUnresolvedForeignCityCommand, UnresolvedForeignCityListItemDto>, RestoreUnresolvedForeignCityHandler>();
+        services.AddScoped<ICommandHandler<CorrectForeignCitySynonymCommand, ForeignCitySynonymDto>, CorrectForeignCitySynonymHandler>();
+        services.AddScoped<ICommandHandler<DeleteForeignCitySynonymCommand, bool>, DeleteForeignCitySynonymHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
@@ -2312,6 +2326,9 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
         services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
+        // Spec 2026-11-26: anotar en la bandeja del operador la ciudad del exterior sin vincular. Escribe; sólo la vista previa y la
+        // emisión lo reciben (la disponibilidad no).
+        services.AddScoped<ISiigoForeignCityInbox, SiigoForeignCityInbox>();
         // Spec 2026-11-21: enviar el PDF de la factura por WhatsApp. Siigo no ve Quotations: el puerto reenvía a su fachada.
         services.AddScoped<ISiigoInvoiceWhatsApp, SiigoInvoiceWhatsApp>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.

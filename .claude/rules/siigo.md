@@ -5,6 +5,8 @@ paths:
   - "src/Bootstrapper/SiigoOpenInvoiceCheck.cs"
   - "src/Bootstrapper/SiigoInvoiceWhatsApp.cs"
   - "src/Bootstrapper/SiigoOrderSource.cs"
+  - "src/Bootstrapper/SiigoGeographyLookup.cs"
+  - "src/Bootstrapper/SiigoForeignCityInbox.cs"
 ---
 
 # Siigo (facturación de pedidos)
@@ -233,3 +235,19 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   (`partner_id_missing`). Un motivo nuevo que alimente `RecordAsync` aparece solo; uno que deba sembrarse en cero para que su alerta dispare
   desde el primer evento (`increase()` toma la primera muestra como base) entra en la lista fija de `SiigoMetrics`. El log del cliente HTTP
   sigue apagado: contar no agrega líneas de log (`SiigoNoLeakTests`).
+
+- **Ciudades del exterior: resolver es lectura, anotar es escritura, y sólo la vista previa y la emisión escriben** (spec 2026-11-26).
+  `SiigoOrderSource` resuelve con `ISiigoGeographyLookup.FindForeignCodesAsync` (sólo lee) y deja el país de Siigo (`Us`), el
+  departamento y la ciudad, o un `SiigoUnlinkedCity` con el faltante `customer_city_unlinked` (sin `reference` ni `label`: el texto es
+  del cliente y no se imprime). Anotar en la bandeja del operador es `ISiigoForeignCityInbox`, en otra clase, y lo llaman **sólo**
+  `PreviewSiigoInvoiceHandler` y `IssueSiigoInvoiceHandler.BuildNewAsync` (a través de `SiigoForeignCityAnnotation`). Por eso la vista
+  previa **ya no es de sólo lectura**: escribe en Geography. `SiigoInvoiceAvailabilityHandler` no recibe el puerto: si se lo das, mirar
+  la pantalla del pedido llena la bandeja con cada pedido visto. Un fallo al anotar deja un warning con **el tipo** de la excepción
+  (nunca el texto de la ciudad) y la facturación sigue; la anotación usa el `DbContext` de Geography, así que no entra en la
+  transacción de Siigo. `ResumeAsync` no carga el pedido ni anota. Un país que no está en el catálogo se factura como
+  `customer_city_unlinked` pero no se anota (`Reportable: false`). Lo amarran `SiigoForeignCityAnnotationTests`,
+  `SiigoOrderSourceTests` y `SiigoForeignCityInvoiceTests` (incluida `TheAvailabilityCheckNeverAnnotates`).
+- **`id_type` 50 (Tax ID) y 42 (NIF y NIE) no se probaron contra un Siigo real y falta que quien lleva la contabilidad los confirme.**
+  El documento de NIF, NIE y Tax ID viaja como el pasaporte (sólo letras y dígitos ASCII). Antes de emitir a la DIAN, factura una de
+  prueba con `send_to_dian` apagado y revisa en Siigo el país, el departamento, la ciudad y el teléfono del cliente creado. **Nunca
+  prendas `send_to_dian` para probar esto.** Ninguna prueba llama a Siigo: `FakeSiigoApi` sólo comprueba lo que QEP manda.
