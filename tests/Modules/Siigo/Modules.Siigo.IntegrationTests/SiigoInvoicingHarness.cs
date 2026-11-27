@@ -62,10 +62,15 @@ internal static class SiigoInvoicingHarness
         }
     }
 
-    /// <summary>Un cliente con la identificación que Siigo conoce (NIT) y una ciudad con código DANE, por la API de Customers.</summary>
-    public static async Task<Guid> CreateCustomerAsync(HttpClient client, Guid tenantId, string name = "Verde Esencial S.A.S.")
+    /// <summary>Un cliente de otro país (spec 2026-11-26): su país y la ciudad escrita, sin ciudad del catálogo de Colombia. Sale con
+    /// Tax ID (<c>12-3456789</c>), persona jurídica y un teléfono internacional.</summary>
+    internal sealed record ForeignCustomer(string Country, string CityName);
+
+    /// <summary>Un cliente con la identificación que Siigo conoce (NIT) y una ciudad con código DANE, por la API de Customers. Con
+    /// <paramref name="foreignCustomer"/>, uno de otro país con la ciudad escrita.</summary>
+    public static async Task<Guid> CreateCustomerAsync(
+        HttpClient client, Guid tenantId, string name = "Verde Esencial S.A.S.", ForeignCustomer? foreignCustomer = null)
     {
-        var cityId = await AnyCityIdAsync(client);
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var classification = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/customers/classifications",
@@ -74,9 +79,8 @@ internal static class SiigoInvoicingHarness
         await EnsureSuccessAsync(classification);
         var classificationId = (await classification.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
 
-        var response = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/customers",
-            new
+        object body = foreignCustomer is null
+            ? new
             {
                 name,
                 identificationType = "NIT",
@@ -86,13 +90,31 @@ internal static class SiigoInvoicingHarness
                 address = "Calle 10 # 45-12",
                 country = "CO",
                 personType = "Juridica",
-                cityId,
+                cityId = await AnyCityIdAsync(client),
                 classificationId,
                 withRetention = false,
                 vatSurplus = false,
                 withholdingTaxRateIds = Array.Empty<Guid>(),
-            },
-            TestContext.Current.CancellationToken);
+            }
+            : new
+            {
+                name,
+                identificationType = "TAX_ID",
+                identificationNumber = "12-3456789",
+                phone = "+1 305 555 0100",
+                email = "compras@verde.co",
+                address = "100 Main St",
+                country = foreignCustomer.Country,
+                personType = "Juridica",
+                cityId = (Guid?)null,
+                cityName = foreignCustomer.CityName,
+                classificationId,
+                withRetention = false,
+                vatSurplus = false,
+                withholdingTaxRateIds = Array.Empty<Guid>(),
+            };
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers", body, TestContext.Current.CancellationToken);
         await EnsureSuccessAsync(response);
         return (await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
     }
@@ -109,7 +131,8 @@ internal static class SiigoInvoicingHarness
         bool freight = false,
         bool linkProduct = true,
         bool markPaid = true,
-        bool advisorLinked = true)
+        bool advisorLinked = true,
+        ForeignCustomer? foreignCustomer = null)
     {
         var connectionString = database.GetConnectionString();
         var siigo = new FakeSiigoApi();
@@ -123,7 +146,7 @@ internal static class SiigoInvoicingHarness
         var company = await CreateCompanyAsync(client, tenant.TenantId);
         var vat = await CreateTaxRateAsync(client, tenant.TenantId, "IVA 19%", 19m);
         var variantId = await CreateProductAsync(client, tenant.TenantId, SiigoCode, "Aceite esencial", 11_900m, vat);
-        var customerId = await CreateCustomerAsync(client, tenant.TenantId);
+        var customerId = await CreateCustomerAsync(client, tenant.TenantId, foreignCustomer: foreignCustomer);
 
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenant.TenantId}/orders",

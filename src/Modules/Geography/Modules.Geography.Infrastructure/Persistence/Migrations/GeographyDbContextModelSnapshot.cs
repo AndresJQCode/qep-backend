@@ -91,6 +91,72 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Geography.Domain.BillingCity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CityCode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("city_code");
+
+                    b.Property<string>("CityName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country_code");
+
+                    b.Property<string>("CountryName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("country_name");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("normalized_name");
+
+                    b.Property<string>("SiigoCountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("siigo_country_code");
+
+                    b.Property<string>("StateCode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("state_code");
+
+                    b.Property<string>("StateName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("state_name");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CountryCode", "NormalizedName")
+                        .HasDatabaseName("IX_billing_cities_country_name");
+
+                    b.HasIndex("CountryCode", "StateCode", "CityCode")
+                        .IsUnique()
+                        .HasDatabaseName("IX_billing_cities_country_state_city");
+
+                    b.ToTable("billing_cities", "geography");
+                });
+
             modelBuilder.Entity("Modules.Geography.Domain.City", b =>
                 {
                     b.Property<Guid>("Id")
@@ -247,6 +313,76 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("departments", "geography");
+                });
+
+            modelBuilder.Entity("Modules.Geography.Domain.ForeignCitySynonym", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("BillingCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("billing_city_id");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country_code");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<Guid?>("DeletedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("deleted_by");
+
+                    b.Property<string>("DisplayText")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("display_text");
+
+                    b.Property<string>("NormalizedText")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("normalized_text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BillingCityId")
+                        .HasDatabaseName("IX_foreign_city_synonyms_billing_city");
+
+                    b.HasIndex("CountryCode", "NormalizedText")
+                        .IsUnique()
+                        .HasDatabaseName("IX_foreign_city_synonyms_country_text_active")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("foreign_city_synonyms", "geography");
                 });
 
             modelBuilder.Entity("Modules.Geography.Domain.Region", b =>
@@ -446,6 +582,107 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                     b.ToTable("unresolved_city_occurrences", "geography");
                 });
 
+            modelBuilder.Entity("Modules.Geography.Domain.UnresolvedForeignCity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CityText")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_text");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country_code");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<string>("NormalizedText")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("normalized_text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid?>("SynonymId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("synonym_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SynonymId");
+
+                    b.HasIndex("CountryCode", "NormalizedText")
+                        .IsUnique()
+                        .HasDatabaseName("IX_unresolved_foreign_cities_country_text_open")
+                        .HasFilter("status <> 'Resolved'");
+
+                    b.HasIndex("Status", "LastSeenAt")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("IX_unresolved_foreign_cities_status_last_seen");
+
+                    b.ToTable("unresolved_foreign_cities", "geography", t =>
+                        {
+                            t.HasCheckConstraint("CK_unresolved_foreign_cities_status", "status IN ('Pending','Resolved','Discarded')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Geography.Domain.UnresolvedForeignCityOccurrence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<DateTimeOffset>("SeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("seen_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("UnresolvedCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("unresolved_city_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UnresolvedCityId", "OrderId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_unresolved_foreign_city_occurrences_city_order");
+
+                    b.ToTable("unresolved_foreign_city_occurrences", "geography");
+                });
+
             modelBuilder.Entity("Modules.Geography.Infrastructure.Persistence.GeographyOutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -536,6 +773,15 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Geography.Domain.ForeignCitySynonym", b =>
+                {
+                    b.HasOne("Modules.Geography.Domain.BillingCity", null)
+                        .WithMany()
+                        .HasForeignKey("BillingCityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Geography.Domain.RegionCity", b =>
                 {
                     b.HasOne("Modules.Geography.Domain.Region", null)
@@ -562,6 +808,23 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Modules.Geography.Domain.UnresolvedCityOccurrence", b =>
                 {
                     b.HasOne("Modules.Geography.Domain.UnresolvedCity", null)
+                        .WithMany()
+                        .HasForeignKey("UnresolvedCityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Geography.Domain.UnresolvedForeignCity", b =>
+                {
+                    b.HasOne("Modules.Geography.Domain.ForeignCitySynonym", null)
+                        .WithMany()
+                        .HasForeignKey("SynonymId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Geography.Domain.UnresolvedForeignCityOccurrence", b =>
+                {
+                    b.HasOne("Modules.Geography.Domain.UnresolvedForeignCity", null)
                         .WithMany()
                         .HasForeignKey("UnresolvedCityId")
                         .OnDelete(DeleteBehavior.Restrict)

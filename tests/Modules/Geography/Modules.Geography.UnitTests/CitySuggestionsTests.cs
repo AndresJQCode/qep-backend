@@ -74,4 +74,28 @@ public sealed class CitySuggestionsTests
         Assert.Equal(expected, result.Select(s => s.CityId));
         Assert.All(result, s => Assert.Equal(80, s.Similarity));
     }
+
+    [Fact]
+    public void TheCatalogRankingTiesByNameStateAndCode()
+    {
+        var miami = BillingCity.Create(BillingCityId.New(), "Us", "Estados Unidos", "09", "Florida", "1", "Miami");
+        var bostonA = BillingCity.Create(BillingCityId.New(), "Us", "Estados Unidos", "21", "Massachusetts", "2101", "Boston");
+        var bostonB = BillingCity.Create(BillingCityId.New(), "Us", "Estados Unidos", "21", "Massachusetts", "02119", "Boston");
+
+        Assert.Equal([new BillingCitySuggestion(miami.Id, 80)], CitySuggestions.Rank("MIAMY", [bostonA, miami, bostonB]));
+        Assert.Equal(
+            [bostonB.Id, bostonA.Id],
+            CitySuggestions.Rank("BOSTON", [bostonA, bostonB, miami]).Select(s => s.BillingCityId));
+    }
+
+    [Fact]
+    public void TheCatalogRankingTiesByStateBeforeCode()
+    {
+        var south = BillingCity.Create(BillingCityId.New(), "Us", "Estados Unidos", "30", "Texas", "1", "Austin");
+        var north = BillingCity.Create(BillingCityId.New(), "Us", "Estados Unidos", "10", "Alabama", "2", "Austin");
+
+        var result = CitySuggestions.Rank("AUSTIN", [south, north]);
+
+        Assert.Equal([north.Id, south.Id], result.Select(s => s.BillingCityId));
+    }
 }

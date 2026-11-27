@@ -70,10 +70,10 @@ public sealed class UnresolvedCity
         {
             Id = id,
             DepartmentId = departmentId,
-            NormalizedText = Truncate(normalized, Domain.CityText.MaxLength),
-            CityText = Truncate(cityText.Trim(), Domain.CityText.MaxLength),
-            SampleAddress = Truncate(sampleAddress, SampleAddressMaxLength),
-            ProvinceCode = provinceCode is null ? null : Truncate(provinceCode, ProvinceCodeMaxLength),
+            NormalizedText = Domain.CityText.Truncate(normalized, Domain.CityText.MaxLength),
+            CityText = Domain.CityText.Truncate(cityText.Trim(), Domain.CityText.MaxLength),
+            SampleAddress = Domain.CityText.Truncate(sampleAddress, SampleAddressMaxLength),
+            ProvinceCode = provinceCode is null ? null : Domain.CityText.Truncate(provinceCode, ProvinceCodeMaxLength),
             Status = UnresolvedCityStatus.Pending,
             FirstSeenAt = seenAt,
             LastSeenAt = seenAt,
@@ -108,19 +108,6 @@ public sealed class UnresolvedCity
     {
         UpdatedAt = now;
         Version++;
-    }
-
-    // Recorta sin partir un par sustituto y sin dejar un espacio al final: NormalizedText es la llave única
-    // por departamento, y "A " y "A" no pueden ser dos llaves.
-    private static string Truncate(string value, int max)
-    {
-        if (value.Length <= max)
-        {
-            return value;
-        }
-
-        var length = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
-        return value[..length].TrimEnd();
     }
 
     private void EnsureStatus(UnresolvedCityStatus expected, string code, string message)

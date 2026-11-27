@@ -19,4 +19,11 @@ public sealed class CityTextTests
     {
         Assert.Equal(string.Empty, CityText.Normalize(" \t\n "));
     }
+
+    [Theory]
+    [InlineData("ABC", 5, "ABC")]
+    [InlineData("ABCD EF", 5, "ABCD")] // corta y no deja el espacio final
+    [InlineData("AB😀", 3, "AB")] // no parte el par sustituto
+    public void TruncateCutsWithoutAPartialPairOrATrailingSpace(string value, int max, string expected) =>
+        Assert.Equal(expected, CityText.Truncate(value, max));
 }
