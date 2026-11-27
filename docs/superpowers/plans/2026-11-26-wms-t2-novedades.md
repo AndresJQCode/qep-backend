@@ -50,6 +50,8 @@ on its own (approving one does not approve the others; a green test is not an au
 | 8 | Permissions: **none new** (`wms.count.perform` and `wms.discrepancy.resolve` already exist with shape, policy and `admin`). `wms.discrepancy.resolve` is reused for incidents (spec §8.5) | — | — |
 | 9 | Architecture tests: **none expected to change** (`WmsLayerTests`, `MultiReplicaInventory`, `CompositionRootTests`). If one asks for a change, stop and report it as a deviation for the owner | Architecture | every block |
 | 10 | DA-38 to DA-51 and every «agent decision» at the end of this plan | Behavior | — |
+| 11 | Error code `wms.adjustment.count_stale` (422) from `approve` and `post` of a `CountVariance` adjustment (owner decision 2026-11-27, H1) | New code | final review |
+| 12 | Migration `AddIncidentsTenantReportedIndex` (index only, expand-only) | Schema | final review |
 
 ### Rollout (expand/contract) — decided in this plan, pending the owner
 
@@ -1308,8 +1310,10 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
     and `source = "count"` plus `taskNumber` in the `wms.adjustment.proposed` audit.
 32. (Block C) Posting the adjustment resolves the `CountVariance` with `Accept`, the batch and the posting membership; rejecting it
     rejects the incident with the adjustment's note.
-33. (Block C) The DA-45 filter (reporter not offered their own `Count`) is in `LockNextCandidateAsync` only; `POST /tasks/{id}/claim`
-    by id does not apply it (the plan names only `next`). Pending the owner.
+33. (Block C) **Decisión del owner, 2026-11-27** (replaces the earlier «pending the owner»): nobody counts the verification `Count` of an
+    incident they reported — not via `next`, not via `POST /tasks/{id}/claim`, not when a supervisor assigns or reassigns it (the
+    `assign` fails), and the `count` action refuses it too (defense in depth), always 422 `wms.incident.self_resolution`. In a
+    one-person warehouse the `Count` waits and the supervisor resolves the incident by hand.
 34. (Block C) Forward compatibility covers the sweeper (`LockExpiredAsync`) and the board reads (`CountByStatusAsync`,
     `CountOpenByTypeAsync`, `ListInProgressAsync`, `ListAssignedOpenAsync`); `ListInProgressAsync` also skips tasks with a line
     status this build does not know. `ListAsync`/`GetAsync` are not filtered (a supervisor reading a row this build cannot read still fails).
@@ -1317,6 +1321,31 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
     the notifier), and `CountTaskLineHandler` in `QepServiceCollectionExtensions` with the other task handlers.
 36. (Block C) A `SyncConflict` left by a `count` with a lost lease has `allowedResolutions = []` (a `Count` line has no destination)
     and can only be rejected.
+
+37. (Final review) **Decisión del owner, 2026-11-27 (H1):** approving or posting an adjustment with a `CountVariance` whose key balance
+    differs from `variance.ExpectedQty` rejects the adjustment and the variance, requests (or links) a new `Count`, re-links the
+    incidents and answers 422 `wms.adjustment.count_stale` after saving (same pattern as `SyncConflict`). The rejection is audited
+    as `wms.adjustment.rejected` with the **system** as actor (`Guid.Empty`, `WmsActorType.System`) and the caller in `triggeredBy`;
+    the incident event has no member (decision 15).
+38. (Final review, decisión del agente, por confirmar) H1 details: the re-link moves **every** incident whose `verification_task_id` is
+    the old `Count` (any status, not only open ones: in the normal flow the children were already resolved by the system, and
+    separation of duties derives reporters from `verification_task_id`); the new `Count`'s source is the rejected `CountVariance`; a
+    serial variant gets no new `Count`. `post` reads the balance without locks first (the recount needs `count-key` and numbering,
+    which go before balances), then locks the adjustment's balance rows in ledger order (`StockKeyComparer`) and re-reads; if it
+    changed in between it answers 412 `concurrency.conflict` (rolled back) and the retry takes the clean 422 path. A key with no
+    balance row has nothing to lock (a concurrent first insert is not covered).
+39. (Final review, decisión del agente, por confirmar) M1: reporters of a `CountVariance` are `ListReportersVerifiedByAsync(sourceCount)`
+    (replaces `ListReportersOfChildrenAsync`).
+40. (Final review, decisión del agente, por confirmar) M3/L3: `AcceptIntoStock` is not offered nor accepted when the raw payload's
+    `toLocationId` differs from the line destination (an unreadable value counts as different), when the variant is lot-tracked and
+    the incident has no lot, or when `actualQty` exceeds the line's **current** remaining (≤ the remaining at incident time).
+41. (Final review, security) The cap is cumulative: remaining = planned − confirmed − sum of `actual_qty` of incidents already
+    `Resolved` with `AcceptIntoStock` on the same source line (read from `wms.incidents`). Resolutions of one line are serialized
+    with the lock `task-line:{lineId}`, taken after the document lock and before the ledger balances (extension of decision 27;
+    `resolve` takes no operator, task or `count-key` lock).
+42. (Final review, decisión del agente, por confirmar) L5: index `IX_incidents_tenant_reported` on `(tenant_id, reported_at, number)`
+    (the order of `GET /incidents` is `reported_at DESC, number DESC`; `number` added so a backward scan serves the whole order),
+    migration `AddIncidentsTenantReportedIndex`, expand-only.
 
 ## Deviations
 
@@ -1335,6 +1364,14 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
   `GET /incidents/{id}` uses `GetWithEventsAsync` (no tracking). New unit test `IncidentRoutesTests` (route table with policies).
 - **B4:** `resolve` reads the line destination with the narrow query (decision 22) instead of `tasks.GetAsync`. Added the unit test
   `EnsureCanResolveAnswersLikeResolveAndChangesNothing` and the route table cases for `review`, `resolve` and `reject`.
+
+### Final review fixes (2026-11-27)
+
+- **M2/H1/M1/M3/L1/L2/L5:** see decisions 33 and 37 to 42. The existing test `TheSupervisorCanAssignTheCountToTheReporter` was removed
+  (it asserted the opposite of decision 33; `TheSupervisorCannotAssignTheCountToTheReporter` replaces it). `FindLineDestinationsAsync`
+  became `FindLineFactsAsync` (destination and remaining). `ListReportersOfChildrenAsync` became `ListReportersVerifiedByAsync`.
+- **L4** (`ShortAndCountConcurrencyApiTests`) and the sequential/concurrent cap tests characterize behavior that was already
+  correct or were written with the fix; L4 was green on the first run (no RED).
 
 ### Block C
 

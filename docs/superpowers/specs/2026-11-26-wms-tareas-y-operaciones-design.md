@@ -813,7 +813,16 @@ ledger; spec de arquitectura §9.3).
    esperado), por otra persona que quien reportó si hay alguien elegible. Sin diferencia: cierra las novedades hijas. Con diferencia:
    propone un `Adjustment` (agregado existente, motivo `CountVariance`) que aprueba quien tenga `wms.adjustment.approve`.
 3. **Separación de funciones** (DA-17): quien reportó la novedad no resuelve con `WriteOff` ni aprueba el ajuste que sale de ella
-   (422 `wms.incident.self_resolution`).
+   (422 `wms.incident.self_resolution`). **Decisión del owner, 2026-11-27 (decisión 33):** nadie cuenta el `Count` de verificación
+   de una novedad que reportó: ni con `next`, ni reclamándolo por id, ni porque el supervisor se lo asigne (el `assign` falla), y la
+   acción `count` también lo rechaza (defensa en profundidad), siempre con 422 `wms.incident.self_resolution`. En una bodega de una
+   persona el `Count` espera y el supervisor resuelve la novedad a mano. Los reportantes que no pueden aprobar el ajuste salen de
+   toda novedad con `verification_task_id` igual al `Count` de origen, sin mirar su estado ni su padre.
+7. **El ajuste de un conteo sólo vale con el saldo que el conteo vio** (decisión del owner, 2026-11-27, H1). Al aprobar o
+   contabilizar un ajuste con `CountVariance`, si el saldo actual de la clave difiere de lo esperado que vio el conteo, el sistema
+   rechaza el ajuste y la `CountVariance` (nota «El saldo cambió desde el conteo TSK-…: había M y ahora hay K. Se pidió un conteo
+   nuevo.»), genera un `Count` nuevo de la misma clave (o enlaza el abierto), enlaza a él las novedades que verificaba el viejo,
+   guarda y responde 422 `wms.adjustment.count_stale`. Contabilizar bloquea los saldos en el orden del ledger y vuelve a leer.
 4. **La app no deja escribir códigos libres:** elige el tipo de la lista permitida para el paso y agrega nota y foto.
 5. **3PL:** toda novedad y ajuste de stock de un dueño `Client` queda filtrable por dueño para informarle (el portal es fase 6).
 6. Umbrales por valor no existen (no hay costeo en el WMS): la aprobación es por permiso, no por monto.
@@ -1053,6 +1062,12 @@ ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que
 | O-4 | Despacho parcial por tenant, apagado por defecto; cross-docking sólo para faltantes, por bodega, apagado por defecto | Confirma DA-24 (con parámetro por tenant) y DA-23 | T7, T8 |
 | O-5 | El POS descuenta stock, a través del inventario básico | Revierte DA-28 | Por definir |
 | O-6 | Plantillas de rol de fábrica «Supervisor de bodega» y «Operario de bodega», también para los tenants existentes cuando se prende el módulo | Revierte DA-31 | Por definir (necesita autorización, ver O-7) |
+
+**Revisión final de T2 y respuestas del owner (2026-11-27):**
+
+- **Decisión 33** (nadie cuenta el `Count` de una novedad que reportó, también por `claim`, `assign` y `count`): ver §8.4 regla 3.
+- **H1** (el ajuste de un conteo se rechaza solo si el saldo cambió desde el conteo, 422 `wms.adjustment.count_stale`): ver §8.4
+  regla 7.
 
 **Pendientes del owner** (no se implementan sin respuesta):
 

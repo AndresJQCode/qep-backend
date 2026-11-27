@@ -58,9 +58,19 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   deshace todo su lote en cada pasada). Sin migración que lo cubra: `TaskForwardCompatibilityTests` quita los `CHECK` para probarlo.
 - **`GetValueOrDefault` sobre un diccionario de `Guid` devuelve `Guid.Empty`, no `null`**: una línea sin destino (la de un `Count`) se
   leía como destino `00000000-…` y `resolve` respondía 404 `wms.location.not_found`. Usa `TryGetValue`.
-- **Un `Count` abierto no se ofrece a quien reportó la novedad que verifica** (DA-45): `LockNextCandidateAsync` lee `wms.incidents`
-  (`verification_task_id`, `reported_by`) por nombre de columna; renombrarlas compila y rompe el filtro. El supervisor puede
-  asignárselo y entonces sí lo recibe.
+- **Nadie cuenta el `Count` de una novedad que reportó** (DA-45, decisión del owner 2026-11-27): `LockNextCandidateAsync` lee
+  `wms.incidents` (`verification_task_id`, `reported_by`) por nombre de columna; renombrarlas compila y rompe el filtro. `claim`,
+  `assign` del supervisor y la acción `count` también lo rechazan (`CountSelfVerificationRule`, 422 `wms.incident.self_resolution`);
+  ya no hay forma de asignárselo. Los reportantes que no aprueban el ajuste salen de toda novedad con `verification_task_id` del
+  `Count` de origen, en cualquier estado.
+- **El ajuste `CountVariance` se rechaza solo si el saldo cambió desde el conteo** (`CountVarianceFreshness`, 422
+  `wms.adjustment.count_stale`): `approve` y `post` lo comprueban; el rechazo, el `Count` nuevo y el re-enlace se **guardan antes del
+  `throw`** (como `SyncConflict`), así que no muevas el `SaveChangesAsync` ni escribas recibo ahí. `post` toma los saldos
+  (`LockBalancesAsync`, orden del ledger) **después** de la primera lectura: el `Count` nuevo toma `count-key` y numeraciones, que
+  van antes que los saldos.
+- **`AcceptIntoStock` de un `SyncConflict` es seguro sólo con destino igual, lote presente si la variante es de lotes y cantidad
+  dentro de lo que falta**, restando lo que otras novedades ya aceptaron en la misma línea; las resoluciones de una línea se
+  serializan con `task-line:{id}` (después del bloqueo del documento, antes de los saldos).
 - **La FK de `task_lines.lot_id` no mira tenant, dueño ni variante**: `CreateMoveTaskHandler` lo comprueba antes de guardar, como el
   ledger al confirmar.
 - **Los handlers que escriben al ledger abren la transacción con `await using var tx = await uow.BeginTransactionAsync(ct)`**: si `SaveChangesAsync` lanza `OperationReplayedException`, el `await using` deshace la transacción y el filtro relee el recibo; sin el `await using` la relectura corre sobre una transacción abortada y responde 500 donde tocaba 200. Y `Propose` la abre aunque no escriba movimientos: la numeración `ADJ-…` toma `pg_advisory_xact_lock` (bloqueante) y sin transacción no hay lock.

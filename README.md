@@ -7018,14 +7018,16 @@ Una **novedad** (`Incident`) es algo que el operario o el sistema encontró dist
   novedad). Reintentar con la misma clave no la duplica.
 - **El `Count` es a ciegas.** Un `ShortMove` o un `LocationMismatch` con ubicación y variante genera, en la misma transacción, un
   `Count` de esa clave de stock (o se enlaza al que ya está abierto: `count-key`). Una variante de series no genera `Count`. El operario
-  no recibe lo esperado: la línea trae lo planeado en cero y el servidor lee el saldo al contar. La persona que reportó el faltante no
-  recibe su propio conteo con `next` (el supervisor puede asignárselo). Sin diferencia, el sistema resuelve las novedades; con
+  no recibe lo esperado: la línea trae lo planeado en cero y el servidor lee el saldo al contar. Quien reportó el faltante no cuenta su
+  propio conteo: ni con `next`, ni reclamándolo por id, ni asignado por el supervisor, ni con `count` (`wms.incident.self_resolution`);
+  en una bodega de una persona el supervisor resuelve la novedad a mano. Sin diferencia, el sistema resuelve las novedades; con
   diferencia, propone un ajuste `CountVariance` (nunca toca el ledger) que **no aprueba** quien contó ni quien reportó el faltante, y
   contabilizar el ajuste resuelve la novedad `CountVariance` (rechazarlo la rechaza). Cancelar el `Count` desenlaza sus novedades, que
   siguen abiertas.
 - **Códigos.** 404 `wms.incident.not_found`. 422 `wms.incident.self_resolution`, `wms.incident.resolution_not_allowed`,
   `wms.incident.type_not_allowed`, `wms.incident.evidence_invalid`, `wms.incident.invalid`. 412 con la `version` vieja de una acción del
-  supervisor. Al contar, además, `wms.serial.required` y `wms.lot.required`.
+  supervisor. Al contar, además, `wms.serial.required` y `wms.lot.required`. Al aprobar o contabilizar un ajuste de conteo,
+  422 `wms.adjustment.count_stale` (el saldo cambió desde el conteo: el ajuste se rechazó solo y se pidió un conteo nuevo).
 - **Tablero.** `GET /tasks/summary` trae `openIncidents` y lista el tipo `Count` aunque esté en cero.
 
 **Despliegue de T2.** Las dos migraciones (`AddIncidentsAndShortLines`, `AddCountTasks`) son **sólo de expansión** (tablas nuevas,
@@ -7037,7 +7039,7 @@ atrás a código anterior a T2 una vez que existe una tarea `Count` o una línea
 `AddCountTasks` falla a propósito con esos datos). Desde T2 el barrido y el tablero ignoran los valores que el build no conoce, así que
 los cortes siguientes no repiten este problema.
 
-**Migraciones:** `Wms` `AddWarehouseTasks`, `AddTaskBoardIndexes` (índices del tablero y del listado), `AddTaskEventRecordedAt` (`recorded_at` en `task_events`, el orden de la historia), `AddIncidentsAndShortLines` (novedades, evidencia e historia; la línea `Short`) y `AddCountTasks` (el tipo `Count`, `task_lines.quantity_counted`).
+**Migraciones:** `Wms` `AddWarehouseTasks`, `AddTaskBoardIndexes` (índices del tablero y del listado), `AddTaskEventRecordedAt` (`recorded_at` en `task_events`, el orden de la historia), `AddIncidentsAndShortLines` (novedades, evidencia e historia; la línea `Short`) y `AddCountTasks` (el tipo `Count`, `task_lines.quantity_counted`) y `AddIncidentsTenantReportedIndex` (índice `(tenant_id, reported_at, number)` de la bandeja de novedades).
 
 ## Verificación
 
