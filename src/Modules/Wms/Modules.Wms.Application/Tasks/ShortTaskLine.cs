@@ -119,7 +119,8 @@ public sealed class ShortTaskLineHandler(
                 WmsErrorCodes.IncidentTypeNotAllowed, "Ese tipo de novedad no se declara en una tarea de este tipo.");
         }
 
-        if (line.LotId is { } planned && command.LotId != planned.Value)
+        // Sin nada encontrado no se escaneó ningún lote: no hay con qué comparar el de la línea, que es el que queda en la novedad.
+        if (line.LotId is { } planned && command.LotId != planned.Value && (command.QuantityFound > 0 || command.LotId is not null))
         {
             throw new WmsDomainException(WmsErrorCodes.TaskLotMismatch, "El lote escaneado no es el de la línea.");
         }

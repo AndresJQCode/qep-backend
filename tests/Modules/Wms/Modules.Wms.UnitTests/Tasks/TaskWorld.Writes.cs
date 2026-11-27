@@ -244,6 +244,9 @@ internal sealed partial class TaskWorld
             Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<Guid?> FindWarehouseOfAsync(Guid tenantId, Guid taskId, CancellationToken cancellationToken) =>
+            Task.FromResult<Guid?>(Find(tenantId, taskId)?.WarehouseId.Value);
+
         public Task<IReadOnlyDictionary<Guid, TaskLineFacts>> FindLineFactsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

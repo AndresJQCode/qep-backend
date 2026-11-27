@@ -371,6 +371,31 @@ public sealed class TaskShortApiTests
     }
 
     [Fact]
+    public async Task AShortWithNothingFoundOnAFixedLotLineNeedsNoScannedLot()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await SetTrackingAsync(s.Manager, s.VariantId, "Lot");
+        var planned = await CreateLotAsync(factory, s, s.VariantId, "L1");
+        await StockAsync(factory, s, s.BinA, 10, planned);
+        var destination = await CreateDestinationAsync(s);
+        await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 5, planned)]));
+        var (_, client) = await SeedOperatorAsync(factory);
+        using var _c = client;
+        var task = await ReadAsync<TaskDto>(
+            await client.PostAsJsonAsync($"{TasksUrl()}/next", new { warehouseId = s.WarehouseId, deviceId = "zebra-01" }, Ct));
+
+        // No encontró nada, así que no escaneó ningún lote: no hay con qué comparar el de la línea.
+        var response = await ShortRawAsync(
+            client, task.Id, task.Lines[0].Id, ShortBody(task.LeaseToken!.Value, 0), NewKey());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(planned, Assert.Single(await IncidentsOfTaskAsync(database, task.Id)).LotId);
+    }
+
+    [Fact]
     public async Task AShortWithNothingFoundOnALotVariantNeedsNoLot()
     {
         var (database, factory) = await OpenAsync();

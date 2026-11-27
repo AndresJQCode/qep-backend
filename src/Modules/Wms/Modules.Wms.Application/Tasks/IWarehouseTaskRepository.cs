@@ -68,6 +68,10 @@ public interface IWarehouseTaskRepository
     Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(
         Guid tenantId, IReadOnlyCollection<Guid> taskIds, CancellationToken cancellationToken);
 
+    /// <summary>La bodega de esa tarea, sin cargarla ni rastrearla; <c>null</c> si no existe en el tenant. Para validar una tarea de origen
+    /// sin que el bloqueo que sigue reciba una copia vieja del contexto.</summary>
+    Task<Guid?> FindWarehouseOfAsync(Guid tenantId, Guid taskId, CancellationToken cancellationToken);
+
     /// <summary>El destino (<c>ToLocationId</c>, nulo si la línea no tiene) y lo que falta por confirmar de cada línea, sin cargar la
     /// tarea ni rastrearla: lo que la resolución <c>AcceptIntoStock</c> de una novedad necesita de la línea de origen. La línea que no
     /// existe no viene.</summary>

@@ -122,6 +122,16 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return rows.ToDictionary(row => row.Id, row => row.Number);
     }
 
+    public async Task<Guid?> FindWarehouseOfAsync(Guid tenantId, Guid taskId, CancellationToken cancellationToken)
+    {
+        var warehouses = await dbContext.Set<WarehouseTask>()
+            .AsNoTracking()
+            .Where(task => task.TenantId == tenantId && task.Id == taskId)
+            .Select(task => task.WarehouseId)
+            .ToListAsync(cancellationToken);
+        return warehouses.Count == 0 ? null : warehouses[0].Value;
+    }
+
     public async Task<IReadOnlyDictionary<Guid, TaskLineFacts>> FindLineFactsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken)
     {

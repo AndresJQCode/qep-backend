@@ -158,8 +158,9 @@ public sealed class ReportIncidentHandler(
 
         if (command.SourceTaskId is { } sourceTaskId)
         {
-            var source = await tasks.GetAsync(command.TenantId, sourceTaskId, cancellationToken);
-            if (source is null || source.WarehouseId.Value != command.WarehouseId)
+            // Sin rastreo: LockVerificationAsync vuelve a cargar tareas ya bloqueadas, y una copia rastreada se las daría vieja.
+            var sourceWarehouse = await tasks.FindWarehouseOfAsync(command.TenantId, sourceTaskId, cancellationToken);
+            if (sourceWarehouse != command.WarehouseId)
             {
                 throw WmsNotFound.Task(sourceTaskId);
             }
