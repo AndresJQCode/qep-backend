@@ -416,9 +416,10 @@ public sealed class TaskOperatorApiTests
         var old = await NextAsync(floor.Client, floor.Setup.WarehouseId);
         var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
         Assert.Equal(1, await sweeper.RunOnceAsync(DateTimeOffset.UtcNow.AddMinutes(16), Ct));
+        // M3: por id sólo se reclama lo que se le ofreció: la otra tarea nace asignada a este operario.
         var other = await CreateAsync(
             floor.Setup.Manager,
-            Body(floor.Setup, [Line(floor.Setup.VariantId, floor.Setup.BinA, floor.Destination, 1)]));
+            Body(floor.Setup, [Line(floor.Setup.VariantId, floor.Setup.BinA, floor.Destination, 1)], assignTo: floor.Worker));
         await ActionAsync(floor.Client, other.Id, "claim", new { deviceId = "zebra-01" });
 
         var response = await ConfirmRawAsync(
@@ -541,9 +542,9 @@ public sealed class TaskOperatorApiTests
         using var _c = floor.Client;
         var (_, secondClient) = await SeedOperatorAsync(factory, SecondOperatorSubject);
         using var _s = secondClient;
-        await ActionAsync(floor.Client, floor.Task.Id, "claim", new { deviceId = "zebra-01" });
+        var taken = await NextAsync(floor.Client, floor.Setup.WarehouseId);
 
-        var response = await ActionRawAsync(secondClient, floor.Task.Id, "claim", new { deviceId = "zebra-02" });
+        var response = await ActionRawAsync(secondClient, taken.Id, "claim", new { deviceId = "zebra-02" });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("wms.task.invalid_transition", await CodeOfAsync(response));
@@ -560,14 +561,32 @@ public sealed class TaskOperatorApiTests
         var other = await CreateAsync(
             floor.Setup.Manager,
             Body(floor.Setup, [Line(floor.Setup.VariantId, floor.Setup.BinA, floor.Destination, 1)]));
-        await ActionAsync(floor.Client, floor.Task.Id, "claim", new { deviceId = "zebra-01" });
+        var current = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        var second = current.Id == floor.Task.Id ? other.Id : floor.Task.Id;
 
-        var response = await ActionRawAsync(floor.Client, other.Id, "claim", new { deviceId = "zebra-01" });
+        var response = await ActionRawAsync(floor.Client, second, "claim", new { deviceId = "zebra-01" });
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         using var problem = System.Text.Json.JsonDocument.Parse(await BodyAsync(response));
         Assert.Equal("wms.task.member_busy", problem.RootElement.GetProperty("code").GetString());
-        Assert.Equal(floor.Task.Id, problem.RootElement.GetProperty("taskId").GetGuid());
+        Assert.Equal(current.Id, problem.RootElement.GetProperty("taskId").GetGuid());
+    }
+
+    // M3: el reclamo por id de una tarea del pool no se ofrece; el trabajo nuevo llega por «siguiente».
+    [Fact]
+    public async Task ClaimingAPoolTaskByIdIs422NotOffered()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+
+        var response = await ActionRawAsync(floor.Client, floor.Task.Id, "claim", new { deviceId = "zebra-01" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.task.not_offered", await CodeOfAsync(response));
+        Assert.Equal("Ready", (await GetAsync(floor.Setup.Manager, floor.Task.Id)).Status);
     }
 
     [Fact]

@@ -1069,16 +1069,20 @@ ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que
 - **H1** (el ajuste de un conteo se rechaza solo si el saldo cambió desde el conteo, 422 `wms.adjustment.count_stale`): ver §8.4
   regla 7.
 
+**Respuestas del owner del 2026-11-27** (tarjeta Trello snLjp0i1; plan `docs/superpowers/plans/2026-11-27-wms-motor-decisiones.md`):
+
+- **M3. Decidido e implementado.** `claim` por id sólo admite la tarea asignada a quien reclama y su propio reclamo vencido
+  (devuelto al pool por el barrido, con su token). Una tarea del pool, o una cuyo reclamo vencido es de otra persona, responde 422
+  `wms.task.not_offered`. El trabajo nuevo llega sólo por «Siguiente tarea»: DA-09 queda impuesta en el servidor, no sólo en la app.
+
 **Pendientes del owner** (no se implementan sin respuesta):
 
-- **M3.** ¿`claim` admite sólo las tareas asignadas a quien reclama y su propio reclamo vencido, o cualquier tarea del pool? Hoy
-  admite cualquiera que esté en el pool (DA-09 sólo esconde el pool en la app).
 - **B4.** ¿Un reclamo tiene una edad máxima, aunque siga latiendo? Hoy un operario que deja la app abierta la conserva sin límite.
 - **B5.** ¿La numeración diaria `TSK-yyyyMMdd-NNNN` corta el día en hora de Colombia? Hoy corta en UTC.
 
 ## 14. Preguntas para el owner
 
-O-1 a O-7 se contestaron el 2026-11-26: ver §13.1. Siguen abiertas M3, B4 y B5 (§13.1).
+O-1 a O-7 se contestaron el 2026-11-26: ver §13.1. M3 se decidió el 2026-11-27 (§13.1); siguen abiertas B4 y B5.
 
 ## 15. Riesgos
 

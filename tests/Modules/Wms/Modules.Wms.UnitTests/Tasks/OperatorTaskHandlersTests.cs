@@ -498,6 +498,73 @@ public sealed class OperatorTaskHandlersTests
         Assert.Contains("save", world.Log);
     }
 
+    // M3 (owner, 2026-11-27): el reclamo por id sólo acepta lo que se le ofreció a quien llama; el trabajo nuevo llega por «siguiente».
+    [Fact]
+    public async Task ClaimingATaskOfThePoolIsNotOffered()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+
+        var error = await Assert.ThrowsAsync<WmsDomainException>(() => ClaimAsync(world, task.Id));
+
+        Assert.Equal(WmsErrorCodes.TaskNotOffered, error.Code);
+        Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
+        Assert.DoesNotContain("save", world.Log);
+    }
+
+    [Fact]
+    public async Task ClaimingATaskWhoseExpiredClaimIsSomeoneElsesIsNotOffered()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+        task.Claim(TaskWorld.OtherMember, "otro-celular", TaskWorld.Start);
+        task.ExpireLease(TaskWorld.Start.AddMinutes(16));
+        world.Now = TaskWorld.Start.AddMinutes(17);
+
+        var error = await Assert.ThrowsAsync<WmsDomainException>(() => ClaimAsync(world, task.Id));
+
+        Assert.Equal(WmsErrorCodes.TaskNotOffered, error.Code);
+        Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
+    }
+
+    [Fact]
+    public async Task ClaimingATaskAssignedToTheCallerWorks()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask(assignTo: TaskWorld.Member);
+
+        var dto = await ClaimAsync(world, task.Id);
+
+        Assert.Equal("InProgress", dto.Status);
+        Assert.Contains("save", world.Log);
+    }
+
+    [Fact]
+    public async Task ClaimingATaskAssignedToSomeoneElseKeepsItsOwnError()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask(assignTo: TaskWorld.OtherMember);
+
+        var error = await Assert.ThrowsAsync<WmsDomainException>(() => ClaimAsync(world, task.Id));
+
+        Assert.Equal(WmsErrorCodes.TaskAssignedToOther, error.Code);
+    }
+
+    // El barrido devuelve al pool la tarea de quien se quedó sin conexión: retomarla por id sigue valiendo.
+    [Fact]
+    public async Task ClaimingMyOwnExpiredClaimWorksAndKeepsTheToken()
+    {
+        var world = new TaskWorld();
+        var (task, _) = ClaimedByCaller(world);
+        var token = task.LeaseToken;
+        task.ExpireLease(TaskWorld.Start.AddMinutes(16));
+        world.Now = TaskWorld.Start.AddMinutes(17);
+
+        var dto = await ClaimAsync(world, task.Id);
+
+        Assert.Equal(("InProgress", token), (dto.Status, dto.LeaseToken));
+    }
+
     [Fact]
     public async Task ClaimingAnUnknownTaskIs404()
     {

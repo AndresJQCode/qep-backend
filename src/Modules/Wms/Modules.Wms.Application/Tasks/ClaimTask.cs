@@ -1,6 +1,8 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
+using Modules.Wms.Domain;
+using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.Application;
 
@@ -68,9 +70,20 @@ public sealed class ClaimTaskHandler(
             return renewed;
         }
 
+        // M3: por id sólo se reclama lo que se le ofreció a quien llama. El trabajo nuevo del pool llega por «siguiente».
+        if (!IsOfferedTo(task, member))
+        {
+            throw new WmsDomainException(WmsErrorCodes.TaskNotOffered, "Esta tarea no se te ha ofrecido: pide la siguiente tarea.");
+        }
+
         task.Claim(member, command.DeviceId, clock.UtcNow);
         var dto = await composer.ComposeAsync(task, member, withEvents: false, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return dto;
     }
+
+    /// <summary>Una tarea del pool sólo se ofrece a quien la tenía reclamada y el barrido se la devolvió. La asignada a otra persona
+    /// sigue siendo asunto de <see cref="WarehouseTask.Claim"/>, que responde con su propio error.</summary>
+    private static bool IsOfferedTo(WarehouseTask task, Guid member) =>
+        task.Status != WarehouseTaskStatus.Ready || (task.ClaimedByMemberId == member && task.LeaseToken is not null);
 }
