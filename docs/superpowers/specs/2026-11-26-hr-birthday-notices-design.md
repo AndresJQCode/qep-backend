@@ -83,6 +83,7 @@ New aggregate `BirthdayNoticeSetting` (one row per tenant, table `hr.birthday_no
 | `LeadDays` | 0..7, default 1. |
 | `WhatsAppEnabled` + `WhatsAppConnectionId` | Connection required when enabled; must be a WhatsApp connection of the tenant. |
 | `EmailEnabled` | bool. |
+| `UpdatedByMemberId` | The member who last saved it; author of the WhatsApp messages (§5.3). |
 
 No row = feature off (the GET answers the defaults: empty managers, `LeadDays` 1, both channels off, `version` null).
 
@@ -129,7 +130,9 @@ call), with the same gates: from `Hr:SendHourLocal`, tenant `Active`, module `hr
   "today":    [{ "employeeId": "…", "employeeName": "Ana Pérez" }],
   "upcoming": [{ "employeeId": "…", "employeeName": "Luis Gómez" }],
   "upcomingDate": "2026-11-27",
-  "channels": { "whatsAppConnectionId": "…" | null, "email": true }
+  "todayTotal": 1, "upcomingTotal": 1,
+  "channels": { "whatsAppConnectionId": "…" | null, "email": true, "sentByMemberId": "…" },
+  "expiresAt": "2026-11-27T05:00:00Z"
 }
 ```
 
@@ -151,12 +154,13 @@ call), with the same gates: from `Hr:SendHourLocal`, tenant `Active`, module `hr
   `MaxAttempts` 3, re-check the member right before sending (`ITaskNoticeRecipients`; inactive → `Skipped member_inactive`), renew
   ownership before sending. **No presence deferral and no read check**: the owner wants the channels regardless of the bell.
 - **Stale cutoff:** a delivery still `Pending` once its `run_date` is over in the tenant's time zone becomes `Skipped stale`
-  (a «Hoy» sent the next day would be wrong). The tenant's time zone travels in the row (`expires_at` = end of the run date, UTC).
+  (a «Hoy» sent the next day would be wrong). HR computes `expiresAt` (end of the run date in the tenant time zone, as UTC) and it travels in the event and the row (`expires_at`).
 - WhatsApp: needs `PhoneE164` (else `Skipped no_phone`) and an approved `HrBirthdayNotice` template on the connection (else
   `Failed template_not_approved`). Sent through a new port `IHrBirthdayWhatsApp` implemented in Bootstrapper
-  (`HrBirthdayWhatsAppSender`, calqued on `TaskNoticeWhatsAppSender`), `ClientId` = delivery id (idempotent). There is no sender
-  member: the send contract has no `SentByMemberId`, and the template does not use `{{asesor}}`; Messaging's outbound for this kind
-  must not require one.
+  (`HrBirthdayWhatsAppSender`, calqued on `TaskNoticeWhatsAppSender`), `ClientId` = delivery id (idempotent). Messaging's outbound
+  requires an author member (the message row stores it, `SentByMemberId` is a non-nullable `Guid`): the author is the member who
+  last saved the setting (`BirthdayNoticeSetting.UpdatedByMemberId`, travels in the event as `sentByMemberId`), the same way a task
+  notice is authored by whoever assigned. The template does not use `{{asesor}}`, so that name never shows in the text.
 - Email: needs the account email (else `Skipped no_email`). New renderer `HrBirthdayDigestEmailTemplate` (`hr.birthdays-digest.v1`):
   subject «Cumpleaños de hoy en tu equipo» or «Próximos cumpleaños en tu equipo» when only upcoming (no company name: it would
   need a new lookup, and the reader already knows their company); body lists both groups with a link per
