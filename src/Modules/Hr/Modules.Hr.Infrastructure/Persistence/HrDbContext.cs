@@ -61,6 +61,12 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
 
     internal DbSet<DailyDigest> DailyDigests => Set<DailyDigest>();
 
+    public DbSet<BirthdayNoticeSetting> BirthdayNoticeSettings => Set<BirthdayNoticeSetting>();
+
+    internal DbSet<BirthdayNoticeRun> BirthdayNoticeRuns => Set<BirthdayNoticeRun>();
+
+    internal DbSet<BirthdayNoticeDigest> BirthdayNoticeDigests => Set<BirthdayNoticeDigest>();
+
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -83,6 +89,58 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         ConfigureOutboxProjection(modelBuilder);
         ConfigureTenantRun(modelBuilder);
         ConfigureDailyDigest(modelBuilder);
+        ConfigureBirthdayNoticeSettings(modelBuilder);
+        ConfigureBirthdayNoticeRun(modelBuilder);
+        ConfigureBirthdayNoticeDigest(modelBuilder);
+    }
+
+    // Spec 2026-11-26 §5.2: same columns as tenant_runs / daily_digests, in their own tables because those keys carry no kind.
+    // Written and read with raw SQL by BirthdayRunStore and BirthdayDigestStore.
+    private static void ConfigureBirthdayNoticeRun(ModelBuilder modelBuilder)
+    {
+        var run = modelBuilder.Entity<BirthdayNoticeRun>();
+        run.ToTable("birthday_notice_runs", Schema);
+        run.HasKey(value => new { value.TenantId, value.RunDate });
+        run.Property(value => value.TenantId).HasColumnName("tenant_id");
+        run.Property(value => value.RunDate).HasColumnName("run_date");
+        run.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        run.Property(value => value.FinishedAt).HasColumnName("finished_at");
+    }
+
+    private static void ConfigureBirthdayNoticeDigest(ModelBuilder modelBuilder)
+    {
+        var digest = modelBuilder.Entity<BirthdayNoticeDigest>();
+        digest.ToTable("birthday_notice_digests", Schema, table =>
+            table.HasCheckConstraint("CK_birthday_notice_digests_status", "status IN ('Sending','Sent','Failed')"));
+        digest.HasKey(value => new { value.TenantId, value.MemberId, value.RunDate });
+        digest.Property(value => value.TenantId).HasColumnName("tenant_id");
+        digest.Property(value => value.MemberId).HasColumnName("member_id");
+        digest.Property(value => value.RunDate).HasColumnName("run_date");
+        digest.Property(value => value.Status).HasColumnName("status").HasMaxLength(16);
+        digest.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+        digest.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        digest.Property(value => value.SentAt).HasColumnName("sent_at");
+    }
+
+    // Spec 2026-11-26 §5.1: one row per tenant. `version` is the optimistic concurrency token of the PUT (If-Match). The managers
+    // are a `uuid[]` read and written whole through the `_managerMemberIds` field; they are never queried by member.
+    private static void ConfigureBirthdayNoticeSettings(ModelBuilder modelBuilder)
+    {
+        var setting = modelBuilder.Entity<BirthdayNoticeSetting>();
+        setting.ToTable("birthday_notice_settings", Schema);
+        setting.HasKey(value => value.TenantId);
+        setting.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        setting.Ignore(value => value.ManagerMemberIds);
+        setting.Property<List<Guid>>("_managerMemberIds").HasColumnName("manager_member_ids").HasColumnType("uuid[]");
+        setting.Property(value => value.LeadDays).HasColumnName("lead_days");
+        setting.Property(value => value.WhatsAppEnabled).HasColumnName("whatsapp_enabled");
+        // The id of a connection of Integrations: no FK, another module.
+        setting.Property(value => value.WhatsAppConnectionId).HasColumnName("whatsapp_connection_id");
+        setting.Property(value => value.EmailEnabled).HasColumnName("email_enabled");
+        setting.Property(value => value.UpdatedByMemberId).HasColumnName("updated_by_member_id");
+        setting.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        setting.Property(value => value.CreatedAt).HasColumnName("created_at");
+        setting.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     // `column IN ('A','B')` para un enum guardado como texto: la base no depende de quien escribe.
@@ -349,6 +407,11 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
             .HasFilter("status = 'Active'")
             .HasDatabaseName("IX_employment_contracts_employee_active");
         contract.HasIndex(value => value.CompanyId).HasDatabaseName("IX_employment_contracts_company_id");
+        // Spec 2026-11-26 («Referencias»): HrDocumentUsage busca por document_file_id en las cinco tablas antes de que Storage purgue un
+        // PDF. Parcial: la mayoría de las filas no tiene PDF. Igual en salary_records, assignment_records, contract_renewals y medical_exams.
+        contract.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_employment_contracts_document_file_id");
     }
 
     private static void ConfigureSalary(ModelBuilder modelBuilder)
@@ -366,6 +429,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         salary.Property(value => value.DocumentFileName).HasColumnName("document_file_name").HasMaxLength(255);
         salary.Property(value => value.CreatedAt).HasColumnName("created_at");
         salary.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        salary.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_salary_records_document_file_id");
     }
 
     private static void ConfigureAssignment(ModelBuilder modelBuilder)
@@ -388,6 +454,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         assignment.HasOne<Area>().WithMany().HasForeignKey(value => value.AreaId).OnDelete(DeleteBehavior.Restrict);
         assignment.HasOne<Site>().WithMany().HasForeignKey(value => value.SiteId).OnDelete(DeleteBehavior.Restrict);
         assignment.HasOne<Workplace>().WithMany().HasForeignKey(value => value.WorkplaceId).OnDelete(DeleteBehavior.Restrict);
+        assignment.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_assignment_records_document_file_id");
     }
 
     private static void ConfigureRenewal(ModelBuilder modelBuilder)
@@ -403,6 +472,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         renewal.Property(value => value.DocumentFileId).HasColumnName("document_file_id");
         renewal.Property(value => value.DocumentFileName).HasColumnName("document_file_name").HasMaxLength(255);
         renewal.Property(value => value.CreatedAt).HasColumnName("created_at");
+        renewal.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_contract_renewals_document_file_id");
     }
 
     // Spec 2026-11-23 §5.1. Own version (concurrency token) so that recording an exam never collides with a ficha edit. The unique
@@ -435,6 +507,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
             .IsUnique()
             .HasDatabaseName(MedicalExamUniqueIndex);
         exam.HasIndex(value => new { value.EmployeeId, value.ExamDate }).HasDatabaseName("IX_medical_exams_employee_exam_date");
+        exam.HasIndex(value => value.DocumentFileId)
+            .HasFilter("document_file_id IS NOT NULL")
+            .HasDatabaseName("IX_medical_exams_document_file_id");
     }
 
     // Spec 2026-11-23 §5.3: one row per terminated contract. Written in the same unit of work as the termination.

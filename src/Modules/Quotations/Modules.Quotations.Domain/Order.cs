@@ -126,6 +126,14 @@ public sealed class Order
 
     public OrderSource Source { get; private set; }
 
+    /// <summary>El tipo de documento (spec 2026-11-26 §6.2): el de la cotización de la que nació. Un pedido manual o de una
+    /// integración es <see cref="QuotationKind.Standard"/>.</summary>
+    public QuotationKind Kind { get; private set; }
+
+    /// <summary>El alcance vendido, copiado de la cotización con los mismos ids; <c>null</c> en un pedido
+    /// <see cref="QuotationKind.Standard"/>. No se edita (P4).</summary>
+    public ProjectScope? ProjectScope { get; private set; }
+
     /// <summary>La cotización de la que nació, si nació de una. Única a nivel de base entre las no nulas:
     /// una cotización tiene a lo sumo un pedido.</summary>
     public QuotationId? QuotationId { get; private set; }
@@ -476,7 +484,9 @@ public sealed class Order
     /// <see cref="Quotation.RequiresShipping"/>. Con false la pantalla oculta el envío y dice «Marcar como prestado»
     /// en vez de «Preparar»; el dominio no cambia nada: <c>Prepare</c> y el resto siguen igual.
     /// </summary>
-    public bool RequiresShipping => _items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical);
+    public bool RequiresShipping =>
+        Kind != QuotationKind.Project
+        && (_items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical));
 
     public IReadOnlyCollection<OrderParty> Parties => _parties;
 
@@ -536,6 +546,9 @@ public sealed class Order
         // Spec ReteICA por empresa §7.5: hereda el municipio de la operación junto con la foto, y las filas con su
         // porcentaje efectivo y el del catálogo (los lleva Rate).
         order.OperationCityId = quotation.OperationCityId;
+        // El tipo y el alcance vendido, con los mismos ids (spec 2026-11-26 §6.6). La línea se copia abajo como cualquiera.
+        order.Kind = quotation.Kind;
+        order.ProjectScope = quotation.ProjectScope;
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
@@ -1225,6 +1238,7 @@ public sealed class Order
         ProductKind kind = ProductKind.Physical,
         SalesUnit salesUnit = SalesUnit.Unit)
     {
+        EnsureLinesEditable();
         ArgumentNullException.ThrowIfNull(costs);
         EnsureEditable("Products can only be added while the order is editable.");
         // Un pedido pagado sigue editable: la línea nueva ya cuenta como vendida y congela al entrar (§4.3). El
@@ -1258,6 +1272,7 @@ public sealed class Order
         ProductKind kind = ProductKind.Physical,
         SalesUnit salesUnit = SalesUnit.Unit)
     {
+        EnsureLinesEditable();
         // Un pedido mayorista no admite regalos: su precio sale de la orden de compra del distribuidor y la factura no los lleva.
         if (Source == OrderSource.Wholesale)
         {
@@ -1346,6 +1361,7 @@ public sealed class Order
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
+        EnsureLinesEditable();
         EnsureEditable("Products can only be edited while the order is editable.");
         FindItem(itemId).UpdateQuantity(
             quantity, discountPercentage, taxPercentage, ChargesVat, Currency, PriceRounding, occurredAt);
@@ -1356,6 +1372,7 @@ public sealed class Order
     /// tasa no cambian; el precio pasa por la regla de redondeo del pedido.</summary>
     public void ChangeItemUnitPrice(OrderItemId itemId, decimal unitPrice, MemberId updatedBy, DateTimeOffset occurredAt)
     {
+        EnsureLinesEditable();
         if (Source != OrderSource.Wholesale)
         {
             throw new QuotationsDomainException(
@@ -1369,6 +1386,7 @@ public sealed class Order
 
     public void RemoveItem(OrderItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
     {
+        EnsureLinesEditable();
         EnsureEditable("Products can only be removed while the order is editable.");
         // Un regalo no sostiene el pedido: sin una línea pagada no hay qué facturar. Quitar un regalo siempre se puede.
         var target = FindItem(itemId);
@@ -2531,6 +2549,15 @@ public sealed class Order
     // La misma señal con que Customers distingue el reintento de un trabajo de lo que hizo una persona.
     private static bool IsRequestedCity(OrderParty party, IReadOnlyCollection<Guid> requestedCityIds) =>
         party.CityId is { } cityId && requestedCityIds.Contains(cityId);
+
+    // El alcance vendido y su línea no se cambian en el pedido (spec 2026-11-26, P4): se anula y se cotiza de nuevo.
+    private void EnsureLinesEditable()
+    {
+        if (Kind == QuotationKind.Project)
+        {
+            throw new QuotationsDomainException(ProjectErrors.ItemsLocked, ProjectErrors.ItemsLockedMessage);
+        }
+    }
 
     private void EnsureEditable(string message)
     {

@@ -63,4 +63,10 @@ internal sealed class ShopifyGeographyLookup(IDepartmentRepository departments, 
         var region = await regions.FindAsync(new RegionId(regionId), cancellationToken);
         return region is null ? null : (region.CountryCode, region.Code);
     }
+
+    public async Task<Guid?> FindRegionAsync(string countryCode, string regionCode, CancellationToken cancellationToken)
+    {
+        var inCountry = await regions.ListByCountryAsync(countryCode, cancellationToken);
+        return inCountry.FirstOrDefault(region => string.Equals(region.Code, regionCode, StringComparison.Ordinal))?.Id.Value;
+    }
 }

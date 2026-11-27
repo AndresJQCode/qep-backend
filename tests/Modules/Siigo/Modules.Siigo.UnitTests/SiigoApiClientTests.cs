@@ -276,6 +276,22 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.Equal(2, _api.Requests.Count(request => request.Path == "/auth"));
     }
 
+    // Editar la conexión con el usuario y la clave de otra cuenta deja el mismo connectionId: el token de la cuenta anterior no sirve.
+    [Fact]
+    public async Task NewCredentialsOnTheSameConnectionAuthenticateAgain()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/customers", HttpStatusCode.OK, Fixture.Read("customers-empty.json"));
+
+        await _client.FindCustomerAsync(Credentials, "1", TestContext.Current.CancellationToken);
+        await _client.FindCustomerAsync(
+            Credentials with { Username = "api@otra-empresa.test", AccessKey = "otra-clave" }, "1", TestContext.Current.CancellationToken);
+
+        var auths = _api.Requests.Where(request => request.Path == "/auth").ToList();
+        Assert.Equal(2, auths.Count);
+        Assert.Contains("api@otra-empresa.test", auths[1].Body, StringComparison.Ordinal);
+    }
+
     // Review Focus 4: el 401 de una creación no la pierde ni la duplica: se reautentica y se repite con la MISMA clave.
     [Fact]
     public async Task A401RenewsTheTokenOnceAndRetriesWithTheSameKey()
@@ -415,7 +431,7 @@ public sealed class SiigoApiClientTests : IDisposable
     public async Task AReadUsesTheDefaultDeadline()
     {
         // Con el token ya puesto, lo único que sale es la lectura: el plazo corto no depende de lo que tarde /auth.
-        _tokens.Set(ConnectionId, "token-vigente", TimeSpan.FromHours(1));
+        _tokens.Set(Credentials, "token-vigente", TimeSpan.FromHours(1));
         _ = _api.Hang("/v1/document-types");
         var client = NewClient(_api, new SiigoApiTimeouts(Default: ShortDeadline, InvoiceCreate: LongDeadline));
 
@@ -446,7 +462,7 @@ public sealed class SiigoApiClientTests : IDisposable
     [Fact]
     public async Task TheStampUsesTheDefaultDeadline()
     {
-        _tokens.Set(ConnectionId, "token-vigente", TimeSpan.FromHours(1));
+        _tokens.Set(Credentials, "token-vigente", TimeSpan.FromHours(1));
         _ = _api.Hang("/v1/invoices/inv-1/stamp");
         var client = NewClient(_api, new SiigoApiTimeouts(Default: ShortDeadline, InvoiceCreate: LongDeadline));
 

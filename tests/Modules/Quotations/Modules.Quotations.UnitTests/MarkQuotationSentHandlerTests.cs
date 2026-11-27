@@ -216,7 +216,8 @@ public sealed class MarkQuotationSentHandlerTests
             deniedPermission is null
                 ? new StubExecutionContext(SubjectId, TenantId)
                 : new StubExecutionContext(SubjectId, TenantId, deniedPermission),
-            new FixedClock(Now));
+            new FixedClock(Now),
+            FixedTenantModules.Simulated);
 
         return new Harness(
             handler,

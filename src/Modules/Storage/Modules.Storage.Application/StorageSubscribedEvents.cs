@@ -27,4 +27,12 @@ public static class StorageSubscribedEvents
     /// <c>ChatbotMediaReleasedEventParityTests</c>.
     /// </summary>
     public const string ChatbotMediaReleased = "automations.chatbot.media-released.v1";
+
+    /// <summary>
+    /// Spec 2026-11-26 («PDF del registro eliminado»): los PDF de un empleado que Hr soltó (hoy, al eliminar un registro de cargo y
+    /// lugar). Payload: <c>{ "tenantId": "&lt;guid&gt;", "fileIds": ["&lt;guid&gt;", …] }</c>. Lo consume
+    /// <c>storage.hr-document-release</c>, que purga sólo los que ninguna tabla de Hr del tenant nombra ya
+    /// (<see cref="IHrDocumentReferences"/>). La paridad con Hr la amarra <c>HrDocumentsReleasedEventParityTests</c>.
+    /// </summary>
+    public const string HrDocumentsReleased = "hr.employee.documents-released.v1";
 }

@@ -31,6 +31,18 @@ repo. El prompt se entiende sin esta conversación: qué se pide y por qué, el 
 de error verificados en el código), la ruta del spec del backend, la rama y el commit donde está, si ya se mergeó o
 desplegó, y las decisiones pendientes.
 
+## Tablero de trabajo
+
+Este repo se trabaja en el tablero de Trello **Lulo CRM** (workspace QCode): <https://trello.com/b/hhjA716M/lulo-crm>.
+Tus tarjetas son las que empiezan por `[backend]`. Las reglas para tomarlas, crearlas, bloquearlas y cerrarlas están
+en el `CLAUDE.md` de la raíz del workspace (`../CLAUDE.md`), compartidas con `qep-frontend`.
+
+**Tarjetas que necesitan la aprobación del owner** (decisión del owner, 2026-11-26): una tarjeta que espera una decisión o
+una aprobación suya, incluida la de un spec, se mueve a la columna «Bloqueadas» con un comentario que diga qué hay que
+aprobar y de qué columna venía. No se implementa ni se toma hasta que responda. Con la respuesta, se comenta en la
+tarjeta y vuelve a «Por hacer», o a «En progreso» si la sigue la misma sesión. Una tarjeta que sólo espera a otra se
+queda en «Por hacer».
+
 ## Reglas duras
 
 - **Nunca imprimir el valor de un secreto.** `dotnet user-secrets list` y equivalentes se
@@ -240,6 +252,7 @@ si vas a tocar un módulo, abre su regla antes (o lee primero un archivo del mó
 | [`tenancy-y-servicios`](.claude/rules/tenancy-y-servicios.md) | Tenancy, Identidad, contratos de servicio y API externa: registro de tenant, roles asignables, módulo billing, claves de API |
 | [`siigo`](.claude/rules/siigo.md) | Siigo (facturación de pedidos): registro legal de facturas, DIAN apagado por defecto, retenciones, `error_detail`, bloqueo de marca manual y anulación |
 | [`wms`](.claude/rules/wms.md) | WMS (bodegas, ledger y saldos): ledger inmutable, clave de `stock_balances`, particiones, ventana de `occurredAt`, idempotencia |
+| [`rrhh`](.claude/rules/rrhh.md) | RRHH (empleados, contratos y sus PDF): tablas con `document_file_id` en `IHrDocumentUsage`, `HrDocument` sólo `Deleted` por la purga, caminos que sueltan un PDF |
 
 Una regla nueva va al archivo de su módulo, no acá. Si lee o escribe columnas o tablas de otro
 módulo por nombre, va en `sql-entre-modulos`: sus paths (Bootstrapper y migraciones) la cargan

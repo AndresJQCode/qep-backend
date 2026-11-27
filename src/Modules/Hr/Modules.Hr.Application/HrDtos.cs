@@ -59,6 +59,15 @@ public sealed record SalaryRecordDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+/// <param name="CanEdit">
+/// El contrato está activo y ninguna nómina <c>Approved</c> o <c>Closed</c> de la empresa del contrato, con resultado del empleado,
+/// usó los días que rige el registro. Lo calcula el backend porque la pantalla no ve la nómina (Backend for Frontend). No mira
+/// permisos, como el resto de la ficha. En <c>true</c> no garantiza cualquier cambio: mover la fecha puede alcanzar otra nómina.
+/// </param>
+/// <param name="CanDelete">
+/// <c>CanEdit</c>, no es el primero y el historial sin él sigue siendo válido (vecinos distintos, cambio de lugar el día 1): la misma
+/// regla que aplica el <c>DELETE</c>, para que la pantalla no ofrezca un botón que va a responder 422.
+/// </param>
 public sealed record AssignmentRecordDto(
     Guid Id,
     DateOnly EffectiveDate,
@@ -69,7 +78,9 @@ public sealed record AssignmentRecordDto(
     FileRefDto? Document,
     bool Scheduled,
     bool Current,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    bool CanEdit,
+    bool CanDelete);
 
 /// <param name="IsShort">Menos de un año sobre el fin anterior: cuenta para la regla de las tres prórrogas.</param>
 public sealed record RenewalDto(

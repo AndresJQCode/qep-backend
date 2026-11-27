@@ -85,6 +85,7 @@ public sealed class CreateMoveTaskHandler(
     IWmsMemberDirectory members,
     IWarehouseTaskRepository tasks,
     WarehouseTaskDtoComposer composer,
+    WmsNumberingDay numberingDay,
     IValidator<CreateMoveTaskCommand> validator)
     : ICommandHandler<CreateMoveTaskCommand, TaskDto>
 {
@@ -125,7 +126,7 @@ public sealed class CreateMoveTaskHandler(
         }
 
         var now = clock.UtcNow;
-        var number = await tasks.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await tasks.NextNumberAsync(command.TenantId, await numberingDay.OfAsync(command.TenantId, now, cancellationToken), cancellationToken);
         var task = WarehouseTask.CreateMove(
             command.TenantId,
             number,
@@ -192,23 +193,13 @@ public sealed class CreateMoveTaskHandler(
     }
 
     // La FK de la línea al lote no mira el tenant, el dueño ni la variante: la misma regla que aplica el ledger, antes de guardar.
-    private async Task EnsureLotsAsync(CreateMoveTaskCommand command, Guid ownerId, CancellationToken cancellationToken)
-    {
-        var ids = command.Lines.Where(line => line.LotId is not null).Select(line => line.LotId!.Value).Distinct().ToList();
-        if (ids.Count == 0)
-        {
-            return;
-        }
-
-        var found = await lots.GetManyAsync(command.TenantId, ids, cancellationToken);
-        foreach (var line in command.Lines.Where(line => line.LotId is not null))
-        {
-            if (!found.TryGetValue(line.LotId!.Value, out var lot) || lot.VariantId != line.VariantId || lot.OwnerId != ownerId)
-            {
-                throw new ResourceNotFoundException(WmsErrorCodes.LotNotFound, $"Lot '{line.LotId}' was not found.");
-            }
-        }
-    }
+    private Task EnsureLotsAsync(CreateMoveTaskCommand command, Guid ownerId, CancellationToken cancellationToken) =>
+        TaskLotRules.EnsureLotsAsync(
+            lots,
+            command.TenantId,
+            ownerId,
+            [.. command.Lines.Where(line => line.LotId is not null).Select(line => (line.VariantId, line.LotId!.Value))],
+            cancellationToken);
 
     // Spec §6.11: las dos de la bodega y no virtuales; el destino además admite almacenamiento (el origen puede ser un muelle).
     // Bloqueada o en conteo no se mira aquí: lo rechaza el ledger al confirmar.

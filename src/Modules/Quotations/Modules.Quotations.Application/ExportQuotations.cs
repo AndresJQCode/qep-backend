@@ -22,7 +22,9 @@ public sealed record ExportQuotationsCommand(
     DateOnly? CreatedFrom,
     DateOnly? CreatedTo,
     string? ClientNit,
-    string? QuotationNumber) : ICommand<ExportJobAccepted>;
+    string? QuotationNumber,
+    /// <summary>El mismo filtro <c>kind</c> del listado.</summary>
+    string? Kind = null) : ICommand<ExportJobAccepted>;
 
 /// <summary>Lo que se acepta: el job y cuándo. Sin archivo ni filas —todavía no existen— ni
 /// enlace: el canal de entrega es el correo (D5).</summary>
@@ -37,7 +39,9 @@ public sealed record QuotationsExportFilters(
     DateOnly CreatedFrom,
     DateOnly CreatedTo,
     string? ClientNit,
-    string? QuotationNumber);
+    string? QuotationNumber,
+    /// <summary>El filtro ya resuelto contra el módulo; un job de antes de este campo es <c>Standard</c>.</summary>
+    string? Kind = null);
 
 /// <summary>
 /// El rango es la cota de volumen, así que es obligatorio y de a lo sumo un año. Validador y no
@@ -72,7 +76,8 @@ public sealed class ExportQuotationsHandler(
     IQuotationsUnitOfWork unitOfWork,
     IValidator<ExportQuotationsCommand> validator,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ITenantModules tenantModules)
     : ICommandHandler<ExportQuotationsCommand, ExportJobAccepted>
 {
     public async Task<ExportJobAccepted> HandleAsync(
@@ -86,6 +91,8 @@ public sealed class ExportQuotationsHandler(
         // 2: filtros y rango.
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var status = QuotationListing.ParseStatus(command.Status);
+        var kind = await QuotationListing.ApplyModuleAsync(
+            tenantModules, command.TenantId, QuotationListing.ParseKind(command.Kind), cancellationToken);
         var advisorId = command.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await QuotationListing.ResolveClientIdsByNitAsync(
             customerLookup, command.TenantId, command.ClientNit, cancellationToken);
@@ -105,6 +112,7 @@ public sealed class ExportQuotationsHandler(
             created.From,
             created.Before,
             command.QuotationNumber,
+            kind,
             cancellationToken);
         if (!anyRow)
         {
@@ -136,7 +144,8 @@ public sealed class ExportQuotationsHandler(
                 command.CreatedFrom!.Value,
                 command.CreatedTo!.Value,
                 command.ClientNit,
-                command.QuotationNumber)),
+                command.QuotationNumber,
+                kind.ToString())),
             calendar.UtcNow);
         queue.Add(job);
         await unitOfWork.SaveChangesAsync(cancellationToken);

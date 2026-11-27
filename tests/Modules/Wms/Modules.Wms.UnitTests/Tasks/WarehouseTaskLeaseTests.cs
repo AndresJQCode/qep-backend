@@ -228,6 +228,55 @@ public sealed class WarehouseTaskLeaseTests
         Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
     }
 
+    // M2: pedir otra vez la tarea en curso renueva el lease con el mismo token, como el latido: sin versión ni evento.
+    [Fact]
+    public void RenewingMyClaimExtendsTheLeaseWithTheSameTokenWithoutVersionOrEvent()
+    {
+        var (task, token) = Claimed();
+        var events = task.Events.Count;
+
+        // Vencido pero sin barrer: sigue InProgress y nadie más pudo tomarlo.
+        task.RenewClaim(Member, $" {Device} ", Expired);
+
+        Assert.Equal((WarehouseTaskStatus.InProgress, token, 2L), (task.Status, task.LeaseToken!.Value, task.Version));
+        Assert.Equal(Expired.AddMinutes(15), task.LeaseExpiresAt);
+        Assert.Equal(Expired, task.LastActivityAt);
+        Assert.Equal(events, task.Events.Count);
+    }
+
+    [Fact]
+    public void OnlyTheClaimerRenewsATaskInProgress()
+    {
+        var (task, _) = Claimed();
+
+        Assert.Throws<InvalidOperationException>(() => task.RenewClaim(Other, Device, Expired));
+        Assert.Throws<TaskTransitionException>(() => NewMove().RenewClaim(Member, Device, Now));
+    }
+
+    // Dos celulares, opción A (owner, 2026-11-27): el segundo celular se lleva la tarea con un token nuevo; el primero ya no vale.
+    [Fact]
+    public void RenewingMyClaimFromAnotherDeviceMovesTheTaskToItWithANewToken()
+    {
+        var (task, token) = Claimed();
+        var later = Now.AddMinutes(3);
+
+        task.RenewClaim(Member, "zebra-02", later);
+
+        Assert.Equal("zebra-02", task.ClaimedDeviceId);
+        Assert.NotEqual(token, task.LeaseToken);
+        Assert.Equal(WarehouseTaskStatus.InProgress, task.Status);
+        Assert.Equal(later.AddMinutes(15), task.LeaseExpiresAt);
+        Assert.Equal(3L, task.Version);
+        var claimed = task.Events[^1];
+        Assert.Equal((TaskEventKind.Claimed, Member, "zebra-02"), (claimed.Kind, claimed.MemberId, claimed.DeviceId));
+        Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
+        Assert.Equal(LeaseCheck.Valid, task.CheckLease(Member, task.LeaseToken!.Value));
+    }
+
+    [Fact]
+    public void RenewingFromAnInvalidDeviceIdIsRefused() =>
+        Assert.Throws<ArgumentException>(() => Claimed().Task.RenewClaim(Member, " ", Expired));
+
     [Fact]
     public void AHeartbeatExtendsTheLeaseWithoutVersionOrEvent()
     {
@@ -520,9 +569,18 @@ public sealed class WarehouseTaskLeaseTests
             Assert.Equal(scanned, e.OccurredAt);
             // timestamptz sólo admite offset cero.
             Assert.Equal(TimeSpan.Zero, e.OccurredAt.Offset);
+            Assert.Equal(synced, e.RecordedAt);
         });
         Assert.Equal(scanned, task.CompletedAt);
         Assert.Equal(synced, task.LastActivityAt);
+    }
+
+    [Fact]
+    public void EveryOtherEventIsRecordedAtItsOwnTime()
+    {
+        var (task, _) = Claimed();
+
+        Assert.All(task.Events, e => Assert.Equal(e.OccurredAt, e.RecordedAt));
     }
 
     [Theory]
@@ -608,6 +666,61 @@ public sealed class WarehouseTaskLeaseTests
         task.Assign(Member, Supervisor, null, Expired);
 
         Assert.Equal(LeaseCheck.Resumable, task.CheckLease(Member, token));
+    }
+
+    // B1: retener borra el reclamo que dejó un lease vencido; si no, al volver a publicar la confirmación tardía de antes la reanudaría.
+    [Fact]
+    public void HoldingAndPublishingAgainRevokesTheExpiredClaim()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        task.Hold(Supervisor, null, Expired);
+        task.Publish(Supervisor, Expired.AddMinutes(1));
+
+        Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
+        Assert.Null(task.ClaimedByMemberId);
+        Assert.Null(task.ClaimedDeviceId);
+        Assert.Null(task.LeaseToken);
+        task.Claim(Member, Device, Expired.AddMinutes(2));
+        Assert.NotEqual(token, task.LeaseToken);
+    }
+
+    // B2: nadie escanea una tarea mucho antes de que exista en el pool; la tolerancia es la del reloj del ledger (5 minutos).
+    [Fact]
+    public void AScanMoreThanTheClockToleranceBeforeTheReleaseIsRejectedWithoutResuming()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        var error = Assert.Throws<WmsDomainException>(() => task.ConfirmLine(
+            Member, token, Device, task.Lines[0].Id, 1, Expired, Now.AddMinutes(-6)));
+
+        Assert.Equal(WmsErrorCodes.MovementOccurredAtOutOfRange, error.Code);
+        Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
+        Assert.Equal(0, task.Lines[0].QuantityConfirmed);
+    }
+
+    // B2: un celular con el reloj atrasado un par de minutos no se queda con un 422 permanente por un escaneo real.
+    [Fact]
+    public void AScanWithinTheClockToleranceBeforeTheReleaseIsAccepted()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        task.ConfirmLine(Member, token, Device, task.Lines[0].Id, 1, Expired, Now.AddMinutes(-4));
+
+        Assert.Equal(1, task.Lines[0].QuantityConfirmed);
+    }
+
+    [Fact]
+    public void AScanAtTheReleaseInstantIsAccepted()
+    {
+        var (task, token) = Claimed();
+
+        task.ConfirmLine(Member, token, Device, task.Lines[0].Id, 1, Now.AddMinutes(1), Now);
+
+        Assert.Equal(1, task.Lines[0].QuantityConfirmed);
     }
 
     [Fact]

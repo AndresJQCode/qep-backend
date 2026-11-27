@@ -72,6 +72,10 @@ public interface IQuotationEdits : IQuotationHeaderEdits
 
     /// <summary>Los tipos municipales con «Sin retención» (owner 2026-11-13); null o vacío = sin marca.</summary>
     IReadOnlyList<string>? ClearedWithholdingTypes { get; }
+
+    /// <summary>El alcance y el precio de una cotización de proyecto (spec 2026-11-26 §6.3): reemplaza el bloque entero;
+    /// null conserva el guardado. Null por defecto, como <see cref="BillingCompanyId"/>.</summary>
+    ProjectScopeRequest? Project => null;
 }
 
 /// <summary>
@@ -189,6 +193,11 @@ public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits
             .SetValidator(new ShippingRequestValidator())
             .When(edits => edits.Shipping is not null);
 
+        // Con SetValidator sobre la propiedad, los errores salen como `Project.…`, que es lo que pinta la pantalla.
+        RuleFor(edits => edits.Project!)
+            .SetValidator(new ProjectScopeRequestValidator())
+            .When(edits => edits.Project is not null);
+
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {
             item.RuleFor(line => line.VariantId).NotEmpty();
@@ -225,4 +234,22 @@ internal static class QuotationEditable
             "quotation.quotation.not_editable",
             "The quotation cannot be edited in its current status.");
     }
+}
+
+/// <summary>
+/// Una cotización de proyecto ignora el envío del cuerpo (spec 2026-11-26 §6.5), así que tampoco lo valida: el guardado y
+/// su cálculo previo lo quitan antes de validar. El tipo no viene en el cuerpo, y sólo se consulta cuando el bloque no
+/// pasaría: un envío bien escrito llega igual a la edición, que en un proyecto no lo aplica.
+/// </summary>
+internal static class ProjectIgnoredShipping
+{
+    public static async Task<bool> WouldFailAsync(
+        IQuotationRepository repository,
+        ShippingRequest? shipping,
+        Guid tenantId,
+        Guid quotationId,
+        CancellationToken cancellationToken) =>
+        !ShippingRequestValidator.Accepts(shipping)
+        && await repository.FindKindAsync(tenantId, new QuotationId(quotationId), cancellationToken)
+            == QuotationKind.Project;
 }

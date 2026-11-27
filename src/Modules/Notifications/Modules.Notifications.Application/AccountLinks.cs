@@ -32,5 +32,8 @@ public static class AccountLinks
     /// <summary>The detail of a support ticket or task in the SPA, for the email of an escalated assignment.</summary>
     public static string SupportTask(string appBaseUrl, Guid ticketId) => $"{Trim(appBaseUrl)}/support/{ticketId:D}";
 
+    /// <summary>The profile of an HR employee in the SPA, for the links of the birthday digest email.</summary>
+    public static string HrEmployee(string appBaseUrl, Guid employeeId) => $"{Trim(appBaseUrl)}/hr/employees/{employeeId:D}";
+
     private static string Trim(string appBaseUrl) => appBaseUrl.TrimEnd('/');
 }

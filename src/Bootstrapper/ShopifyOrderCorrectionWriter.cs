@@ -43,9 +43,7 @@ internal sealed class ShopifyOrderCorrectionWriter(
                 correction.TenantId,
                 correction.OrderId,
                 correction.ExpectedVersion,
-                correction.ShippingParty is not { } party
-                    ? null
-                    : new ExternalShippingParty(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId),
+                correction.ShippingParty is not { } party ? null : ShopifyOrderWriter.ToExternalParty(party),
                 correction.ReplaceBuyerNotes,
                 correction.BuyerNotes,
                 correction.MemberId,

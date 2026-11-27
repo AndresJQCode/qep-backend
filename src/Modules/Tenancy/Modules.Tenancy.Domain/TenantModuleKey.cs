@@ -127,8 +127,13 @@ public static class TenantModuleKeys
     /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Wms = TenantModuleKey.Define("wms");
 
+    /// <summary>Spec 2026-11-26 (cotizaciones de proyecto): «Gestión de proyectos». Depende de <see cref="Quotations"/> y
+    /// <see cref="Orders"/> (la cotización de proyecto se convierte en pedido) y queda fuera de
+    /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Projects = TenantModuleKey.Define("projects");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo, Hr, Payroll, Scheduling, Wms];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo, Hr, Payroll, Scheduling, Wms, Projects];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -169,6 +174,8 @@ public static class TenantModuleKeys
         [Scheduling] = [Customers],
         // Spec WMS 2026-10-31 §1.1: el inventario es de variantes del catálogo.
         [Wms] = [Catalog],
+        // Spec 2026-11-26: una cotización de proyecto se convierte en pedido.
+        [Projects] = [Quotations, Orders],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>

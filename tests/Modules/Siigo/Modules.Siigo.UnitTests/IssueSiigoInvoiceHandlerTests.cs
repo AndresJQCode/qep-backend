@@ -630,7 +630,9 @@ public sealed class IssueSiigoInvoiceHandlerTests
                 UnitOfWork,
                 Audit,
                 Clock,
-                new IssueSiigoInvoiceValidator());
+                new IssueSiigoInvoiceValidator(),
+                new ThrowingForeignCityInbox(),
+                NullLogger<IssueSiigoInvoiceHandler>.Instance);
         }
 
         public ApiProxy Api { get; }
@@ -744,6 +746,13 @@ public sealed class IssueSiigoInvoiceHandlerTests
             throw new NotSupportedException();
 
         public void Add(SiigoInvoice invoice) => throw new NotSupportedException();
+    }
+
+    /// <summary>La reanudación nunca carga el pedido ni anota: si algo llama a la bandeja, la prueba falla.</summary>
+    private sealed class ThrowingForeignCityInbox : ISiigoForeignCityInbox
+    {
+        public Task ReportAsync(Guid tenantId, Guid orderId, SiigoUnlinkedCity city, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Resuming an invoice must not annotate the operator inbox.");
     }
 
     /// <summary>Ninguna tanda tiene el pedido.</summary>

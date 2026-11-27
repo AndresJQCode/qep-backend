@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
 using Testcontainers.PostgreSql;
+using static Modules.Wms.IntegrationTests.Incidents.IncidentTestSupport;
 using static Modules.Wms.IntegrationTests.Tasks.TaskTestSupport;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
 using static Modules.Wms.IntegrationTests.WmsLedgerSeeding;
@@ -116,6 +118,99 @@ public sealed class TaskCandidateQueryTests
         await a.SaveAsync(a.Move(priority: 9, assignTo: Guid.CreateVersion7()));
 
         Assert.Null(await PickAsync(a));
+    }
+
+    // Un Count en el pool cuya novedad (la verifica) reportó `reporter`.
+    private static async Task<WarehouseTask> CountOfAsync(Arrangement a, Guid reporter)
+    {
+        var incident = await NumberAndSaveAsync(
+            a.Factory, a.Setup, number => NewIncident(a.Setup, number, reportedBy: reporter));
+        var count = NewCount(a.Setup, a.Setup.BinA, incident.Id, createdAt: Now);
+        await a.SaveAsync(count);
+        await ExecuteAsync(
+            a.Database,
+            "UPDATE wms.incidents SET verification_task_id = @task WHERE id = @id",
+            ("task", count.Id),
+            ("id", incident.Id));
+        return count;
+    }
+
+    [Fact]
+    public async Task TheReporterIsNotOfferedTheCountThatVerifiesTheirIncident()
+    {
+        await using var a = await ArrangeTasksAsync();
+        var reporter = Guid.CreateVersion7();
+        var counter = Guid.CreateVersion7();
+        var count = await CountOfAsync(a, reporter);
+
+        // DA-45: quien declaró el faltante no cuenta su propia ubicación.
+        await using var picker = await Picker.OpenAsync(a.Factory);
+        Assert.Null(await picker.NextAsync(a.Setup.TenantId, a.Setup.WarehouseId, reporter, [WarehouseTaskType.Count]));
+        Assert.Equal(
+            count.Id, await picker.NextAsync(a.Setup.TenantId, a.Setup.WarehouseId, counter, [WarehouseTaskType.Count]));
+    }
+
+    [Fact]
+    public async Task TheReporterGetsTheCountWhenItIsAssignedToThem()
+    {
+        await using var a = await ArrangeTasksAsync();
+        var reporter = Guid.CreateVersion7();
+        var count = await CountOfAsync(a, reporter);
+        await ExecuteAsync(
+            a.Database,
+            "UPDATE wms.tasks SET status = 'Assigned', assigned_member_id = @member WHERE id = @id",
+            ("member", reporter),
+            ("id", count.Id));
+
+        await using var picker = await Picker.OpenAsync(a.Factory);
+        Assert.Equal(
+            count.Id, await picker.NextAsync(a.Setup.TenantId, a.Setup.WarehouseId, reporter, [WarehouseTaskType.Count]));
+    }
+
+    [Fact]
+    public async Task FindOpenCountAsyncIgnoresClosedCountsAndOtherKeys()
+    {
+        await using var a = await ArrangeTasksAsync();
+        var s = a.Setup;
+        var lot = await CreateLotAsync(a.Factory, s, s.VariantId, "L-1");
+        var count = NewCount(s, s.BinA, createdAt: Now);
+        await a.SaveAsync(count);
+        await using var scope = a.Factory.Services.CreateAsyncScope();
+        var tasks = scope.ServiceProvider.GetRequiredService<IWarehouseTaskRepository>();
+
+        Task<Guid?> FindAsync(Guid location, Guid? withLot, StockStatus status = StockStatus.Available) =>
+            tasks.FindOpenCountAsync(s.TenantId, s.WarehouseId, s.OwnerId, location, s.VariantId, withLot, status, Ct);
+
+        Assert.Equal(count.Id, await FindAsync(s.BinA, null));
+        // Lote nulo ≠ lote L1, otro estado y otra ubicación son otras claves; otro tenant no ve nada.
+        Assert.Null(await FindAsync(s.BinA, lot));
+        Assert.Null(await FindAsync(s.BinA, null, StockStatus.Quarantine));
+        Assert.Null(await FindAsync(a.Destination, null));
+        Assert.Null(await tasks.FindOpenCountAsync(
+            Guid.CreateVersion7(), s.WarehouseId, s.OwnerId, s.BinA, s.VariantId, null, StockStatus.Available, Ct));
+
+        await ExecuteAsync(a.Database, "UPDATE wms.tasks SET status = 'Cancelled', cancelled_at = now() WHERE id = @id", ("id", count.Id));
+        Assert.Null(await FindAsync(s.BinA, null));
+
+        // Un Move sobre la misma clave nunca es un Count.
+        await a.SaveAsync(a.Move());
+        Assert.Null(await FindAsync(s.BinA, null));
+    }
+
+    [Fact]
+    public async Task AMoveIsNeverHiddenByTheReporterRule()
+    {
+        await using var a = await ArrangeTasksAsync();
+        var reporter = Guid.CreateVersion7();
+        await CountOfAsync(a, reporter);
+        var move = a.Move();
+        await a.SaveAsync(move);
+
+        await using var picker = await Picker.OpenAsync(a.Factory);
+        Assert.Equal(
+            move.Id,
+            await picker.NextAsync(
+                a.Setup.TenantId, a.Setup.WarehouseId, reporter, [WarehouseTaskType.Move, WarehouseTaskType.Count]));
     }
 
     [Fact]

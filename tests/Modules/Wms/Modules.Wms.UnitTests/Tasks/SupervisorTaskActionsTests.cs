@@ -10,16 +10,7 @@ public sealed class SupervisorTaskActionsTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static SupervisorTaskRunner Runner(TaskWorld world) =>
-        new(
-            world.Context(),
-            world.Authorization,
-            world.Repository(),
-            world.UnitOfWork(),
-            world.Recorder(),
-            world.Clock(),
-            world.Caller(),
-            world.Composer());
+    private static SupervisorTaskRunner Runner(TaskWorld world) => world.SupervisorRunner();
 
     private static Task<TaskDto> CancelLineAsync(TaskWorld world, Guid taskId, Guid lineId, long version) =>
         new CancelTaskLineHandler(Runner(world), new CancelTaskLineValidator())
@@ -101,7 +92,7 @@ public sealed class SupervisorTaskActionsTests
         var task = world.AddTask();
 
         var error = await Assert.ThrowsAsync<WmsDomainException>(() =>
-            new AssignTaskHandler(Runner(world), world.Members(), new AssignTaskValidator())
+            new AssignTaskHandler(Runner(world), world.Members(), world.IncidentRepository(), new AssignTaskValidator())
                 .HandleAsync(new AssignTaskCommand(TaskWorld.Tenant, task.Id, TaskWorld.OtherMember, 1, null), Ct));
 
         Assert.Equal(WmsErrorCodes.TaskAssigneeNotEligible, error.Code);
@@ -169,18 +160,62 @@ public sealed class SupervisorTaskActionsTests
         claimed.Heartbeat(TaskWorld.Member, claimed.LeaseToken!.Value, TaskWorld.Start.AddMinutes(9));
         world.AddTask();
         var handler = new GetTaskBoardHandler(
-            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
 
         var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
 
         Assert.Equal(
             [("Planned", 0), ("Ready", 1), ("Assigned", 0), ("InProgress", 1), ("Done", 0), ("Cancelled", 0)],
             board.ByStatus.Select(slice => (slice.Status, slice.Count)));
-        Assert.Equal([("Move", 2)], board.ByType.Select(slice => (slice.Type, slice.Open)));
+        Assert.Equal([("Move", 2), ("Count", 0)], board.ByType.Select(slice => (slice.Type, slice.Open)));
         var worker = Assert.Single(board.Operators);
         Assert.Equal(("Ana Operaria", claimed.Id, claimed.Number), (worker.Name, worker.TaskId, worker.TaskNumber));
         Assert.Equal(TaskWorld.Start.AddMinutes(1), worker.Since);
         Assert.Equal(TaskWorld.Start.AddMinutes(9), worker.LastActivityAt);
+        Assert.Empty(board.StaleAssignments);
+    }
+
+    // M1: una asignada a quien ya no puede hacerla no la reclama nadie; el tablero la muestra completa y con nombre.
+    [Fact]
+    public async Task TheBoardListsAssignmentsTheAssigneeCanNoLongerPerform()
+    {
+        var world = new TaskWorld();
+        world.Names[TaskWorld.OtherMember] = "Luis Exoperario";
+        var assigned = world.AddTask(assignTo: TaskWorld.OtherMember);
+        var planned = world.AddTask(publish: false, assignTo: TaskWorld.OtherMember);
+        world.AddTask(assignTo: TaskWorld.Member);
+        world.AddTask();
+        var handler = new GetTaskBoardHandler(
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
+
+        var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
+
+        Assert.Equal(
+            [(assigned.Id, assigned.Number, TaskWorld.OtherMember, "Luis Exoperario"),
+             (planned.Id, planned.Number, TaskWorld.OtherMember, "Luis Exoperario")],
+            board.StaleAssignments.Select(item => (item.TaskId, item.TaskNumber, item.MemberId, item.Name)));
+        // Una consulta de elegibles por permiso (el del tipo y wms.document.read), no una por tarea.
+        Assert.Equal(2, world.PermissionLookups);
+    }
+
+    // M1: toda ruta de tareas exige wms.document.read; quien lo perdió no puede reclamar su asignada aunque conserve el del proceso.
+    [Fact]
+    public async Task TheBoardListsAssignmentsOfSomeoneWhoLostDocumentRead()
+    {
+        var world = new TaskWorld();
+        world.Eligible.Add(TaskWorld.OtherMember);
+        world.WithoutDocumentRead.Add(TaskWorld.OtherMember);
+        world.Names[TaskWorld.OtherMember] = "Luis Sin Lectura";
+        var lost = world.AddTask(assignTo: TaskWorld.OtherMember);
+        world.AddTask(assignTo: TaskWorld.Member);
+        var handler = new GetTaskBoardHandler(
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.IncidentRepository(), world.Members());
+
+        var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
+
+        var stale = Assert.Single(board.StaleAssignments);
+        Assert.Equal((lost.Id, TaskWorld.OtherMember, "Luis Sin Lectura"), (stale.TaskId, stale.MemberId, stale.Name));
+        Assert.Equal(2, world.PermissionLookups);
     }
 
     [Fact]

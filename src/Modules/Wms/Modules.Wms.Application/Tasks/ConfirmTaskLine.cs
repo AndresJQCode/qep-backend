@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
@@ -41,7 +40,7 @@ public sealed record ConfirmTaskLineCommand(
     }
 }
 
-/// <summary>La ventana de <c>OccurredAt</c> no se mira aquí: la aplican la tarea y el ledger, con el código del ledger.</summary>
+/// <summary>La ventana y el piso de <c>OccurredAt</c> no se miran aquí: los aplican la tarea y el ledger, con el código del ledger.</summary>
 public sealed class ConfirmTaskLineValidator : AbstractValidator<ConfirmTaskLineCommand>
 {
     public const int OverrideReasonMaxLength = 200;
@@ -60,48 +59,49 @@ public sealed class ConfirmTaskLineValidator : AbstractValidator<ConfirmTaskLine
 /// <summary>
 /// Confirma parte o todo de una línea y mueve el stock (spec 2026-11-26 §6.8 y §7.9). Es el único camino por el que una tarea escribe
 /// al ledger, con una sola llamada por transacción. Ruta IK. Orden de bloqueos: el operario, la tarea y, dentro del ledger, los saldos.
+/// El molde común (clave, transacción, locks, lease, cierre, recibo) vive en <see cref="OperatorLineRunner"/>.
 /// </summary>
 public sealed class ConfirmTaskLineHandler(
-    IExecutionContext executionContext,
-    WmsAuthorization authorization,
-    WmsCaller caller,
-    IWmsUnitOfWork unitOfWork,
-    IdempotencyScope scope,
-    IOperationReceipts receipts,
-    IWarehouseTaskRepository tasks,
+    OperatorLineRunner runner,
     IWarehouseRepository warehouses,
-    OperatorTaskGuard guard,
     IInventoryLedger ledger,
-    IWmsConfirmMetrics metrics,
     IClock clock,
-    WarehouseTaskDtoComposer composer,
     IValidator<ConfirmTaskLineCommand> validator)
     : ICommandHandler<ConfirmTaskLineCommand, TaskDto>
 {
     public async Task<TaskDto> HandleAsync(ConfirmTaskLineCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        await authorization.EnsureAsync(
-            executionContext, command.TenantId, WmsPermissions.DocumentRead, ct: cancellationToken);
+        await runner.AuthorizeAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-        var key = scope.Key ?? throw new InvalidOperationException("Confirming a task line must run behind an idempotency key.");
-        var member = await caller.RequireAsync(command.TenantId, cancellationToken);
+        var occurredAt = command.OccurredAt!.Value;
 
-        var started = Stopwatch.GetTimestamp();
-        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        await unitOfWork.LockAsync(TaskMemberLocks.For(member), cancellationToken);
-        if (!await tasks.LockAsync(command.TenantId, command.TaskId, cancellationToken))
+        return await runner.RunAsync(
+            new OperatorLineRequest(
+                command.TenantId,
+                command.TaskId,
+                command.LineId,
+                command.LeaseToken,
+                command.DeviceId,
+                occurredAt,
+                "confirm",
+                command,
+                command.Quantity),
+            (context, ct) => ApplyAsync(command, occurredAt, context, ct),
+            cancellationToken);
+    }
+
+    private async Task ApplyAsync(
+        ConfirmTaskLineCommand command, DateTimeOffset occurredAt, OperatorLineContext context, CancellationToken cancellationToken)
+    {
+        var (task, line, member) = (context.Task, context.Line, context.MemberId);
+
+        // Una línea de conteo no se confirma: el operario recibe la transición inválida y no un location_mismatch confuso.
+        if (TaskTypePolicy.ConfirmsByCount(task.Type))
         {
-            throw WmsNotFound.Task(command.TaskId);
+            throw new TaskTransitionException(task.Status.ToString(), "confirm-line");
         }
 
-        var task = await tasks.GetAsync(command.TenantId, command.TaskId, cancellationToken)
-            ?? throw WmsNotFound.Task(command.TaskId);
-        await guard.EnsureCanPerformAsync(command.TenantId, task, cancellationToken);
-        var lease = OperatorTaskGuard.EnsureLease(task, member, command.LeaseToken);
-
-        // El dominio trata una línea ajena como error de cableado: el 404 sale de acá.
-        var line = task.FindLine(command.LineId) ?? throw WmsNotFound.TaskLine(command.LineId);
         var (to, overrideReason) = await ResolveDestinationAsync(task, line, command, cancellationToken);
         if (line.LotId is { } planned && command.LotId != planned.Value)
         {
@@ -109,13 +109,8 @@ public sealed class ConfirmTaskLineHandler(
         }
 
         var lot = line.LotId?.Value ?? command.LotId;
-        var occurredAt = command.OccurredAt!.Value;
-        // DA-32: bajo el lock de la persona, si mientras tanto tomó otra tarea ésta no vuelve a InProgress. Lo que movió en el piso se
-        // anota igual.
-        var busy = lease == LeaseCheck.Resumable
-            && await tasks.FindInProgressOfMemberAsync(command.TenantId, member, cancellationToken) is not null;
         task.ConfirmLine(
-            member, command.LeaseToken, command.DeviceId, line.Id, command.Quantity, clock.UtcNow, occurredAt, busy);
+            member, command.LeaseToken, command.DeviceId, line.Id, command.Quantity, clock.UtcNow, occurredAt, context.MemberIsBusy);
 
         var owner = task.OwnerId.Value;
         var entry = new LedgerEntry(
@@ -131,17 +126,10 @@ public sealed class ConfirmTaskLineHandler(
             new LedgerBatch(
                 command.TenantId,
                 Guid.CreateVersion7(),
-                key,
+                context.OperationKey,
                 new LedgerActor(member, LedgerActorType.Human, command.DeviceId.Trim()),
                 [entry]),
             cancellationToken);
-
-        var dto = await composer.ComposeAsync(task, member, withEvents: false, cancellationToken);
-        receipts.Record(dto);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        metrics.RecordConfirmDuration(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-        return dto;
     }
 
     // El origen es siempre el planeado. Otro destino exige motivo, un tipo que lo admita y una ubicación física de la bodega que

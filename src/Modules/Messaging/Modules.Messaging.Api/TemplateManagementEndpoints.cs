@@ -111,6 +111,14 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // HR birthday notices: the birthday notice template (optional body, body only, no module gate).
+        group.MapPost("/hr-birthday-notice", ProvisionHrBirthdayNoticeAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<ProvisionHrBirthdayNoticeTemplateRequest>(isOptional: true, "application/json")
+            .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista (cuerpo opcional, sin encabezado ni gate de módulo).
         group.MapPost("/appointment-reminder", ProvisionAppointmentReminderAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
@@ -165,6 +173,12 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/wholesale-invitation-notice/draft", GetWholesaleInvitationNoticeDraftAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<SystemTemplateDraftDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/hr-birthday-notice/draft", GetHrBirthdayNoticeDraftAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
             .Produces<SystemTemplateDraftDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -292,6 +306,13 @@ internal static class TemplateManagementEndpoints
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
             await dispatcher.SendAsync(new ProvisionTaskNoticeTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
 
+    private static async Task<IResult> ProvisionHrBirthdayNoticeAsync(
+        Guid tenantId, Guid connectionId, ProvisionHrBirthdayNoticeTemplateRequest? request, IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Created(
+            $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
+            await dispatcher.SendAsync(new ProvisionHrBirthdayNoticeTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
+
     private static async Task<IResult> ProvisionAppointmentReminderAsync(
         Guid tenantId, Guid connectionId, ProvisionAppointmentReminderTemplateRequest? request, IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
@@ -328,6 +349,10 @@ internal static class TemplateManagementEndpoints
     private static async Task<IResult> GetWholesaleInvitationNoticeDraftAsync(
         Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetWholesaleInvitationNoticeTemplateDraftQuery(tenantId, connectionId), cancellationToken));
+
+    private static async Task<IResult> GetHrBirthdayNoticeDraftAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetHrBirthdayNoticeTemplateDraftQuery(tenantId, connectionId), cancellationToken));
 
     private static async Task<IResult> GetTaskNoticeDraftAsync(
         Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -390,6 +415,9 @@ public sealed record ProvisionWholesaleInvitationNoticeTemplateRequest(string? B
 
 /// <summary>Support task notices: the edited body of the assignment notice template, or nothing for the base text.</summary>
 public sealed record ProvisionTaskNoticeTemplateRequest(string? Body);
+
+/// <summary>HR birthday notices: the edited body of the birthday notice template, or nothing for the base text.</summary>
+public sealed record ProvisionHrBirthdayNoticeTemplateRequest(string? Body);
 
 /// <summary>Agenda: el cuerpo editado de la plantilla del recordatorio de cita, o nada para el texto base.</summary>
 public sealed record ProvisionAppointmentReminderTemplateRequest(string? Body);

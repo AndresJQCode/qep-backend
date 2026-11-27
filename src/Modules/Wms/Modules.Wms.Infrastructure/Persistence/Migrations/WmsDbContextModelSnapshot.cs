@@ -362,6 +362,281 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                     b.ToTable("import_previews", "wms");
                 });
 
+            modelBuilder.Entity("Modules.Wms.Domain.Control.Incident", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal?>("ActualQty")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("actual_qty");
+
+                    b.Property<Guid?>("AdjustmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("adjustment_id");
+
+                    b.Property<Guid?>("BatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("batch_id");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<decimal?>("ExpectedQty")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("expected_qty");
+
+                    b.Property<Guid?>("LocationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("location_id");
+
+                    b.Property<Guid?>("LotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lot_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<string>("Number")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("number");
+
+                    b.Property<string>("OperationKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("operation_key");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<Guid?>("ParentIncidentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_incident_id");
+
+                    b.Property<string>("RawCode")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("raw_code");
+
+                    b.Property<string>("RawPayload")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("raw_payload");
+
+                    b.Property<DateTimeOffset>("ReportedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reported_at");
+
+                    b.Property<Guid>("ReportedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reported_by");
+
+                    b.Property<string>("Resolution")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("resolution");
+
+                    b.Property<string>("ResolutionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("resolution_note");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resolved_by");
+
+                    b.Property<Guid?>("SourceTaskId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_task_id");
+
+                    b.Property<Guid?>("SourceTaskLineId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_task_line_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("StockStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("stock_status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("type");
+
+                    b.Property<Guid?>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
+                    b.Property<Guid?>("VerificationTaskId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("verification_task_id");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("warehouse_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LocationId");
+
+                    b.HasIndex("LotId");
+
+                    b.HasIndex("OwnerId");
+
+                    b.HasIndex("ParentIncidentId");
+
+                    b.HasIndex("WarehouseId");
+
+                    b.HasIndex("TenantId", "Number")
+                        .IsUnique()
+                        .HasDatabaseName("IX_incidents_tenant_number");
+
+                    b.HasIndex(new[] { "AdjustmentId" }, "IX_incidents_adjustment")
+                        .HasFilter("adjustment_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId", "WarehouseId", "Status" }, "IX_incidents_open")
+                        .HasFilter("status IN ('Open','InReview')");
+
+                    b.HasIndex(new[] { "TenantId", "OperationKey" }, "IX_incidents_operation_key")
+                        .IsUnique()
+                        .HasFilter("operation_key IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId", "ReportedAt", "Number" }, "IX_incidents_tenant_reported");
+
+                    b.HasIndex(new[] { "TenantId", "VariantId" }, "IX_incidents_variant_open")
+                        .HasFilter("status IN ('Open','InReview') AND variant_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "VerificationTaskId" }, "IX_incidents_verification")
+                        .HasFilter("verification_task_id IS NOT NULL");
+
+                    b.ToTable("incidents", "wms", t =>
+                        {
+                            t.HasCheckConstraint("CK_incidents_quantities", "(expected_qty IS NULL OR expected_qty >= 0) AND (actual_qty IS NULL OR actual_qty >= 0)");
+
+                            t.HasCheckConstraint("CK_incidents_resolution", "resolution IS NULL OR resolution IN ('Accept','AcceptIntoStock')");
+
+                            t.HasCheckConstraint("CK_incidents_resolved", "status <> 'Resolved' OR (resolution IS NOT NULL AND resolved_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_incidents_status", "status IN ('Open','InReview','Resolved','Rejected')");
+
+                            t.HasCheckConstraint("CK_incidents_type", "type IN ('ShortMove','LocationMismatch','UnreadableLabel','CountVariance','SyncConflict')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Control.IncidentEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("detail");
+
+                    b.Property<Guid>("IncidentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("incident_id");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid?>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "IncidentId", "RecordedAt" }, "IX_incident_events_incident");
+
+                    b.ToTable("incident_events", "wms");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Control.IncidentEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<Guid>("IncidentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("incident_id");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<string>("RawValue")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("raw_value");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IncidentId", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("IX_incident_evidence_position");
+
+                    b.ToTable("incident_evidence", "wms", t =>
+                        {
+                            t.HasCheckConstraint("CK_incident_evidence_kind", "kind IN ('Photo','Scan')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Wms.Domain.Inventory.Lot", b =>
                 {
                     b.Property<Guid>("Id")
@@ -957,8 +1232,13 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_tasks_tenant_number");
 
+                    b.HasIndex(new[] { "TenantId", "WarehouseId", "Status", "Type" }, "IX_tasks_board");
+
                     b.HasIndex(new[] { "LeaseExpiresAt" }, "IX_tasks_lease")
                         .HasFilter("status = 'InProgress'");
+
+                    b.HasIndex(new[] { "TenantId", "WarehouseId", "CreatedAt", "Number" }, "IX_tasks_list")
+                        .IsDescending(false, false, true, true);
 
                     b.HasIndex(new[] { "TenantId", "ClaimedByMemberId" }, "IX_tasks_member_in_progress")
                         .IsUnique()
@@ -981,7 +1261,7 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_tasks_status", "status IN ('Planned','Ready','Assigned','InProgress','Done','Cancelled')");
 
-                            t.HasCheckConstraint("CK_tasks_type", "type IN ('Move')");
+                            t.HasCheckConstraint("CK_tasks_type", "type IN ('Move','Count')");
                         });
                 });
 
@@ -1023,6 +1303,12 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)")
                         .HasColumnName("quantity");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at")
+                        .HasDefaultValueSql("now()");
 
                     b.Property<Guid>("TaskId")
                         .HasColumnType("uuid")
@@ -1067,6 +1353,11 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(18,6)")
                         .HasColumnName("quantity_confirmed");
 
+                    b.Property<decimal?>("QuantityCounted")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("quantity_counted");
+
                     b.Property<decimal>("QuantityPlanned")
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)")
@@ -1110,9 +1401,9 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                     b.ToTable("task_lines", "wms", t =>
                         {
-                            t.HasCheckConstraint("CK_task_lines_quantity", "quantity_planned > 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned");
+                            t.HasCheckConstraint("CK_task_lines_quantity", "quantity_planned >= 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned AND (quantity_counted IS NULL OR quantity_counted >= 0)");
 
-                            t.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Cancelled')");
+                            t.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Short','Cancelled')");
                         });
                 });
 
@@ -1663,6 +1954,61 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasConstraintName("FK_adjustment_lines_adjustment");
                 });
 
+            modelBuilder.Entity("Modules.Wms.Domain.Control.Incident", b =>
+                {
+                    b.HasOne("Modules.Wms.Domain.Warehousing.Location", null)
+                        .WithMany()
+                        .HasForeignKey("LocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_incidents_location");
+
+                    b.HasOne("Modules.Wms.Domain.Inventory.Lot", null)
+                        .WithMany()
+                        .HasForeignKey("LotId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_incidents_lot");
+
+                    b.HasOne("Modules.Wms.Domain.Warehousing.Owner", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_incidents_owner");
+
+                    b.HasOne("Modules.Wms.Domain.Control.Incident", null)
+                        .WithMany()
+                        .HasForeignKey("ParentIncidentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_incidents_parent");
+
+                    b.HasOne("Modules.Wms.Domain.Warehousing.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("WarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_incidents_warehouse");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Control.IncidentEvent", b =>
+                {
+                    b.HasOne("Modules.Wms.Domain.Control.Incident", null)
+                        .WithMany("Events")
+                        .HasForeignKey("IncidentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_incident_events_incident");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Control.IncidentEvidence", b =>
+                {
+                    b.HasOne("Modules.Wms.Domain.Control.Incident", null)
+                        .WithMany("Evidence")
+                        .HasForeignKey("IncidentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_incident_evidence_incident");
+                });
+
             modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTask", b =>
                 {
                     b.HasOne("Modules.Wms.Domain.Warehousing.Owner", null)
@@ -1748,6 +2094,13 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Modules.Wms.Domain.Control.Adjustment", b =>
                 {
                     b.Navigation("Lines");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Domain.Control.Incident", b =>
+                {
+                    b.Navigation("Events");
+
+                    b.Navigation("Evidence");
                 });
 
             modelBuilder.Entity("Modules.Wms.Domain.Tasks.WarehouseTask", b =>

@@ -74,7 +74,7 @@ internal sealed class CountingRegionRepository(params Region[] regions) : IRegio
     }
 
     public Task<IReadOnlyList<Region>> ListByCountryAsync(string countryCode, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyList<Region>>(regions.Where(region => region.CountryCode == countryCode).ToList());
 
     public Task<Region?> FindAsync(RegionId regionId, CancellationToken cancellationToken) =>
         Task.FromResult(regions.FirstOrDefault(region => region.Id == regionId));

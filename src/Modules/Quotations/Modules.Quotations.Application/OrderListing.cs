@@ -114,6 +114,25 @@ internal static class OrderListing
     }
 
     /// <summary>
+    /// El filtro <c>kind</c> de la lista y su Excel (spec 2026-11-26 §6.6 y §12-D): vacío y <c>All</c> traen todo, porque
+    /// los pedidos de proyecto se cobran y facturan en la misma bandeja, y el módulo <c>projects</c> no se consulta. Por
+    /// nombre y no con <c>Enum.TryParse</c>, que aceptaría «1». Otro valor es un 422 con el campo en <c>errors</c>.
+    /// </summary>
+    public static QuotationKind? ParseKind(string? kind)
+    {
+        if (string.IsNullOrWhiteSpace(kind) || string.Equals(kind.Trim(), "All", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var name = Enum.GetNames<QuotationKind>()
+            .FirstOrDefault(value => string.Equals(value, kind.Trim(), StringComparison.OrdinalIgnoreCase));
+        return name is not null
+            ? Enum.Parse<QuotationKind>(name)
+            : throw new ValidationException([new ValidationFailure("kind", "Use Standard, Project or All.")]);
+    }
+
+    /// <summary>
     /// Mayorista fase 3: el filtro por la marca de aprobación (D-1). <c>Pending</c> es <c>false</c> (sin aprobar) y
     /// <c>Approved</c> es <c>true</c>; sin valor, todos. Otro valor es un error de campo, como pide el contrato.
     /// </summary>

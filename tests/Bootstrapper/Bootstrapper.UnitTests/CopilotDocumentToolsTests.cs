@@ -184,7 +184,7 @@ public sealed class CopilotDocumentToolsTests
 
         private static QuotationListItemDto QuotationRow(int index) => new(
             Guid.NewGuid(), $"C-{index}", Guid.NewGuid(), "Acme", Guid.NewGuid(), "Ana", "Sent", DateTimeOffset.UnixEpoch, "COP", 100, true, true, null, null,
-            new ShippingDto(true, null, null, 0, 0, 0, 0, false), RequiresShipping: true);
+            new ShippingDto(true, null, null, 0, 0, 0, 0, false), RequiresShipping: true, Kind: "Standard", PricingMode: null);
 
         // El DTO tiene decenas de campos posicionales: se arma por JSON con lo que importa y el resto en su valor por defecto.
         private static OrderDto Order() => JsonSerializer.Deserialize<OrderDto>(

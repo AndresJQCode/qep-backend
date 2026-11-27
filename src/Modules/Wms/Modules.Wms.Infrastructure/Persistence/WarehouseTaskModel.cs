@@ -28,7 +28,7 @@ internal static class WarehouseTaskModel
         var task = modelBuilder.Entity<WarehouseTask>();
         task.ToTable("tasks", Schema, table =>
         {
-            table.HasCheckConstraint("CK_tasks_type", "type IN ('Move')");
+            table.HasCheckConstraint("CK_tasks_type", "type IN ('Move','Count')");
             table.HasCheckConstraint(
                 "CK_tasks_status", "status IN ('Planned','Ready','Assigned','InProgress','Done','Cancelled')");
             table.HasCheckConstraint("CK_tasks_priority", "priority BETWEEN 1 AND 9");
@@ -83,6 +83,12 @@ internal static class WarehouseTaskModel
         // El barrido de leases vencidos.
         task.HasIndex(value => value.LeaseExpiresAt, "IX_tasks_lease").HasFilter("status = 'InProgress'");
         task.HasIndex(value => new { value.TenantId, value.SourceType, value.SourceId }, "IX_tasks_source");
+        // Los conteos del tablero (por estado y abiertas por tipo) salen sólo del índice; ListAssignedOpenAsync lo usa para acotar
+        // por bodega y estado, pero sí lee la tabla para traer el asignado (revisión T1, M4).
+        task.HasIndex(value => new { value.TenantId, value.WarehouseId, value.Status, value.Type }, "IX_tasks_board");
+        // El listado del supervisor: la página sale del índice en el orden de ListAsync.
+        task.HasIndex(value => new { value.TenantId, value.WarehouseId, value.CreatedAt, value.Number }, "IX_tasks_list")
+            .IsDescending(false, false, true, true);
 
         task.HasOne<Warehouse>()
             .WithMany()
@@ -115,10 +121,11 @@ internal static class WarehouseTaskModel
         var line = modelBuilder.Entity<WarehouseTaskLine>();
         line.ToTable("task_lines", Schema, table =>
         {
-            table.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Cancelled')");
+            table.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Short','Cancelled')");
             table.HasCheckConstraint(
                 "CK_task_lines_quantity",
-                "quantity_planned > 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned");
+                "quantity_planned >= 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned"
+                + " AND (quantity_counted IS NULL OR quantity_counted >= 0)");
         });
         line.HasKey(value => value.Id);
         // El id lo pone el dominio: así EF inserta lo que aparece nuevo en la colección en vez de intentar actualizarlo.
@@ -138,6 +145,8 @@ internal static class WarehouseTaskModel
             .HasConversion(id => id!.Value.Value, value => new LocationId(value));
         line.Property(value => value.QuantityPlanned).HasColumnName("quantity_planned").HasPrecision(18, 6);
         line.Property(value => value.QuantityConfirmed).HasColumnName("quantity_confirmed").HasPrecision(18, 6);
+        // Nulo salvo en la línea de un Count que ya se contó (T2). Cero es una cuenta válida.
+        line.Property(value => value.QuantityCounted).HasColumnName("quantity_counted").HasPrecision(18, 6);
         // `status` es de la tarea: en la línea la columna se llama line_status (spec §6.1).
         line.Property(value => value.Status).HasColumnName("line_status").HasConversion<string>().HasMaxLength(EnumMaxLength);
         line.Property(value => value.CancelReason).HasColumnName("cancel_reason").HasMaxLength(WarehouseTask.ReasonMaxLength);
@@ -177,6 +186,8 @@ internal static class WarehouseTaskModel
         history.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(18, 6);
         history.Property(value => value.Detail).HasColumnName("detail").HasMaxLength(WarehouseTask.ReasonMaxLength);
         history.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        // El default sólo existe para el rollout: un pod viejo inserta sin la columna. El código nuevo siempre la escribe.
+        history.Property(value => value.RecordedAt).HasColumnName("recorded_at").HasDefaultValueSql("now()");
         history.HasIndex(value => new { value.TaskId, value.OccurredAt }, "IX_task_events_task");
     }
 }

@@ -1,6 +1,8 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
+using Modules.Wms.Domain;
+using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.Application;
 
@@ -18,7 +20,7 @@ public sealed class ClaimTaskValidator : AbstractValidator<ClaimTaskCommand>
     public ClaimTaskValidator() => RuleFor(command => command.DeviceId).MustBeADeviceId();
 }
 
-/// <summary>Reclama una tarea concreta, desde «Mis tareas». Reclamar la que ya tiene en curso la devuelve sin cambios.</summary>
+/// <summary>Reclama una tarea concreta, desde «Mis tareas». Reclamar la que ya tiene en curso la devuelve con el lease renovado.</summary>
 public sealed class ClaimTaskHandler(
     IExecutionContext executionContext,
     WmsAuthorization authorization,
@@ -28,6 +30,7 @@ public sealed class ClaimTaskHandler(
     OperatorTaskGuard guard,
     IClock clock,
     WarehouseTaskDtoComposer composer,
+    IIncidentRepository incidents,
     IValidator<ClaimTaskCommand> validator)
     : ICommandHandler<ClaimTaskCommand, TaskDto>
 {
@@ -49,14 +52,29 @@ public sealed class ClaimTaskHandler(
         var task = await tasks.GetAsync(command.TenantId, command.TaskId, cancellationToken)
             ?? throw WmsNotFound.Task(command.TaskId);
         await guard.EnsureCanPerformAsync(command.TenantId, task, cancellationToken);
+        await CountSelfVerificationRule.EnsureNotReporterAsync(incidents, command.TenantId, task, member, cancellationToken);
 
         // Antes de reclamar: así el 409 dice cuál es la otra. El índice único es la última red, y no lo sabe.
         var current = await tasks.FindInProgressOfMemberAsync(command.TenantId, member, cancellationToken);
         if (current is not null)
         {
-            return current.Id == task.Id
-                ? await composer.ComposeAsync(task, member, withEvents: false, cancellationToken)
-                : throw new TaskMemberBusyException(current.Id);
+            if (current.Id != task.Id)
+            {
+                throw new TaskMemberBusyException(current.Id);
+            }
+
+            // M2: reclamar la que ya tiene en curso renueva el lease con el mismo token, como el latido. Desde otro celular, la tarea
+            // se mueve a ese celular con un token nuevo (dos celulares, opción A del owner, 2026-11-27).
+            task.RenewClaim(member, command.DeviceId, clock.UtcNow);
+            var renewed = await composer.ComposeAsync(task, member, withEvents: false, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return renewed;
+        }
+
+        // M3: por id sólo se reclama lo que se le ofreció a quien llama. El trabajo nuevo del pool llega por «siguiente».
+        if (!IsOfferedTo(task, member))
+        {
+            throw new WmsDomainException(WmsErrorCodes.TaskNotOffered, "Esta tarea no se te ha ofrecido: pide la siguiente tarea.");
         }
 
         task.Claim(member, command.DeviceId, clock.UtcNow);
@@ -64,4 +82,9 @@ public sealed class ClaimTaskHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return dto;
     }
+
+    /// <summary>Una tarea del pool sólo se ofrece a quien la tenía reclamada y el barrido se la devolvió. La asignada a otra persona
+    /// sigue siendo asunto de <see cref="WarehouseTask.Claim"/>, que responde con su propio error.</summary>
+    private static bool IsOfferedTo(WarehouseTask task, Guid member) =>
+        task.Status != WarehouseTaskStatus.Ready || (task.ClaimedByMemberId == member && task.LeaseToken is not null);
 }

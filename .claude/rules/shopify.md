@@ -106,6 +106,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `ExternalOrderDeliveryCheck`); en uno solo, el envío queda reintentando horas o el guardado deja pasar lo que no sale.
   La dirección que sale la arma `ShopifyPushAddress`, y con ella el planificador reconoce el eco de una parte de fuera de
   Colombia: un campo nuevo del envío que no entre en `IsForeignEchoAsync` deja un conflicto falso por cada envío.
+  La dirección extranjera que **entra** la arma `ShopifyForeignAddress`, para el importador y el planificador; y los tres
+  adaptadores de Bootstrapper que escriben la parte pasan por `ShopifyOrderWriter.ToExternalParty` o llevan sus mismos campos.
 - **Un payload sin la clave `zip` no es lo mismo que `"zip": null`** (`ShopifyAddress.ZipUnrecorded`): es de antes de que el
   espejo lo leyera, y de ahí no sale ningún cambio. `ReadPayload` lo marca y `WritePayload` vuelve a omitir la clave; serializar
   un snapshot por otro camino lo convierte en «no tenía zip».

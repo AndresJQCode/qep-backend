@@ -86,6 +86,55 @@ public sealed class ActivityChangesTests
         Assert.All(changes, change => Assert.True(change.Sensitive));
     }
 
+    private static readonly Dictionary<Guid, string> AssignmentNames = new()
+    {
+        [AnalystId.Value] = "Analista",
+        [ManagerId.Value] = "Gerente",
+        [LogisticsId.Value] = "Logística",
+        [MainSite.Id.Value] = "Principal",
+        [Warehouse.Id.Value] = "Bodega",
+    };
+
+    [Fact]
+    public void ARewriteListsTheDateAndWhatChanged()
+    {
+        var employee = Hire();
+        var contract = employee.ActiveContract!;
+        var record = contract.Assignments.Single();
+        var before = record.ToEntry();
+        employee.RewriteAssignment(contract.Id, record.Id, before with { PositionId = ManagerId }, true, Later);
+
+        var changes = ActivityChanges.AssignmentRewritten(before, record, AssignmentNames);
+
+        Assert.Equal(["effectiveDate", "position"], changes.Select(change => change.Field));
+        Assert.Equal("2026-01-15", Text(changes[0].Before));
+        Assert.Equal("2026-01-15", Text(changes[0].After));
+        Assert.Equal("Analista", Text(changes[1].Before));
+        Assert.Equal("Gerente", Text(changes[1].After));
+        Assert.All(changes, change => Assert.True(change.Sensitive));
+    }
+
+    [Fact]
+    public void ADeletionListsTheRecordItRemoved()
+    {
+        var employee = Hire();
+        var contract = employee.ActiveContract!;
+        var id = AssignmentRecordId.New();
+        employee.AddAssignment(
+            contract.Id, id, new AssignmentEntry(new DateOnly(2026, 4, 1), ManagerId, null, MainSite.Id, Warehouse.Id), null, Later);
+        var removed = employee.RemoveAssignment(contract.Id, id, Later);
+
+        var changes = ActivityChanges.AssignmentDeleted(removed, AssignmentNames);
+
+        Assert.Equal(["effectiveDate", "position", "site", "workplace"], changes.Select(change => change.Field));
+        Assert.Equal("2026-04-01", Text(changes[0].Before));
+        Assert.Equal("Gerente", Text(changes[1].Before));
+        Assert.Equal("Principal", Text(changes[2].Before));
+        Assert.Equal("Bodega", Text(changes[3].Before));
+        Assert.All(changes, change => Assert.Null(change.After));
+        Assert.All(changes, change => Assert.True(change.Sensitive));
+    }
+
     [Fact]
     public void ASalaryRaiseListsTheCurrentAndTheNewAmount()
     {

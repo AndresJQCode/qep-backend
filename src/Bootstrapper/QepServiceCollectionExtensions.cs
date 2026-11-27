@@ -557,6 +557,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetHrSettingsQuery, Modules.Hr.Application.HrSettingsDto>,
             Modules.Hr.Application.GetHrSettingsHandler>();
+        // Hr, birthday notices (spec 2026-11-26): the setting of who receives the daily digest.
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.BirthdayNoticesComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.BirthdayNotices.GetBirthdayNoticesQuery, Modules.Hr.Application.BirthdayNotices.BirthdayNoticesDto>,
+            Modules.Hr.Application.BirthdayNotices.GetBirthdayNoticesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.BirthdayNotices.SaveBirthdayNoticesCommand, Modules.Hr.Application.BirthdayNotices.BirthdayNoticesDto>,
+            Modules.Hr.Application.BirthdayNotices.SaveBirthdayNoticesHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.CreateSiteCommand, Modules.Hr.Application.SiteDto>,
             Modules.Hr.Application.CreateSiteHandler>();
@@ -667,6 +675,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.AddAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
             Modules.Hr.Application.AddAssignmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RewriteAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RewriteAssignmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RemoveAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RemoveAssignmentHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.RenewContractCommand, Modules.Hr.Application.EmployeeDetailDto>,
             Modules.Hr.Application.RenewContractHandler>();
@@ -1369,6 +1383,31 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.ConfirmTaskLineCommand, Modules.Wms.Application.TaskDto>,
             Modules.Wms.Application.ConfirmTaskLineHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ShortTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ShortTaskLineHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CountTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CountTaskLineHandler>();
+        // Novedades (spec 2026-11-26 §8.5).
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListIncidentsQuery, Modules.Wms.Application.IncidentPageDto>,
+            Modules.Wms.Application.ListIncidentsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetIncidentQuery, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.GetIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ReportIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.ReportIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ReviewIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.ReviewIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ResolveIncidentCommand, Modules.Wms.Application.IncidentResolutionDto>,
+            Modules.Wms.Application.ResolveIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.RejectIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.RejectIncidentHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1605,6 +1644,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteCitySynonymCommand, bool>, DeleteCitySynonymHandler>();
         services.AddScoped<ICommandHandler<RetryCitySynonymCorrectionsCommand, CitySynonymDto>, RetryCitySynonymCorrectionsHandler>();
         services.AddScoped<ICommandHandler<RunCityBackfillCommand, CityBackfillResultDto>, RunCityBackfillHandler>();
+        // Spec 2026-11-26: las lecturas de la consola de ciudades del exterior, con la misma doble capa. Sin el registro de un
+        // handler su ruta responde 500; los validadores entran por el escaneo de ensamblado.
+        services.AddScoped<IQueryHandler<ListBillingCountriesQuery, IReadOnlyList<BillingCountryDto>>, ListBillingCountriesHandler>();
+        services.AddScoped<IQueryHandler<SearchBillingCitiesQuery, IReadOnlyList<BillingCityRefDto>>, SearchBillingCitiesHandler>();
+        services.AddScoped<IQueryHandler<ListUnresolvedForeignCitiesQuery, UnresolvedForeignCityPageDto>, ListUnresolvedForeignCitiesHandler>();
+        services.AddScoped<IQueryHandler<GetUnresolvedForeignCityQuery, UnresolvedForeignCityDetailDto>, GetUnresolvedForeignCityHandler>();
+        services.AddScoped<IQueryHandler<ListForeignCitySynonymsQuery, ForeignCitySynonymPageDto>, ListForeignCitySynonymsHandler>();
+        // Las escrituras: confirmar, descartar, restaurar, corregir y borrar.
+        services.AddScoped<ICommandHandler<ResolveUnresolvedForeignCityCommand, ForeignCitySynonymDto>, ResolveUnresolvedForeignCityHandler>();
+        services.AddScoped<UnresolvedForeignCityTriage>();
+        services.AddScoped<ICommandHandler<DiscardUnresolvedForeignCityCommand, UnresolvedForeignCityListItemDto>, DiscardUnresolvedForeignCityHandler>();
+        services.AddScoped<ICommandHandler<RestoreUnresolvedForeignCityCommand, UnresolvedForeignCityListItemDto>, RestoreUnresolvedForeignCityHandler>();
+        services.AddScoped<ICommandHandler<CorrectForeignCitySynonymCommand, ForeignCitySynonymDto>, CorrectForeignCitySynonymHandler>();
+        services.AddScoped<ICommandHandler<DeleteForeignCitySynonymCommand, bool>, DeleteForeignCitySynonymHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
@@ -2025,6 +2078,8 @@ public static class QepServiceCollectionExtensions
         // Support task notices: the assignment notice template, sibling of the wholesale invitation notice.
         services.AddScoped<ICommandHandler<ProvisionTaskNoticeTemplateCommand, ManagedTemplateDto>, ProvisionTaskNoticeTemplateHandler>();
         services.AddScoped<IQueryHandler<GetTaskNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetTaskNoticeTemplateDraftHandler>();
+        services.AddScoped<ICommandHandler<ProvisionHrBirthdayNoticeTemplateCommand, ManagedTemplateDto>, ProvisionHrBirthdayNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetHrBirthdayNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetHrBirthdayNoticeTemplateDraftHandler>();
         // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista.
         services.AddScoped<ICommandHandler<ProvisionAppointmentReminderTemplateCommand, ManagedTemplateDto>, ProvisionAppointmentReminderTemplateHandler>();
         services.AddScoped<IQueryHandler<GetAppointmentReminderTemplateDraftQuery, SystemTemplateDraftDto>, GetAppointmentReminderTemplateDraftHandler>();
@@ -2312,6 +2367,9 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
         services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
+        // Spec 2026-11-26: anotar en la bandeja del operador la ciudad del exterior sin vincular. Escribe; sólo la vista previa y la
+        // emisión lo reciben (la disponibilidad no).
+        services.AddScoped<ISiigoForeignCityInbox, SiigoForeignCityInbox>();
         // Spec 2026-11-21: enviar el PDF de la factura por WhatsApp. Siigo no ve Quotations: el puerto reenvía a su fachada.
         services.AddScoped<ISiigoInvoiceWhatsApp, SiigoInvoiceWhatsApp>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
@@ -2468,6 +2526,8 @@ public static class QepServiceCollectionExtensions
         // La consola de valores legales de Hr sabe qué nóminas ya se calcularon por este puerto (PayrollLayerTests.NoPayrollLayerReferencesHr):
         // Payroll expone sus períodos calculados y este adaptador los traduce al puerto de Hr.
         services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
+        // Editar y eliminar registros de cargo y lugar mira las nóminas congeladas del empleado por este puerto (spec 2026-11-26).
+        services.AddScoped<Modules.Hr.Application.IFrozenPayrollPeriods, FrozenPayrollPeriods>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
         services.AddScoped<Modules.Payroll.Application.IPayrollHolidayCalendar, PayrollHolidayCalendar>();
@@ -2494,6 +2554,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeState, TaskNoticeState>();
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeRecipients, TaskNoticeRecipients>();
         services.AddScoped<Modules.Notifications.Application.ITaskNoticeWhatsApp, TaskNoticeWhatsAppSender>();
+        // HR birthday notices spec 2026-11-26 §5.3: the WhatsApp digest, through the approved HrBirthdayNotice template of Messaging.
+        services.AddScoped<Modules.Notifications.Application.IHrBirthdayWhatsApp, HrBirthdayWhatsAppSender>();
         services.AddScoped<
             IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
             Modules.Notifications.Application.ListInAppNotificationsHandler>();
@@ -2645,6 +2707,9 @@ public static class QepServiceCollectionExtensions
         // Y los archivos de chatbot (spec 2026-11-18): en uso mientras los nombre un chatbot, una versión, una plantilla guardada o un
         // mensaje de la bandeja.
         services.AddScoped<IChatbotMediaReferences, ChatbotMediaReferences>();
+        // Y los PDF de empleados (spec 2026-11-26): en uso mientras los nombre una de las cinco tablas de Hr del tenant. Es obligatorio
+        // para la purga de Storage (HrDocumentPurge): sin él, el contenedor no se arma y nada se borra.
+        services.AddScoped<IHrDocumentReferences, HrDocumentReferences>();
         // Spec 2026-11-20: el PDF de un contrato o de un registro de RRHH sobre Storage (dueño HrDocument, sin pasar por sus handlers ni
         // sus permisos: lo autoriza hr.contract.manage). Hr no referencia Storage (HrLayerTests).
         services.AddScoped<Modules.Hr.Application.IHrDocumentStore, HrDocumentStore>();
@@ -2658,6 +2723,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        // Hr, birthday notices: the WhatsApp connections of the tenant and whether a manager has phone and email, by their own ports.
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.IHrWhatsAppConnections, HrWhatsAppConnections>();
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.IHrMemberContacts, HrMemberContacts>();
         services.AddScoped<Modules.Hr.Application.MedicalExams.IHrBusinessCalendar, HrBusinessCalendarSource>();
         // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
         services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();
@@ -2956,6 +3024,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wms.Application.IWmsGeographyReader, WmsGeographyReader>();
         // Tareas de bodega (spec 2026-11-26): nombres y permisos de las membresías.
         services.AddScoped<Modules.Wms.Application.IWmsMemberDirectory, WmsMemberDirectory>();
+        // Evidencia de novedades (spec 2026-11-26 §8.4, DA-49): archivos WmsEvidence del tenant, en cualquier estado.
+        services.AddScoped<Modules.Wms.Application.IWmsEvidenceLookup, WmsEvidenceLookup>();
 
         // Etiquetas de ubicación (RF-004, P-9): el servicio y la clave son los de Quotations:Pdf, que Wms no ve. Singleton con timeout propio,
         // como AddPdfRenderer: el default de HttpClient son 100 s y qcode-pdf corta la compilación a los 15. La fábrica va tipada con

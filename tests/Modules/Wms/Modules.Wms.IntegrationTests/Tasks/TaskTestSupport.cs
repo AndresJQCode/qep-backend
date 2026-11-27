@@ -37,6 +37,20 @@ internal static class TaskTestSupport
             createdBy ?? Guid.CreateVersion7(),
             createdAt ?? DateTimeOffset.UtcNow);
 
+    /// <summary>Un conteo de verificación de una línea, publicado, con una novedad como origen (el id que se pase).</summary>
+    public static WarehouseTask NewCount(
+        LedgerSetup s, Guid location, Guid? sourceId = null, Guid? lot = null, DateTimeOffset? createdAt = null) =>
+        WarehouseTask.CreateCount(
+            s.TenantId,
+            $"T-{Guid.NewGuid():N}"[..32],
+            new WarehouseId(s.WarehouseId),
+            new OwnerId(s.OwnerId),
+            [WarehouseTaskLine.CreateCount(
+                s.VariantId, lot is { } id ? new LotId(id) : null, StockStatus.Available, new LocationId(location))],
+            TaskSourceType.Incident,
+            sourceId ?? Guid.CreateVersion7(),
+            createdAt ?? DateTimeOffset.UtcNow);
+
     public static WarehouseTaskLine Line(
         LedgerSetup s, Guid from, Guid to, decimal qty = 5, Guid? lot = null, StockStatus status = StockStatus.Available) =>
         WarehouseTaskLine.Create(
@@ -74,8 +88,8 @@ internal static class TaskTestSupport
         return reloaded;
     }
 
-    /// <summary>La historia en orden causal: los hechos de una transacción comparten <c>occurred_at</c> y un UUID v7 no ordena dentro
-    /// del mismo milisegundo; el enum está declarado en orden causal.</summary>
+    /// <summary>La historia en el orden del servidor (<c>RecordedAt</c>); los hechos de una transacción comparten fecha y un UUID v7 no
+    /// ordena dentro del mismo milisegundo: dentro de una fecha manda el tipo, que el enum declara en orden causal.</summary>
     public static IReadOnlyList<WarehouseTaskEvent> History(WarehouseTask task) =>
-        [.. task.Events.OrderBy(value => value.OccurredAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)];
+        [.. task.Events.OrderBy(value => value.RecordedAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)];
 }

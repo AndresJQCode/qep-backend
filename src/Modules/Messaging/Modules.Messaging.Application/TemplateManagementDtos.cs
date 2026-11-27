@@ -66,6 +66,9 @@ public sealed record WholesaleInvitationNoticeTemplateStatusDto(Guid TemplateId,
 /// <summary>Support task notices: the status of the assignment notice template. <c>null</c> = not provisioned. An old frontend ignores it.</summary>
 public sealed record TaskNoticeTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
+/// <summary>HR birthday notices: the status of the birthday notice template. <c>null</c> = not provisioned. An old frontend ignores it.</summary>
+public sealed record HrBirthdayNoticeTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
 /// <summary>Agenda: el estado de la plantilla del recordatorio de cita. <c>null</c> = no aprovisionada. Un frontend viejo lo ignora.</summary>
 public sealed record AppointmentReminderTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
@@ -86,4 +89,5 @@ public sealed record TemplateManagementDto(
     WholesaleInvitationNoticeTemplateStatusDto? WholesaleInvitationNoticeTemplate = null,
     InvoiceTemplateStatusDto? InvoiceTemplate = null,
     TaskNoticeTemplateStatusDto? TaskNoticeTemplate = null,
-    AppointmentReminderTemplateStatusDto? AppointmentReminderTemplate = null);
+    AppointmentReminderTemplateStatusDto? AppointmentReminderTemplate = null,
+    HrBirthdayNoticeTemplateStatusDto? HrBirthdayNoticeTemplate = null);

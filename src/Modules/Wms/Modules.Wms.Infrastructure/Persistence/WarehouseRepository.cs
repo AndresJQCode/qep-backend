@@ -27,6 +27,21 @@ internal sealed class WarehouseRepository(WmsDbContext dbContext) : IWarehouseRe
     public Task<Location?> GetLocationAsync(Guid tenantId, LocationId id, CancellationToken ct) =>
         dbContext.Locations.FirstOrDefaultAsync(location => location.TenantId == tenantId && location.Id == id, ct);
 
+    public async Task<IReadOnlyDictionary<LocationId, string>> FindLocationCodesAsync(
+        Guid tenantId, IReadOnlyCollection<LocationId> ids, CancellationToken ct)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<LocationId, string>();
+        }
+
+        var wanted = ids.Distinct().ToArray();
+        return await dbContext.Locations
+            .AsNoTracking()
+            .Where(location => location.TenantId == tenantId && wanted.Contains(location.Id))
+            .ToDictionaryAsync(location => location.Id, location => location.Code, ct);
+    }
+
     public Task<Location?> GetVirtualLocationAsync(Guid tenantId, WarehouseId warehouseId, LocationRole role, CancellationToken ct) =>
         dbContext.Locations.FirstOrDefaultAsync(
             location => location.TenantId == tenantId

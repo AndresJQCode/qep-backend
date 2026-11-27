@@ -34,6 +34,8 @@ public sealed class RejectAdjustmentHandler(
     IWmsAuditRecorder auditRecorder,
     IClock clock,
     AdjustmentDtoComposer composer,
+    IIncidentRepository incidents,
+    WmsCaller caller,
     IValidator<RejectAdjustmentCommand> validator)
     : ICommandHandler<RejectAdjustmentCommand, AdjustmentDto>
 {
@@ -51,6 +53,13 @@ public sealed class RejectAdjustmentHandler(
 
         var now = clock.UtcNow;
         adjustment.Reject(executionContext.SubjectId, command.Note, now);
+
+        // La CountVariance que este ajuste seguía se rechaza con él; sin novedad detrás, no se pide membresía.
+        if (await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken) is { } variance)
+        {
+            variance.RejectByAdjustment(await caller.RequireAsync(command.TenantId, cancellationToken), command.Note, now);
+        }
+
         auditRecorder.Record(
             command.TenantId,
             executionContext.SubjectId,

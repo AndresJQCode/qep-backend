@@ -94,7 +94,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
     }
 
     // La regla de Order.RequiresShipping en SQL (spec 2026-11-18 §5), como la de cotizaciones: la búsqueda del listado no
-    // trae las líneas, y cargarlas para esto sería toda la página de líneas para un booleano.
+    // trae las líneas, y cargarlas para esto sería toda la página de líneas para un booleano. Un proyecto nunca se despacha
+    // (spec 2026-11-26 §6.4).
     public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken)
     {
@@ -108,6 +109,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .AsNoTracking()
             .Where(order => order.TenantId == tenantId
                 && ids.Contains(order.Id)
+                && order.Kind != QuotationKind.Project
                 && (!order.Items.Any() || order.Items.Any(item => item.Kind == ProductKind.Physical)))
             .Select(order => order.Id)
             .ToListAsync(cancellationToken);
@@ -151,13 +153,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         bool? wholesaleApproved,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo,
+            orderNumber, source, kind);
         // D-1: «Por aprobar» es la marca, no un estado; el filtro deja sólo pedidos mayoristas.
         if (wholesaleApproved is { } approved)
         {
@@ -190,10 +194,11 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         CancellationToken cancellationToken) =>
         Filtered(
                 tenantId, clientId, clientIds, advisorId, OrderStatus.Open, paymentStatus, fulfillmentStatus, invoiced,
-                orderDateFrom, orderDateTo, orderNumber, source)
+                orderDateFrom, orderDateTo, orderNumber, source, kind)
             .Where(order => order.Source == OrderSource.Wholesale && order.WholesaleApprovedAt == null)
             .CountAsync(cancellationToken);
 
@@ -265,8 +270,11 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         CancellationToken cancellationToken) =>
-        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source)
+        Filtered(
+                tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom,
+                orderDateTo, orderNumber, source, kind)
             .AnyAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Order>> ListForExportAsync(
@@ -282,12 +290,14 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo,
+            orderNumber, source, kind);
         if (after is not null)
         {
             // El cursor es el orden del listado entero (spec 2026-11-16 §5): fecha del pedido, instante y número.
@@ -321,11 +331,18 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateOnly? orderDateFrom,
         DateOnly? orderDateTo,
         string? orderNumber,
-        OrderSource? source)
+        OrderSource? source,
+        QuotationKind? kind)
     {
         var orders = dbContext.Orders
             .AsNoTracking()
             .Where(order => order.TenantId == tenantId);
+        // Spec 2026-11-26 §6.6: sin valor salen los dos tipos.
+        if (kind is { } orderKind)
+        {
+            orders = orders.Where(order => order.Kind == orderKind);
+        }
+
         // Sin filtro de estado, los archivados no salen (spec 2026-11-10 §5): el listado es lo pendiente de trabajar.
         orders = status is { } orderStatus
             ? orders.Where(order => order.Status == orderStatus)

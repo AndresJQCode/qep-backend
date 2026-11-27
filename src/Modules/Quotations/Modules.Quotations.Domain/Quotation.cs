@@ -65,12 +65,19 @@ public sealed class Quotation
         IReadOnlyList<WithholdingRate> customerWithholdings,
         MunicipalContext municipal,
         MemberId createdBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        QuotationKind kind)
     {
         ArgumentNullException.ThrowIfNull(customerWithholdings);
         ArgumentNullException.ThrowIfNull(municipal);
         Id = id;
         TenantId = tenantId;
+        Kind = kind;
+        if (kind == QuotationKind.Project)
+        {
+            AssignProjectScope(Domain.ProjectScope.Empty);
+        }
+
         QuotationNumber = NormalizeQuotationNumber(quotationNumber);
         ClientId = EnsureValidClientId(clientId);
         AdvisorId = advisorId;
@@ -125,6 +132,18 @@ public sealed class Quotation
     public MemberId AdvisorId { get; private set; }
 
     public QuotationStatus Status { get; private set; }
+
+    /// <summary>El tipo de documento (spec 2026-11-26 §5). Se fija al crear y ningún método lo cambia; el pedido lo
+    /// copia.</summary>
+    public QuotationKind Kind { get; private set; }
+
+    /// <summary>El alcance y el precio de un proyecto; <c>null</c> en una cotización <see cref="QuotationKind.Standard"/>.
+    /// Lo cambia <see cref="ReplaceProjectScope"/>, que mantiene la única línea del documento.</summary>
+    public ProjectScope? ProjectScope { get; private set; }
+
+    /// <summary>Espejo de <see cref="Domain.ProjectScope.PricingMode"/>: la fila del listado lo lee sin abrir el
+    /// <c>jsonb</c>.</summary>
+    public ProjectPricingMode? ProjectPricingMode { get; private set; }
 
     /// <summary>
     /// El piso de escala que el asesor eligió para toda la cotización, o <c>null</c> si no
@@ -270,9 +289,12 @@ public sealed class Quotation
     /// Si la cotización vende algo que se despacha (spec 2026-11-18 §5): alguna línea <c>Physical</c>, o ninguna línea,
     /// que es el estado de hoy y el del formulario vacío. Derivado, sin columna: el listado lo pregunta con un
     /// <c>EXISTS</c> (<c>IQuotationRepository.FindIdsRequiringShippingAsync</c>), y las dos reglas son la misma. El
-    /// backend nunca pone ni borra el envío por esto; sólo se lo dice a la pantalla.
+    /// backend nunca pone ni borra el envío por esto; sólo se lo dice a la pantalla. Un proyecto nunca se despacha,
+    /// tampoco sin líneas (spec 2026-11-26 §6.4).
     /// </summary>
-    public bool RequiresShipping => _items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical);
+    public bool RequiresShipping =>
+        Kind != QuotationKind.Project
+        && (_items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical));
 
     /// <summary>A quién se le factura y a quién se le entrega, **sólo cuando no son los datos del
     /// cliente** (US-6): una parte ausente es "usá los del cliente". Ver
@@ -331,9 +353,22 @@ public sealed class Quotation
 
         _priceRoundingDecimals = rounding.Decimals;
         _priceRoundingMode = rounding.Mode;
-        foreach (var item in _items)
+        if (ProjectScope is { } scope)
         {
-            item.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, Currency, rounding, occurredAt);
+            // La línea es la suma de las fases ya redondeadas (P8): redondear sólo la línea guardada la separaría de lo
+            // que dice el alcance.
+            AssignProjectScope(scope.RoundedWith(rounding));
+            foreach (var item in _items)
+            {
+                item.ChangeUnitPrice(ProjectScope!.Total ?? 0m, ChargesVat, Currency, rounding, occurredAt);
+            }
+        }
+        else
+        {
+            foreach (var item in _items)
+            {
+                item.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, Currency, rounding, occurredAt);
+            }
         }
 
         RecalculateTotals();
@@ -469,7 +504,8 @@ public sealed class Quotation
         IReadOnlyList<WithholdingRate> customerWithholdings,
         MunicipalContext municipal,
         MemberId createdBy,
-        DateTimeOffset occurredAt) =>
+        DateTimeOffset occurredAt,
+        QuotationKind kind = QuotationKind.Standard) =>
         new(
             id,
             tenantId,
@@ -486,7 +522,8 @@ public sealed class Quotation
             customerWithholdings,
             municipal,
             createdBy,
-            occurredAt);
+            occurredAt,
+            kind);
 
     /// <summary>
     /// El municipio de la operación de una cotización que se crea (owner 2026-11-14, plan P13): no hay municipio guardado
@@ -529,9 +566,73 @@ public sealed class Quotation
         SalesUnit salesUnit = SalesUnit.Unit)
     {
         EnsureEditable();
+        EnsureManualLines();
         AddItemCore(
             itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, kind, salesUnit,
             updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Reemplaza el alcance entero de un proyecto y deja la única línea que lo cobra (spec 2026-11-26 §5 y §6.4): la del
+    /// servicio elegido, cantidad 1, precio igual al total y sin descuento. Sin servicio no hay línea; sin total, vale 0.
+    /// Cada precio se redondea con la regla del documento, así que la aplicación baja antes la vigente
+    /// (<see cref="UsePriceRounding"/>).
+    ///
+    /// <paramref name="service"/> es lo que dice el catálogo del servicio y sólo hace falta cuando
+    /// <see cref="Domain.ProjectScope.ServiceVariantId"/> cambia: la línea que ya existe conserva su foto y sólo cambia de
+    /// precio. Faltar ahí es un error del llamador, no del usuario.
+    ///
+    /// Si no cambia nada, no toca la versión.
+    /// </summary>
+    public void ReplaceProjectScope(
+        ProjectScope scope, ProjectServiceLine? service, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        EnsureEditable();
+        if (ProjectScope is not { } current)
+        {
+            throw new InvalidOperationException("Only a project quotation has a project scope.");
+        }
+
+        var rounded = scope.RoundedWith(PriceRounding);
+        var serviceVariantId = rounded.ServiceVariantId;
+        var line = _items.SingleOrDefault();
+        var replacesLine = serviceVariantId is not null && line?.VariantId != serviceVariantId;
+        // Antes de asignar nada: un alcance rechazado no puede quedar aplicado a medias.
+        if ((serviceVariantId != current.ServiceVariantId || replacesLine) && service?.VariantId != serviceVariantId)
+        {
+            throw new InvalidOperationException(
+                "Changing the project service needs the line of the new variant.");
+        }
+
+        var changed = rounded != current;
+        AssignProjectScope(rounded);
+        var total = rounded.Total ?? 0m;
+        if (replacesLine)
+        {
+            _items.Clear();
+            // AddItemCore ya toca el documento: es la misma edición, así que no se vuelve a tocar.
+            AddItemCore(
+                QuotationItemId.New(), service!.VariantId, service.ProductId, 1m, total, 0m, service.TaxPercentage,
+                service.Kind, service.SalesUnit, updatedBy, occurredAt);
+            return;
+        }
+
+        if (serviceVariantId is null && line is not null)
+        {
+            _items.Clear();
+            changed = true;
+        }
+        else if (line is not null && line.UnitPrice != total)
+        {
+            line.ChangeUnitPrice(total, ChargesVat, Currency, PriceRounding, occurredAt);
+            changed = true;
+        }
+
+        if (changed)
+        {
+            Touch(updatedBy, occurredAt);
+        }
     }
 
     /// <summary>
@@ -680,6 +781,7 @@ public sealed class Quotation
         DateTimeOffset occurredAt)
     {
         EnsureEditable();
+        EnsureManualLines();
 
         FindItem(itemId).UpdateQuantity(
             quantity, discountPercentage, taxPercentage, ChargesVat, Currency, PriceRounding, occurredAt);
@@ -689,6 +791,7 @@ public sealed class Quotation
     public void RemoveItem(QuotationItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable();
+        EnsureManualLines();
 
         _items.Remove(FindItem(itemId));
         Touch(updatedBy, occurredAt);
@@ -932,16 +1035,29 @@ public sealed class Quotation
         _priceRoundingDecimals = null;
         _priceRoundingMode = null;
         var rounding = PriceRounding.LegacyFor(currency);
-        foreach (var item in _items)
+        if (ProjectScope is { } scope)
         {
-            if (repricing is null || !repricing.TryGetValue(item.VariantId, out var pricing))
+            // En un proyecto el precio lo escribe el asesor y no hay catálogo que consultar (spec 2026-11-26 §5): lo
+            // escrito en la moneda vieja se borra y la línea queda en 0 hasta que se vuelva a escribir.
+            AssignProjectScope(scope.WithoutPrices());
+            foreach (var item in _items)
             {
-                throw new QuotationsDomainException(
-                    "quotation.quotation.repricing_incomplete",
-                    "Every line needs a price in the new currency before the quotation can change currency.");
+                item.ChangeUnitPrice(0m, ChargesVat, currency, rounding, occurredAt);
             }
+        }
+        else
+        {
+            foreach (var item in _items)
+            {
+                if (repricing is null || !repricing.TryGetValue(item.VariantId, out var pricing))
+                {
+                    throw new QuotationsDomainException(
+                        "quotation.quotation.repricing_incomplete",
+                        "Every line needs a price in the new currency before the quotation can change currency.");
+                }
 
-            item.Reprice(pricing, currency, ChargesVat, rounding, occurredAt);
+                item.Reprice(pricing, currency, ChargesVat, rounding, occurredAt);
+            }
         }
 
         Currency = currency;
@@ -1153,6 +1269,8 @@ public sealed class Quotation
                 "Only a draft or sent quotation can be marked as sent.");
         }
 
+        EnsureProjectComplete();
+
         if (ValidUntil is null)
         {
             throw new QuotationsDomainException(
@@ -1218,6 +1336,9 @@ public sealed class Quotation
                 "quotation.quotation.status_not_convertible",
                 "Only a draft or sent quotation can be converted to an order.");
         }
+
+        // Antes que «sin productos»: un proyecto sin servicio no tiene líneas, y ése no es el motivo.
+        EnsureProjectComplete();
 
         // Lo que un pedido necesita para existir y que la cotizacion puede no tener todavia. Se
         // comprueba aca y no en la pantalla porque es la condicion del negocio, no del formulario:
@@ -1294,6 +1415,7 @@ public sealed class Quotation
     /// </summary>
     public bool CanBeConvertedToOrder =>
         Status is QuotationStatus.Draft or QuotationStatus.Sent
+        && !ProjectIsIncomplete
         && _items.Count > 0
         && ValidUntil is not null
         && HasBillingCompany
@@ -1352,6 +1474,38 @@ public sealed class Quotation
         Status = QuotationStatus.Expired;
         UpdatedAt = occurredAt;
         Version++;
+    }
+
+    // Las líneas de un proyecto salen de su alcance (spec 2026-11-26 §5).
+    private void EnsureManualLines()
+    {
+        if (Kind == QuotationKind.Project)
+        {
+            throw new QuotationsDomainException(
+                ProjectErrors.ItemsNotAllowed,
+                "En una cotización de proyecto no agregas ni cambias productos a mano: la línea sale del alcance.");
+        }
+    }
+
+    // Completo es con servicio, precio y la línea que lo cobra: sin cualquiera de los tres no hay qué enviar ni vender.
+    private bool ProjectIsIncomplete =>
+        Kind == QuotationKind.Project && (ProjectScope is not { IsComplete: true } || _items.Count == 0);
+
+    // Enviar y convertir un proyecto exigen servicio y precio (spec 2026-11-26 §6.5).
+    private void EnsureProjectComplete()
+    {
+        if (ProjectIsIncomplete)
+        {
+            throw new QuotationsDomainException(
+                ProjectErrors.Incomplete,
+                "Elige el servicio y completa el precio del proyecto antes de enviar o convertir la cotización.");
+        }
+    }
+
+    private void AssignProjectScope(ProjectScope scope)
+    {
+        ProjectScope = scope;
+        ProjectPricingMode = scope.PricingMode;
     }
 
     // US-10: "se puede editar en Draft y Sent... se bloquea una vez convertida a pedido". Bloquea

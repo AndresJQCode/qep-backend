@@ -38,6 +38,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
         // Support task notices: the assignment notice, through the same core as the wholesale invitation notice.
         services.AddScoped<ITaskNoticeOutbound, TaskNoticeOutbound>();
+        // HR birthday notices: the birthday digest, through the same core.
+        services.AddScoped<IHrBirthdayNoticeOutbound, HrBirthdayNoticeOutbound>();
         // Agenda: el recordatorio de una cita por WhatsApp, por el mismo núcleo.
         services.AddScoped<IAppointmentReminderOutbound, AppointmentReminderOutbound>();
         // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
@@ -155,6 +157,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IWholesaleInvitationNoticeReadiness, WholesaleInvitationNoticeTemplateReadiness>();
         // Support task notices: the readiness of the assignment notice template (the escalation worker and /settings/support read it).
         services.AddScoped<ITaskNoticeTemplateReadiness, TaskNoticeTemplateReadiness>();
+        // HR birthday notices: the readiness of the birthday notice template (the delivery worker reads it).
+        services.AddScoped<IHrBirthdayNoticeTemplateReadiness, HrBirthdayNoticeTemplateReadiness>();
         // Agenda: la del recordatorio de cita, para su envío.
         services.AddScoped<IAppointmentReminderReadiness, AppointmentReminderTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.

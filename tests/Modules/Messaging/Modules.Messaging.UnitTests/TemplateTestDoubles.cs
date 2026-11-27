@@ -242,6 +242,9 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
     public Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.TaskNotice));
 
+    public Task<MessageTemplate?> FindHrBirthdayNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.HrBirthdayNotice));
+
     public Task<MessageTemplate?> FindWholesaleInvitationNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.WholesaleInvitationNotice));
 

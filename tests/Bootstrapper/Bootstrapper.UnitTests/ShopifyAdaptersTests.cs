@@ -1224,6 +1224,51 @@ public sealed class ShopifyAdaptersTests
         Assert.Null(await lookup.DescribeRegionAsync(Guid.CreateVersion7(), Ct));
     }
 
+    [Fact]
+    public async Task GeographyLookupFindsARegionByCountryAndCode()
+    {
+        var madrid = Region.Create(RegionId.New(), "ES", "28", "Madrid");
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(), new NamedCities(), new CountingRegionRepository(madrid));
+
+        Assert.Equal(madrid.Id.Value, await lookup.FindRegionAsync("ES", "28", Ct));
+        Assert.Null(await lookup.FindRegionAsync("ES", "99", Ct));
+        Assert.Null(await lookup.FindRegionAsync("FR", "28", Ct));
+    }
+
+    private static ShopifyPartyDraft SpanishDraftParty(Guid regionId) => new(
+        "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28013", "ES", "Madrid", regionId);
+
+    [Fact]
+    public async Task OrderWriterCreateKeepsAForeignParty()
+    {
+        var writer = new FakeExternalOrderWriter();
+        var regionId = Guid.CreateVersion7();
+
+        await OrderWriter(writer).CreateAsync(Draft() with { ShippingParty = SpanishDraftParty(regionId) }, Ct);
+
+        Assert.Equal(
+            new QuotationPartyRequest(
+                "Lucía Fernández", null, "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null,
+                Country: "ES", CityName: "Madrid", RegionId: regionId, PostalCode: "28013"),
+            Assert.Single(writer.Created).Parties!.Shipping);
+    }
+
+    [Fact]
+    public async Task AShopifyAddressEditKeepsAForeignParty()
+    {
+        var (orderId, regionId) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var orders = new FakeExternalOrderWriter { OnApplyEdit = _ => EditState(orderId) };
+
+        await OrderWriter(orders).ApplyEditAsync(
+            new ShopifyOrderEditDraft(TenantId, orderId, 3, null, null, SpanishDraftParty(regionId), false, null, Now), Ct);
+
+        Assert.Equal(
+            new ExternalShippingParty(
+                "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28013", "ES", "Madrid",
+                regionId),
+            Assert.Single(orders.Edits).ShippingParty);
+    }
+
     // ---- Armado ----
 
     private static ShopifyCityCorrectionWriter CityCorrectionWriter(

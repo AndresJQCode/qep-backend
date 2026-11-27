@@ -50,10 +50,10 @@ internal sealed partial class TaskNoticeWhatsAppSender(ITaskNoticeTemplateReadin
     }
 
     // Meta's wa_id is digits only, with the country code; the stored phone is E.164 («+573001234567»).
-    private static string WaIdOf(string phoneE164) => new(phoneE164.Where(char.IsAsciiDigit).ToArray());
+    internal static string WaIdOf(string phoneE164) => new(phoneE164.Where(char.IsAsciiDigit).ToArray());
 
     // Meta rejects line breaks, tabs and more than four spaces in a row: one line, single spaces.
-    private static string OneLine(string? value) => value is null ? string.Empty : Whitespace().Replace(value, " ").Trim();
+    internal static string OneLine(string? value) => value is null ? string.Empty : Whitespace().Replace(value, " ").Trim();
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
     private static partial Regex Whitespace();

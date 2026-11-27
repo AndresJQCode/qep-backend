@@ -34,7 +34,7 @@ public sealed class AddAssignmentHandler(
         ContractRules.EnsureEffectiveDateWithinContract(contract, effectiveDate);
 
         var (position, area, workplace, site) = await AssignmentLookups.ResolveAsync(
-            settings, command.TenantId, request.PositionId!.Value, request.AreaId, request.WorkplaceId!.Value, Keys, cancellationToken);
+            settings, command.TenantId, request.PositionId!.Value, request.AreaId, request.WorkplaceId!.Value, Keys, null, cancellationToken);
         ContractRules.EnsureWorkplaceOfCompany(site, contract.CompanyId, Keys.Workplace);
         var document = await HrDocumentAttachment.ResolveAsync(documents, command.TenantId, request.DocumentFileId, cancellationToken);
 

@@ -12,6 +12,7 @@ public sealed class GetTaskBoardHandler(
     WmsAuthorization authorization,
     IWarehouseRepository warehouses,
     IWarehouseTaskRepository tasks,
+    IIncidentRepository incidents,
     IWmsMemberDirectory members)
     : IQueryHandler<GetTaskBoardQuery, TaskBoardDto>
 {
@@ -28,12 +29,36 @@ public sealed class GetTaskBoardHandler(
         var byType = (await tasks.CountOpenByTypeAsync(query.TenantId, query.WarehouseId, cancellationToken))
             .ToDictionary(count => count.Type, count => count.Count);
 
+        var openIncidents = await incidents.CountOpenAsync(query.TenantId, query.WarehouseId, cancellationToken);
+
         // Una InProgress siempre tiene quien la reclamó (CK_tasks_claim).
         var working = await tasks.ListInProgressAsync(query.TenantId, query.WarehouseId, cancellationToken);
         var claimedAt = await tasks.FindClaimedAtAsync(
             query.TenantId, [.. working.Select(task => task.Id)], cancellationToken);
+
+        // M1: una consulta de asignadas y una de elegibles por permiso (el de cada tipo distinto y wms.document.read, que exige toda
+        // ruta de tareas; nunca una por tarea). Sin wms.document.read tampoco puede reclamar su asignada.
+        var assigned = await tasks.ListAssignedOpenAsync(query.TenantId, query.WarehouseId, cancellationToken);
+        var eligible = new Dictionary<string, HashSet<Guid>>(StringComparer.Ordinal);
+        if (assigned.Count > 0)
+        {
+            foreach (var permission in assigned
+                         .Select(task => TaskTypePermissions.For(task.Type))
+                         .Append(WmsPermissions.DocumentRead)
+                         .Distinct(StringComparer.Ordinal))
+            {
+                eligible[permission] = [.. await members.ListWithPermissionAsync(query.TenantId, permission, cancellationToken)];
+            }
+        }
+
+        var stale = assigned
+            .Where(task => !eligible[TaskTypePermissions.For(task.Type)].Contains(task.AssignedMemberId)
+                || !eligible[WmsPermissions.DocumentRead].Contains(task.AssignedMemberId))
+            .ToList();
         var names = await members.FindNamesAsync(
-            query.TenantId, [.. working.Select(task => task.ClaimedByMemberId!.Value).Distinct()], cancellationToken);
+            query.TenantId,
+            [.. working.Select(task => task.ClaimedByMemberId!.Value).Concat(stale.Select(task => task.AssignedMemberId)).Distinct()],
+            cancellationToken);
 
         return new TaskBoardDto(
             query.WarehouseId,
@@ -57,6 +82,11 @@ public sealed class GetTaskBoardHandler(
                         task.LastActivityAt))
                     .OrderBy(worker => worker.Name, StringComparer.InvariantCultureIgnoreCase)
                     .ThenBy(worker => worker.TaskNumber, StringComparer.Ordinal),
-            ]);
+            ],
+            [
+                .. stale.Select(task => new TaskStaleAssignmentDto(
+                    task.TaskId, task.Number, task.AssignedMemberId, names.GetValueOrDefault(task.AssignedMemberId) ?? "Sin nombre")),
+            ],
+            openIncidents);
     }
 }

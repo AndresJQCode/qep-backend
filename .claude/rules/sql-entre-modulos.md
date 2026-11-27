@@ -18,16 +18,22 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `pos.sales`) y, de Wms, `wms.stock_movements`, `wms.stock_balances`, `wms.adjustment_lines` (unida a `wms.adjustments`
   por el tenant, sólo los ajustes abiertos: `Proposed` y `Approved`, que todavía pueden contabilizarse), `wms.lots` y
   `wms.task_lines` (unida a `wms.tasks` por el tenant: líneas `line_status = 'Open'` de tareas `Planned`, `Ready`,
-  `Assigned` o `InProgress`; un estado de tarea nuevo que todavía pueda confirmar entra en esa lista), y
+  `Assigned` o `InProgress`; un estado de tarea nuevo que todavía pueda confirmar entra en esa lista),
+  `wms.incidents` (`tenant_id`, `variant_id` y `status IN ('Open', 'InReview')`: una novedad abierta puede escribir al ledger al
+  resolverse, DA-51), y
   corre en la conexión del `PUT` de producto para quedar dentro de su transacción. Renombrar
   `variant_id` o una de esas tablas compila, y el `GET` y el `PUT` de producto responden 500 (`42703`). Sólo
   `ProductVariantDeletionApiTests` usa un doble del puerto; el resto de las pruebas de Catalog que leen o guardan un
   producto corre el checker real contra el esquema migrado y se cae con ese 500, que no se parece a la causa. Se cambia
   junto con el checker y sus pruebas: `CatalogVariantUsageCheckerTests` (que arma réplicas mínimas de las tablas, a
   mano: no siguen solas a la migración), `StockProbeTests.TheRealCheckerSeesAWmsMovementAgainstTheMigratedSchema` (y sus
-  hermanas `…AnOpenAdjustmentLineAndALot…` y `…AnOpenTaskLine…`) y las
+  hermanas `…AnOpenAdjustmentLineAndALot…`, `…AnOpenTaskLine…`, `…AnOpenCountLine…` y `…AnOpenIncident…`) y las
   dos `TheCatalogUsageQueryFindsTheBackfilledVariant` (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`),
   que resuelven el checker real del contenedor y lo corren contra el esquema de las migraciones.
+- **`LockNextCandidateAsync` (Wms, tareas) lee `wms.incidents.verification_task_id` y `reported_by` por nombre** para no ofrecerle a
+  quien reportó una novedad el `Count` que la verifica (DA-45), y `FindOpenCountAsync` y el barrido leen `wms.task_lines` y
+  `wms.tasks` por nombre de columna. Es SQL crudo dentro del mismo módulo: renombrar una de esas columnas compila y rompe el filtro
+  o el barrido en ejecución. Las amarran `TaskCandidateQueryTests` y `TaskForwardCompatibilityTests`.
 - **`CustomerMergeReferences` escribe en nueve esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
   quotations, pos, pipeline, messaging, billing, loans, support, ai y shopify: es SQL crudo en Bootstrapper sobre
   `quotations.quotations`/`orders.client_id`, `pos.sales.customer_id`,

@@ -25,6 +25,7 @@ public static class WmsEndpoints
         AdjustmentEndpoints.Map(group);
         ImportEndpoints.Map(group);
         TaskEndpoints.Map(group);
+        IncidentEndpoints.Map(group);
 
         return endpoints;
     }

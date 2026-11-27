@@ -550,7 +550,7 @@ internal sealed class SiigoApiClient(
 
         for (var attempt = 0; ; attempt++)
         {
-            var token = tokens.TryGet(credentials.ConnectionId);
+            var token = tokens.TryGet(credentials);
             if (token is null)
             {
                 var authentication = await AuthenticateAsync(credentials, cancellationToken);
@@ -569,7 +569,7 @@ internal sealed class SiigoApiClient(
             }
 
             // 401: el token pudo vencer o revocarse. Se olvida (si sigue siendo ése), se reautentica una vez y se repite lo mismo.
-            tokens.Invalidate(credentials.ConnectionId, token);
+            tokens.Invalidate(credentials, token);
             if (attempt > 0)
             {
                 return Reply.Rejected(reply.Capture);
@@ -601,7 +601,7 @@ internal sealed class SiigoApiClient(
         }
 
         var seconds = SiigoJson.Decimal(document!.RootElement, "expires_in");
-        tokens.Set(credentials.ConnectionId, token, seconds is > 0 ? TimeSpan.FromSeconds((double)seconds.Value) : DefaultTokenLifetime);
+        tokens.Set(credentials, token, seconds is > 0 ? TimeSpan.FromSeconds((double)seconds.Value) : DefaultTokenLifetime);
         return (token, null);
     }
 

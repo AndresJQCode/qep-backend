@@ -42,6 +42,14 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
                 quotation => quotation.TenantId == tenantId && quotation.Id == quotationId,
                 cancellationToken);
 
+    public Task<QuotationKind?> FindKindAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        dbContext.Quotations
+            .AsNoTracking()
+            .Where(quotation => quotation.TenantId == tenantId && quotation.Id == quotationId)
+            .Select(quotation => (QuotationKind?)quotation.Kind)
+            .SingleOrDefaultAsync(cancellationToken);
+
     private const string LikeEscapeCharacter = "\\";
 
     // Mismo criterio que CustomerRepository.EscapeLikeWildcards/LikePattern: un numero de
@@ -66,12 +74,13 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var query = FilteredQuery(
-            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber, kind);
 
         var total = await query.CountAsync(cancellationToken);
         var items = await query
@@ -99,12 +108,13 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         QuotationExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
         var query = FilteredQuery(
-            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
+            tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber, kind);
 
         if (after is not null)
         {
@@ -133,9 +143,10 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         CancellationToken cancellationToken) =>
         FilteredQuery(
-                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber)
+                tenantId, clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber, kind)
             .AnyAsync(cancellationToken);
 
     // Los filtros del listado y de su Excel salen de aca y de ningun otro lado: si cada camino
@@ -153,11 +164,18 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         QuotationStatus? status,
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
-        string? quotationNumber)
+        string? quotationNumber,
+        QuotationKindFilter kind)
     {
         var query = dbContext.Quotations
             .AsNoTracking()
             .Where(quotation => quotation.TenantId == tenantId);
+
+        if (kind != QuotationKindFilter.All)
+        {
+            var documentKind = kind == QuotationKindFilter.Project ? QuotationKind.Project : QuotationKind.Standard;
+            query = query.Where(quotation => quotation.Kind == documentKind);
+        }
 
         if (clientId is { } client)
         {
@@ -228,7 +246,8 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return found.Select(id => id.Value).ToHashSet();
     }
 
-    // La regla de Quotation.RequiresShipping en SQL (spec 2026-11-18 §5): dos EXISTS por fila en la misma consulta.
+    // La regla de Quotation.RequiresShipping en SQL (spec 2026-11-18 §5): dos EXISTS por fila en la misma consulta. Un
+    // proyecto nunca se despacha (spec 2026-11-26 §6.4).
     public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -244,6 +263,7 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
             .AsNoTracking()
             .Where(quotation => quotation.TenantId == tenantId
                 && ids.Contains(quotation.Id)
+                && quotation.Kind != QuotationKind.Project
                 && (!quotation.Items.Any() || quotation.Items.Any(item => item.Kind == ProductKind.Physical)))
             .Select(quotation => quotation.Id)
             .ToListAsync(cancellationToken);

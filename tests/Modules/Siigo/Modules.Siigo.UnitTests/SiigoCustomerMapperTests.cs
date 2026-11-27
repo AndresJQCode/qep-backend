@@ -45,7 +45,7 @@ public sealed class SiigoCustomerMapperTests
     [InlineData(SiigoIdentificationKind.Ce, "AB-123 456", "AB123456")]
     [InlineData(SiigoIdentificationKind.Pasaporte, " ab.123 ", "ab123")]
     [InlineData(SiigoIdentificationKind.Ce, " .- ", null)]
-    [InlineData(SiigoIdentificationKind.Nif, " X-123.4 ", "X-123.4")]
+    [InlineData(SiigoIdentificationKind.Nif, " X-123.4 ", "X1234")]
     [InlineData(null, " 12.34 ", "12.34")]
     [InlineData(null, "  ", null)]
     public void TheDocumentIsSentAsSiigoExpectsIt(SiigoIdentificationKind? kind, string raw, string? expected) =>
@@ -143,14 +143,40 @@ public sealed class SiigoCustomerMapperTests
     public void EachSupportedTypeHasItsSiigoCode(SiigoIdentificationKind kind, string code) =>
         Assert.Equal(code, SiigoIdentificationTypes.CodeFor(kind));
 
-    [Theory]
-    [InlineData(SiigoIdentificationKind.Nif)]
-    [InlineData(SiigoIdentificationKind.Nie)]
-    [InlineData(SiigoIdentificationKind.TaxId)]
-    public void ANifNieOrTaxIdIsUnsupported(SiigoIdentificationKind kind)
+    [Fact]
+    public void ADocumentWithoutTypeIsStillUnsupported()
     {
-        Assert.Null(SiigoIdentificationTypes.CodeFor(kind));
-        Assert.Null(SiigoCustomerMapper.Map(Person() with { IdentificationType = kind }));
+        Assert.Null(SiigoCustomerMapper.Map(Person() with { IdentificationType = null }));
+    }
+
+    // Spec 2026-11-26: Tax ID es 50; NIF y NIE son 42 (por confirmar con quien lleva la contabilidad).
+    [Theory]
+    [InlineData(SiigoIdentificationKind.TaxId, "50")]
+    [InlineData(SiigoIdentificationKind.Nif, "42")]
+    [InlineData(SiigoIdentificationKind.Nie, "42")]
+    public void AForeignDocumentHasItsSiigoCode(SiigoIdentificationKind kind, string code) =>
+        Assert.Equal(code, SiigoIdentificationTypes.CodeFor(kind));
+
+    [Theory]
+    [InlineData(SiigoIdentificationKind.Nif, " X-123.4 ", "X1234")]
+    [InlineData(SiigoIdentificationKind.Nie, "y 9876543-z", "y9876543z")]
+    [InlineData(SiigoIdentificationKind.TaxId, "12-3456789", "123456789")]
+    public void AForeignDocumentTravelsLikeThePassport(SiigoIdentificationKind kind, string raw, string expected) =>
+        Assert.Equal(expected, SiigoCustomerMapper.Identification(Person() with { IdentificationType = kind, Identification = raw }));
+
+    [Fact]
+    public void AForeignPartySendsTheSiigoCountryAsItCame()
+    {
+        var request = SiigoCustomerMapper.Map(Company() with
+        {
+            IdentificationType = SiigoIdentificationKind.TaxId,
+            Identification = "123456789",
+            SiigoCountryCode = "Us",
+            StateCode = "09",
+            CityCode = "1",
+        })!;
+
+        Assert.Equal(("50", "Us", "09", "1"), (request.IdTypeCode, request.CountryCode, request.StateCode, request.CityCode));
     }
 
     [Fact]

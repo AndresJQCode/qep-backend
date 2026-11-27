@@ -166,6 +166,13 @@ internal sealed class ShippingRequestValidator : AbstractValidator<ShippingReque
 {
     private static readonly string[] ModeNames = Enum.GetNames<FreightChargeMode>();
 
+    private static readonly ShippingRequestValidator Rules = new();
+
+    /// <summary>Si el bloque, presente o no, pasa estas reglas. Lo preguntan los documentos de proyecto, que ignoran el
+    /// envío del cuerpo (spec 2026-11-26 §6.5 y §12-C): sólo cuando no pasaría hace falta saber el tipo del documento
+    /// antes de validar.</summary>
+    public static bool Accepts(ShippingRequest? shipping) => shipping is null || Rules.Validate(shipping).IsValid;
+
     public ShippingRequestValidator()
     {
         RuleFor(shipping => shipping.FreightChargeMode)

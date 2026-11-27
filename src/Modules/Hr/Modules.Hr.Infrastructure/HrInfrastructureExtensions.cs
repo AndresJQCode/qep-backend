@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Hr.Application;
+using Modules.Hr.Application.BirthdayNotices;
 using Modules.Hr.Application.MedicalExams;
 using Modules.Hr.Infrastructure.Excel;
 using Modules.Hr.Infrastructure.Persistence;
@@ -32,6 +33,7 @@ public static class HrInfrastructureExtensions
         services.AddScoped<ILegalParameterSource, LegalParameterSource>();
         services.AddScoped<ILegalParameterRepository, LegalParameterRepository>();
         services.AddScoped<IHrSettingsRepository, HrSettingsRepository>();
+        services.AddScoped<IBirthdayNoticeSettingRepository, BirthdayNoticeSettingRepository>();
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeActivityLog, EmployeeActivityLog>();
         services.AddScoped<IMedicalExamRepository, MedicalExamRepository>();
@@ -43,6 +45,10 @@ public static class HrInfrastructureExtensions
         services.AddScoped<IEmployeeImportTemplateBuilder, ClosedXmlEmployeeImportTemplateBuilder>();
         services.AddScoped<IExcelLegalParameterImporter, ClosedXmlLegalParameterImporter>();
         services.AddScoped<ILegalParameterTemplateBuilder, ClosedXmlLegalParameterTemplateBuilder>();
+        // Spec 2026-11-26: el aviso a Storage del PDF de un registro de cargo y lugar eliminado, en el outbox de la plataforma.
+        services.AddScoped<IHrDocumentReleases, HrDocumentReleasePublisher>();
+        // Y qué PDF nombra todavía Hr, para que Storage no purgue uno vivo (lo traduce HrDocumentReferences, en Bootstrapper).
+        services.AddScoped<IHrDocumentUsage, HrDocumentUsage>();
 
         // Spec 2026-11-23 §9: the daily reminder run. Options validated at start, as ServiceContractsOptions.
         services.AddOptions<HrOptions>().Bind(configuration.GetSection(HrOptions.SectionName)).ValidateOnStart();
@@ -52,6 +58,12 @@ public static class HrInfrastructureExtensions
         services.AddScoped<MedicalExamEventPublisher>();
         services.AddScoped<IMedicalExamEventPublisher>(provider => provider.GetRequiredService<MedicalExamEventPublisher>());
         services.AddScoped<IHrMedicalExamsReminderProcessor, HrMedicalExamsReminderProcessor>();
+
+        // Spec 2026-11-26 §5.2: the daily birthday run, driven by the same worker tick, with its own claim tables.
+        services.AddScoped<BirthdayRunStore>();
+        services.AddScoped<BirthdayDigestStore>();
+        services.AddScoped<BirthdayEventPublisher>();
+        services.AddScoped<IHrBirthdayNoticesProcessor, HrBirthdayNoticesProcessor>();
         services.AddHostedService<HrMedicalExamsReminderWorker>();
 
         return services;

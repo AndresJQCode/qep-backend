@@ -185,8 +185,8 @@ public sealed class ShopifyEditPlanner(
             return (Conflict(diff, ShopifyEditReasons.StorePickup), null);
         }
 
-        // Una parte de fuera de Colombia no se resuelve contra DIVIPOLA: antes de intentarlo se mira si lo que llegó es lo que el
-        // envío de esa parte mandó. Si no lo es, sigue el camino de siempre (hoy, conflicto: no se importan ciudades de afuera).
+        // Una parte de fuera de Colombia: antes de comparar se mira si lo que llegó es lo que el envío de esa parte mandó. Si no
+        // lo es, sigue la comparación de siempre contra el pedido y la proyección.
         if (order.ShippingParty is { } own
             && !ShopifyPushAddress.IsColombia(own.Country)
             && await ShopifyPushAddress.IsForeignEchoAsync(
@@ -195,10 +195,8 @@ public sealed class ShopifyEditPlanner(
             return (null, null);
         }
 
-        var resolution = await customers.ResolveCityAsync(incoming.ShippingAddress, cancellationToken);
-        if (resolution.City is not { } city)
+        if (await DestinationAsync(row, incoming, order, cancellationToken) is not { } destination)
         {
-            await ReportCityAsync(row, incoming, order, resolution, cancellationToken);
             return (Conflict(diff, ShopifyEditReasons.CityUnresolved), null);
         }
 
@@ -211,12 +209,20 @@ public sealed class ShopifyEditPlanner(
             return (Conflict(diff, ShopifyEditReasons.PartyIncomplete), null);
         }
 
+        // Fuera de Colombia, la guarda de la importación: un campo que no cabe en la parte de Quotations la haría rechazar y el
+        // cambio quedaría Pending. Colombia sigue como estaba.
+        if (destination.Country is not null && !ShopifyOrderImporter.FitsTheOrder(fields))
+        {
+            return (Conflict(diff, ShopifyEditReasons.PartyIncomplete), null);
+        }
+
         // Un payload que no guardó el zip no dice que Shopify no tenga ninguno: vale el del pedido.
         var postalCode = incoming.ShippingAddress is { ZipUnrecorded: true }
             ? order.ShippingParty?.PostalCode
             : ShopifyOrderImporter.ShippingPostalCode(incoming);
         var candidate = new ShopifyShippingFingerprint(
-            fields.Name, fields.Phone, fields.Email, fields.Address, city.DepartmentId, city.CityId, postalCode);
+            fields.Name, fields.Phone, fields.Email, fields.Address, destination.DepartmentId, destination.CityId, postalCode,
+            destination.Country, destination.CityName, destination.RegionId);
         // Un zip que Shopify ya tenía en la versión aplicada no es una novedad: si el pedido no guarda código postal (importado
         // antes de que viajara, o mandado sin uno propio, con el zip que Shopify conservaba), no cuenta como diferencia. Sin esto,
         // el eco de ese envío saldría como qep_changed. Tampoco cuenta si la versión aplicada no guardó el zip: no se sabe si
@@ -234,7 +240,30 @@ public sealed class ShopifyEditPlanner(
         return !ShopifyOrderProjection.SameParty(order.ShippingParty, projection.ShippingParty)
             ? (Conflict(diff, ShopifyEditReasons.QepChanged), null)
             : (Apply(diff), new ShopifyPartyDraft(
-                fields.Name, fields.Phone, fields.Email, fields.Address, city.DepartmentId, city.CityId, postalCode));
+                fields.Name, fields.Phone, fields.Email, fields.Address, destination.DepartmentId, destination.CityId, postalCode,
+                destination.Country, destination.CityName, destination.RegionId));
+    }
+
+    // A dónde va la dirección que llegó, con la regla de la importación: fuera de Colombia, ShopifyForeignAddress (sin región no
+    // es conflicto); en Colombia, la ciudad DIVIPOLA. null es city_unresolved; sólo la de Colombia va a la bandeja de ciudades.
+    private async Task<(Guid? DepartmentId, Guid? CityId, string? Country, string? CityName, Guid? RegionId)?> DestinationAsync(
+        ShopifyOrderMirror row, ShopifyOrderSnapshot incoming, ShopifyOrderState order, CancellationToken cancellationToken)
+    {
+        if (ShopifyForeignAddress.IsForeign(incoming.ShippingAddress))
+        {
+            return await ShopifyForeignAddress.ResolveAsync(geography, incoming.ShippingAddress!, cancellationToken) is { } foreign
+                ? (null, null, foreign.Country, foreign.CityName, foreign.RegionId)
+                : null;
+        }
+
+        var resolution = await customers.ResolveCityAsync(incoming.ShippingAddress, cancellationToken);
+        if (resolution.City is not { } city)
+        {
+            await ReportCityAsync(row, incoming, order, resolution, cancellationToken);
+            return null;
+        }
+
+        return (city.DepartmentId, city.CityId, null, null, null);
     }
 
     // Como la importación (RecordShippingCityAsync): la ciudad de Colombia que no casó, con su departamento resuelto, va a la bandeja

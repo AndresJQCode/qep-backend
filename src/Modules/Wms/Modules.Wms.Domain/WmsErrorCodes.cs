@@ -83,6 +83,10 @@ public static class WmsErrorCodes
     public const string AdjustmentNotFound = "wms.adjustment.not_found";
     public const string AdjustmentLineInvalid = "wms.adjustment.line_invalid";
 
+    /// <summary>422: el saldo de la clave cambió desde que un conteo lo vio; el ajuste <c>CountVariance</c> se rechazó solo y se pidió
+    /// un conteo nuevo (decisión del owner, 2026-11-27).</summary>
+    public const string AdjustmentCountStale = "wms.adjustment.count_stale";
+
     public const string ImportAmbiguousCode = "wms.import.ambiguous_code";
     public const string ImportUnknownCode = "wms.import.unknown_code";
     public const string ImportUnknownLocation = "wms.import.unknown_location";
@@ -110,10 +114,19 @@ public static class WmsErrorCodes
     public const string TaskLeaseLost = "wms.task.lease_lost";
     public const string TaskMemberBusy = "wms.task.member_busy";
     public const string TaskAssignedToOther = "wms.task.assigned_to_other";
+    public const string TaskNotOffered = "wms.task.not_offered";
     public const string TaskAssigneeNotEligible = "wms.task.assignee_not_eligible";
     public const string TaskLocationInvalid = "wms.task.location_invalid";
     public const string TaskLocationMismatch = "wms.task.location_mismatch";
     public const string TaskLotMismatch = "wms.task.lot_mismatch";
     public const string TaskQuantityExceedsRemaining = "wms.task.quantity_exceeds_remaining";
     public const string TaskLineInvalid = "wms.task.line_invalid";
+
+    // Novedades (spec 2026-11-26 §8).
+    public const string IncidentTypeNotAllowed = "wms.incident.type_not_allowed";
+    public const string IncidentInvalid = "wms.incident.invalid";
+    public const string IncidentEvidenceInvalid = "wms.incident.evidence_invalid";
+    public const string IncidentNotFound = "wms.incident.not_found";
+    public const string IncidentSelfResolution = "wms.incident.self_resolution";
+    public const string IncidentResolutionNotAllowed = "wms.incident.resolution_not_allowed";
 }

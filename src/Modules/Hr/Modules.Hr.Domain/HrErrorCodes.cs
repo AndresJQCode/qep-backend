@@ -46,6 +46,14 @@ public static class HrErrorCodes
     public const string SiteChangeNotFirstOfMonth = "hr.assignment.site_change_not_first_of_month";
     public const string AssignmentUnchanged = "hr.assignment.unchanged";
     public const string WorkplaceOtherCompany = "hr.assignment.workplace_other_company";
+
+    // Editar y eliminar registros de cargo y lugar (spec 2026-11-26). Todos 422, ninguno es conflicto.
+    public const string AssignmentRewriteUnconfirmed = "hr.assignment.rewrite_unconfirmed";
+    public const string AssignmentFirstRecordDateFixed = "hr.assignment.first_record_date_fixed";
+    public const string AssignmentFirstRecordNotDeletable = "hr.assignment.first_record_not_deletable";
+    public const string AssignmentEffectiveDateOutOfOrder = "hr.assignment.effective_date_out_of_order";
+    public const string AssignmentUsedByPayroll = "hr.assignment.used_by_payroll";
+
     public const string SetupIncomplete = "hr.settings.setup_incomplete";
     public const string SiteArchived = "hr.settings.site_archived";
     public const string SiteHasActiveWorkplaces = "hr.settings.site_has_active_workplaces";
@@ -61,6 +69,12 @@ public static class HrErrorCodes
     public const string MedicalExamNoPendingExit = "hr.medical_exam.no_pending_exit";
     public const string MedicalExamStatusInvalid = "hr.medical_exam.status_invalid";
     public const string ExamFrequencyInvalid = "hr.settings.exam_frequency_invalid";
+
+    // Birthday notices (spec 2026-11-26 §5.1): all 422, each marks its field.
+    public const string BirthdayManagerNotFound = "hr.birthday_notice.manager_not_found";
+    public const string BirthdayManagerWithoutAccess = "hr.birthday_notice.manager_without_access";
+    public const string BirthdayConnectionRequired = "hr.birthday_notice.connection_required";
+    public const string BirthdayConnectionInvalid = "hr.birthday_notice.connection_invalid";
 
     // 422, importación por Excel (Tarea 10): errores de archivo y confirmación.
     public const string ImportFileRequired = "hr.import.file_required";

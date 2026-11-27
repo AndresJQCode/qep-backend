@@ -20,5 +20,8 @@ public static class GeographyDatabaseInitializer
 
         var regionSeeder = scope.ServiceProvider.GetRequiredService<RegionSeeder>();
         await regionSeeder.SeedAsync(cancellationToken);
+
+        var billingCitySeeder = scope.ServiceProvider.GetRequiredService<BillingCitySeeder>();
+        await billingCitySeeder.SeedAsync(cancellationToken);
     }
 }

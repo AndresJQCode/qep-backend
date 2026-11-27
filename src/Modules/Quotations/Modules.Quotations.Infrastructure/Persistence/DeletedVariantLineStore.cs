@@ -26,14 +26,15 @@ internal sealed class DeletedVariantLineStore(QuotationsDbContext dbContext) : I
 
         // Las cotizaciones fuera del borrador congelan código y nombre al salir de él; las enviadas antes del
         // 2026-09-26 no los tienen y se leían en vivo del catálogo. Al borrar la variante ya no hay de dónde
-        // leerlos, así que se completan ahora. Un borrador no se toca: pierde la línea en otro paso.
+        // leerlos, así que se completan ahora. Un borrador estándar no se toca: pierde la línea en otro paso. El borrador de
+        // un proyecto conserva la suya (spec 2026-11-26 §5), así que se congela como la de una cotización enviada.
         var quotationLines = await dbContext.Database.ExecuteSqlAsync(
             $"""
             UPDATE quotations.quotation_items qi
             SET product_code = s.code, product_name = s.name
             FROM quotations.quotations q,
                  unnest({variantIds}::uuid[], {codes}::text[], {names}::text[]) AS s(variant_id, code, name)
-            WHERE q.id = qi.quotation_id AND q.tenant_id = {tenantId} AND q.status <> 'Draft'
+            WHERE q.id = qi.quotation_id AND q.tenant_id = {tenantId} AND (q.status <> 'Draft' OR q.kind = 'Project')
               AND qi.variant_id = s.variant_id AND qi.product_code IS NULL;
             """,
             cancellationToken);
@@ -64,6 +65,8 @@ internal sealed class DeletedVariantLineStore(QuotationsDbContext dbContext) : I
             .AsSingleQuery()
             .Where(quotation => quotation.TenantId == tenantId
                 && quotation.Status == QuotationStatus.Draft
+                // Un proyecto no pierde su línea ni se reprecia: su precio lo escribió el asesor.
+                && quotation.Kind == QuotationKind.Standard
                 && quotation.Items.Any(item => ids.Contains(item.VariantId)))
             .ToListAsync(cancellationToken);
     }

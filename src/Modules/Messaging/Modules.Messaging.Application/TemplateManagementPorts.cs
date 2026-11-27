@@ -42,6 +42,10 @@ public interface IMessageTemplateRepository
 
     /// <summary>Support task notices: the only <c>TaskNotice</c> row of the connection, tracked, or <c>null</c>.</summary>
     Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>HR birthday notices: the only <c>HrBirthdayNotice</c> row of the connection, tracked, or <c>null</c>.</summary>
+    Task<MessageTemplate?> FindHrBirthdayNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Agenda: la única fila <c>AppointmentReminder</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindAppointmentReminderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -133,6 +137,16 @@ public interface IWholesaleInvitationNoticeReadiness
 /// <c>FindApprovedAsync</c> returns the <c>TaskNotice</c> row when it is <c>APPROVED</c> on that connection, or <c>null</c>;
 /// <c>FindStatusAsync</c> returns Meta's raw status of that row, or <c>null</c> when there is none.</summary>
 public interface ITaskNoticeTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<string?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>HR birthday notices: the readiness signal of the birthday notice template, sibling of <see cref="ITaskNoticeTemplateReadiness"/>.
+/// <c>FindApprovedAsync</c> returns the <c>HrBirthdayNotice</c> row when it is <c>APPROVED</c> on that connection, or <c>null</c>;
+/// <c>FindStatusAsync</c> returns the raw Meta status of that row, or <c>null</c> when there is none.</summary>
+public interface IHrBirthdayNoticeTemplateReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 

@@ -62,12 +62,15 @@ public sealed class PreviewOrderEditsHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, OrdersPermissions.OrderManage);
-        await validator.ValidateAndThrowAsync(query, cancellationToken);
-
         // Sin tracking: el preview muta el agregado en memoria y nada de eso puede llegar a un
-        // SaveChangesAsync del mismo scope.
-        var order = await orderRepository.FindUntrackedByIdAsync(
-            query.TenantId, new OrderId(query.OrderId), cancellationToken)
+        // SaveChangesAsync del mismo scope. Como en el guardado, a veces hay que saber el tipo del pedido antes de validar.
+        var orderId = new OrderId(query.OrderId);
+        var order = OrderEditsValidation.NeedsTheOrder(query)
+            ? await orderRepository.FindUntrackedByIdAsync(query.TenantId, orderId, cancellationToken)
+            : null;
+        await OrderEditsValidation.ValidateAsync(validator, query, order, cancellationToken);
+
+        order ??= await orderRepository.FindUntrackedByIdAsync(query.TenantId, orderId, cancellationToken)
             ?? throw OrderNotFound.ById(query.OrderId);
         // Mismo orden que el guardado: el motivo exacto de la entrega antes que la guarda general.
         if (query.Delivery is not null)
@@ -82,17 +85,23 @@ public sealed class PreviewOrderEditsHandler(
                 "An order can only be edited while it is open, not prepared and not invoiced.");
         }
 
+        // Mismo candado que el guardado (spec 2026-11-26 §12-C).
+        var keepsProjectLine = ProjectOrderLines.KeepsTheLine(order, query.Items, query.Gifts);
         var storedVersion = order.Version;
         var previousNetTotal = order.NetTotal;
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
         var now = clock.UtcNow;
-        await OrderItemEdits.ApplyAsync(
-            order, query.Items, pricingLookup, costLookup, wholesalePricing, query.TenantId, updatedBy, now, query.IsRetail,
-            cancellationToken);
-        // Mismo orden que el guardado (spec 2026-11-23): los regalos después de las pagadas, y null no los toca.
-        await OrderGiftEdits.ApplyAsync(
-            order, query.Gifts, pricingLookup, costLookup, query.TenantId, updatedBy, now, cancellationToken);
+        if (!keepsProjectLine)
+        {
+            await OrderItemEdits.ApplyAsync(
+                order, query.Items, pricingLookup, costLookup, wholesalePricing, query.TenantId, updatedBy, now,
+                query.IsRetail, cancellationToken);
+            // Mismo orden que el guardado (spec 2026-11-23): los regalos después de las pagadas, y null no los toca.
+            await OrderGiftEdits.ApplyAsync(
+                order, query.Gifts, pricingLookup, costLookup, query.TenantId, updatedBy, now, cancellationToken);
+        }
+
         foreach (var proofId in query.Proofs.RemoveIds)
         {
             order.RemovePaymentProof(new OrderPaymentProofId(proofId), now);
@@ -119,12 +128,12 @@ public sealed class PreviewOrderEditsHandler(
             order.ChangeOrderDate(orderDate, (await tenantClock.GetAsync(query.TenantId, cancellationToken)).Today, now);
         }
 
-        if (order.IsRetail != query.IsRetail)
+        if (!keepsProjectLine && order.IsRetail != query.IsRetail)
         {
             order.SetIsRetail(query.IsRetail, updatedBy, now);
         }
 
-        if (order.GlobalScaleFloor != query.GlobalScaleFloor)
+        if (!keepsProjectLine && order.GlobalScaleFloor != query.GlobalScaleFloor)
         {
             order.SetGlobalScaleFloor(query.GlobalScaleFloor, updatedBy, now);
         }
@@ -149,9 +158,11 @@ public sealed class PreviewOrderEditsHandler(
             updatedBy, now, cancellationToken);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
-        var shipping = await shippingResolver.ResolveAsync(
-            query.TenantId, query.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
-            order.ChargesVat, "order.order", cancellationToken);
+        var shipping = keepsProjectLine
+            ? null
+            : await shippingResolver.ResolveAsync(
+                query.TenantId, query.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
+                order.ChargesVat, "order.order", cancellationToken);
         if (shipping is not null && shipping != order.ShippingDetails)
         {
             order.SetShipping(shipping, updatedBy, now);

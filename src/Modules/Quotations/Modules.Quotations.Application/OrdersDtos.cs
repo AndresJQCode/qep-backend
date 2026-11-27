@@ -120,7 +120,12 @@ public sealed record OrderDto(
     /// <summary>El número de la factura del proveedor (<c>FV-1-123</c>); <c>null</c> en una marca manual.</summary>
     string? InvoiceNumber = null,
     /// <summary>Ver <see cref="OrderResponse.DeliveryEditable"/>: <see cref="Order.IsEditable"/> del pedido.</summary>
-    bool DeliveryEditable = false);
+    bool DeliveryEditable = false,
+    /// <summary>El tipo de documento, por nombre: <c>Standard</c> o <c>Project</c> (spec 2026-11-26 §6.2). El pedido lo
+    /// copia de su cotización.</summary>
+    string Kind = "Standard",
+    /// <summary>El alcance y el precio de un pedido de proyecto; null en un <c>Standard</c>.</summary>
+    ProjectScopeDto? Project = null);
 
 /// <summary>Los dos valores de la aprobación mayorista (D-1), por nombre en el JSON.</summary>
 public static class WholesaleApprovals
@@ -508,7 +513,13 @@ public sealed record OrderResponse(
     /// <summary>BFF: el frontend sólo abre la entrega con <c>true</c>; ausente en un backend viejo = sólo lectura; no
     /// depende del origen (owner 2026-11-24). Es la guarda de edición del pedido, para que la pantalla no la deduzca de los
     /// estados. Viaja acá, como <see cref="PostalCodeSupported"/>, para que también lo traigan /approve, /cancel…</summary>
-    bool DeliveryEditable = false);
+    bool DeliveryEditable = false,
+    /// <summary>Ver <see cref="OrderDto.Kind"/>. BFF: con <c>Project</c> la pantalla bloquea las líneas. Viaja acá y no
+    /// en la raíz de <see cref="OrderDetailResponse"/> (spec 2026-11-26 §12-B), para que también lo traigan /approve,
+    /// /cancel… y la vista previa de la conversión.</summary>
+    string Kind = "Standard",
+    /// <summary>Ver <see cref="ProjectScopeDto"/>; null en un <c>Standard</c>.</summary>
+    ProjectScopeDto? Project = null);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
@@ -543,7 +554,9 @@ public sealed record OrderListItemResponse(
     /// «Prestado» en vez de «Preparado» sin pedir el detalle.</summary>
     bool RequiresShipping,
     /// <summary>Mayorista fase 3: número de la orden y aprobación; null fuera de un pedido mayorista.</summary>
-    OrderListWholesaleDto? Wholesale = null);
+    OrderListWholesaleDto? Wholesale = null,
+    /// <summary>Ver <see cref="OrderDto.Kind"/>. BFF: la insignia y el filtro «Tipo» de la lista.</summary>
+    string Kind = "Standard");
 
 /// <summary>La cotización de origen del detalle. <c>CreatedAt</c> es el de la cotización (spec 2026-11-16 F-8): el detalle
 /// lo muestra junto a la fecha del pedido.</summary>

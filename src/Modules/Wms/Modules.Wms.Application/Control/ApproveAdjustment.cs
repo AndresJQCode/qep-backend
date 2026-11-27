@@ -16,7 +16,10 @@ public sealed class ApproveAdjustmentHandler(
     IWmsUnitOfWork unitOfWork,
     IWmsAuditRecorder auditRecorder,
     IClock clock,
-    AdjustmentDtoComposer composer)
+    AdjustmentDtoComposer composer,
+    IIncidentRepository incidents,
+    WmsCaller caller,
+    CountVarianceFreshness freshness)
     : ICommandHandler<ApproveAdjustmentCommand, AdjustmentDto>
 {
     public async Task<AdjustmentDto> HandleAsync(ApproveAdjustmentCommand command, CancellationToken cancellationToken)
@@ -30,7 +33,28 @@ public sealed class ApproveAdjustmentHandler(
             executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, adjustment.OwnerId.Value, adjustment.WarehouseId.Value, cancellationToken);
         WmsVersions.Ensure(adjustment.Version, command.Version);
 
+        // Un ajuste que propuso un conteo no lo aprueba quien contó ni quien reportó el faltante (DA-17, DA-47). Se comparan
+        // membresías (WmsCaller), nunca SubjectId. Sin novedad detrás, el ajuste se aprueba como siempre y no pide membresía.
+        var variance = await incidents.FindByAdjustmentAsync(command.TenantId, adjustment.Id, cancellationToken);
+        if (variance is not null)
+        {
+            var member = await caller.RequireAsync(command.TenantId, cancellationToken);
+            // Los reportantes salen de toda novedad que el Count de origen verificaba, sin mirar su estado ni su padre.
+            var reporters = variance.SourceTaskId is { } countTaskId
+                ? await incidents.ListReportersVerifiedByAsync(command.TenantId, countTaskId, cancellationToken)
+                : [];
+            variance.EnsureNotInvolvedInApproval(member, reporters);
+        }
+
         var now = clock.UtcNow;
+
+        // Un ajuste de conteo se abre con transacción: si el saldo cambió desde el conteo, el rechazo automático numera y bloquea.
+        await using var transaction = variance is null ? null : await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (variance is not null)
+        {
+            await freshness.EnsureFreshAsync(adjustment, variance, now, cancellationToken);
+        }
+
         adjustment.Approve(executionContext.SubjectId, now);
         auditRecorder.Record(
             command.TenantId,

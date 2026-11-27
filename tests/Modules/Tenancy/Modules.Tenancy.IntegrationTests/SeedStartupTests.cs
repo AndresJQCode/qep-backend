@@ -214,7 +214,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "projects", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -247,7 +247,7 @@ public sealed class SeedStartupTests
             Guid.CreateVersion7(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "projects", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -309,7 +309,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "projects", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -336,7 +336,7 @@ public sealed class SeedStartupTests
         Assert.Equal(ownerUserId, membership.UserId);
         Assert.NotEqual(operatorUserId, membership.UserId);
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "projects", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -416,7 +416,7 @@ public sealed class SeedStartupTests
             membership => membership.TenantId == new TenantId(OperatorTenantId),
             TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "hr", "loans", "messaging", "orders", "payroll", "pipeline", "pos", "projects", "purchases", "quotations", "reporting", "scheduling", "shopify", "siigo", "store", "suppliers", "support", "wholesale", "wms"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 

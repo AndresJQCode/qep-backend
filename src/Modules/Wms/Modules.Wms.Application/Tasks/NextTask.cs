@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
+using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.Application;
 
@@ -18,7 +19,8 @@ public sealed class NextTaskValidator : AbstractValidator<NextTaskCommand>
     public NextTaskValidator() => RuleFor(command => command.DeviceId).MustBeADeviceId();
 }
 
-/// <summary>«Siguiente tarea» (spec 2026-11-26 §6.8): la mejor elegible, ya reclamada. Repetirla devuelve la que tiene en curso.
+/// <summary>«Siguiente tarea» (spec 2026-11-26 §6.8): la mejor elegible, ya reclamada. Repetirla devuelve la que tiene en curso, con
+/// el lease renovado.
 /// </summary>
 public sealed class NextTaskHandler(
     IExecutionContext executionContext,
@@ -56,8 +58,32 @@ public sealed class NextTaskHandler(
                 throw new TaskMemberBusyException(current.Id);
             }
 
-            return new NextTaskResultDto(
-                await composer.ComposeAsync(current, member, withEvents: false, cancellationToken));
+            // M2: la fila se bloquea y se recarga antes de renovar (orden: operario → tarea). Si el barrido la venció en el medio y
+            // sigue siendo suya (reclamo y token intactos, y es de las que su rol puede hacer), se la vuelve a reclamar: en el mismo
+            // celular conserva el token (DA-34). Si ya no es suya (un supervisor la retuvo o la reasignó), sigue el camino normal.
+            if (await tasks.LockAsync(command.TenantId, current.Id, cancellationToken)
+                && await tasks.GetAsync(command.TenantId, current.Id, cancellationToken) is { } mine
+                && mine.ClaimedByMemberId == member
+                && types.Contains(mine.Type))
+            {
+                var swept = mine.Status == WarehouseTaskStatus.Ready
+                    || (mine.Status == WarehouseTaskStatus.Assigned && mine.AssignedMemberId == member);
+                if (mine.Status == WarehouseTaskStatus.InProgress)
+                {
+                    mine.RenewClaim(member, command.DeviceId, clock.UtcNow);
+                }
+                else if (swept && mine.LeaseToken is not null)
+                {
+                    mine.Claim(member, command.DeviceId, clock.UtcNow);
+                }
+
+                if (mine.Status == WarehouseTaskStatus.InProgress)
+                {
+                    var own = await composer.ComposeAsync(mine, member, withEvents: false, cancellationToken);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
+                    return new NextTaskResultDto(own);
+                }
+            }
         }
 
         var now = clock.UtcNow;

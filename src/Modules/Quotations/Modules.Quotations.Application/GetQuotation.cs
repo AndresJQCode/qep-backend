@@ -8,7 +8,8 @@ public sealed record GetQuotationQuery(Guid TenantId, Guid QuotationId) : IQuery
 
 public sealed class GetQuotationHandler(
     IQuotationRepository repository,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules)
     : IQueryHandler<GetQuotationQuery, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -21,6 +22,8 @@ public sealed class GetQuotationHandler(
         var quotation = await repository.FindAsync(
             query.TenantId, new QuotationId(query.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(query.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, query.TenantId, quotation.Kind, cancellationToken);
 
         // Una lectura pura (spec impuestos por tipo §7.6): la cotización congela las tasas y el excedente de
         // IVA del cliente, así que ya no hay nada que refrescar contra el cliente maestro al abrirla.

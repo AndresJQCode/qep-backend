@@ -52,6 +52,8 @@ public sealed class TaskRoutesTests
             ("POST", "/{id:guid}/hold", manage),
             ("POST", "/{id:guid}/lines/{lineId:guid}/cancel", manage),
             ("POST", "/{id:guid}/lines/{lineId:guid}/confirm", read),
+            ("POST", "/{id:guid}/lines/{lineId:guid}/count", read),
+            ("POST", "/{id:guid}/lines/{lineId:guid}/short", read),
             ("POST", "/{id:guid}/priority", manage),
             ("POST", "/{id:guid}/publish", manage),
             ("POST", "/{id:guid}/unassign", manage),

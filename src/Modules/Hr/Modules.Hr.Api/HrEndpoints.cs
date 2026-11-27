@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Hr.Application;
+using Modules.Hr.Application.BirthdayNotices;
 using Modules.Hr.Application.MedicalExams;
 
 namespace Modules.Hr.Api;
@@ -40,6 +41,22 @@ public static class HrEndpoints
             .RequireAuthorization(HrPermissions.EmployeeRead)
             .Produces<HrSettingsDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        // Birthday notices (spec 2026-11-26 §5.1): who receives the daily digest. The PUT is an upsert: the first one carries no
+        // If-Match, the following ones must.
+        group.MapGet("/birthday-notices", GetBirthdayNoticesAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead)
+            .Produces<BirthdayNoticesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/birthday-notices", SaveBirthdayNoticesAsync)
+            .RequireAuthorization(HrPermissions.SettingsManage)
+            .Accepts<BirthdayNoticeRequest>("application/json")
+            .Produces<BirthdayNoticesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         group.MapPost("/sites", CreateSiteAsync)
             .RequireAuthorization(HrPermissions.SettingsManage)
@@ -302,9 +319,9 @@ public static class HrEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden);
     }
 
-    // El contrato del empleado: toda ruta es `hr.contract.manage` (y el handler exige también `employee.read` y `contract.read`). Sólo
-    // el `PUT` de salario lleva `If-Match`; en las demás, una escritura concurrente igual responde 412 porque la versión del empleado es
-    // token de concurrencia.
+    // El contrato del empleado: toda ruta es `hr.contract.manage` (y el handler exige también `employee.read` y `contract.read`). Las
+    // que reescriben o eliminan un registro (el `PUT` de salario, y el `PUT` y el `DELETE` de cargo y lugar) llevan `If-Match`; en las
+    // demás, una escritura concurrente igual responde 412 porque la versión del empleado es token de concurrencia.
     private static void MapContracts(RouteGroupBuilder group)
     {
         const string Contract = "/employees/{employeeId:guid}/contracts/{contractId:guid}";
@@ -329,6 +346,17 @@ public static class HrEndpoints
             .RequireAuthorization(HrPermissions.ContractManage)
             .Accepts<AssignmentRequest>("application/json")
             .ProducesContractWrite();
+
+        group.MapPut($"{Contract}/assignments/{{recordId:guid}}", RewriteAssignmentAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<AssignmentRewriteRequest>("application/json")
+            .ProducesContractWrite()
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapDelete($"{Contract}/assignments/{{recordId:guid}}", RemoveAssignmentAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .ProducesContractWrite()
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         group.MapPost($"{Contract}/renewals", RenewAsync)
             .RequireAuthorization(HrPermissions.ContractManage)
@@ -404,6 +432,29 @@ public static class HrEndpoints
     private static async Task<IResult> AddAssignmentAsync(
         Guid tenantId, Guid employeeId, Guid contractId, AssignmentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new AddAssignmentCommand(tenantId, employeeId, contractId, request), cancellationToken));
+
+    private static async Task<IResult> RewriteAssignmentAsync(
+        Guid tenantId,
+        Guid employeeId,
+        Guid contractId,
+        Guid recordId,
+        AssignmentRewriteRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RewriteAssignmentCommand(tenantId, employeeId, contractId, recordId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> RemoveAssignmentAsync(
+        Guid tenantId,
+        Guid employeeId,
+        Guid contractId,
+        Guid recordId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RemoveAssignmentCommand(tenantId, employeeId, contractId, recordId, IfMatchOf(httpContext)), cancellationToken));
 
     private static async Task<IResult> RenewAsync(
         Guid tenantId, Guid employeeId, Guid contractId, RenewalRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -575,6 +626,27 @@ public static class HrEndpoints
         var settings = await dispatcher.QueryAsync(new GetHrSettingsQuery(tenantId), cancellationToken);
 
         return Results.Ok(settings);
+    }
+
+    private static async Task<IResult> GetBirthdayNoticesAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var notices = await dispatcher.QueryAsync(new GetBirthdayNoticesQuery(tenantId), cancellationToken);
+
+        return Results.Ok(notices);
+    }
+
+    private static async Task<IResult> SaveBirthdayNoticesAsync(
+        Guid tenantId,
+        BirthdayNoticeRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var notices = await dispatcher.SendAsync(
+            new SaveBirthdayNoticesCommand(tenantId, request, IfMatchOf(httpContext)), cancellationToken);
+
+        return Results.Ok(notices);
     }
 
     private static async Task<IResult> CreateSiteAsync(

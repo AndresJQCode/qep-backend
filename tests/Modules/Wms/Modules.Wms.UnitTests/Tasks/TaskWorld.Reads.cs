@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Tenancy.Application;
 using Modules.Wms.Application;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Warehousing;
@@ -13,13 +14,36 @@ internal sealed partial class TaskWorld
         public DateTimeOffset UtcNow => world.Now;
     }
 
+    /// <summary>El huso de los tenants de prueba: Colombia, como el del arnés de integración.</summary>
+    private sealed class FakeTenantClock : ITenantClock
+    {
+        public Task<TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult(new TenantCalendar(Start, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota")));
+    }
+
     private sealed class FakeWarehouses(TaskWorld world) : IWarehouseRepository
     {
-        public Task<Warehouse?> GetAsync(Guid tenantId, WarehouseId id, CancellationToken ct) =>
-            Task.FromResult(tenantId == Tenant && id == world.Warehouse.Id ? world.Warehouse : null);
+        public Task<Warehouse?> GetAsync(Guid tenantId, WarehouseId id, CancellationToken ct)
+        {
+            world.Log.Add("warehouse-tree");
+            return Task.FromResult(tenantId == Tenant && id == world.Warehouse.Id ? world.Warehouse : null);
+        }
 
-        public Task<IReadOnlyList<Warehouse>> ListAsync(Guid tenantId, bool includeInactive, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<Warehouse>>(tenantId == Tenant ? [world.Warehouse] : []);
+        public Task<IReadOnlyList<Warehouse>> ListAsync(Guid tenantId, bool includeInactive, CancellationToken ct)
+        {
+            world.Log.Add("warehouse-tree");
+            return Task.FromResult<IReadOnlyList<Warehouse>>(tenantId == Tenant ? [world.Warehouse] : []);
+        }
+
+        public Task<IReadOnlyDictionary<LocationId, string>> FindLocationCodesAsync(
+            Guid tenantId, IReadOnlyCollection<LocationId> ids, CancellationToken ct)
+        {
+            world.LocationReads.Add(ids);
+            return Task.FromResult<IReadOnlyDictionary<LocationId, string>>(
+                tenantId == Tenant
+                    ? world.Warehouse.Locations.Where(location => ids.Contains(location.Id)).ToDictionary(l => l.Id, l => l.Code)
+                    : new Dictionary<LocationId, string>());
+        }
 
         public void Add(Warehouse warehouse) => throw new NotSupportedException();
 
@@ -70,7 +94,8 @@ internal sealed partial class TaskWorld
         public void Add(VariantLogisticsProfile profile) => throw new NotSupportedException();
 
         public Task<VariantLogisticsProfile?> FindAsync(Guid tenantId, Guid variantId, CancellationToken ct) =>
-            throw new NotSupportedException();
+            Task.FromResult<VariantLogisticsProfile?>(
+                variantId == Variant ? VariantLogisticsProfile.CreateDefault(Tenant, Variant, Variant, [12], Start) : null);
 
         public Task<VariantLogisticsProfile> GetOrCreateDefaultAsync(Guid tenantId, Guid variantId, CancellationToken ct) =>
             throw new NotSupportedException();
@@ -86,8 +111,12 @@ internal sealed partial class TaskWorld
         public Task<bool> CanPerformAsync(Guid tenantId, Guid memberId, string permission, CancellationToken ct) =>
             Task.FromResult(world.Eligible.Contains(memberId));
 
-        public Task<IReadOnlyList<Guid>> ListWithPermissionAsync(Guid tenantId, string permission, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<Guid>>([.. world.Eligible]);
+        public Task<IReadOnlyList<Guid>> ListWithPermissionAsync(Guid tenantId, string permission, CancellationToken ct)
+        {
+            world.PermissionLookups++;
+            return Task.FromResult<IReadOnlyList<Guid>>(
+                [.. world.Eligible.Where(member => permission != WmsPermissions.DocumentRead || !world.WithoutDocumentRead.Contains(member))]);
+        }
     }
 
     public List<Lot> Lots { get; } = [];

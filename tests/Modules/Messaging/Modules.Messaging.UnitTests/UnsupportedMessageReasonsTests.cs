@@ -17,6 +17,14 @@ public sealed class UnsupportedMessageReasonsTests
             UnsupportedMessageReasons.For(131051, imported: false));
 
     [Fact]
+    public void ARevokeSaysTheMessageWasDeleted() =>
+        Assert.Equal("Se eliminó este mensaje.", UnsupportedMessageReasons.ForMetaType("revoke"));
+
+    [Fact]
+    public void AnotherMetaTypeHasNoTypeReason() =>
+        Assert.Null(UnsupportedMessageReasons.ForMetaType("unsupported"));
+
+    [Fact]
     public void AnImportedUnavailableMessageIsUnchanged() =>
         Assert.Equal(
             "WhatsApp no entregó el contenido de este mensaje. Pídele a la persona que lo envíe de nuevo.",

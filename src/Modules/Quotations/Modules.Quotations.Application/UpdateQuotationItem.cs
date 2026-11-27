@@ -30,7 +30,8 @@ public sealed class UpdateQuotationItemHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<UpdateQuotationItemCommand> validator)
+    IValidator<UpdateQuotationItemCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<UpdateQuotationItemCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -44,6 +45,9 @@ public sealed class UpdateQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
+        ProjectScopeApplication.EnsureManualLines(quotation);
 
         // Mismo código que Quotation.UpdateItemQuantity usaría si se le pasara un id
         // desconocido: se busca acá primero porque hace falta el VariantId de la línea antes de

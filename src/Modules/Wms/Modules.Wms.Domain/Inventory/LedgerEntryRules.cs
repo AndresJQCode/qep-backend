@@ -6,6 +6,10 @@ public static class LedgerEntryRules
     public const int MaxPastDays = 30;
     public const int MaxFutureMinutes = 5;
 
+    /// <summary>La holgura de reloj de un celular, la misma del futuro: un escaneo real puede traer la hora atrasada hasta tanto.
+    /// </summary>
+    public const int ClockToleranceMinutes = MaxFutureMinutes;
+
     /// <summary>S12: la fecha física no puede ser de hace más de 30 días ni estar más de 5 minutos en el futuro.</summary>
     public static void EnsureOccurredAtInWindow(DateTimeOffset occurredAt, DateTimeOffset now)
     {

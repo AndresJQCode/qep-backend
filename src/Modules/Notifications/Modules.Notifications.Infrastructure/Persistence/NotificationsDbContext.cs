@@ -12,6 +12,8 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
 
     public DbSet<TaskNoticeEscalation> TaskNoticeEscalations => Set<TaskNoticeEscalation>();
 
+    public DbSet<HrBirthdayDelivery> HrBirthdayDeliveries => Set<HrBirthdayDelivery>();
+
     internal DbSet<NotificationInboxMessage> Inbox => Set<NotificationInboxMessage>();
 
     internal DbSet<OutboxRecord> Outbox => Set<OutboxRecord>();
@@ -21,6 +23,7 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
         ConfigureNotification(modelBuilder);
         ConfigureInApp(modelBuilder);
         ConfigureTaskNoticeEscalations(modelBuilder);
+        ConfigureHrBirthdayDeliveries(modelBuilder);
         ConfigureInbox(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -115,6 +118,34 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
         escalation.HasIndex(value => new { value.Status, value.DueAt }).HasDatabaseName("IX_task_notice_escalations_due");
         // The 90-day retention deletes the entry; the escalation finished long before.
         escalation.HasOne<InAppNotification>().WithMany().HasForeignKey(value => value.InAppNotificationId).OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // HR birthday notices, spec 2026-11-26 §5.3. Names by hand: the consumer inserts these rows with raw SQL (ON CONFLICT on the unique key) and the
+    // worker claims them the same way.
+    private static void ConfigureHrBirthdayDeliveries(ModelBuilder modelBuilder)
+    {
+        var delivery = modelBuilder.Entity<HrBirthdayDelivery>();
+        delivery.ToTable("hr_birthday_deliveries", "notifications");
+        delivery.HasKey(value => value.Id);
+        delivery.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        delivery.Property(value => value.TenantId).HasColumnName("tenant_id");
+        delivery.Property(value => value.MemberId).HasColumnName("member_id");
+        delivery.Property(value => value.RunDate).HasColumnName("run_date").HasColumnType("date");
+        delivery.Property(value => value.Channel).HasColumnName("channel").HasMaxLength(16);
+        delivery.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        delivery.Property(value => value.SentByMemberId).HasColumnName("sent_by_member_id");
+        delivery.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        delivery.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        delivery.Property(value => value.ResultCode).HasColumnName("result_code").HasMaxLength(HrBirthdayDelivery.ResultCodeMaxLength);
+        delivery.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
+        delivery.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        delivery.Property(value => value.ExpiresAt).HasColumnName("expires_at");
+        delivery.Property(value => value.CreatedAt).HasColumnName("created_at");
+        delivery.Property(value => value.CompletedAt).HasColumnName("completed_at");
+        // A replayed digest finds its rows already there: this key is what makes the insert idempotent.
+        delivery.HasIndex(value => new { value.TenantId, value.MemberId, value.RunDate, value.Channel }).IsUnique()
+            .HasDatabaseName("UX_hr_birthday_deliveries_key");
+        delivery.HasIndex(value => new { value.Status, value.CreatedAt }).HasDatabaseName("IX_hr_birthday_deliveries_status");
     }
 
     private static void ConfigureInbox(ModelBuilder modelBuilder)

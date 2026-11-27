@@ -22,6 +22,26 @@ public sealed class WarehouseTaskPersistenceTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
+    public async Task LocationCodesComeOnlyFromTheTenantAndTheIndexesExist()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var warehouses = scope.ServiceProvider.GetRequiredService<IWarehouseRepository>();
+
+        var mine = await warehouses.FindLocationCodesAsync(s.TenantId, [new LocationId(s.BinA)], Ct);
+        var foreign = await warehouses.FindLocationCodesAsync(Guid.CreateVersion7(), [new LocationId(s.BinA)], Ct);
+
+        Assert.Single(mine);
+        Assert.Empty(foreign);
+        Assert.Equal(2L, await ScalarAsync<long>(
+            database,
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname IN ('IX_tasks_board', 'IX_tasks_list')"));
+    }
+
+    [Fact]
     public async Task ATaskRoundTripsWithItsLinesAndEvents()
     {
         var (database, factory) = await OpenAsync();
@@ -84,6 +104,94 @@ public sealed class WarehouseTaskPersistenceTests
         var confirmed = History(reloaded)[^1];
         Assert.Equal((s.TenantId, task.Id, member, "device-1"), (confirmed.TenantId, confirmed.TaskId, confirmed.MemberId, confirmed.DeviceId));
         Assert.Equal((task.Lines[0].Id, 2m), (confirmed.LineId, confirmed.Quantity));
+    }
+
+    [Fact]
+    public async Task AShortLineRoundTrips()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var member = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        var task = NewMove(s, s.BinA, destination, createdAt: now.AddMinutes(-1));
+        task.Claim(member, "device-1", now);
+        task.ShortLine(member, task.LeaseToken!.Value, "device-1", task.Lines[0].Id, 2, now);
+        await SaveAsync(factory, task);
+
+        var reloaded = await ReloadAsync(factory, task);
+
+        Assert.Equal(WarehouseTaskStatus.Done, reloaded.Status);
+        var line = Assert.Single(reloaded.Lines);
+        Assert.Equal((TaskLineStatus.Short, 5m, 2m), (line.Status, line.QuantityPlanned, line.QuantityConfirmed));
+        var shortEvent = Assert.Single(History(reloaded), value => value.Kind == TaskEventKind.LineShort);
+        Assert.Equal((task.Lines[0].Id, 3m), (shortEvent.LineId, shortEvent.Quantity));
+        Assert.Equal("Short", await ScalarAsync<string>(database, "SELECT line_status FROM wms.task_lines"));
+    }
+
+    [Fact]
+    public async Task ACountTaskWithACountedLineRoundTrips()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var member = Guid.CreateVersion7();
+        var incident = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        var task = NewCount(s, s.BinA, incident, createdAt: now.AddMinutes(-1));
+        task.Claim(member, "device-1", now);
+        task.RecordCount(member, task.LeaseToken!.Value, "device-1", task.Lines[0].Id, 7.5m, null, now);
+        await SaveAsync(factory, task);
+
+        var reloaded = await ReloadAsync(factory, task);
+
+        Assert.Equal(WarehouseTaskType.Count, reloaded.Type);
+        Assert.Equal(WarehouseTaskStatus.Done, reloaded.Status);
+        Assert.Equal(TaskSourceType.Incident, reloaded.SourceType);
+        Assert.Equal(incident, reloaded.SourceId);
+        Assert.Equal(Guid.Empty, reloaded.CreatedBy);
+        var line = Assert.Single(reloaded.Lines);
+        Assert.Equal((TaskLineStatus.Done, 0m, 7.5m, 0m), (line.Status, line.QuantityPlanned, line.QuantityCounted, line.QuantityConfirmed));
+        Assert.Null(line.ToLocationId);
+        Assert.Equal(0m, await ScalarAsync<decimal>(database, "SELECT quantity_planned FROM wms.task_lines"));
+        Assert.Equal(7.5m, await ScalarAsync<decimal>(database, "SELECT quantity_counted FROM wms.task_lines"));
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.task_lines WHERE to_location_id IS NOT NULL"));
+        Assert.Equal("Incident", await ScalarAsync<string>(database, "SELECT source_type FROM wms.tasks"));
+    }
+
+    [Fact]
+    public async Task TheDatabaseRejectsANegativeCount()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var task = NewCount(s, s.BinA);
+        await SaveAsync(factory, task);
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() =>
+            ExecuteAsync(database, "UPDATE wms.task_lines SET quantity_counted = -1 WHERE task_id = @id", ("id", task.Id)));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal("CK_task_lines_quantity", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task TheDatabaseAcceptsACountOfZero()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var task = NewCount(s, s.BinA);
+        await SaveAsync(factory, task);
+
+        await ExecuteAsync(database, "UPDATE wms.task_lines SET quantity_counted = 0 WHERE task_id = @id", ("id", task.Id));
+
+        Assert.Equal(0m, await ScalarAsync<decimal>(database, "SELECT quantity_counted FROM wms.task_lines"));
     }
 
     // El camino de un handler: la tarea se carga sin su historia, cambia, y sólo se insertan los hechos nuevos.

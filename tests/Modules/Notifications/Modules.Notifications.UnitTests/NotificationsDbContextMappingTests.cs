@@ -94,6 +94,46 @@ public sealed class NotificationsDbContextMappingTests
         Assert.Equal("jsonb", escalation.FindProperty(nameof(TaskNoticeEscalation.ChannelAttemptsJson))!.GetColumnType());
     }
 
+    // HR birthday notices: the consumer inserts these rows with raw SQL that names the columns and the unique key by hand (ON CONFLICT), and
+    // the worker claims by (status, claimed_until), so a convention-made name would break both without the compiler noticing.
+    [Fact]
+    public void HrBirthdayDeliveriesMapToTheirTableColumnsAndKeys()
+    {
+        using var context = new NotificationsDbContextFactory().CreateDbContext([]);
+        var delivery = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(HrBirthdayDelivery))!;
+
+        Assert.Equal(("hr_birthday_deliveries", "notifications"), (delivery.GetTableName(), delivery.GetSchema()));
+        Assert.Equal(
+            ["attempts", "channel", "claimed_until", "completed_at", "connection_id", "created_at", "expires_at", "id", "member_id", "payload",
+                "result_code", "run_date", "sent_by_member_id", "status", "tenant_id"],
+            delivery.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
+        Assert.Equal("jsonb", delivery.FindProperty(nameof(HrBirthdayDelivery.PayloadJson))!.GetColumnType());
+        Assert.Equal("date", delivery.FindProperty(nameof(HrBirthdayDelivery.RunDate))!.GetColumnType());
+        var unique = delivery.GetIndexes().Single(index => index.IsUnique);
+        Assert.Equal(["tenant_id", "member_id", "run_date", "channel"], unique.Properties.Select(property => property.GetColumnName()));
+        Assert.Equal("UX_hr_birthday_deliveries_key", unique.GetDatabaseName());
+        var pending = delivery.GetIndexes().Single(index => index.GetDatabaseName() == "IX_hr_birthday_deliveries_status");
+        Assert.Equal(["status", "created_at"], pending.Properties.Select(property => property.GetColumnName()));
+        Assert.True(delivery.FindProperty(nameof(HrBirthdayDelivery.ConnectionId))!.IsNullable);
+    }
+
+    [Fact]
+    public void TheHrBirthdayDeliveryStatusAndChannelFitTheirColumns()
+    {
+        using var context = new NotificationsDbContextFactory().CreateDbContext([]);
+        var delivery = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(HrBirthdayDelivery))!;
+
+        var status = delivery.FindProperty(nameof(HrBirthdayDelivery.Status))!.GetMaxLength()!.Value;
+        var channel = delivery.FindProperty(nameof(HrBirthdayDelivery.Channel))!.GetMaxLength()!.Value;
+        Assert.All(Enum.GetNames<HrBirthdayDeliveryStatus>(), name => Assert.True(name.Length <= status));
+        Assert.All([HrBirthdayDeliveryChannels.WhatsApp, HrBirthdayDeliveryChannels.Email], name => Assert.True(name.Length <= channel));
+        Assert.Equal(("whatsapp", "email"), (HrBirthdayDeliveryChannels.WhatsApp, HrBirthdayDeliveryChannels.Email));
+        Assert.Equal(
+            ["stale", "no_phone", "no_email", "member_inactive", "attempts_exhausted"],
+            [HrBirthdayDeliverySkipReasons.Stale, HrBirthdayDeliverySkipReasons.NoPhone, HrBirthdayDeliverySkipReasons.NoEmail,
+                HrBirthdayDeliverySkipReasons.MemberInactive, HrBirthdayDeliverySkipReasons.AttemptsExhausted]);
+    }
+
     [Fact]
     public void TheEscalationStatusFitsItsColumn()
     {

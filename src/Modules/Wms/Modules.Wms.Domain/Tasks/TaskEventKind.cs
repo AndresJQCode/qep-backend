@@ -14,6 +14,7 @@ public enum TaskEventKind
     LeaseResumed,
     PriorityChanged,
     LineConfirmed,
+    LineShort,
     LineCancelled,
     Completed,
     Cancelled,

@@ -195,7 +195,7 @@ public sealed class ExportQuotationsHandlerTests
         Assert.Equal(TenantId, job.TenantId);
         Assert.Equal(SubjectId, job.RequestedBy);
         Assert.Equal(
-            new QuotationsExportFilters(ClientId, AdvisorId.Value, "sent", From, To, "900", "0001"),
+            new QuotationsExportFilters(ClientId, AdvisorId.Value, "sent", From, To, "900", "0001", "Standard"),
             JsonSerializer.Deserialize<QuotationsExportFilters>(job.Filters));
         Assert.Equal(1, unitOfWork.Saves);
     }
@@ -289,5 +289,6 @@ public sealed class ExportQuotationsHandlerTests
             unitOfWork ?? new CountingQuotationsUnitOfWork(),
             new ExportQuotationsValidator(),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            FixedTenantModules.Simulated);
 }

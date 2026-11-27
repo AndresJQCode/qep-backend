@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -177,6 +178,21 @@ public sealed class ListQuotationsHandlerTests
         Assert.False(Assert.Single(page.Items).IsComplete);
     }
 
+    // Un borrador de proyecto con servicio pero sin precio tiene su línea en 0: «tiene productos»,
+    // pero el envío lo rechaza (quotation.project.incomplete) y la fila tiene que decirlo.
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(119_000.0, true)]
+    public async Task ListReportsAProjectQuotationAsCompleteOnlyWithItsPrice(double? price, bool expected)
+    {
+        var handler = NewHandler(NewCustomerLookup(), [], NewProjectQuotation((decimal?)price));
+
+        var page = await handler.HandleAsync(
+            NewQuery() with { Kind = "Project" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(expected, Assert.Single(page.Items).IsComplete);
+    }
+
     // Ver cotizaciones no es ver pedidos. Sin el permiso, la fila viaja sin pedido: es todo lo que
     // esa persona puede saber, y la pantalla no le ofrece ir a aprobar algo que tampoco podria.
     [Fact]
@@ -189,7 +205,8 @@ public sealed class ListQuotationsHandlerTests
             NewCustomerLookup(),
             new StubQuotationAdvisorLookup(),
             new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.OrderRead),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            FixedTenantModules.Simulated);
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
@@ -245,6 +262,36 @@ public sealed class ListQuotationsHandlerTests
         return quotation;
     }
 
+    private static Quotation NewProjectQuotation(decimal? price)
+    {
+        var quotation = Quotation.Create(
+            QuotationId.New(),
+            TenantId,
+            "QUO-2026-0001",
+            ClientId,
+            AdvisorId,
+            validUntil: new DateOnly(2026, 12, 31),
+            paymentMethod: null,
+            notes: null,
+            QuotationParties.Empty,
+            billingAccount: BillingAccount,
+            defaultCurrency: "COP",
+            customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
+            AdvisorId,
+            Now,
+            QuotationKind.Project);
+        var serviceVariantId = Guid.CreateVersion7();
+        quotation.ReplaceProjectScope(
+            ProjectScope.Create(serviceVariantId, ProjectPricingMode.Global, price, [], []),
+            new ProjectServiceLine(serviceVariantId, Guid.CreateVersion7(), 19, ProductKind.Service, SalesUnit.Hour),
+            AdvisorId,
+            Now);
+
+        return quotation;
+    }
+
     // La copia del pedido necesita una cotización completa (cuenta de cobro y una línea).
     private static Order NewOrder(Quotation quotation) =>
         Order.FromQuotation(
@@ -288,5 +335,6 @@ public sealed class ListQuotationsHandlerTests
             customers,
             advisors,
             new StubExecutionContext(SubjectId, TenantId),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            FixedTenantModules.Simulated);
 }

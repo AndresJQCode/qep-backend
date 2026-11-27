@@ -1,4 +1,6 @@
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
+using Modules.Wms.Domain.Warehousing;
 
 namespace Modules.Wms.UnitTests.Tasks;
 
@@ -24,6 +26,57 @@ public sealed class WarehouseTaskDtoComposerTests
         Assert.Equal((5m, 0m, 5m), (line.QuantityPlanned, line.QuantityConfirmed, line.QuantityRemaining));
         Assert.Equal(("Open", "Available"), (line.LineStatus, line.StockStatus));
         Assert.Empty(dto.Events);
+    }
+
+    // M4: la composición corre con la tarea y los saldos bloqueados: sólo lee las ubicaciones de sus líneas, sin la bodega entera.
+    [Fact]
+    public async Task TheDetailReadsOnlyTheLocationsOfItsLines()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+
+        var dto = await world.Composer().ComposeAsync(task, null, withEvents: false, Ct);
+
+        Assert.Equal(("A-01-01", "A-01-02"), (dto.Lines[0].FromLocationCode, dto.Lines[0].ToLocationCode));
+        // LocationId no es comparable: se compara como conjunto.
+        var read = Assert.Single(world.LocationReads);
+        Assert.Equal(2, read.Count);
+        Assert.True(new HashSet<LocationId> { world.From, world.To }.SetEquals(read));
+        Assert.DoesNotContain("warehouse-tree", world.Log);
+    }
+
+    [Fact]
+    public async Task SummariesReadOnlyTheFirstSourceOfEachTask()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask(lines: [world.Line(), WarehouseTaskLine.Create(
+            TaskWorld.Variant, null, StockStatus.Available, world.Spare, world.To, 1)]);
+
+        var dto = Assert.Single(await world.Composer().ComposeSummariesAsync(TaskWorld.Tenant, [task], Ct));
+
+        Assert.Equal("A-01-01", dto.FirstFromLocationCode);
+        Assert.Equal([world.From], Assert.Single(world.LocationReads).ToArray());
+        Assert.DoesNotContain("warehouse-tree", world.Log);
+    }
+
+    // B3: la historia sigue el orden del servidor; la confirmación tardía conserva su hora de escaneo.
+    [Fact]
+    public async Task ALateConfirmationComesAfterTheExpiryKeepingItsScanTime()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+        task.Claim(TaskWorld.Member, TaskWorld.Device, TaskWorld.Start.AddMinutes(1));
+        var token = task.LeaseToken!.Value;
+        task.ExpireLease(TaskWorld.Start.AddMinutes(20));
+        var scanned = TaskWorld.Start.AddMinutes(5);
+        task.ConfirmLine(TaskWorld.Member, token, TaskWorld.Device, task.Lines[0].Id, 5, TaskWorld.Start.AddMinutes(25), scanned);
+
+        var dto = await world.Composer().ComposeAsync(task, null, withEvents: true, Ct);
+
+        Assert.Equal(
+            ["Created", "Published", "Claimed", "LeaseExpired", "LeaseResumed", "LineConfirmed", "Completed"],
+            dto.Events.Select(value => value.Kind));
+        Assert.Equal(scanned, dto.Events[4].OccurredAt);
     }
 
     [Fact]

@@ -538,11 +538,39 @@ internal static class OrderMunicipalHistory
     }
 }
 
+/// <summary>Corre el validador de la edición diciéndole si el pedido es de proyecto, que es lo único que sus reglas
+/// necesitan y no sale del cuerpo.</summary>
+internal static class OrderEditsValidation
+{
+    public const string ProjectOrderKey = "ProjectOrder";
+
+    /// <summary>Las dos reglas que cambian en un pedido de proyecto (§12-C): admite la lista de líneas vacía e ignora el
+    /// envío. Sin ninguno de los dos casos en el cuerpo, el tipo del pedido no cambia nada y no hace falta leerlo antes de
+    /// validar.</summary>
+    public static bool NeedsTheOrder(IOrderEdits edits) =>
+        edits.Items.Count == 0 || !ShippingRequestValidator.Accepts(edits.Shipping);
+
+    /// <param name="order">El pedido, si ya se leyó; ver <see cref="NeedsTheOrder"/>.</param>
+    public static async Task ValidateAsync<TEdits>(
+        IValidator<TEdits> validator, TEdits edits, Order? order, CancellationToken cancellationToken)
+        where TEdits : IOrderEdits
+    {
+        var context = ValidationContext<TEdits>.CreateWithOptions(edits, options => options.ThrowOnFailures());
+        if (order?.Kind == QuotationKind.Project)
+        {
+            context.RootContextData[ProjectOrderKey] = true;
+        }
+
+        await validator.ValidateAsync(context, cancellationToken);
+    }
+}
+
 /// <summary>
 /// Las reglas de la sección «Validación» del spec 2026-09-17. Abstracta a propósito: el escaneo de
 /// validadores del composition root sólo registra las dos concretas. <paramref name="requireFileIds"/>
 /// separa el guardado del cálculo previo, que todavía no tiene archivos (el <c>newFileId</c> sí se
-/// valida en los dos: si llega, no puede ser <see cref="Guid.Empty"/>).
+/// valida en los dos: si llega, no puede ser <see cref="Guid.Empty"/>). Se ejecuta con
+/// <see cref="OrderEditsValidation.ValidateAsync"/>, que dice si el pedido es de proyecto.
 /// </summary>
 public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
     where TEdits : IOrderEdits
@@ -551,8 +579,10 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
     {
         AddBillingRules(requireBillingIdentification);
 
+        // Un pedido de proyecto se edita sin líneas (spec 2026-11-26 §12-C): su línea no cambia.
         RuleFor(edits => edits.Items)
-            .Must(items => items.Count > 0)
+            .Must((_, items, context) =>
+                items.Count > 0 || context.RootContextData.ContainsKey(OrderEditsValidation.ProjectOrderKey))
             .WithMessage("At least one product is required.");
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {
@@ -601,7 +631,9 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
 
         RuleFor(edits => edits.Shipping!)
             .SetValidator(new ShippingRequestValidator())
-            .When(edits => edits.Shipping is not null);
+            .When((edits, context) =>
+                edits.Shipping is not null
+                && !context.RootContextData.ContainsKey(OrderEditsValidation.ProjectOrderKey));
 
         // Las notas no tienen tope (plan 2026-10-15, P2): heredan las de la cotización.
     }

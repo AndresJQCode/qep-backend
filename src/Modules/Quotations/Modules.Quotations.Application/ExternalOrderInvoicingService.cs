@@ -308,7 +308,15 @@ public sealed class ExternalOrderInvoicingService(
         var name = billing?.Name is { Length: > 0 } billingName
             ? billingName
             : CustomerName(order, customer, personType);
-        var billingCityComplete = billing?.CityId is not null;
+        // Ciudad, departamento, país y nombre de ciudad salen juntos de una sola fuente: la parte de facturación si declara ciudad o
+        // país, y si no, la ficha. Una parte colombiana guarda el país null: con su CityId, ese null es Colombia y no se completa.
+        var billingDeclaresPlace = billing is not null
+            && (billing.CityId is not null
+                || !string.IsNullOrWhiteSpace(billing.CityName)
+                || !string.IsNullOrWhiteSpace(billing.Country));
+        var (cityId, departmentId, country, cityName) = billingDeclaresPlace
+            ? (billing!.CityId, billing.DepartmentId, FirstNonBlank(billing.Country, null), FirstNonBlank(billing.CityName, null))
+            : (customer?.CityId, customer?.DepartmentId, FirstNonBlank(customer?.Country, null), FirstNonBlank(customer?.CityName, null));
         return new ExternalInvoicingParty(
             false,
             personType,
@@ -316,11 +324,12 @@ public sealed class ExternalOrderInvoicingService(
             FirstNonBlank(billing?.IdentificationNumber, customer?.IdentificationNumber) ?? string.Empty,
             name,
             FirstNonBlank(billing?.Address, customer?.Address),
-            billingCityComplete ? billing!.CityId : customer?.CityId,
-            billingCityComplete ? billing!.DepartmentId : customer?.DepartmentId,
-            FirstNonBlank(billing?.Country, customer?.Country),
+            cityId,
+            departmentId,
+            country,
             FirstNonBlank(billing?.Email, customer?.Email),
-            FirstNonBlank(billing?.Phone, customer?.Phone));
+            FirstNonBlank(billing?.Phone, customer?.Phone),
+            cityName);
     }
 
     // La razón social cuando el pedido factura a ella (BillingUsesBusinessName) o la persona es jurídica; si no, el nombre de contacto.

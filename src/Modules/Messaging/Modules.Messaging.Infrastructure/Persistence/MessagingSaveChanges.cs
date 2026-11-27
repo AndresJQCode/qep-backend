@@ -165,6 +165,16 @@ internal static class MessagingSaveChanges
                 MessagingErrorCodes.TemplateTaskNoticeExists, "This connection already has its task notice template.", exception);
         }
 
+        // HR birthday notices: the same for the birthday notice template.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateHrBirthdayNoticeIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateHrBirthdayNoticeExists, "This connection already has its birthday notice template.", exception);
+        }
+
         // Agenda: lo mismo para la plantilla del recordatorio de cita.
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

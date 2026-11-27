@@ -676,6 +676,55 @@ public sealed class QuotationPdfDocumentMapperTests
     public void EverySalesUnitHasASpanishLabel() =>
         Assert.All(Enum.GetValues<SalesUnit>(), unit => Assert.False(string.IsNullOrEmpty(SalesUnitLabels.Spanish(unit, 2m))));
 
+    // Spec 2026-11-26 §6.5: el PDF de un proyecto lleva su alcance —fases, ítems y, por fase, su precio—, en el mismo orden
+    // y sin los ids, que no se imprimen. Una cotización estándar no lleva nada.
+    [Fact]
+    public void AProjectQuotationCarriesItsScopeWithoutIds()
+    {
+        var scope = ProjectScope("PerPhase");
+
+        var perPhase = Map(Response() with { Kind = "Project", Project = scope });
+        var global = Map(Response() with { Kind = "Project", Project = ProjectScope("Global") });
+        var standard = Map(Response());
+
+        AssertCarries(scope, perPhase.Scope);
+        Assert.True(perPhase.Scope!.ShowPhasePrices);
+        Assert.False(global.Scope!.ShowPhasePrices);
+        Assert.Null(standard.Scope);
+        var payload = System.Text.Json.JsonSerializer.Serialize(perPhase.Scope, PayloadFormat);
+        Assert.DoesNotContain("\"id\"", payload, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(scope.Phases[0].Id.ToString(), payload, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static ProjectScopeDto ProjectScope(string pricingMode) => new(
+        Guid.CreateVersion7(),
+        pricingMode,
+        pricingMode == "Global" ? 1_000_000m : null,
+        [
+            new ProjectPhaseDto(
+                Guid.CreateVersion7(), "Descubrimiento", pricingMode == "PerPhase" ? 600_000m : null,
+                [
+                    new ProjectItemDto(Guid.CreateVersion7(), "Talleres con el equipo de ventas"),
+                    new ProjectItemDto(Guid.CreateVersion7(), "Mapa de procesos"),
+                ]),
+            new ProjectPhaseDto(Guid.CreateVersion7(), "Entrega", pricingMode == "PerPhase" ? 400_000m : null, []),
+        ],
+        pricingMode == "Global" ? [new ProjectItemDto(Guid.CreateVersion7(), "Soporte durante el lanzamiento")] : [],
+        "COP",
+        1_000_000m);
+
+    internal static void AssertCarries(ProjectScopeDto expected, QuotationPdfScope? actual)
+    {
+        Assert.NotNull(actual);
+        Assert.Equal(
+            expected.Phases.Select(phase => (phase.Name, phase.Price)),
+            actual.Phases.Select(phase => (phase.Name, phase.Price)));
+        Assert.Equal(
+            expected.Phases.SelectMany(phase => phase.Items).Select(item => item.Text),
+            actual.Phases.SelectMany(phase => phase.Items).Select(item => item.Text));
+        Assert.Equal(expected.Items.Select(item => item.Text), actual.Items.Select(item => item.Text));
+    }
+
     private static QuotationResponse Response() => new(
         Guid.CreateVersion7(),
         "QUO-2026-0042",

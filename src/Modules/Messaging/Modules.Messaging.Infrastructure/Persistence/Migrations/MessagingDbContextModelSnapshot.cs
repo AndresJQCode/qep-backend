@@ -902,6 +902,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("header_image_file_id IS NOT NULL");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_hr_birthday_notice")
+                        .IsUnique()
+                        .HasFilter("kind = 'HrBirthdayNotice'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_invoice")
                         .IsUnique()
                         .HasFilter("kind = 'Invoice'");
@@ -942,7 +946,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice','HrBirthdayNotice')");
                         });
                 });
 

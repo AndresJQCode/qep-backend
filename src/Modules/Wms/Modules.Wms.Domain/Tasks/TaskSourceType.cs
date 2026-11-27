@@ -4,4 +4,7 @@ namespace Modules.Wms.Domain.Tasks;
 public enum TaskSourceType
 {
     Manual,
+
+    /// <summary>La creó una novedad (el <c>Count</c> de verificación): <c>SourceId</c> es la novedad que la originó.</summary>
+    Incident,
 }

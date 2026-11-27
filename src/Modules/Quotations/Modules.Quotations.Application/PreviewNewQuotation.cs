@@ -24,7 +24,9 @@ public sealed record PreviewNewQuotationQuery(
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
-    Guid? BillingCompanyId = null) : IQuery<QuotationDto>, IQuotationEdits;
+    Guid? BillingCompanyId = null,
+    string? Kind = null,
+    ProjectScopeRequest? Project = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las reglas de la creación salvo el documento de la facturación, que el cálculo previo no exige: corre
 /// mientras la persona escribe, igual que <see cref="PreviewQuotationValidator"/>.</summary>
@@ -34,6 +36,7 @@ public sealed class PreviewNewQuotationValidator : QuotationEditsValidator<Previ
         : base(requireBillingIdentification: false)
     {
         RuleFor(query => query.ClientId).NotEmpty();
+        QuotationKindRules.AddTo(this, query => query.Kind);
     }
 }
 
@@ -50,7 +53,8 @@ public sealed class PreviewNewQuotationHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
-    IValidator<PreviewNewQuotationQuery> validator)
+    IValidator<PreviewNewQuotationQuery> validator,
+    ITenantModules tenantModules)
     : IQueryHandler<PreviewNewQuotationQuery, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -60,6 +64,15 @@ public sealed class PreviewNewQuotationHandler(
         // Antes de validar, como la creación: 403 para un tenant ajeno, nunca un 422 que hable de su cuerpo.
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, QuotationsPermissions.QuotationManage);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, query.TenantId, QuotationKindNames.Parse(query.Kind) ?? QuotationKind.Standard,
+            cancellationToken);
+        // Un proyecto ignora el envío del cuerpo (§6.5): se quita antes de validar.
+        if (QuotationKindNames.Parse(query.Kind) == QuotationKind.Project)
+        {
+            query = query with { Shipping = null };
+        }
+
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(
@@ -70,7 +83,7 @@ public sealed class PreviewNewQuotationHandler(
         var draft = await drafts.BuildAsync(
             new QuotationDraftInput(
                 query.TenantId, query.ClientId, QuotationDraftBuilder.PreviewQuotationNumber, advisorId, query,
-                calendar.Today, calendar.UtcNow),
+                calendar.Today, calendar.UtcNow, QuotationKindNames.Parse(query.Kind)!.Value),
             cancellationToken);
 
         return draft.Quotation.ToDto() with { Id = Guid.Empty, QuotationNumber = string.Empty, Version = 0 };

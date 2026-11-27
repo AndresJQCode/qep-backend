@@ -29,6 +29,10 @@ public sealed class StorageDbContext(DbContextOptions<StorageDbContext> options)
         inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(200);
         inbox.Property(value => value.MessageId).HasColumnName("message_id");
         inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        // Spec 2026-11-26: los nombres van a mano porque StorageInboxClaims los escribe en SQL crudo.
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        // Default 1 en la base: las filas que ya existen, y las que insertan los consumidores que no reclaman, quedan con un intento.
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
     }
 
     private static void ConfigureFileResource(ModelBuilder modelBuilder)

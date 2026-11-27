@@ -29,6 +29,7 @@ internal sealed class HrUnitOfWork(HrDbContext dbContext) : IHrUnitOfWork
         "FK_assignment_records_workplaces_workplace_id",
     ];
 
+    private const string BirthdayNoticeSettingKey = "PK_birthday_notice_settings";
     private const string DocumentIndex = "IX_employees_tenant_document_number";
     private const string MemberIndex = "IX_employees_tenant_member_id";
 
@@ -58,6 +59,13 @@ internal sealed class HrUnitOfWork(HrDbContext dbContext) : IHrUnitOfWork
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SettingNameIndexes))
         {
             throw new ResourceConflictException(HrErrorCodes.SettingsNameTaken, "Ya existe uno con ese nombre.", exception);
+        }
+        // Two first saves of the birthday notice setting at once: the loser sees the row the winner created, so it is a stale
+        // precondition (412), exactly as if it had sent the version it now needs.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, BirthdayNoticeSettingKey))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", "The birthday notice setting was created by someone else.", exception);
         }
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, DocumentIndex))
         {

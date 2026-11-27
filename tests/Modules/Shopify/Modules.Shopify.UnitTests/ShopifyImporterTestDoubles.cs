@@ -200,6 +200,18 @@ internal sealed class FakeGeographyLookup : IShopifyGeographyLookup
     public Task<(string CountryCode, string Code)?> DescribeRegionAsync(Guid regionId, CancellationToken cancellationToken) =>
         Task.FromResult<(string CountryCode, string Code)?>(Regions.TryGetValue(regionId, out var region) ? region : null);
 
+    public List<(string Country, string Code)> RegionRequests { get; } = [];
+
+    /// <summary>Contra <see cref="Regions"/>.</summary>
+    public Task<Guid?> FindRegionAsync(string countryCode, string regionCode, CancellationToken cancellationToken)
+    {
+        RegionRequests.Add((countryCode, regionCode));
+        return Task.FromResult(Regions
+            .Where(region => region.Value == (countryCode, regionCode))
+            .Select(region => (Guid?)region.Key)
+            .FirstOrDefault());
+    }
+
     /// <summary>Por ids, contra lo sembrado en <see cref="Cities"/> y <see cref="Departments"/>.</summary>
     public Task<ShopifyCityCheck> CheckCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken)
     {
@@ -665,7 +677,8 @@ internal sealed class ImporterWorld
 
     public ShopifyOrderImporter Importer =>
         new(
-            Members, Billing, Resolver, Products, CustomLines, ProductLinks, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
+            Members, Billing, Resolver, Products, CustomLines, ProductLinks, Shipping, Geography, Writer,
+            new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
             CityCorrections, CityCorrectionJobs, UnresolvedCities, Synonyms, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>

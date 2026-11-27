@@ -140,6 +140,8 @@ public static class HrLabels
         [HrActivityAction.MedicalExamUpdated] = "Examen médico editado",
         [HrActivityAction.MedicalExamDeleted] = "Examen médico eliminado",
         [HrActivityAction.ExitExamNotAttended] = "Egreso sin asistir al examen",
+        [HrActivityAction.AssignmentRewritten] = "Cargo y lugar de trabajo editado",
+        [HrActivityAction.AssignmentDeleted] = "Cargo y lugar de trabajo eliminado",
     };
 
     /// <summary>

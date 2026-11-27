@@ -5,4 +5,7 @@ namespace Modules.Wms.Domain.Tasks;
 public enum WarehouseTaskType
 {
     Move,
+
+    /// <summary>Conteo ciego de verificación de una ubicación (spec 2026-11-26 §6.2, DA-39).</summary>
+    Count,
 }

@@ -646,4 +646,133 @@ public sealed class ShopifyImportResultTests
         Assert.Equal((null, new ShopifyShippingDraft(false, null, null, null, 0m, 0, false)), (draft.ShippingParty, draft.Shipping));
         Assert.Null(row.Warnings);
     }
+
+    // Fuera de Colombia (spec 2026-11-24 «otros países»): país, ciudad escrita, región de Geography si el país tiene catálogo y
+    // la provincia se traduce, y el zip como código postal.
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000d1");
+
+    private static readonly ShopifyAddress Madrid = new(
+        "Lucía Fernández", "Calle Mayor 1", null, "Madrid", "Madrid", "M", "ES", "+34600111222", null, " 28013 ");
+
+    private const string RegionWarning = """{"code":"shipping_region_unresolved","detail":null}""";
+
+    private static ImporterWorld WorldWithMadrid()
+    {
+        var world = new ImporterWorld();
+        world.Geography.Regions[MadridRegionId] = ("ES", "28");
+        return world;
+    }
+
+    private static async Task<(ShopifyOrderDraft Draft, string Warnings)> ImportAddressAsync(
+        ImporterWorld world, ShopifyAddress address)
+    {
+        var snapshot = Order(address: address);
+        var row = world.RowFor(snapshot);
+        await world.ImportAsync(row, snapshot);
+        return (Assert.Single(world.Writer.Creates).Draft, row.Warnings ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task ASpanishAddressBecomesTheShippingParty()
+    {
+        var (draft, warnings) = await ImportAddressAsync(WorldWithMadrid(), Madrid);
+
+        Assert.Equal(
+            new ShopifyPartyDraft(
+                "Lucía Fernández", "+34600111222", "laura@verde.co", "Calle Mayor 1", null, null, "28013", "ES", "Madrid",
+                MadridRegionId),
+            draft.ShippingParty);
+        Assert.Equal("Shopify #1001", draft.Notes);
+        Assert.DoesNotContain("shipping_", warnings, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(" ")]
+    [InlineData("XX")]
+    [InlineData("B")] // se traduce, pero Geography no la tiene en este mundo
+    public async Task ASpanishAddressWithoutRegionKeepsThePartyAndWarns(string? provinceCode)
+    {
+        var (draft, warnings) = await ImportAddressAsync(WorldWithMadrid(), Madrid with { ProvinceCode = provinceCode });
+
+        Assert.Equal(
+            ("ES", "Madrid", (Guid?)null),
+            (draft.ShippingParty!.Country, draft.ShippingParty.CityName, draft.ShippingParty.RegionId));
+        Assert.Contains(RegionWarning, warnings, StringComparison.Ordinal);
+        Assert.Equal("Shopify #1001", draft.Notes);
+    }
+
+    [Fact]
+    public async Task ACountryWithoutCatalogKeepsThePartyWithoutWarning()
+    {
+        var world = new ImporterWorld();
+
+        var (draft, warnings) = await ImportAddressAsync(world, Madrid with { CountryCode = "fr", City = " Lyon " });
+
+        Assert.Equal(
+            ("FR", "Lyon", (Guid?)null),
+            (draft.ShippingParty!.Country, draft.ShippingParty.CityName, draft.ShippingParty.RegionId));
+        Assert.DoesNotContain("shipping_", warnings, StringComparison.Ordinal);
+        Assert.Empty(world.Geography.RegionRequests);
+    }
+
+    // Sin ciudad, o con una de más de 120 caracteres (P-1): sin parte, y el pedido entra igual.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(121)]
+    public async Task AForeignCityThatDoesNotFitLeavesNoParty(int cityLength)
+    {
+        var (draft, warnings) = await ImportAddressAsync(WorldWithMadrid(), Madrid with { City = new string('a', cityLength) });
+
+        Assert.Null(draft.ShippingParty);
+        Assert.Contains("shipping_address_unresolved", warnings, StringComparison.Ordinal);
+        Assert.DoesNotContain("shipping_region_unresolved", warnings, StringComparison.Ordinal);
+        Assert.Contains(ShopifyOrderImporter.RawAddressLabel, draft.Notes, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AForeignAddressWithoutBuyerEmailLeavesNoParty()
+    {
+        var world = WorldWithMadrid();
+        var snapshot = Order(address: Madrid, buyer: new ShopifyBuyer("Lucía", "Fernández", null, "+34600111222"));
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        Assert.Null(Assert.Single(world.Writer.Creates).Draft.ShippingParty);
+        Assert.Equal(ShopifyImportState.Imported, row.ImportState);
+        Assert.Contains("shipping_address_unresolved", row.Warnings ?? string.Empty, StringComparison.Ordinal);
+        Assert.Empty(world.Geography.RegionRequests);
+    }
+
+    // Un campo más largo que lo que guarda el pedido: antes de armar la parte, esos pedidos entraban; no pueden quedar
+    // order_rejected por ella.
+    [Theory]
+    [InlineData("name")]
+    [InlineData("phone")]
+    [InlineData("address")]
+    [InlineData("email")]
+    public async Task AForeignFieldThatDoesNotFitLeavesNoParty(string field)
+    {
+        var world = WorldWithMadrid();
+        var longText = new string('1', 256);
+        var snapshot = Order(
+            address: field switch
+            {
+                "name" => Madrid with { Name = longText },
+                "phone" => Madrid with { Phone = new string('1', ShopifyCityCorrection.PartyPhoneMaxLength + 1) },
+                "address" => Madrid with { Address1 = longText },
+                _ => Madrid,
+            },
+            buyer: new ShopifyBuyer("Lucía", "Fernández", field == "email" ? longText : "laura@verde.co", "+34600111222"));
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var draft = Assert.Single(world.Writer.Creates).Draft;
+        Assert.Null(draft.ShippingParty);
+        Assert.Contains(ShopifyOrderImporter.RawAddressLabel, draft.Notes, StringComparison.Ordinal);
+        Assert.Contains("shipping_address_unresolved", row.Warnings ?? string.Empty, StringComparison.Ordinal);
+        Assert.Empty(world.Geography.RegionRequests);
+    }
 }

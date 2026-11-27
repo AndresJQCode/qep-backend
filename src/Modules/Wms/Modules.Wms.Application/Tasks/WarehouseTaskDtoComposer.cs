@@ -4,8 +4,9 @@ using Modules.Wms.Domain.Warehousing;
 
 namespace Modules.Wms.Application;
 
-/// <summary>Arma los DTO de tareas: los códigos de ubicación salen de la bodega, el producto de Catalog, la unidad base del perfil,
-/// el código del lote de los lotes y los nombres de las personas de Tenancy. Las lecturas van a la base: lo que la transacción acaba
+/// <summary>Arma los DTO de tareas: los códigos de ubicación salen sólo de las ubicaciones que las líneas nombran (sin la bodega
+/// entera ni rastreo: la confirmación compone con la tarea y los saldos bloqueados), el producto de Catalog, la unidad base del
+/// perfil, el código del lote de los lotes y los nombres de las personas de Tenancy. Las lecturas van a la base: lo que la transacción acaba
 /// de crear tiene que estar enviado (<see cref="IWmsUnitOfWork.FlushAsync"/>) antes de componer.</summary>
 public sealed class WarehouseTaskDtoComposer(
     IWarehouseRepository warehouses,
@@ -23,8 +24,8 @@ public sealed class WarehouseTaskDtoComposer(
     {
         ArgumentNullException.ThrowIfNull(task);
 
-        var warehouse = await warehouses.GetAsync(task.TenantId, task.WarehouseId, cancellationToken)
-            ?? throw WmsNotFound.Warehouse(task.WarehouseId.Value);
+        var codes = await warehouses.FindLocationCodesAsync(
+            task.TenantId, [.. task.Lines.SelectMany(LocationsOf).Distinct()], cancellationToken);
         var variantIds = task.Lines.Select(line => line.VariantId).Distinct().ToList();
         var variants = (await catalog.GetVariantsAsync(task.TenantId, variantIds, cancellationToken))
             .ToDictionary(variant => variant.VariantId);
@@ -33,16 +34,17 @@ public sealed class WarehouseTaskDtoComposer(
         var lotIds = task.Lines.Where(line => line.LotId is not null).Select(line => line.LotId!.Value.Value).Distinct().ToList();
         var lotsById = await lots.GetManyAsync(task.TenantId, lotIds, cancellationToken);
 
-        // Los hechos de una transacción comparten fecha y un UUID v7 no ordena dentro del mismo milisegundo: dentro de una fecha manda
-        // el tipo, que el enum declara en orden causal.
+        // La historia sigue el orden del servidor (RecordedAt); cada evento conserva su OccurredAt. Los hechos de una transacción
+        // comparten fecha y un UUID v7 no ordena dentro del mismo milisegundo: dentro de una fecha manda el tipo, que el enum declara
+        // en orden causal.
         IReadOnlyList<WarehouseTaskEvent> history = withEvents
-            ? [.. task.Events.OrderBy(value => value.OccurredAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)]
+            ? [.. task.Events.OrderBy(value => value.RecordedAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)]
             : [];
         var names = await NamesAsync(
             task.TenantId,
             MembersOf(task).Concat(history.Where(value => value.MemberId is not null).Select(value => value.MemberId!.Value)),
             cancellationToken);
-        var summary = ToSummary(task, warehouse, names, clock.UtcNow);
+        var summary = ToSummary(task, codes, names, clock.UtcNow);
         var inProgress = task.Status == WarehouseTaskStatus.InProgress;
 
         return new TaskDto(
@@ -84,14 +86,16 @@ public sealed class WarehouseTaskDtoComposer(
                     line.LotId is { } lotId ? lotsById.GetValueOrDefault(lotId.Value)?.Code : null,
                     line.StockStatus.ToString(),
                     line.FromLocationId.Value,
-                    CodeOf(warehouse, line.FromLocationId),
+                    CodeOf(codes, line.FromLocationId),
                     line.ToLocationId?.Value,
-                    line.ToLocationId is { } to ? CodeOf(warehouse, to) : null,
+                    line.ToLocationId is { } to ? CodeOf(codes, to) : null,
                     line.QuantityPlanned,
                     line.QuantityConfirmed,
                     line.Remaining,
                     line.Status.ToString(),
-                    baseUoms.GetValueOrDefault(line.VariantId) ?? string.Empty);
+                    baseUoms.GetValueOrDefault(line.VariantId) ?? string.Empty,
+                    // Sólo lo que el operario contó; lo esperado nunca viaja (DA-39). Un Count muestra planeado y faltante en cero.
+                    line.QuantityCounted);
             })],
             [.. history.Select(value => new TaskEventDto(
                 value.Kind.ToString(),
@@ -113,26 +117,27 @@ public sealed class WarehouseTaskDtoComposer(
             return [];
         }
 
-        var byId = (await warehouses.ListAsync(tenantId, includeInactive: true, cancellationToken))
-            .ToDictionary(warehouse => warehouse.Id);
+        var codes = await warehouses.FindLocationCodesAsync(
+            tenantId,
+            [.. tasks.Select(FirstLine).OfType<WarehouseTaskLine>().Select(line => line.FromLocationId).Distinct()],
+            cancellationToken);
         var names = await NamesAsync(tenantId, tasks.SelectMany(MembersOf), cancellationToken);
         var now = clock.UtcNow;
 
         return
         [
-            .. tasks.Select(task => ToSummary(
-                task,
-                byId.GetValueOrDefault(task.WarehouseId) ?? throw WmsNotFound.Warehouse(task.WarehouseId.Value),
-                names,
-                now)),
+            .. tasks.Select(task => ToSummary(task, codes, names, now)),
         ];
     }
 
     private static TaskSummaryDto ToSummary(
-        WarehouseTask task, Warehouse warehouse, IReadOnlyDictionary<Guid, string> names, DateTimeOffset now)
+        WarehouseTask task,
+        IReadOnlyDictionary<LocationId, string> codes,
+        IReadOnlyDictionary<Guid, string> names,
+        DateTimeOffset now)
     {
         var claimer = task.Status == WarehouseTaskStatus.InProgress ? task.ClaimedByMemberId : null;
-        var first = task.Lines.MinBy(line => line.Position);
+        var first = FirstLine(task);
 
         return new TaskSummaryDto(
             task.Id,
@@ -152,9 +157,20 @@ public sealed class WarehouseTaskDtoComposer(
             NameOf(names, claimer),
             task.Lines.Count,
             task.Lines.Count(line => line.Status == TaskLineStatus.Open),
-            first is null ? string.Empty : CodeOf(warehouse, first.FromLocationId),
+            first is null ? string.Empty : CodeOf(codes, first.FromLocationId),
             task.LastActivityAt,
             task.Version);
+    }
+
+    private static WarehouseTaskLine? FirstLine(WarehouseTask task) => task.Lines.MinBy(line => line.Position);
+
+    private static IEnumerable<LocationId> LocationsOf(WarehouseTaskLine line)
+    {
+        yield return line.FromLocationId;
+        if (line.ToLocationId is { } to)
+        {
+            yield return to;
+        }
     }
 
     private static IEnumerable<Guid> MembersOf(WarehouseTask task)
@@ -182,5 +198,6 @@ public sealed class WarehouseTaskDtoComposer(
     private static string? NameOf(IReadOnlyDictionary<Guid, string> names, Guid? memberId) =>
         memberId is { } id ? names.GetValueOrDefault(id) ?? UnknownName : null;
 
-    private static string CodeOf(Warehouse warehouse, LocationId id) => warehouse.FindLocation(id)?.Code ?? string.Empty;
+    private static string CodeOf(IReadOnlyDictionary<LocationId, string> codes, LocationId id) =>
+        codes.GetValueOrDefault(id) ?? string.Empty;
 }

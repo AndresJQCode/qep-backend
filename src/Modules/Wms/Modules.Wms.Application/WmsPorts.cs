@@ -65,6 +65,7 @@ public static class WmsAuditActions
         public const string Import = "wms.import";
         public const string Export = "wms.export";
         public const string Task = "wms.task";
+        public const string Incident = "wms.incident";
     }
 
     public const string WarehouseCreated = "wms.warehouse.created";
@@ -95,6 +96,12 @@ public static class WmsAuditActions
     public const string TaskPriorityChanged = "wms.task.priority_changed";
     public const string TaskCancelled = "wms.task.cancelled";
     public const string TaskLineCancelled = "wms.task.line_cancelled";
+
+    // Novedades (spec 2026-11-26 §8.5): sólo las acciones del supervisor se auditan. Lo que declara el operario vive en la historia de
+    // la novedad (DA-50).
+    public const string IncidentReviewed = "wms.incident.reviewed";
+    public const string IncidentResolved = "wms.incident.resolved";
+    public const string IncidentRejected = "wms.incident.rejected";
 }
 
 public interface IWarehouseRepository
@@ -108,6 +115,11 @@ public interface IWarehouseRepository
     Task<IReadOnlyList<Warehouse>> ListAsync(Guid tenantId, bool includeInactive, CancellationToken ct);
 
     Task<Location?> GetLocationAsync(Guid tenantId, LocationId id, CancellationToken ct);
+
+    /// <summary>El código de cada ubicación pedida del tenant, sin rastreo y sin cargar la bodega: para componer respuestas que corren
+    /// con filas bloqueadas. La que no existe en el tenant no viene.</summary>
+    Task<IReadOnlyDictionary<LocationId, string>> FindLocationCodesAsync(
+        Guid tenantId, IReadOnlyCollection<LocationId> ids, CancellationToken ct);
 
     Task<Location?> GetVirtualLocationAsync(Guid tenantId, WarehouseId warehouseId, LocationRole role, CancellationToken ct);
 

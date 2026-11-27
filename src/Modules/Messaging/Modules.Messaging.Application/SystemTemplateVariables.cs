@@ -84,6 +84,17 @@ public static class SystemTemplateVariables
         new("numero", "Número del caso", "SOP-000127"),
     ];
 
+    /// <summary>HR birthday notices: the digest sent to a manager. Only <c>nombre_contacto</c> of the fixed variables: the notice is not signed by an
+    /// advisor and says nothing about the company. <c>hoy</c> and <c>proximos</c> are name lists the sender folds to a short text; <c>fecha</c> is the
+    /// date of the upcoming birthdays. No birth year and no age ever travel.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> HrBirthdayNotice { get; } =
+    [
+        Fixed[0],
+        new("hoy", "Cumpleañeros de hoy", "Ana Pérez y Luis Rojas"),
+        new("fecha", "Fecha de los próximos cumpleaños", "viernes 4 de diciembre"),
+        new("proximos", "Próximos cumpleañeros", "Marta Díaz"),
+    ];
+
     /// <summary>Agenda: el recordatorio de una cita. <c>fecha_hora</c> ya viene formateada en la zona del tenant por el emisor; <c>recurso</c> y
     /// <c>sede</c> son los nombres vigentes al enviar. Las fijas van primero, como en toda plantilla del sistema.</summary>
     public static IReadOnlyList<SystemTemplateVariable> AppointmentReminder { get; } =
