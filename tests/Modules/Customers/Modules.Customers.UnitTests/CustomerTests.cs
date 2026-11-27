@@ -632,6 +632,30 @@ public sealed class CustomerTests
         Assert.Null(customer.IdentificationNumber);
     }
 
+    // La regla bloquea siempre al escribir: un cliente que ya tenía un NIT con letras (guardado antes de la regla, y
+    // que se lee igual) no puede volver a guardarse con ese número sin cambios. Se siembra por reflexión porque Create
+    // ya lo rechaza, igual que una fila vieja que EF materializa sin pasar por el dominio.
+    [Fact]
+    public void UpdateRejectsAnUnchangedLegacyLetteredNumber()
+    {
+        var customer = Create();
+        typeof(Customer).GetProperty(nameof(Customer.IdentificationNumber))!.SetValue(customer, "ACME SAS");
+        Assert.Equal("ACME SAS", customer.IdentificationNumber);
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            customer.Name,
+            businessName: null,
+            identification: Identification(IdentificationType.Nit, "ACME SAS"),
+            null,
+            ValidContact(),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("customers.customer.identification_number_not_numeric", exception.Code);
+        Assert.Equal("ACME SAS", customer.IdentificationNumber);
+    }
+
     [Fact]
     public void CreateFromRegisterWithoutIdentificationIsIncompleteWithoutDocument()
     {
