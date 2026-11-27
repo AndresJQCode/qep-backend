@@ -182,6 +182,8 @@ internal static class WarehouseTaskModel
         history.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(18, 6);
         history.Property(value => value.Detail).HasColumnName("detail").HasMaxLength(WarehouseTask.ReasonMaxLength);
         history.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        // El default sólo existe para el rollout: un pod viejo inserta sin la columna. El código nuevo siempre la escribe.
+        history.Property(value => value.RecordedAt).HasColumnName("recorded_at").HasDefaultValueSql("now()");
         history.HasIndex(value => new { value.TaskId, value.OccurredAt }, "IX_task_events_task");
     }
 }

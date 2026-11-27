@@ -77,6 +77,32 @@ public sealed class TaskOperatorApiTests
     private static Task<long> TaskMovementsAsync(PostgreSqlContainer database) =>
         ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements WHERE document_type = 'Task'");
 
+    // B3: la historia va en el orden del servidor y la confirmación tardía conserva su hora de escaneo.
+    [Fact]
+    public async Task TheHistoryFollowsTheServerOrderAndKeepsTheScanTime()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var task = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        var scanned = DateTimeOffset.UtcNow;
+        await ExecuteAsync(database, "UPDATE wms.tasks SET lease_expires_at = now() - interval '1 minute' WHERE id = @id", ("id", task.Id));
+        var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
+        await sweeper.RunOnceAsync(DateTimeOffset.UtcNow, Ct);
+
+        var response = await ConfirmRawAsync(
+            floor.Client, task.Id, task.Lines[0].Id, ConfirmBody(task, task.LeaseToken!.Value, 4, occurredAt: scanned));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var events = (await GetAsync(floor.Setup.Manager, task.Id)).Events;
+        Assert.Equal(
+            ["Created", "Published", "Claimed", "LeaseExpired", "LeaseResumed", "LineConfirmed", "Completed"],
+            events.Select(value => value.Kind));
+        Assert.True(events[4].OccurredAt < events[3].OccurredAt);
+    }
+
     [Fact]
     public async Task NextReturnsTheTaskClaimedWithALeaseTokenAndRepeatingItIsTheSame()
     {

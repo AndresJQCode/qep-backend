@@ -30,7 +30,7 @@ public interface IWarehouseTaskRepository
     Task<bool> LockAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
 
     /// <summary>Con líneas y eventos, sin rastreo: la ficha del supervisor. Los eventos vienen sin orden: los de una misma transacción
-    /// comparten <c>occurred_at</c>, así que quien los muestra ordena por fecha, tipo (orden del enum) e id.</summary>
+    /// comparten fecha, así que quien los muestra ordena por <c>recorded_at</c>, tipo (orden del enum) e id.</summary>
     Task<WarehouseTask?> GetWithEventsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
 
     /// <summary>Sin rastreo, las más recientes primero.</summary>

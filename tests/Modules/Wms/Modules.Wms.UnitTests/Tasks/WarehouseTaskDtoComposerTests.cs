@@ -59,6 +59,26 @@ public sealed class WarehouseTaskDtoComposerTests
         Assert.DoesNotContain("warehouse-tree", world.Log);
     }
 
+    // B3: la historia sigue el orden del servidor; la confirmación tardía conserva su hora de escaneo.
+    [Fact]
+    public async Task ALateConfirmationComesAfterTheExpiryKeepingItsScanTime()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+        task.Claim(TaskWorld.Member, TaskWorld.Device, TaskWorld.Start.AddMinutes(1));
+        var token = task.LeaseToken!.Value;
+        task.ExpireLease(TaskWorld.Start.AddMinutes(20));
+        var scanned = TaskWorld.Start.AddMinutes(5);
+        task.ConfirmLine(TaskWorld.Member, token, TaskWorld.Device, task.Lines[0].Id, 5, TaskWorld.Start.AddMinutes(25), scanned);
+
+        var dto = await world.Composer().ComposeAsync(task, null, withEvents: true, Ct);
+
+        Assert.Equal(
+            ["Created", "Published", "Claimed", "LeaseExpired", "LeaseResumed", "LineConfirmed", "Completed"],
+            dto.Events.Select(value => value.Kind));
+        Assert.Equal(scanned, dto.Events[4].OccurredAt);
+    }
+
     [Fact]
     public async Task OnlyTheClaimerReceivesTheLeaseToken()
     {

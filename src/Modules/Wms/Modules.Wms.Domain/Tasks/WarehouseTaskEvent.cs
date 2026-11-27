@@ -28,6 +28,10 @@ public sealed class WarehouseTaskEvent
 
     public DateTimeOffset OccurredAt { get; private set; }
 
+    /// <summary>Cuándo lo guardó el servidor; la historia se ordena por esta fecha (revisión T1, B3). <see cref="OccurredAt"/> es la del
+    /// hecho.</summary>
+    public DateTimeOffset RecordedAt { get; private set; }
+
     public static WarehouseTaskEvent Record(
         Guid tenantId,
         Guid taskId,
@@ -37,7 +41,8 @@ public sealed class WarehouseTaskEvent
         Guid? lineId,
         decimal? quantity,
         string? detail,
-        DateTimeOffset at) =>
+        DateTimeOffset at,
+        DateTimeOffset recordedAt) =>
         new()
         {
             Id = Guid.CreateVersion7(),
@@ -50,5 +55,6 @@ public sealed class WarehouseTaskEvent
             Quantity = quantity,
             Detail = detail,
             OccurredAt = at,
+            RecordedAt = recordedAt.ToUniversalTime(),
         };
 }

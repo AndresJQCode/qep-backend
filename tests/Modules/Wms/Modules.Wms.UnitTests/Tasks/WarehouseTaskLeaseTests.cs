@@ -545,9 +545,18 @@ public sealed class WarehouseTaskLeaseTests
             Assert.Equal(scanned, e.OccurredAt);
             // timestamptz sólo admite offset cero.
             Assert.Equal(TimeSpan.Zero, e.OccurredAt.Offset);
+            Assert.Equal(synced, e.RecordedAt);
         });
         Assert.Equal(scanned, task.CompletedAt);
         Assert.Equal(synced, task.LastActivityAt);
+    }
+
+    [Fact]
+    public void EveryOtherEventIsRecordedAtItsOwnTime()
+    {
+        var (task, _) = Claimed();
+
+        Assert.All(task.Events, e => Assert.Equal(e.OccurredAt, e.RecordedAt));
     }
 
     [Theory]

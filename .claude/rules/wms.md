@@ -27,6 +27,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   el token al retomar. No los «limpies»; por eso el composer sólo muestra el reclamo con la tarea `InProgress`, y `leaseToken` sólo a
   quien la tiene. **Retener (`hold`) sí los limpia** (revisión T1, B1): sin eso, retener y volver a publicar dejaba reanudable una confirmación de
   antes de la retención.
+- **La historia de una tarea se ordena por `recorded_at` (servidor), luego por tipo e id; `occurred_at` es la hora del escaneo**
+  (DA-36, revisión T1 B3). No ordenes por `occurred_at`: una confirmación tardía quedaría antes del vencimiento que la precedió. Y no
+  quites el tipo del desempate: los hechos de una transacción comparten fecha y un UUID v7 no ordena dentro del mismo milisegundo.
 - **Los números de `TaskPriority` están repetidos en el SQL de `LockNextCandidateAsync`**; `TaskCandidateQueryTests` los amarra. Cambiar
   uno sin el otro lo pone en rojo. El mismo SQL excluye lo saltado leyendo `task_events` por nombre (`kind = 'Unclaimed'`,
   `detail = 'Skipped'`): renombrar un valor de `TaskEventKind` o de `TaskUnclaimReason` compila y rompe el filtro sin error.

@@ -74,8 +74,8 @@ internal static class TaskTestSupport
         return reloaded;
     }
 
-    /// <summary>La historia en orden causal: los hechos de una transacción comparten <c>occurred_at</c> y un UUID v7 no ordena dentro
-    /// del mismo milisegundo; el enum está declarado en orden causal.</summary>
+    /// <summary>La historia en el orden del servidor (<c>RecordedAt</c>); los hechos de una transacción comparten fecha y un UUID v7 no
+    /// ordena dentro del mismo milisegundo: dentro de una fecha manda el tipo, que el enum declara en orden causal.</summary>
     public static IReadOnlyList<WarehouseTaskEvent> History(WarehouseTask task) =>
-        [.. task.Events.OrderBy(value => value.OccurredAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)];
+        [.. task.Events.OrderBy(value => value.RecordedAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)];
 }

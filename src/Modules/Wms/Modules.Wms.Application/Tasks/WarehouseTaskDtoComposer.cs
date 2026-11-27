@@ -34,10 +34,11 @@ public sealed class WarehouseTaskDtoComposer(
         var lotIds = task.Lines.Where(line => line.LotId is not null).Select(line => line.LotId!.Value.Value).Distinct().ToList();
         var lotsById = await lots.GetManyAsync(task.TenantId, lotIds, cancellationToken);
 
-        // Los hechos de una transacción comparten fecha y un UUID v7 no ordena dentro del mismo milisegundo: dentro de una fecha manda
-        // el tipo, que el enum declara en orden causal.
+        // La historia sigue el orden del servidor (RecordedAt); cada evento conserva su OccurredAt. Los hechos de una transacción
+        // comparten fecha y un UUID v7 no ordena dentro del mismo milisegundo: dentro de una fecha manda el tipo, que el enum declara
+        // en orden causal.
         IReadOnlyList<WarehouseTaskEvent> history = withEvents
-            ? [.. task.Events.OrderBy(value => value.OccurredAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)]
+            ? [.. task.Events.OrderBy(value => value.RecordedAt).ThenBy(value => value.Kind).ThenBy(value => value.Id)]
             : [];
         var names = await NamesAsync(
             task.TenantId,

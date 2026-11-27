@@ -244,7 +244,7 @@ public sealed class WarehouseTask
         }
 
         Version++;
-        MarkCancelled(detail, by, now);
+        MarkCancelled(detail, by, now, now);
     }
 
     /// <summary>Si era la última línea abierta, la tarea se cierra.</summary>
@@ -261,7 +261,7 @@ public sealed class WarehouseTask
         line.Cancel(detail);
         Version++;
         Record(TaskEventKind.LineCancelled, by, now, lineId: lineId, detail: detail);
-        CloseIfFinished(by, now, detail);
+        CloseIfFinished(by, now, now, detail);
     }
 
     /// <summary>Toma la tarea: cualquiera si está en el pool, sólo el asignado si está asignada. El lease es nuevo, salvo que la misma
@@ -412,7 +412,7 @@ public sealed class WarehouseTask
         if (lease == LeaseCheck.Resumable && !memberIsBusy)
         {
             Status = WarehouseTaskStatus.InProgress;
-            Record(TaskEventKind.LeaseResumed, memberId, scannedAt, deviceId: device);
+            Record(TaskEventKind.LeaseResumed, memberId, scannedAt, deviceId: device, recordedAt: now);
         }
 
         line.Confirm(quantity);
@@ -426,8 +426,8 @@ public sealed class WarehouseTask
         }
 
         Version++;
-        Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity);
-        CloseIfFinished(memberId, scannedAt);
+        Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity, recordedAt: now);
+        CloseIfFinished(memberId, scannedAt, now);
         return line;
     }
 
@@ -441,7 +441,7 @@ public sealed class WarehouseTask
     /// <summary>Sin líneas abiertas la tarea se cierra: <c>Done</c> si alguna quedó <c>Done</c>, <c>Cancelled</c> si se cancelaron
     /// todas. <paramref name="cancelReason"/> sólo falta al confirmar, donde siempre queda al menos una <c>Done</c> si no hay abiertas.
     /// </summary>
-    private void CloseIfFinished(Guid by, DateTimeOffset now, string? cancelReason = null)
+    private void CloseIfFinished(Guid by, DateTimeOffset now, DateTimeOffset recordedAt, string? cancelReason = null)
     {
         if (_lines.Exists(line => line.Status == TaskLineStatus.Open))
         {
@@ -453,20 +453,20 @@ public sealed class WarehouseTask
             Status = WarehouseTaskStatus.Done;
             CompletedAt = now;
             ClearClaim();
-            Record(TaskEventKind.Completed, by, now);
+            Record(TaskEventKind.Completed, by, now, recordedAt: recordedAt);
             return;
         }
 
-        MarkCancelled(cancelReason ?? throw new InvalidOperationException($"Task {Id} has no confirmed line."), by, now);
+        MarkCancelled(cancelReason ?? throw new InvalidOperationException($"Task {Id} has no confirmed line."), by, now, recordedAt);
     }
 
-    private void MarkCancelled(string reason, Guid by, DateTimeOffset now)
+    private void MarkCancelled(string reason, Guid by, DateTimeOffset now, DateTimeOffset recordedAt)
     {
         Status = WarehouseTaskStatus.Cancelled;
         CancelledAt = now;
         CancelReason = reason;
         ClearClaim();
-        Record(TaskEventKind.Cancelled, by, now, detail: reason);
+        Record(TaskEventKind.Cancelled, by, now, detail: reason, recordedAt: recordedAt);
     }
 
     /// <summary>Extiende el lease desde <paramref name="now"/> y marca la actividad.</summary>
@@ -550,6 +550,7 @@ public sealed class WarehouseTask
         string? deviceId = null,
         Guid? lineId = null,
         decimal? quantity = null,
-        string? detail = null) =>
-        _events.Add(WarehouseTaskEvent.Record(TenantId, Id, kind, memberId, deviceId, lineId, quantity, detail, at));
+        string? detail = null,
+        DateTimeOffset? recordedAt = null) =>
+        _events.Add(WarehouseTaskEvent.Record(TenantId, Id, kind, memberId, deviceId, lineId, quantity, detail, at, recordedAt ?? at));
 }
