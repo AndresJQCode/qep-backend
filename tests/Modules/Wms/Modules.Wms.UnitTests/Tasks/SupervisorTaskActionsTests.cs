@@ -181,6 +181,30 @@ public sealed class SupervisorTaskActionsTests
         Assert.Equal(("Ana Operaria", claimed.Id, claimed.Number), (worker.Name, worker.TaskId, worker.TaskNumber));
         Assert.Equal(TaskWorld.Start.AddMinutes(1), worker.Since);
         Assert.Equal(TaskWorld.Start.AddMinutes(9), worker.LastActivityAt);
+        Assert.Empty(board.StaleAssignments);
+    }
+
+    // M1: una asignada a quien ya no puede hacerla no la reclama nadie; el tablero la muestra completa y con nombre.
+    [Fact]
+    public async Task TheBoardListsAssignmentsTheAssigneeCanNoLongerPerform()
+    {
+        var world = new TaskWorld();
+        world.Names[TaskWorld.OtherMember] = "Luis Exoperario";
+        var assigned = world.AddTask(assignTo: TaskWorld.OtherMember);
+        var planned = world.AddTask(publish: false, assignTo: TaskWorld.OtherMember);
+        world.AddTask(assignTo: TaskWorld.Member);
+        world.AddTask();
+        var handler = new GetTaskBoardHandler(
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+
+        var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
+
+        Assert.Equal(
+            [(assigned.Id, assigned.Number, TaskWorld.OtherMember, "Luis Exoperario"),
+             (planned.Id, planned.Number, TaskWorld.OtherMember, "Luis Exoperario")],
+            board.StaleAssignments.Select(item => (item.TaskId, item.TaskNumber, item.MemberId, item.Name)));
+        // Una consulta de elegibles por permiso, no una por tarea.
+        Assert.Equal(1, world.PermissionLookups);
     }
 
     [Fact]

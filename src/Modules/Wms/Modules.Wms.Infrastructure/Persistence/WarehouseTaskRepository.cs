@@ -232,6 +232,19 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return prefix + (existing.Single() + 1).ToString("D4", CultureInfo.InvariantCulture);
     }
 
+    public async Task<IReadOnlyList<AssignedTaskRef>> ListAssignedOpenAsync(
+        Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
+    {
+        var id = new WarehouseId(warehouseId);
+        return await OfTenant(tenantId)
+            .Where(task => task.WarehouseId == id
+                && (task.Status == WarehouseTaskStatus.Planned || task.Status == WarehouseTaskStatus.Assigned)
+                && task.AssignedMemberId != null)
+            .OrderBy(task => task.Number)
+            .Select(task => new AssignedTaskRef(task.Id, task.Number, task.Type, task.AssignedMemberId!.Value))
+            .ToListAsync(cancellationToken);
+    }
+
     private IQueryable<WarehouseTask> OfTenant(Guid tenantId) =>
         dbContext.Set<WarehouseTask>().AsNoTracking().Where(task => task.TenantId == tenantId);
 

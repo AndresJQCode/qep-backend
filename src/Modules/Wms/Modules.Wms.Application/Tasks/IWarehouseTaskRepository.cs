@@ -11,6 +11,9 @@ public sealed record TaskTypeCount(WarehouseTaskType Type, int Count);
 /// <summary>Una tarea con el lease vencido, con su tenant para cargarla.</summary>
 public sealed record ExpiredTaskLease(Guid TenantId, Guid TaskId);
 
+/// <summary>Una tarea abierta con asignado, lo justo para el tablero.</summary>
+public sealed record AssignedTaskRef(Guid TaskId, string Number, WarehouseTaskType Type, Guid AssignedMemberId);
+
 /// <summary>Las tareas de bodega (spec 2026-11-26 §6). Todo se pide por tenant, salvo <see cref="LockExpiredAsync"/>, que es del
 /// barrido. Todas las lecturas traen las líneas en orden de recorrido. Las que sólo alimentan una pantalla vienen sin rastreo: así
 /// no se cuelan en un <c>SaveChangesAsync</c> ni se quedan viejas en el contexto si después se bloquea y se recarga la misma
@@ -47,6 +50,10 @@ public interface IWarehouseTaskRepository
     /// <summary>Las abiertas (ni <c>Done</c> ni <c>Cancelled</c>) por tipo. Sólo los tipos que tienen: quien arma el tablero completa
     /// los ceros.</summary>
     Task<IReadOnlyList<TaskTypeCount>> CountOpenByTypeAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);
+
+    /// <summary>Las <c>Planned</c> y <c>Assigned</c> de la bodega que tienen asignado, sin rastreo y en orden de número. Todas: el
+    /// tablero decide cuáles quedaron huérfanas.</summary>
+    Task<IReadOnlyList<AssignedTaskRef>> ListAssignedOpenAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);
 
     /// <summary>La fecha del último reclamo (evento <c>Claimed</c>) de cada tarea; la que nunca se reclamó no viene.</summary>
     Task<IReadOnlyDictionary<Guid, DateTimeOffset>> FindClaimedAtAsync(

@@ -165,6 +165,29 @@ public sealed class TaskSupervisorActionsApiTests
     }
 
     [Fact]
+    public async Task TheBoardListsAssignmentsTheAssigneeCanNoLongerPerform()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var (worker, client) = await SeedOperatorAsync(factory);
+        var (advisor, advisorClient) = await SeedOperatorAsync(factory, SecondOperatorSubject, ["advisor"]);
+        using var _w = client;
+        using var _a = advisorClient;
+        // Sembradas por el dominio: la API ya no deja asignar a quien no tiene el permiso, que es justo el caso de perderlo después.
+        var orphan = NewMove(s, s.BinA, destination, assignTo: advisor);
+        await SaveAsync(factory, orphan, NewMove(s, s.BinA, destination, assignTo: worker));
+
+        var board = await s.Manager.GetFromJsonAsync<TaskBoardDto>($"{TasksUrl()}/summary?warehouseId={s.WarehouseId}", Ct);
+
+        Assert.NotNull(board);
+        var stale = Assert.Single(board.StaleAssignments);
+        Assert.Equal((orphan.Id, orphan.Number, advisor, "Caller"), (stale.TaskId, stale.TaskNumber, stale.MemberId, stale.Name));
+    }
+
+    [Fact]
     public async Task AssigneesOnlyListMembersWithThePermission()
     {
         var (database, factory) = await OpenAsync();

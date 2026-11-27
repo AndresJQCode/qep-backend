@@ -18,6 +18,9 @@ internal sealed partial class TaskWorld
     /// <summary>Las membresías que pueden hacer una tarea.</summary>
     public HashSet<Guid> Eligible { get; } = [Member];
 
+    /// <summary>Cuántas veces se pidió la lista de elegibles de un permiso.</summary>
+    public int PermissionLookups { get; set; }
+
     public List<(string Action, IReadOnlyDictionary<string, string?> Fields)> Audit { get; } = [];
 
     /// <summary>La que devuelve «la mejor candidata».</summary>
@@ -165,6 +168,17 @@ internal sealed partial class TaskWorld
             Guid tenantId, Guid warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<WarehouseTask>>(
                 [.. world.Tasks.Where(task => task.Status == WarehouseTaskStatus.InProgress)]);
+
+        public Task<IReadOnlyList<AssignedTaskRef>> ListAssignedOpenAsync(
+            Guid tenantId, Guid warehouseId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AssignedTaskRef>>(
+            [
+                .. world.Tasks
+                    .Where(task => task.Status is WarehouseTaskStatus.Planned or WarehouseTaskStatus.Assigned
+                        && task.AssignedMemberId is not null)
+                    .OrderBy(task => task.Number, StringComparer.Ordinal)
+                    .Select(task => new AssignedTaskRef(task.Id, task.Number, task.Type, task.AssignedMemberId!.Value)),
+            ]);
 
         public Task<IReadOnlyList<TaskStatusCount>> CountByStatusAsync(
             Guid tenantId, Guid warehouseId, CancellationToken cancellationToken) =>

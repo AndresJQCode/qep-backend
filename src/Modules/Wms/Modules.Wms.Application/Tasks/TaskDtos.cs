@@ -124,13 +124,19 @@ public sealed record TaskOperatorDto(
     DateTimeOffset? Since,
     DateTimeOffset? LastActivityAt);
 
+/// <summary>Una tarea abierta asignada a alguien que ya no está activo o perdió el permiso del tipo (BFF, revisión T1 M1). La
+/// pantalla no puede saberlo: no conoce Tenancy ni los permisos de nadie, y sin esta lista la tarea espera para siempre a una persona
+/// que no puede reclamarla. Viene completa, sin paginar, en orden de número, para que el supervisor la reasigne.</summary>
+public sealed record TaskStaleAssignmentDto(Guid TaskId, string TaskNumber, Guid MemberId, string Name);
+
 /// <summary>El tablero de una bodega (BFF, spec 2026-11-26 §6.10). <c>ByStatus</c> y <c>ByType</c> vienen completos, también en cero:
-/// la pantalla no conoce los enums.</summary>
+/// la pantalla no conoce los enums. <c>StaleAssignments</c> viene completa: ver <see cref="TaskStaleAssignmentDto"/>.</summary>
 public sealed record TaskBoardDto(
     Guid WarehouseId,
     IReadOnlyList<TaskStatusSliceDto> ByStatus,
     IReadOnlyList<TaskTypeSliceDto> ByType,
-    IReadOnlyList<TaskOperatorDto> Operators);
+    IReadOnlyList<TaskOperatorDto> Operators,
+    IReadOnlyList<TaskStaleAssignmentDto> StaleAssignments);
 
 public sealed record TaskAssigneeDto(Guid MemberId, string Name);
 

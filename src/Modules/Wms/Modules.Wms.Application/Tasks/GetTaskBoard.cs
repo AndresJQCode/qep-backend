@@ -32,8 +32,22 @@ public sealed class GetTaskBoardHandler(
         var working = await tasks.ListInProgressAsync(query.TenantId, query.WarehouseId, cancellationToken);
         var claimedAt = await tasks.FindClaimedAtAsync(
             query.TenantId, [.. working.Select(task => task.Id)], cancellationToken);
+
+        // M1: una consulta de asignadas y una de elegibles por permiso (tantas como tipos distintos, nunca una por tarea).
+        var assigned = await tasks.ListAssignedOpenAsync(query.TenantId, query.WarehouseId, cancellationToken);
+        var eligible = new Dictionary<string, HashSet<Guid>>(StringComparer.Ordinal);
+        foreach (var permission in assigned.Select(task => TaskTypePermissions.For(task.Type)).Distinct(StringComparer.Ordinal))
+        {
+            eligible[permission] = [.. await members.ListWithPermissionAsync(query.TenantId, permission, cancellationToken)];
+        }
+
+        var stale = assigned
+            .Where(task => !eligible[TaskTypePermissions.For(task.Type)].Contains(task.AssignedMemberId))
+            .ToList();
         var names = await members.FindNamesAsync(
-            query.TenantId, [.. working.Select(task => task.ClaimedByMemberId!.Value).Distinct()], cancellationToken);
+            query.TenantId,
+            [.. working.Select(task => task.ClaimedByMemberId!.Value).Concat(stale.Select(task => task.AssignedMemberId)).Distinct()],
+            cancellationToken);
 
         return new TaskBoardDto(
             query.WarehouseId,
@@ -57,6 +71,10 @@ public sealed class GetTaskBoardHandler(
                         task.LastActivityAt))
                     .OrderBy(worker => worker.Name, StringComparer.InvariantCultureIgnoreCase)
                     .ThenBy(worker => worker.TaskNumber, StringComparer.Ordinal),
+            ],
+            [
+                .. stale.Select(task => new TaskStaleAssignmentDto(
+                    task.TaskId, task.Number, task.AssignedMemberId, names.GetValueOrDefault(task.AssignedMemberId) ?? "Sin nombre")),
             ]);
     }
 }
