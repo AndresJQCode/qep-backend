@@ -774,7 +774,7 @@ doble capa (política + handler), con los permisos `operator.cities.read` y `ope
 
 | Ruta | Permiso | Qué hace |
 | --- | --- | --- |
-| `GET countries` | read | Los países del catálogo, ordenados por nombre sin tildes. |
+| `GET countries` | read | Los países del catálogo, los que tienen pendientes primero y después por nombre sin tildes. |
 | `GET catalog?country=&search=` | read | Las ciudades de un país para el modal de confirmar. `country` es obligatorio (422 si falta). |
 | `GET unresolved` | read | La bandeja, con filtros de país, estado y búsqueda, paginada. |
 | `GET unresolved/{id}` | read | El detalle: la fila, los tenants que la vieron y hasta tres sugerencias. |
