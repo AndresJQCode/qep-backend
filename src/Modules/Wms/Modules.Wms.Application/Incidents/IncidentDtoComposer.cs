@@ -19,6 +19,7 @@ internal static class IncidentResolutionRules
             && incident.SourceTaskLineId is not null
             && incident.LocationId is not null
             && incident.VariantId is not null
+            && incident.StockStatus is not null
             && lineDestination is not null;
     }
 

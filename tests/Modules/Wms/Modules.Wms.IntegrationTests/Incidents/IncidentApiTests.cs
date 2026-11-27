@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Application;
 using Modules.Wms.Application;
 using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Inventory;
@@ -424,5 +426,378 @@ public sealed class IncidentApiTests
         var response = await client.GetAsync($"{IncidentsUrl()}?{query}", Ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return await ReadAsync<IncidentPageDto>(response);
+    }
+
+    // ───── review, resolve y reject (spec §8.3 y §8.5) ─────
+
+    private static async Task<HttpResponseMessage> IncidentActionAsync(HttpClient client, Guid id, string action, object body) =>
+        await client.PostAsJsonAsync($"{IncidentsUrl()}/{id}/{action}", body, Ct);
+
+    private static async Task<Guid> SupervisorMemberAsync(QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<IMembershipDirectory>();
+        return await directory.FindActiveMembershipIdAsync(Guid.Parse(SubjectId), Guid.Parse(TenantId), Ct)
+            ?? throw new InvalidOperationException("The supervisor has no membership.");
+    }
+
+    private sealed record Conflict(LedgerSetup Setup, Guid Destination, TaskDto Task, Guid Reporter, HttpClient ReporterClient, Incident Incident);
+
+    /// <summary>10 en A-01-02, un movimiento de 5 a B-01-01 y una novedad <c>SyncConflict</c> del operario por <paramref name="found"/>.</summary>
+    private static async Task<Conflict> ArrangeConflictAsync(PostgreSqlContainer database, QepApiFactory factory, decimal found = 3)
+    {
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        await StockAsync(factory, s, s.BinA, 10);
+        var task = await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 5)]));
+        var (reporter, client) = await SeedOperatorAsync(factory);
+        var subject = new IncidentSubject(
+            task.Id, task.Lines[0].Id, new LocationId(s.BinA), s.VariantId, null, StockStatus.Available, null, found);
+        var incident = await NumberAndSaveAsync(
+            factory,
+            s,
+            number => NewIncident(s, number, IncidentType.SyncConflict, subject, reportedBy: reporter, operationKey: NewKey()));
+        return new Conflict(s, destination, task, reporter, client, incident);
+    }
+
+    private static Task<long> IncidentMovementsAsync(PostgreSqlContainer database) =>
+        ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements WHERE document_type = 'Incident'");
+
+    [Fact]
+    public async Task ReviewThenAcceptRoundTrips()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.UnreadableLabel));
+        var supervisor = await SupervisorMemberAsync(factory);
+
+        var review = await IncidentActionAsync(s.Manager, incident.Id, "review", new { version = 1 });
+        var reviewed = await ReadAsync<IncidentDto>(review);
+        var resolve = await IncidentActionAsync(s.Manager, incident.Id, "resolve", new { version = 2, resolution = "Accept", note = "Se acepta" });
+        var resolution = await ReadAsync<IncidentResolutionDto>(resolve);
+        var stored = await GetIncidentAsync(s.Manager, incident.Id);
+
+        Assert.Equal(HttpStatusCode.OK, review.StatusCode);
+        Assert.Equal(("InReview", 2L), (reviewed.Status, reviewed.Version));
+        Assert.Equal(HttpStatusCode.OK, resolve.StatusCode);
+        Assert.Null(resolution.BatchId);
+        Assert.Empty(resolution.CreatedTaskIds);
+        Assert.Equal(("Resolved", 3L, "Accept", "Se acepta"), (stored.Status, stored.Version, stored.Resolution, stored.ResolutionNote));
+        Assert.Equal((supervisor, "Caller"), (stored.ResolvedBy, stored.ResolvedByName));
+        Assert.Equal(["Reported", "InReview", "Resolved"], stored.Events.Select(value => value.Kind));
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.incident.reviewed", incident.Id.ToString()));
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.incident.resolved", incident.Id.ToString()));
+        Assert.Equal(0L, await IncidentMovementsAsync(database));
+    }
+
+    [Fact]
+    public async Task AStaleVersionIs412()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.UnreadableLabel));
+
+        var review = await IncidentActionAsync(s.Manager, incident.Id, "review", new { version = 7 });
+        var resolve = await IncidentActionAsync(s.Manager, incident.Id, "resolve", new { version = 7, resolution = "Accept" });
+        var reject = await IncidentActionAsync(s.Manager, incident.Id, "reject", new { version = 7, note = "x" });
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, review.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, resolve.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, reject.StatusCode);
+        var stored = await GetIncidentAsync(s.Manager, incident.Id);
+        Assert.Equal(("Open", 1L), (stored.Status, stored.Version));
+        Assert.Equal(0, await CountAuditEntriesAsync(factory, "wms.incident.reviewed", incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task TwoConcurrentReviewsLeaveOneWinnerAndOneStale()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.UnreadableLabel));
+
+        var responses = await Task.WhenAll(
+            IncidentActionAsync(s.Manager, incident.Id, "review", new { version = 1 }),
+            IncidentActionAsync(s.Manager, incident.Id, "review", new { version = 1 }));
+
+        var codes = responses.Select(response => response.StatusCode).Order().ToList();
+        Assert.Equal(HttpStatusCode.OK, codes[0]);
+        Assert.True(
+            codes[1] is HttpStatusCode.PreconditionFailed or HttpStatusCode.UnprocessableEntity,
+            $"The loser answered {codes[1]}.");
+        var stored = await GetIncidentAsync(s.Manager, incident.Id);
+        Assert.Equal(("InReview", 2L), (stored.Status, stored.Version));
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.incident.reviewed", incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task ResolvingWithANotAllowedResolutionIs422()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var label = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.UnreadableLabel));
+        var variance = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.CountVariance));
+
+        var intoStock = await IncidentActionAsync(s.Manager, label.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" });
+        var byHand = await IncidentActionAsync(s.Manager, variance.Id, "resolve", new { version = 1, resolution = "Accept" });
+        var unknown = await IncidentActionAsync(s.Manager, label.Id, "resolve", new { version = 1, resolution = "Nope" });
+        var missing = await IncidentActionAsync(s.Manager, label.Id, "resolve", new { version = 1 });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, intoStock.StatusCode);
+        Assert.Equal("wms.incident.resolution_not_allowed", await CodeOfAsync(intoStock));
+        Assert.Equal("wms.incident.resolution_not_allowed", await CodeOfAsync(byHand));
+        Assert.Equal("validation.failed", await CodeOfAsync(unknown));
+        Assert.Equal("validation.failed", await CodeOfAsync(missing));
+        Assert.Equal("Open", (await GetIncidentAsync(s.Manager, label.Id)).Status);
+        Assert.Equal(0L, await IncidentMovementsAsync(database));
+    }
+
+    [Fact]
+    public async Task ResolvingOrRejectingFromAClosedStateIs422InvalidTransition()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.UnreadableLabel));
+        var conflict = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.SyncConflict));
+        await IncidentActionAsync(s.Manager, incident.Id, "resolve", new { version = 1, resolution = "Accept" });
+        await IncidentActionAsync(s.Manager, conflict.Id, "reject", new { version = 1, note = "duplicada" });
+
+        var again = await IncidentActionAsync(s.Manager, incident.Id, "resolve", new { version = 2, resolution = "Accept" });
+        var reviewResolved = await IncidentActionAsync(s.Manager, incident.Id, "review", new { version = 2 });
+        var resolveRejected = await IncidentActionAsync(s.Manager, conflict.Id, "resolve", new { version = 2, resolution = "AcceptIntoStock" });
+        var rejectAgain = await IncidentActionAsync(s.Manager, conflict.Id, "reject", new { version = 2, note = "otra vez" });
+
+        foreach (var response in new[] { again, reviewResolved, resolveRejected, rejectAgain })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("wms.document.invalid_transition", await CodeOfAsync(response));
+        }
+
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.incident.resolved", incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task RejectingAShortMoveIs422ResolutionNotAllowed()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.ShortMove));
+
+        var response = await IncidentActionAsync(s.Manager, incident.Id, "reject", new { version = 1, note = "no cuenta" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.incident.resolution_not_allowed", await CodeOfAsync(response));
+        Assert.Equal("Open", (await GetIncidentAsync(s.Manager, incident.Id)).Status);
+        Assert.Equal(0, await CountAuditEntriesAsync(factory, "wms.incident.rejected", incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task RejectingASyncConflictWithANote()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.SyncConflict));
+
+        var withoutNote = await IncidentActionAsync(s.Manager, incident.Id, "reject", new { version = 1 });
+        var blank = await IncidentActionAsync(s.Manager, incident.Id, "reject", new { version = 1, note = "  " });
+        var rejected = await IncidentActionAsync(s.Manager, incident.Id, "reject", new { version = 1, note = "Duplicada" });
+
+        Assert.Equal("validation.failed", await CodeOfAsync(withoutNote));
+        Assert.Equal("validation.failed", await CodeOfAsync(blank));
+        Assert.Equal(HttpStatusCode.OK, rejected.StatusCode);
+        var dto = await ReadAsync<IncidentDto>(rejected);
+        Assert.Equal(("Rejected", 2L, "Duplicada"), (dto.Status, dto.Version, dto.ResolutionNote));
+        Assert.Null(dto.Resolution);
+        Assert.Empty(dto.AllowedResolutions);
+        Assert.False(dto.CanBeRejected);
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.incident.rejected", incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task AcceptingASyncConflictIntoStockMovesTheStock()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeConflictAsync(database, factory);
+        using var _c = floor.ReporterClient;
+        var s = floor.Setup;
+        var before = await GetAsync(s.Manager, floor.Task.Id);
+
+        var response = await IncidentActionAsync(s.Manager, floor.Incident.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var resolution = await ReadAsync<IncidentResolutionDto>(response);
+        Assert.NotNull(resolution.BatchId);
+        Assert.Equal(7m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
+        Assert.Equal(3m, await OnHandAsync(database, floor.Destination, s.VariantId, StockStatus.Available));
+        Assert.Equal(1L, await IncidentMovementsAsync(database));
+        Assert.Equal(
+            resolution.BatchId,
+            await ScalarAsync<Guid>(database, "SELECT batch_id FROM wms.stock_movements WHERE document_type = 'Incident'"));
+        Assert.Equal(
+            floor.Task.Lines[0].Id,
+            await ScalarAsync<Guid>(database, "SELECT document_line_id FROM wms.stock_movements WHERE document_type = 'Incident'"));
+        var after = await GetAsync(s.Manager, floor.Task.Id);
+        Assert.Equal((before.Version, before.Status, before.Lines[0].QuantityConfirmed), (after.Version, after.Status, after.Lines[0].QuantityConfirmed));
+        var stored = await GetIncidentAsync(s.Manager, floor.Incident.Id);
+        Assert.Equal(("Resolved", "AcceptIntoStock", resolution.BatchId), (stored.Status, stored.Resolution, stored.BatchId));
+        Assert.Equal(await SupervisorMemberAsync(factory), stored.ResolvedBy);
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.incident.resolved", floor.Incident.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task TheReporterCannotAcceptIntoStockTheirOwnConflict()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeConflictAsync(database, factory);
+        using var _c = floor.ReporterClient;
+        using var reporter = CreateClient(
+            factory, OperatorSubject, TenantId, WmsPermissions.DocumentRead, WmsPermissions.PutawayPerform, WmsPermissions.DiscrepancyResolve);
+
+        var response = await IncidentActionAsync(reporter, floor.Incident.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.incident.self_resolution", await CodeOfAsync(response));
+        Assert.Equal(0L, await IncidentMovementsAsync(database));
+        Assert.Equal("Open", (await GetIncidentAsync(reporter, floor.Incident.Id)).Status);
+        Assert.Equal(10m, await OnHandAsync(database, floor.Setup.BinA, floor.Setup.VariantId, StockStatus.Available));
+    }
+
+    [Fact]
+    public async Task AConflictWithNothingFoundCannotBeAcceptedIntoStock()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeConflictAsync(database, factory, found: 0);
+        using var _c = floor.ReporterClient;
+
+        var response = await IncidentActionAsync(floor.Setup.Manager, floor.Incident.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.incident.resolution_not_allowed", await CodeOfAsync(response));
+        Assert.Equal(0L, await IncidentMovementsAsync(database));
+        var stored = await GetIncidentAsync(floor.Setup.Manager, floor.Incident.Id);
+        Assert.Equal("Open", stored.Status);
+        Assert.Empty(stored.AllowedResolutions);
+        Assert.True(stored.CanBeRejected);
+    }
+
+    [Fact]
+    public async Task RepeatingTheResolveReturnsTheSavedResponse()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeConflictAsync(database, factory);
+        using var _c = floor.ReporterClient;
+        var body = new { version = 1, resolution = "AcceptIntoStock" };
+
+        var first = await IncidentActionAsync(floor.Setup.Manager, floor.Incident.Id, "resolve", body);
+        var second = await IncidentActionAsync(floor.Setup.Manager, floor.Incident.Id, "resolve", body);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal((await ReadAsync<IncidentResolutionDto>(first)).BatchId, (await ReadAsync<IncidentResolutionDto>(second)).BatchId);
+        Assert.Equal(1L, await IncidentMovementsAsync(database));
+        Assert.Equal(7m, await OnHandAsync(database, floor.Setup.BinA, floor.Setup.VariantId, StockStatus.Available));
+    }
+
+    [Fact]
+    public async Task ReviewResolveAndRejectWithoutDiscrepancyResolveAre403()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var incident = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.SyncConflict));
+        var (_, operatorClient) = await SeedOperatorAsync(factory);
+        using var _c = operatorClient;
+
+        foreach (var (action, body) in new (string, object)[]
+        {
+            ("review", new { version = 1 }),
+            ("resolve", new { version = 1, resolution = "Accept" }),
+            ("reject", new { version = 1, note = "x" }),
+        })
+        {
+            var response = await IncidentActionAsync(operatorClient, incident.Id, action, body);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+
+        Assert.Equal(("Open", 1L), ((await GetIncidentAsync(s.Manager, incident.Id)).Status, 1L));
+    }
+
+    [Fact]
+    public async Task AnUnknownIncidentIs404OnEveryAction()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var unknown = Guid.NewGuid();
+
+        foreach (var (action, body) in new (string, object)[]
+        {
+            ("review", new { version = 1 }),
+            ("resolve", new { version = 1, resolution = "Accept" }),
+            ("reject", new { version = 1, note = "x" }),
+        })
+        {
+            var response = await IncidentActionAsync(s.Manager, unknown, action, body);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("wms.incident.not_found", await CodeOfAsync(response));
+        }
+    }
+
+    [Fact]
+    public async Task OperatorActionsLeaveNoAudit()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        await StockAsync(factory, s, s.BinA, 10);
+        var task = await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination, 5)]));
+        var (_, client) = await SeedOperatorAsync(factory);
+        using var _c = client;
+        var claimed = await ReadAsync<TaskDto>(
+            await client.PostAsJsonAsync($"{TasksUrl()}/next", new { warehouseId = s.WarehouseId, deviceId = "zebra-01" }, Ct));
+        var reported = await ReadAsync<IncidentDto>(await ReportRawAsync(client, ReportBody(s)));
+
+        var shortResponse = await ShortRawAsync(
+            client, claimed.Id, claimed.Lines[0].Id, ShortBody(claimed.LeaseToken!.Value, 2), NewKey());
+
+        Assert.Equal(HttpStatusCode.OK, shortResponse.StatusCode);
+        var shortIncident = Assert.Single(await IncidentsOfTaskAsync(database, task.Id));
+        foreach (var id in new[] { reported.Id, shortIncident.Id })
+        {
+            foreach (var action in new[] { "reviewed", "resolved", "rejected", "reported", "created" })
+            {
+                Assert.Equal(0, await CountAuditEntriesAsync(factory, $"wms.incident.{action}", id.ToString()));
+            }
+        }
+
+        Assert.Equal(
+            0L,
+            await ScalarAsync<long>(database, "SELECT count(*) FROM audit.entries WHERE action LIKE 'wms.incident.%'"));
     }
 }

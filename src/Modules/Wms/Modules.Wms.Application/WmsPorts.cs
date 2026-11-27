@@ -96,6 +96,12 @@ public static class WmsAuditActions
     public const string TaskPriorityChanged = "wms.task.priority_changed";
     public const string TaskCancelled = "wms.task.cancelled";
     public const string TaskLineCancelled = "wms.task.line_cancelled";
+
+    // Novedades (spec 2026-11-26 §8.5): sólo las acciones del supervisor se auditan. Lo que declara el operario vive en la historia de
+    // la novedad (DA-50).
+    public const string IncidentReviewed = "wms.incident.reviewed";
+    public const string IncidentResolved = "wms.incident.resolved";
+    public const string IncidentRejected = "wms.incident.rejected";
 }
 
 public interface IWarehouseRepository

@@ -1382,6 +1382,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.ReportIncidentCommand, Modules.Wms.Application.IncidentDto>,
             Modules.Wms.Application.ReportIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ReviewIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.ReviewIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ResolveIncidentCommand, Modules.Wms.Application.IncidentResolutionDto>,
+            Modules.Wms.Application.ResolveIncidentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.RejectIncidentCommand, Modules.Wms.Application.IncidentDto>,
+            Modules.Wms.Application.RejectIncidentHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

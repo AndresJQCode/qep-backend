@@ -185,13 +185,7 @@ public sealed class Incident
     /// <paramref name="batchId"/> es el lote del ledger si la resolución movió stock.</summary>
     public void Resolve(IncidentResolution resolution, Guid by, string? note, Guid? batchId, DateTimeOffset now)
     {
-        EnsureUnresolved("resolve");
-        if (!IncidentCatalog.ResolutionsOf(Type).Contains(resolution))
-        {
-            throw new WmsDomainException(
-                WmsErrorCodes.IncidentResolutionNotAllowed, $"Una novedad {Type} no se resuelve con {resolution}.");
-        }
-
+        EnsureCanResolve(resolution);
         var trimmed = Trimmed(note, NoteMaxLength, "La nota de la resolución");
         Status = IncidentStatus.Resolved;
         Resolution = resolution;
@@ -201,6 +195,18 @@ public sealed class Incident
         BatchId = batchId;
         Version++;
         _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Resolved, by, resolution.ToString(), now, now));
+    }
+
+    /// <summary>Lo que <see cref="Resolve"/> comprueba antes de cambiar nada: el handler lo llama antes de armar el movimiento del
+    /// ledger, para que una resolución que el tipo no admite no llegue a mover stock (y deshacerlo sería trabajo tirado).</summary>
+    public void EnsureCanResolve(IncidentResolution resolution)
+    {
+        EnsureUnresolved("resolve");
+        if (!IncidentCatalog.ResolutionsOf(Type).Contains(resolution))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentResolutionNotAllowed, $"Una novedad {Type} no se resuelve con {resolution}.");
+        }
     }
 
     /// <summary>La descarta. Sólo una novedad que no movió nada (<see cref="IncidentCatalog.CanBeRejected"/>); la nota es obligatoria.</summary>

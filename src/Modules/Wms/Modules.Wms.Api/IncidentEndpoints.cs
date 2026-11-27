@@ -37,6 +37,37 @@ internal static class IncidentEndpoints
             .Produces<IncidentDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+
+        // Las tres acciones del supervisor llevan la versión que leyó (412 si cambió). resolve es SK: la clave la deriva el servidor
+        // (incident:{id}:resolve:{version}) y repetirla devuelve lo guardado.
+        group.MapPost("/incidents/{id:guid}/review", ReviewAsync)
+            .RequireAuthorization(WmsPermissions.DiscrepancyResolve)
+            .Accepts<IncidentVersionRequest>("application/json")
+            .Produces<IncidentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/incidents/{id:guid}/resolve", ResolveAsync)
+            .UseServerIdempotencyKey("incident", "resolve")
+            .RequireAuthorization(WmsPermissions.DiscrepancyResolve)
+            .Accepts<ResolveIncidentRequest>("application/json")
+            .Produces<IncidentResolutionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/incidents/{id:guid}/reject", RejectAsync)
+            .RequireAuthorization(WmsPermissions.DiscrepancyResolve)
+            .Accepts<RejectIncidentRequest>("application/json")
+            .Produces<IncidentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static async Task<IResult> ListAsync(
@@ -62,4 +93,16 @@ internal static class IncidentEndpoints
     private static async Task<IResult> GetAsync(
         Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetIncidentQuery(tenantId, id), cancellationToken));
+
+    private static async Task<IResult> ReviewAsync(
+        Guid tenantId, Guid id, IncidentVersionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ReviewIncidentCommand(tenantId, id, request.Version), cancellationToken));
+
+    private static async Task<IResult> ResolveAsync(
+        Guid tenantId, Guid id, ResolveIncidentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(ResolveIncidentCommand.From(tenantId, id, request), cancellationToken));
+
+    private static async Task<IResult> RejectAsync(
+        Guid tenantId, Guid id, RejectIncidentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(RejectIncidentCommand.From(tenantId, id, request), cancellationToken));
 }

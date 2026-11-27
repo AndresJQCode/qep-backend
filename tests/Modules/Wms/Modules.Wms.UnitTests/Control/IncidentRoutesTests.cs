@@ -35,11 +35,15 @@ public sealed class IncidentRoutesTests
             .ToList();
 
         const string read = WmsPermissions.DocumentRead;
+        const string resolve = WmsPermissions.DiscrepancyResolve;
         (string Method, string Route, string Policy)[] expected =
         [
             ("GET", "", read),
             ("POST", "", read),
             ("GET", "/{id:guid}", read),
+            ("POST", "/{id:guid}/reject", resolve),
+            ("POST", "/{id:guid}/resolve", resolve),
+            ("POST", "/{id:guid}/review", resolve),
         ];
         Assert.Equal(expected, routes);
     }

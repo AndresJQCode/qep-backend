@@ -174,4 +174,21 @@ public sealed class IncidentLifecycleTests
         Assert.Null(incident.Resolution);
         Assert.Equal(IncidentEventKind.Rejected, incident.Events[^1].Kind);
     }
+
+    [Fact]
+    public void EnsureCanResolveAnswersLikeResolveAndChangesNothing()
+    {
+        var conflict = Report();
+        conflict.EnsureCanResolve(IncidentResolution.AcceptIntoStock);
+        Assert.Equal((IncidentStatus.Open, 1L), (conflict.Status, conflict.Version));
+
+        Assert.Equal(
+            WmsErrorCodes.IncidentResolutionNotAllowed,
+            Assert.Throws<WmsDomainException>(() => conflict.EnsureCanResolve(IncidentResolution.Accept)).Code);
+        Assert.Equal(
+            WmsErrorCodes.IncidentResolutionNotAllowed,
+            Assert.Throws<WmsDomainException>(() => Report(IncidentType.CountVariance).EnsureCanResolve(IncidentResolution.Accept)).Code);
+        conflict.Reject(Supervisor, "duplicada", Now);
+        Assert.Throws<InvalidTransitionException>(() => conflict.EnsureCanResolve(IncidentResolution.AcceptIntoStock));
+    }
 }

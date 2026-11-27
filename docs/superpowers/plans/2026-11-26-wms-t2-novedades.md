@@ -1274,7 +1274,38 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
 18. Forward compatibility: the sweeper and the board filter by the enum names the build knows; the T2 rollout is forward-only and
     normal `RollingUpdate` is accepted (seconds of possible 500 on the old pod's board).
 19. `resolve` body in T2 is `{ version, resolution, note? }` (no `toLocationId`/`lotCode`, unused by T2's resolutions).
+20. (Block B) `POST /incidents`: an unparseable `type` is 422 `validation.failed` (field `Type`); a type that parses but is not in
+    `IncidentCatalog.DeclarableStandalone` is 422 `wms.incident.type_not_allowed` (handler, after the permission check).
+21. (Block B) `POST /incidents` stores `stock_status = NULL` and `expected_qty = NULL`; `quantity` goes to `actual_qty`. A `lotId`
+    without `variantId` is 422 `validation.failed` (the FK to `lots` ignores the tenant, so a lot only enters validated against its
+    variant and the Self owner with `TaskLotRules.EnsureLotAsync`). `occurredAt` outside the ledger window is 422
+    `wms.movement.occurred_at_out_of_range`.
+22. (Block B) `resolve` with `AcceptIntoStock` reads the line destination with a narrow query
+    (`IWarehouseTaskRepository.FindLineDestinationsAsync`, no tracking, task not loaded) instead of `tasks.GetAsync`; the DTO composer
+    uses the same query for `allowedResolutions`, and `FindNumbersAsync` for `sourceTaskNumber`.
+23. (Block B) The `AcceptIntoStock` movement uses `occurredAt = incident.ReportedAt` while it is inside the 30-day ledger window and the
+    resolve time otherwise (a conflict resolved after 30 days would be rejected by the ledger window otherwise). It also requires the
+    incident to carry `stock_status` (every `SyncConflict` made by the runner does).
+24. (Block B) `Incident.EnsureCanResolve(resolution)` is the part of `Resolve` that does not mutate, so `resolve` can fail before it
+    builds the ledger movement; `Resolve` calls it.
+25. (Block B) `resolve` takes the document lock `TryLockDocumentAsync(incident.Id)` like `post` of an adjustment: a second concurrent
+    resolve of the same incident answers 409 `wms.document.busy` (or replays the winner's receipt through the SK filter).
+26. (Block B) An incident reported by the system (`ReportedBy = Guid.Empty`) never counts as a self-resolution.
 
 ## Deviations
 
 *(Filled by each implementer, per block, as in T1.)*
+
+### Block B
+
+- **B1:** none beyond decision 24 (added in B4).
+- **B2:** `ShortTaskLineRequest.PhotoFileIds` is declared with a `null` default so existing callers compile; the recorder exposes
+  `ResolveEvidenceAsync` (also used by `POST /incidents` in B3) and validates evidence **before** numbering. B2's recorder constructor
+  left the unit-test doubles (`TaskWorld`) uncompiled; they were fixed in B3's commit, so the B2 commit alone does not build
+  `Modules.Wms.UnitTests`.
+- **B3:** `IncidentDtoComposer` and `IncidentResolutionRules` live in `IncidentDtoComposer.cs`, not in `IncidentDtos.cs`. The DTOs
+  `IncidentDto` and `IncidentSummaryDto` are flat records (no inheritance), same JSON as the plan. New repository members:
+  `IIncidentRepository.GetAsync/ListAsync/CountOpenAsync`, `IWarehouseTaskRepository.FindNumbersAsync/FindLineDestinationsAsync`.
+  `GET /incidents/{id}` uses `GetWithEventsAsync` (no tracking). New unit test `IncidentRoutesTests` (route table with policies).
+- **B4:** `resolve` reads the line destination with the narrow query (decision 22) instead of `tasks.GetAsync`. Added the unit test
+  `EnsureCanResolveAnswersLikeResolveAndChangesNothing` and the route table cases for `review`, `resolve` and `reject`.
