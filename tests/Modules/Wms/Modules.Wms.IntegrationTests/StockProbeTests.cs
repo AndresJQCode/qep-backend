@@ -214,6 +214,55 @@ public sealed class StockProbeTests
         Assert.Empty(fromAnotherTenant);
     }
 
+    // DA-51: una novedad abierta (puede escribir al ledger al resolverse) protege la variante; la resuelta o rechazada, no.
+    [Fact]
+    public async Task TheRealCheckerSeesAnOpenIncidentAgainstTheMigratedSchema()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var openVariant = await CreateVariantAsync(factory, "V-OPEN-INCIDENT", null, [12]);
+        var closedVariant = await CreateVariantAsync(factory, "V-CLOSED-INCIDENT", null, [12]);
+        await Incidents.IncidentTestSupport.NumberAndSaveAsync(
+            factory, s, number => Incidents.IncidentTestSupport.NewIncident(s with { VariantId = openVariant }, number));
+        var closed = await Incidents.IncidentTestSupport.NumberAndSaveAsync(
+            factory, s, number => Incidents.IncidentTestSupport.NewIncident(s with { VariantId = closedVariant }, number));
+        await ExecuteAsync(database, "UPDATE wms.incidents SET status = 'Rejected' WHERE id = @id", ("id", closed.Id));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var checker = scope.ServiceProvider.GetRequiredService<Modules.Catalog.Application.IVariantUsageChecker>();
+        var used = await checker.FindUsedAsync(s.TenantId, [openVariant, closedVariant], Ct);
+        var fromAnotherTenant = await checker.FindUsedAsync(Guid.CreateVersion7(), [openVariant], Ct);
+
+        Assert.Equal(new HashSet<Guid> { openVariant }, used.ToHashSet());
+        Assert.Empty(fromAnotherTenant);
+    }
+
+    [Fact]
+    public async Task TheRealCheckerSeesAnOpenCountLineAgainstTheMigratedSchema()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var openVariant = await CreateVariantAsync(factory, "V-OPEN-COUNT", null, [12]);
+        var doneVariant = await CreateVariantAsync(factory, "V-DONE-COUNT", null, [12]);
+        var open = Tasks.TaskTestSupport.NewCount(s with { VariantId = openVariant }, s.BinA);
+        var done = Tasks.TaskTestSupport.NewCount(s with { VariantId = doneVariant }, s.BinA);
+        var member = Guid.CreateVersion7();
+        done.Claim(member, "device-1", DateTimeOffset.UtcNow);
+        done.RecordCount(member, done.LeaseToken!.Value, "device-1", done.Lines[0].Id, 1, null, DateTimeOffset.UtcNow);
+        await Tasks.TaskTestSupport.SaveAsync(factory, open, done);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var checker = scope.ServiceProvider.GetRequiredService<Modules.Catalog.Application.IVariantUsageChecker>();
+        var used = await checker.FindUsedAsync(s.TenantId, [openVariant, doneVariant], Ct);
+
+        // Un Count abierto no escribe al ledger, pero su línea abierta cuenta como cualquier otra: el supervisor la ve en el tablero.
+        Assert.Equal(new HashSet<Guid> { openVariant }, used.ToHashSet());
+    }
+
     private static object UpdateBody(string name, bool isActive) =>
         new { name, identification = "900123", contactEmail = "acme@example.com", isActive, version = 1 };
 
