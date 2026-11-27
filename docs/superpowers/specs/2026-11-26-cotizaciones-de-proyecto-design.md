@@ -394,3 +394,18 @@ versión «después».
   conservan los precios guardados (`globalPrice` y el de cada fase por su `id`; una fase nueva queda en `null`), y
   `total` es `null` sólo si falta alguno». Hoy el texto dice a la vez «se conservan» y «la respuesta trae
   `total: null`».
+
+## 13. Comportamientos que el spec no decía (aprobados por el owner el 2026-11-26)
+
+Salieron de la construcción; precisan §6 y §7. Todos los 422 son `validation.failed` con el mapa `errors`.
+
+- **I. Tope de precio (§6.3).** Ningún precio ni la suma de las fases pasa de `999999999999.99`, lo que cabe en
+  `numeric(14,2)`. Claves: `Project.GlobalPrice`, `Project.Phases[i].Price` y, para la suma, `Project.Phases`. Se
+  revisa lo escrito y lo redondeado.
+- **J. Elementos `null` (§6.3).** Una fase `null` sale en `Project.Phases`; un ítem `null`, suelto o dentro de una
+  fase, en `Project.Items`.
+- **K. Redondeo sobre precios guardados (§5).** Si una regla de redondeo más gruesa sube un precio guardado sobre el
+  tope, guardar sin `project` responde 422 en las claves de I. El documento se guarda al mandar `project` con un precio
+  menor.
+- **L. Export encolado (§7).** El módulo se revisa al pedir el export, no al generarlo: si `projects` se apaga mientras
+  el trabajo está en cola, ese archivo sale con las filas de proyecto.
