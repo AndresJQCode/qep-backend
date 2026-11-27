@@ -26,6 +26,9 @@ Non-goals
 Anti-goals (failure even if it "works")
 
 - A member without `hr.employee.read` receiving employee data (names, birthday).
+  Accepted exception (owner, 2026-11-27): the WhatsApp digest goes out through Messaging, which stores it in a conversation
+  with the manager's phone, so inbox users may read it without HR access — the same behavior as the Support task notices.
+  It carries only names and day/month (no year, no age). A send path that leaves no inbox trace is separate work.
 - Exposing the birth **year** or age anywhere in the notice.
 - One WhatsApp per employee (cost): it is one message per manager per day, whatever the number of birthdays.
 - The same digest sent twice to a manager (replicas, retries).
