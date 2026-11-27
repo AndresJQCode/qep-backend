@@ -783,6 +783,22 @@ public sealed class ImportCustomersHandler(
                 continue;
             }
 
+            // Documento vacío en la fila = conserva el guardado, y Update lo vuelve a validar. Un NIT/CC/CE con letras guardado
+            // antes de la regla numérica lo rechazaría y, sin try/catch por fila, tumbaría el archivo entero sin decir qué fila.
+            // Se adelanta para reportar sólo esa fila: la persona no envió el número, así que el error nombra la fila.
+            if (ToIdentification(candidate) is null
+                && customer is { IdentificationType: { } storedType, IdentificationNumber: { } storedNumber }
+                && !DocumentNumberFormat.IsValidFor(storedType.ToWireValue(), storedNumber))
+            {
+                errors.Add(new ImportRowError(
+                    candidate.RowNumber,
+                    "customers.import.row.identification_number_not_numeric",
+                    DocumentNumberFormat.NumericTypesMessage,
+                    nameof(ExcelCustomerRow.IdentificationNumber),
+                    ToRowData(candidate.SourceRow)));
+                continue;
+            }
+
             // Una jurídica se identifica con NIT: Update lanzaría la excepción de dominio y, como arriba,
             // no hay try/catch por fila — se adelanta para reportar sólo esa fila (spec 2026-10-26).
             if (customer.PersonType == PersonType.Juridica && (candidate.Type ?? customer.IdentificationType) is { } rowType && rowType != IdentificationType.Nit)
