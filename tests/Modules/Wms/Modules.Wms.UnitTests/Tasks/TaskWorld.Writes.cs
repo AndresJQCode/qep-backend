@@ -187,6 +187,29 @@ internal sealed partial class TaskWorld
         public Task<bool> ExistsWithOperationKeyAsync(Guid tenantId, string operationKey, CancellationToken cancellationToken) =>
             Task.FromResult(world.Incidents.Exists(incident => incident.TenantId == tenantId && incident.OperationKey == operationKey));
 
+        public Task<IReadOnlyList<Incident>> ListOpenVerifiedByAsync(
+            Guid tenantId, Guid countTaskId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Incident>>(
+            [
+                .. world.Incidents.Where(incident =>
+                    incident.TenantId == tenantId
+                    && incident.VerificationTaskId == countTaskId
+                    && incident.Status is IncidentStatus.Open or IncidentStatus.InReview),
+            ]);
+
+        public Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken) =>
+            Task.FromResult(world.Incidents.Find(incident => incident.TenantId == tenantId && incident.AdjustmentId == adjustmentId));
+
+        public Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(
+            Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Guid>>(
+            [
+                .. world.Incidents
+                    .Where(incident => incident.TenantId == tenantId && incident.ParentIncidentId == parentIncidentId)
+                    .Select(incident => incident.ReportedBy)
+                    .Distinct(),
+            ]);
+
         public Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken) =>
             Task.FromResult($"NOV-{today:yyyyMMdd}-{world.Incidents.Count + 1:D4}");
     }
@@ -239,6 +262,29 @@ internal sealed partial class TaskWorld
             Guid tenantId, Guid memberId, CancellationToken cancellationToken) =>
             Task.FromResult(world.Tasks.Find(task =>
                 task.Status == WarehouseTaskStatus.InProgress && task.ClaimedByMemberId == memberId));
+
+        public Task<Guid?> FindOpenCountAsync(
+            Guid tenantId,
+            Guid warehouseId,
+            Guid ownerId,
+            Guid locationId,
+            Guid variantId,
+            Guid? lotId,
+            Modules.Wms.Domain.Inventory.StockStatus stockStatus,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(world.Tasks
+                .Where(task => task.TenantId == tenantId
+                    && task.Type == WarehouseTaskType.Count
+                    && task.WarehouseId.Value == warehouseId
+                    && task.OwnerId.Value == ownerId
+                    && task.Status is not (WarehouseTaskStatus.Done or WarehouseTaskStatus.Cancelled)
+                    && task.Lines.Any(line => line.Status == TaskLineStatus.Open
+                        && line.FromLocationId.Value == locationId
+                        && line.VariantId == variantId
+                        && line.LotId?.Value == lotId
+                        && line.StockStatus == stockStatus))
+                .Select(task => (Guid?)task.Id)
+                .FirstOrDefault());
 
         public Task<bool> HasMemberClaimedAsync(Guid tenantId, Guid taskId, Guid memberId, CancellationToken cancellationToken) =>
             Task.FromResult(Find(tenantId, taskId)?.Events.Any(value => value.Kind == TaskEventKind.Claimed && value.MemberId == memberId) == true);
@@ -315,7 +361,10 @@ internal sealed partial class TaskWorld
         public Task<IReadOnlyList<ExpiredTaskLease>> LockExpiredAsync(
             DateTimeOffset now, int limit, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken)
+        {
+            world.Log.Add("task-number");
+            return Task.FromResult($"TSK-{today:yyyyMMdd}-{world.Tasks.Count + 1:D4}");
+        }
     }
 }

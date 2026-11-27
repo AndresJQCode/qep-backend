@@ -1,3 +1,4 @@
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.Application;
@@ -67,6 +68,18 @@ public interface IWarehouseTaskRepository
     /// <c>AcceptIntoStock</c> de una novedad necesita de la línea de origen. La línea sin destino o que no existe no viene.</summary>
     Task<IReadOnlyDictionary<Guid, Guid>> FindLineDestinationsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> lineIds, CancellationToken cancellationToken);
+
+    /// <summary>El id del <c>Count</c> abierto (ni <c>Done</c> ni <c>Cancelled</c>) que verifica esa clave; <c>null</c> si no hay
+    /// (DA-44). Sin bloqueo: quien lo va a enlazar lo bloquea después con <see cref="LockAsync"/> y vuelve a mirar su estado.</summary>
+    Task<Guid?> FindOpenCountAsync(
+        Guid tenantId,
+        Guid warehouseId,
+        Guid ownerId,
+        Guid locationId,
+        Guid variantId,
+        Guid? lotId,
+        StockStatus stockStatus,
+        CancellationToken cancellationToken);
 
     /// <summary>Sin rastreo.</summary>
     Task<IReadOnlyList<WarehouseTask>> ListInProgressAsync(Guid tenantId, Guid warehouseId, CancellationToken cancellationToken);

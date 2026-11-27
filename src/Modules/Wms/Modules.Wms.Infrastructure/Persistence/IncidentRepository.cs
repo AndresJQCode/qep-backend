@@ -78,6 +78,36 @@ internal sealed class IncidentRepository(WmsDbContext dbContext) : IIncidentRepo
             .AsNoTracking()
             .AnyAsync(incident => incident.TenantId == tenantId && incident.OperationKey == operationKey, cancellationToken);
 
+    public async Task<IReadOnlyList<Incident>> ListOpenVerifiedByAsync(
+        Guid tenantId, Guid countTaskId, CancellationToken cancellationToken) =>
+        await dbContext.Set<Incident>()
+            .AsSplitQuery()
+            .Include(incident => incident.Evidence)
+            .Include(incident => incident.Events)
+            .Where(incident => incident.TenantId == tenantId
+                && incident.VerificationTaskId == countTaskId
+                && (incident.Status == IncidentStatus.Open || incident.Status == IncidentStatus.InReview))
+            .OrderBy(incident => incident.ReportedAt)
+            .ThenBy(incident => incident.Number)
+            .ToListAsync(cancellationToken);
+
+    public Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken) =>
+        dbContext.Set<Incident>()
+            .AsSplitQuery()
+            .Include(incident => incident.Evidence)
+            .Include(incident => incident.Events)
+            .FirstOrDefaultAsync(
+                incident => incident.TenantId == tenantId && incident.AdjustmentId == adjustmentId, cancellationToken);
+
+    public async Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(
+        Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken) =>
+        await dbContext.Set<Incident>()
+            .AsNoTracking()
+            .Where(incident => incident.TenantId == tenantId && incident.ParentIncidentId == parentIncidentId)
+            .Select(incident => incident.ReportedBy)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
     // Como la numeración de ajustes y de tareas: el lock bloqueante va antes del conteo y vive hasta que la transacción confirme, así
     // dos reportes simultáneos numeran en serie. El índice único del número queda como último recurso.
     public async Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken)

@@ -179,6 +179,88 @@ public sealed class IncidentPersistenceTests
     }
 
     [Fact]
+    public async Task ListOpenVerifiedByAsyncSkipsClosedIncidents()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var count = Guid.CreateVersion7();
+        var open = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number));
+        var inReview = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number));
+        var resolved = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number));
+        var other = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number));
+        await ExecuteAsync(
+            database,
+            "UPDATE wms.incidents SET verification_task_id = @count WHERE id IN (@open, @review, @resolved)",
+            ("count", count), ("open", open.Id), ("review", inReview.Id), ("resolved", resolved.Id));
+        await ExecuteAsync(database, "UPDATE wms.incidents SET status = 'InReview' WHERE id = @id", ("id", inReview.Id));
+        await ExecuteAsync(
+            database,
+            "UPDATE wms.incidents SET status = 'Resolved', resolution = 'Accept', resolved_at = now() WHERE id = @id",
+            ("id", resolved.Id));
+        await using var scope = factory.Services.CreateAsyncScope();
+        var incidents = scope.ServiceProvider.GetRequiredService<IIncidentRepository>();
+
+        var verified = await incidents.ListOpenVerifiedByAsync(s.TenantId, count, Ct);
+
+        Assert.Equal(
+            new[] { open.Id, inReview.Id }.Order(),
+            verified.Select(value => value.Id).Order());
+        Assert.Empty(await incidents.ListOpenVerifiedByAsync(Guid.CreateVersion7(), count, Ct));
+        Assert.DoesNotContain(other.Id, verified.Select(value => value.Id));
+    }
+
+    [Fact]
+    public async Task FindByAdjustmentAsyncFindsTheCountVarianceOfThatTenantOnly()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var adjustment = Guid.CreateVersion7();
+        var variance = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.CountVariance));
+        await NumberAndSaveAsync(factory, s, number => NewIncident(s, number));
+        await ExecuteAsync(
+            database, "UPDATE wms.incidents SET adjustment_id = @adjustment WHERE id = @id", ("adjustment", adjustment), ("id", variance.Id));
+        await using var scope = factory.Services.CreateAsyncScope();
+        var incidents = scope.ServiceProvider.GetRequiredService<IIncidentRepository>();
+
+        var found = await incidents.FindByAdjustmentAsync(s.TenantId, adjustment, Ct);
+
+        Assert.Equal(variance.Id, found?.Id);
+        Assert.Null(await incidents.FindByAdjustmentAsync(Guid.CreateVersion7(), adjustment, Ct));
+        Assert.Null(await incidents.FindByAdjustmentAsync(s.TenantId, Guid.CreateVersion7(), Ct));
+    }
+
+    [Fact]
+    public async Task ListReportersOfChildrenAsyncReturnsTheDistinctReportersOfTheChildren()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var first = Guid.CreateVersion7();
+        var second = Guid.CreateVersion7();
+        var parent = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, IncidentType.CountVariance));
+        var childOfFirst = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: first));
+        var secondChild = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: second));
+        var againFirst = await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: first));
+        await NumberAndSaveAsync(factory, s, number => NewIncident(s, number, reportedBy: Guid.CreateVersion7()));
+        await ExecuteAsync(
+            database,
+            "UPDATE wms.incidents SET parent_incident_id = @parent WHERE id IN (@a, @b, @c)",
+            ("parent", parent.Id), ("a", childOfFirst.Id), ("b", secondChild.Id), ("c", againFirst.Id));
+        await using var scope = factory.Services.CreateAsyncScope();
+        var incidents = scope.ServiceProvider.GetRequiredService<IIncidentRepository>();
+
+        var reporters = await incidents.ListReportersOfChildrenAsync(s.TenantId, parent.Id, Ct);
+
+        Assert.Equal(new[] { first, second }.Order(), reporters.Order());
+        Assert.Empty(await incidents.ListReportersOfChildrenAsync(Guid.CreateVersion7(), parent.Id, Ct));
+    }
+
+    [Fact]
     public async Task DeletingALocationUsedByAnIncidentIs422HasStock()
     {
         var (database, factory) = await OpenAsync();

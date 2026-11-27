@@ -86,7 +86,8 @@ internal sealed partial class TaskWorld
         public void Add(VariantLogisticsProfile profile) => throw new NotSupportedException();
 
         public Task<VariantLogisticsProfile?> FindAsync(Guid tenantId, Guid variantId, CancellationToken ct) =>
-            throw new NotSupportedException();
+            Task.FromResult<VariantLogisticsProfile?>(
+                variantId == Variant ? VariantLogisticsProfile.CreateDefault(Tenant, Variant, Variant, [12], Start) : null);
 
         public Task<VariantLogisticsProfile> GetOrCreateDefaultAsync(Guid tenantId, Guid variantId, CancellationToken ct) =>
             throw new NotSupportedException();

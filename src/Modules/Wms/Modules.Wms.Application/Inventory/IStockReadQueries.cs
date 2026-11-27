@@ -101,6 +101,10 @@ public interface IStockReadQueries
 
     Task<MovementSearchResult> ListMovementsAsync(MovementFilter filter, CancellationToken cancellationToken);
 
+    /// <summary>El saldo físico de exactamente esa clave, sin unidad logística: lote nulo es «sin lote», no «cualquiera»
+    /// (<c>lot_id IS NOT DISTINCT FROM</c>). Cero si no hay fila. Lo que el conteo ciego compara contra lo que el operario contó.</summary>
+    Task<decimal> FindOnHandAsync(Guid tenantId, StockKey key, CancellationToken cancellationToken);
+
     /// <summary>Las claves <c>(variante, ubicación, lote)</c> de ese dueño que ya tienen saldo distinto de cero en algún estado: la carga
     /// inicial las bloquea para no duplicarlo. Sólo mira las variantes y ubicaciones que se le pasan.</summary>
     Task<IReadOnlySet<(Guid VariantId, Guid LocationId, Guid? LotId)>> FindNonZeroBalanceKeysAsync(

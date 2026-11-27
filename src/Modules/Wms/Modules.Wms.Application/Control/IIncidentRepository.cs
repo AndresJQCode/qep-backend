@@ -30,6 +30,18 @@ public interface IIncidentRepository
     /// <summary>Si esa Idempotency-Key ya dejó una novedad (deduplicar SyncConflict). Se llama bajo el lock del operario.</summary>
     Task<bool> ExistsWithOperationKeyAsync(Guid tenantId, string operationKey, CancellationToken cancellationToken);
 
+    /// <summary>Las novedades <c>Open</c> e <c>InReview</c> que ese <c>Count</c> verifica, rastreadas con sus eventos: cuando el
+    /// conteo se cierra, el hook las resuelve o las desenlaza.</summary>
+    Task<IReadOnlyList<Incident>> ListOpenVerifiedByAsync(Guid tenantId, Guid countTaskId, CancellationToken cancellationToken);
+
+    /// <summary>La <c>CountVariance</c> que ese ajuste cierra, rastreada con sus eventos; <c>null</c> si el ajuste no nació de un
+    /// conteo.</summary>
+    Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken);
+
+    /// <summary>Las membresías (sin repetir) que reportaron las novedades que esa <c>CountVariance</c> cerró: ninguna puede aprobar el
+    /// ajuste (DA-47).</summary>
+    Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken);
+
     /// <summary><c>NOV-{yyyyMMdd}-{NNNN}</c> por tenant y día, con lock bloqueante <c>incident-seq:{tenant}</c> de transacción; exige la
     /// transacción de <see cref="IWmsUnitOfWork.BeginTransactionAsync"/>.</summary>
     Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken);

@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
 using Modules.Wms.Domain.Warehousing;
 
@@ -182,6 +183,35 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .ToListAsync(cancellationToken);
     }
 
+    // Sólo cuenta el Count con una línea abierta sobre exactamente esa clave. Lote nulo es «sin lote» (IS NOT DISTINCT FROM; el cast
+    // a uuid tipa el parámetro nulo). Sin FOR UPDATE: quien enlaza bloquea la fila después y vuelve a mirar su estado.
+    public async Task<Guid?> FindOpenCountAsync(
+        Guid tenantId,
+        Guid warehouseId,
+        Guid ownerId,
+        Guid locationId,
+        Guid variantId,
+        Guid? lotId,
+        StockStatus stockStatus,
+        CancellationToken cancellationToken)
+    {
+        var status = stockStatus.ToString();
+        var found = await dbContext.Database
+            .SqlQuery<Guid>(
+                $"""
+                SELECT t.id AS "Value" FROM wms.tasks t
+                JOIN wms.task_lines l ON l.task_id = t.id
+                WHERE t.tenant_id = {tenantId} AND t.warehouse_id = {warehouseId} AND t.owner_id = {ownerId}
+                  AND t.type = 'Count' AND t.status NOT IN ('Done','Cancelled')
+                  AND l.line_status = 'Open' AND l.from_location_id = {locationId} AND l.variant_id = {variantId}
+                  AND l.lot_id IS NOT DISTINCT FROM {lotId}::uuid AND l.stock_status = {status}
+                ORDER BY t.created_at, t.id
+                LIMIT 1
+                """)
+            .ToListAsync(cancellationToken);
+        return found.Count == 0 ? null : found[0];
+    }
+
     public Task<WarehouseTask?> FindInProgressOfMemberAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) =>
         WithLines(OfTenant(tenantId))
             .FirstOrDefaultAsync(
@@ -212,6 +242,9 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
 
         // DA-33: lo que la persona saltó hace poco no se le vuelve a ofrecer, salvo que se lo hayan asignado. El FOR UPDATE sólo
         // bloquea la fila de la tarea: la subconsulta de la historia no bloquea nada.
+        // DA-45: tampoco se le ofrece el Count que verifica una novedad que ella misma reportó (no cuenta su propio faltante), salvo
+        // que el supervisor se lo haya asignado. Lee wms.incidents por nombre de columna (verification_task_id, reported_by): ver
+        // la regla sql-entre-modulos. La subconsulta tampoco bloquea nada.
         var candidates = await dbContext.Database
             .SqlQuery<Guid>(
                 $"""
@@ -224,6 +257,9 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
                         SELECT 1 FROM wms.task_events e
                         WHERE e.task_id = t.id AND e.kind = 'Unclaimed' AND e.detail = 'Skipped'
                           AND e.member_id = {memberId} AND e.occurred_at > {skippedSince}))
+                  AND (t.assigned_member_id = {memberId} OR NOT EXISTS (
+                        SELECT 1 FROM wms.incidents i
+                        WHERE i.verification_task_id = t.id AND i.reported_by = {memberId}))
                 ORDER BY (t.assigned_member_id IS NOT NULL) DESC,
                   (t.priority
                    + CASE WHEN t.urgent THEN 10 ELSE 0 END
