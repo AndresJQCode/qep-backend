@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -2467,5 +2468,96 @@ public sealed class OrderTests
         var ex = Assert.Throws<QuotationsDomainException>(() => order.CancelByBuyer(buyer, Now.AddHours(1)));
         Assert.Equal("order.order.not_cancellable_by_buyer", ex.Code);
         Assert.Equal(status, order.Status);
+    }
+
+    // ---- Pedidos de proyecto (spec 2026-11-26) ----
+
+    private static Quotation ConvertedProjectQuotation()
+    {
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "COT-2026-0002", ClientId, Advisor, new DateOnly(2026, 11, 1), paymentMethod: null,
+            notes: null, QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [],
+            MunicipalContext.None, Advisor, Now, QuotationKind.Project);
+        var service = new ProjectServiceLine(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), 19, ProductKind.Service, SalesUnit.Service);
+        var scope = ProjectScope.Create(
+            service.VariantId, ProjectPricingMode.PerPhase, null,
+            [
+                new ProjectPhase(Guid.CreateVersion7(), "Descubrimiento", 600_000m,
+                    [new ProjectItem(Guid.CreateVersion7(), "Talleres")]),
+                new ProjectPhase(Guid.CreateVersion7(), "Construcción", 400_000m, []),
+            ],
+            []);
+        quotation.ReplaceProjectScope(scope, service, Advisor, Now);
+        quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [service.VariantId] = new("DEV", "Desarrollo de software"),
+        });
+
+        return quotation;
+    }
+
+    private static Order ProjectOrder(Quotation quotation) =>
+        Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0002", quotation, null, ConvertedBy, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+
+    [Fact]
+    public void OrderFromAProjectCopiesKindScopeAndLine()
+    {
+        var quotation = ConvertedProjectQuotation();
+
+        var order = ProjectOrder(quotation);
+
+        Assert.Equal(QuotationKind.Project, order.Kind);
+        Assert.Equal(quotation.ProjectScope, order.ProjectScope);
+        Assert.Equal(
+            quotation.ProjectScope!.Phases.Select(phase => phase.Id), order.ProjectScope!.Phases.Select(phase => phase.Id));
+        Assert.Equal(
+            quotation.ProjectScope.Phases[0].Items.Select(item => item.Id),
+            order.ProjectScope.Phases[0].Items.Select(item => item.Id));
+        var quoted = Assert.Single(quotation.Items);
+        var line = Assert.Single(order.Items);
+        Assert.Equal(quoted.VariantId, line.VariantId);
+        Assert.Equal(1m, line.Quantity);
+        Assert.Equal(quoted.UnitPrice, line.UnitPrice);
+        Assert.Equal(1_000_000m, line.UnitPrice);
+        Assert.Equal(ProductKind.Service, line.Kind);
+        Assert.Equal("Desarrollo de software", line.ProductName);
+        Assert.Equal(quotation.Total, order.Total);
+    }
+
+    [Fact]
+    public void AnOrderFromAStandardQuotationHasNoProjectScope()
+    {
+        var order = ProjectOrder(ConvertedQuotation());
+
+        Assert.Equal(QuotationKind.Standard, order.Kind);
+        Assert.Null(order.ProjectScope);
+    }
+
+    [Fact]
+    public void AProjectOrderLocksItsLines()
+    {
+        var order = ProjectOrder(ConvertedProjectQuotation());
+        var line = order.Items.Single();
+
+        QuotationsDomainException[] errors =
+        [
+            Assert.Throws<QuotationsDomainException>(() => order.AddItem(
+                OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 1m, 0m, 19, OrderLineCosts.None,
+                Advisor, Now)),
+            Assert.Throws<QuotationsDomainException>(() => order.AddGift(
+                OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 1m, 19, OrderLineCosts.None,
+                Advisor, Now)),
+            Assert.Throws<QuotationsDomainException>(
+                () => order.UpdateItemQuantity(line.Id, 2m, 0m, 19, Advisor, Now)),
+            Assert.Throws<QuotationsDomainException>(() => order.ChangeItemUnitPrice(line.Id, 5m, Advisor, Now)),
+            Assert.Throws<QuotationsDomainException>(() => order.RemoveItem(line.Id, Advisor, Now)),
+        ];
+
+        Assert.All(errors, error => Assert.Equal("order.project.items_locked", error.Code));
+        Assert.Equal(1m, Assert.Single(order.Items).Quantity);
+        Assert.False(order.RequiresShipping);
     }
 }

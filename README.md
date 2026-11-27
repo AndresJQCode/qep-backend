@@ -5241,8 +5241,15 @@ prendido, al importador:
 - El pedido entra por `IExternalOrderWriter` con la clave externa `"{shopId}:{shopifyOrderId}"`: el índice único
   `IX_orders_tenant_external_key` hace que el mismo pedido dos veces (webhook y conciliación a la vez, o el worker que
   cae entre crear el pedido y guardar la fila) deje un solo pedido. Lo que entra con algo que revisar lleva `warnings`
-  (`customer_incomplete`, `shipping_address_unresolved`, `total_difference`, `carrier_unrecognized`,
-  `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
+  (`customer_incomplete`, `shipping_address_unresolved`, `shipping_region_unresolved`, `total_difference`,
+  `carrier_unrecognized`, `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
+- **Dirección de envío de fuera de Colombia.** El pedido nace con su parte de envío: el país del snapshot, la ciudad escrita
+  (`cityName`, máx. 120), el `zip` como `postalCode` y, en España, la región (`regionId`) traducida del `province_code` (ISO →
+  INE). Sin región traducible la parte entra sin ella, con `shipping_region_unresolved`; se elige en «Editar pedido». Sin
+  nombre, teléfono, dirección, correo del comprador o ciudad, o con alguno más largo que lo que guarda el pedido (ciudad 120,
+  nombre y dirección 255, correo 254, teléfono 32), no hay parte:
+  `shipping_address_unresolved` y la dirección cruda en las notas, como en Colombia. El cliente no cambia (el alta completa
+  sigue siendo sólo de Colombia) y los pedidos ya importados no se reescriben.
 - Después de importado, el resto de las ediciones de Shopify (líneas, envío, dirección, nota, atributos) llegan como
   **cambios** (ver «Ediciones del pedido» abajo), y además se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
   contraentrega se prepara y se cobra después; con comprobantes, o anulado o facturado, el rechazo queda en `last_error`;
@@ -5336,8 +5343,10 @@ atributos) viaja a Shopify.
   Un pedido sin código postal no toma como cambio un `zip` que Shopify no modificó. Un payload guardado antes de que el espejo
   leyera el zip no tiene la clave (distinto de `"zip": null`): de ese zip desconocido no sale ningún cambio.
 - **El eco de una dirección de fuera de Colombia** se reconoce comparando lo que llega con lo que el envío de la parte del pedido
-  mandaría (`ShopifyPushAddress`, la misma regla de los dos lados): si coincide, no hay cambio; si no, es conflicto
-  `city_unresolved`, porque las ciudades de afuera todavía no se importan.
+  mandaría (`ShopifyPushAddress`, la misma regla de los dos lados): si coincide, no hay cambio. Lo que no es eco se compara
+  como en Colombia, con la regla de la importación (`ShopifyForeignAddress`): se aplica si el asesor no tocó la parte (sin
+  región traducible, sin región) o es conflicto `qep_changed`. `city_unresolved` queda para una dirección sin ciudad o con una
+  de más de 120 caracteres, y no va a la bandeja de ciudades. El cambio de **sólo** el país no genera fila de diferencia.
 - **El envío.** `ShopifyOrderPushWorker` corre cada 10 s, en lotes de 50, y manda `orderUpdate` (GraphQL, `shopify.admin`) con
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
   (`lastName` y `address2` vacíos, D12) y la `company` del **último** snapshot, porque `orderUpdate` reemplaza la dirección

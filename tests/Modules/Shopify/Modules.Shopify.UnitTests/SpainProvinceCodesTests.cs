@@ -30,4 +30,18 @@ public sealed class SpainProvinceCodesTests
     [InlineData("", null)]
     public void IsoForTranslatesTheIneCode(string ineCode, string? iso) =>
         Assert.Equal(iso, SpainProvinceCodes.IsoFor(ineCode));
+
+    [Theory]
+    [InlineData("M", "28")]
+    [InlineData(" m ", "28")]
+    [InlineData("B", "08")]
+    [InlineData("CO", "14")]
+    [InlineData("XX", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void IneForTranslatesTheIsoCodeBack(string? iso, string? ine) => Assert.Equal(ine, SpainProvinceCodes.IneFor(iso));
+
+    [Fact]
+    public void IneForInvertsEveryEntry() =>
+        Assert.All(SpainProvinceCodes.All, entry => Assert.Equal(entry.Key, SpainProvinceCodes.IneFor(entry.Value)));
 }
