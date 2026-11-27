@@ -97,6 +97,7 @@ public sealed class ReportIncidentHandler(
     IIncidentRepository incidents,
     TaskIncidentRecorder recorder,
     IncidentDtoComposer composer,
+    WmsNumberingDay numberingDay,
     IValidator<ReportIncidentCommand> validator)
     : ICommandHandler<ReportIncidentCommand, IncidentDto>
 {
@@ -180,7 +181,7 @@ public sealed class ReportIncidentHandler(
         // numerar la novedad, igual que en short.
         var verification = await recorder.LockVerificationAsync(
             type, subject, command.TenantId, warehouse.Id.Value, owner.Value, cancellationToken);
-        var number = await incidents.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await incidents.NextNumberAsync(command.TenantId, await numberingDay.OfAsync(command.TenantId, now, cancellationToken), cancellationToken);
         var incident = Incident.Report(
             command.TenantId,
             number,

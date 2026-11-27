@@ -13,6 +13,26 @@ public sealed class TaskSupervisorApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    // B5 (owner, 2026-11-27): el día del número es el del huso del tenant (el arnés usa America/Bogota), no el de UTC.
+    [Fact]
+    public async Task TheDailyNumberCutsTheDayInTheTenantTimeZone()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+        string DayOf(DateTimeOffset instant) =>
+            TimeZoneInfo.ConvertTime(instant, bogota).ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+        var before = DayOf(DateTimeOffset.UtcNow);
+
+        var task = await CreateAsync(s.Manager, Body(s, [Line(s.VariantId, s.BinA, destination)]));
+
+        var after = DayOf(DateTimeOffset.UtcNow);
+        Assert.Contains(task.Number, new[] { $"TSK-{before}-0001", $"TSK-{after}-0001" });
+    }
+
     [Fact]
     public async Task CreatingAMoveReturns201ReadyWithItsLines()
     {

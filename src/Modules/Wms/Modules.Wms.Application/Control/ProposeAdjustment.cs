@@ -85,6 +85,7 @@ public sealed class ProposeAdjustmentHandler(
     IAdjustmentRepository adjustments,
     IWmsCatalogReader catalog,
     AdjustmentDtoComposer composer,
+    WmsNumberingDay numberingDay,
     IValidator<ProposeAdjustmentCommand> validator)
     : ICommandHandler<ProposeAdjustmentCommand, AdjustmentDto>
 {
@@ -121,7 +122,7 @@ public sealed class ProposeAdjustmentHandler(
         await EnsureVariantsExistAsync(command, cancellationToken);
         var lines = await BuildLinesAsync(command, warehouse, ownerId, now, cancellationToken);
 
-        var number = await adjustments.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await adjustments.NextNumberAsync(command.TenantId, await numberingDay.OfAsync(command.TenantId, now, cancellationToken), cancellationToken);
         var adjustment = Adjustment.Propose(
             command.TenantId,
             number,

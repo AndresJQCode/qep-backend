@@ -85,6 +85,7 @@ public sealed class CreateMoveTaskHandler(
     IWmsMemberDirectory members,
     IWarehouseTaskRepository tasks,
     WarehouseTaskDtoComposer composer,
+    WmsNumberingDay numberingDay,
     IValidator<CreateMoveTaskCommand> validator)
     : ICommandHandler<CreateMoveTaskCommand, TaskDto>
 {
@@ -125,7 +126,7 @@ public sealed class CreateMoveTaskHandler(
         }
 
         var now = clock.UtcNow;
-        var number = await tasks.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        var number = await tasks.NextNumberAsync(command.TenantId, await numberingDay.OfAsync(command.TenantId, now, cancellationToken), cancellationToken);
         var task = WarehouseTask.CreateMove(
             command.TenantId,
             number,

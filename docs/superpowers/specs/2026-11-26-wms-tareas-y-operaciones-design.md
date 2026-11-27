@@ -1079,15 +1079,18 @@ ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que
   `version + 1` y un evento `Claimed` con el celular nuevo (sin un `TaskEventKind` nuevo). El primer celular recibe 409
   `wms.task.lease_lost` con `resumable: false` al confirmar, reportar faltante, contar, latir o soltar. Desde el mismo celular
   nada cambia (mismo token, sin evento ni versión). Reemplaza el comportamiento provisional de T1.
+- **B5. Decidido e implementado.** El día de `TSK-yyyyMMdd-NNNN` es el del huso del tenant (`ITenantClock`), no el de UTC, para el
+  mismo instante `now` que usa el handler (`WmsNumberingDay`). Los números ya emitidos no cambian. Decisión del agente, por confirmar:
+  `ADJ-` e `INC-` también cortan el día en el huso del tenant (la tarjeta decía «como los ajustes», pero en el código ajustes y
+  novedades cortaban en UTC). El contador diario sigue siendo por prefijo `TSK-yyyyMMdd-`: el día local cambia de prefijo a las 00:00 locales.
 
 **Pendientes del owner** (no se implementan sin respuesta):
 
 - **B4.** ¿Un reclamo tiene una edad máxima, aunque siga latiendo? Hoy un operario que deja la app abierta la conserva sin límite.
-- **B5.** ¿La numeración diaria `TSK-yyyyMMdd-NNNN` corta el día en hora de Colombia? Hoy corta en UTC.
 
 ## 14. Preguntas para el owner
 
-O-1 a O-7 se contestaron el 2026-11-26: ver §13.1. M3 se decidió el 2026-11-27 (§13.1); siguen abiertas B4 y B5.
+O-1 a O-7 se contestaron el 2026-11-26: ver §13.1. M3 y B5 se decidieron el 2026-11-27 (§13.1); sigue abierta B4.
 
 ## 15. Riesgos
 

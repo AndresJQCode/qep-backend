@@ -7046,6 +7046,8 @@ tarea del pool o de otra persona: el trabajo nuevo llega por `next`),
 `wms.uom.precision_exceeded` y `wms.lot.not_found` (404); al confirmar, los del ledger (`wms.stock.insufficient`,
 `wms.location.blocked`, `wms.lot.required`, `wms.movement.occurred_at_out_of_range`…) tal cual.
 
+**Numeración.** `TSK-yyyyMMdd-NNNN`, `ADJ-…` e `INC-…` cortan el día en el huso del tenant (`ITenantClock`), no en UTC; un número ya emitido no cambia.
+
 Una variante con una línea abierta en una tarea sin terminar, o con una novedad abierta, no se borra de Catalog.
 
 #### Novedades y conteo de verificación (T2)
