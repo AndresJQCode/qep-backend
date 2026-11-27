@@ -34,6 +34,29 @@ internal sealed partial class TaskWorld
     /// actúan entre la lectura y el bloqueo de quien la reclama.</summary>
     public Action<WarehouseTask>? OnLoadTask { get; set; }
 
+    /// <summary>Los ganchos que corren cuando una tarea se cierra, en orden de registro.</summary>
+    public List<ITaskClosedHook> Hooks { get; } = [];
+
+    public TaskClosedNotifier Notifier() => new(Hooks);
+
+    public OperatorLineRunner LineRunner(string? key = "key-1") =>
+        new(
+            Context(),
+            Authorization,
+            Caller(),
+            UnitOfWork(),
+            new IdempotencyScope { Key = key },
+            ReceiptStore(),
+            Repository(),
+            new OperatorTaskGuard(Context(), Authorization),
+            Metrics,
+            Clock(),
+            Composer(),
+            Notifier());
+
+    public SupervisorTaskRunner SupervisorRunner() =>
+        new(Context(), Authorization, Repository(), UnitOfWork(), Recorder(), Clock(), Caller(), Composer(), Notifier());
+
     public IExecutionContext Context() => new FakeContext(this);
 
     public WmsAuthorization Authorization { get; } = new(new FakeModules());

@@ -10,16 +10,7 @@ public sealed class SupervisorTaskActionsTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static SupervisorTaskRunner Runner(TaskWorld world) =>
-        new(
-            world.Context(),
-            world.Authorization,
-            world.Repository(),
-            world.UnitOfWork(),
-            world.Recorder(),
-            world.Clock(),
-            world.Caller(),
-            world.Composer());
+    private static SupervisorTaskRunner Runner(TaskWorld world) => world.SupervisorRunner();
 
     private static Task<TaskDto> CancelLineAsync(TaskWorld world, Guid taskId, Guid lineId, long version) =>
         new CancelTaskLineHandler(Runner(world), new CancelTaskLineValidator())

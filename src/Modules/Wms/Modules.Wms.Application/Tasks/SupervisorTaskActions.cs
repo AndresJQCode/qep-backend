@@ -10,9 +10,9 @@ namespace Modules.Wms.Application;
 
 /// <summary>
 /// El molde de las acciones del supervisor: autoriza → bloquea la fila → carga (404) → autoriza con dueño y bodega → versión (412) →
-/// muta → audita → compone → guarda. El bloqueo va antes de cargar, como en las rutas del operario: así una acción nunca se cruza con
-/// una confirmación a medias (la tarea siempre se bloquea antes que sus líneas y que los saldos) y la versión se compara con la fila
-/// vigente.
+/// muta → avisa el cierre → audita → compone → guarda. El bloqueo va antes de cargar, como en las rutas del operario: así una acción
+/// nunca se cruza con una confirmación a medias (la tarea siempre se bloquea antes que sus líneas y que los saldos) y la versión se
+/// compara con la fila vigente.
 /// </summary>
 public sealed class SupervisorTaskRunner(
     IExecutionContext executionContext,
@@ -22,7 +22,8 @@ public sealed class SupervisorTaskRunner(
     IWmsAuditRecorder auditRecorder,
     IClock clock,
     WmsCaller caller,
-    WarehouseTaskDtoComposer composer)
+    WarehouseTaskDtoComposer composer,
+    TaskClosedNotifier closed)
 {
     public Task AuthorizeAsync(Guid tenantId, CancellationToken cancellationToken) =>
         authorization.EnsureAsync(executionContext, tenantId, WmsPermissions.TaskManage, ct: cancellationToken);
@@ -61,7 +62,9 @@ public sealed class SupervisorTaskRunner(
         }
 
         var now = clock.UtcNow;
+        var before = task.Status;
         mutate(task, actor, now);
+        await closed.NotifyIfClosedAsync(before, new TaskClosed(task, actor, null, now, now), cancellationToken);
 
         var changed = new Dictionary<string, string?>(fields)
         {
