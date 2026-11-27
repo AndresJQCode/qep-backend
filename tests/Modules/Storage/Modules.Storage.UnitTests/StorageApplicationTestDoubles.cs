@@ -127,13 +127,19 @@ internal sealed class RecordingStorageAuditPublisher : IStorageAuditPublisher
 {
     public List<string> Actions { get; } = [];
 
+    /// <summary>Lo que se publicó como el sistema, completo: la acción sola no dice por qué ni sobre qué.</summary>
+    public List<(Guid? TenantId, string Action, string ResourceType, string ResourceId, string Outcome)> SystemEntries { get; } = [];
+
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
         Actions.Add(action);
 
     public void PublishSystem(
-        Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt)
+    {
         Actions.Add(action);
+        SystemEntries.Add((tenantId, action, resourceType, resourceId, outcome));
+    }
 }
 
 internal sealed class AllowAllExecutionContext(Guid tenantId) : IExecutionContext

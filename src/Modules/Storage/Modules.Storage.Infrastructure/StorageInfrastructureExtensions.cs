@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure.ChatbotMedia;
+using Modules.Storage.Infrastructure.HrDocuments;
 using Modules.Storage.Infrastructure.Imaging;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
@@ -84,6 +85,13 @@ public static class StorageInfrastructureExtensions
         // otro chatbot, una plantilla guardada o la bandeja todavía usan (IChatbotMediaReferences, de Bootstrapper).
         services.AddScoped<IChatbotMediaReleaseProcessor, ChatbotMediaReleaseProcessor>();
         services.AddHostedService<ChatbotMediaReleaseWorker>();
+        // Spec 2026-11-26 («PDF del registro eliminado»): purga los PDF que Hr soltó y ya no usa. IHrDocumentReferences lo registra
+        // Bootstrapper y es obligatorio para HrDocumentPurge: sin él el contenedor no se arma y nada se borra (falla cerrado).
+        services.AddScoped<IHrDocumentPurgeStore, HrDocumentPurgeStore>();
+        services.AddScoped<HrDocumentPurge>();
+        services.AddSingleton<HrDocumentReleaseProcessor>();
+        services.AddSingleton<IHrDocumentReleaseProcessor>(provider => provider.GetRequiredService<HrDocumentReleaseProcessor>());
+        services.AddHostedService<HrDocumentReleaseWorker>();
         // Spec 2026-11-17, «Closing the residual gaps», y 2026-11-18 («Lifecycle»): una vez al día suelta los archivos de sistema de más
         // de 24 h que ya nadie usa, un barrido por dueño. ITemplateImageReferences e IChatbotMediaReferences los registra Bootstrapper
         // (Storage no conoce a Messaging ni a Automations). Cada barrido también se registra por su tipo para que las pruebas lo corran solo.
