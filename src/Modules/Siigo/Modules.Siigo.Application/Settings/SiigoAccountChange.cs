@@ -50,7 +50,7 @@ public interface ISiigoAccountChange
     Task ResetAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
 
-internal sealed class SiigoAccountChange(
+public sealed class SiigoAccountChange(
     ISiigoApi api,
     ISiigoSettingsRepository settingsRepository,
     ISiigoUnitOfWork unitOfWork,

@@ -2362,6 +2362,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ISiigoVariantCatalog, SiigoVariantCatalog>();
         services.AddValidatorsFromAssemblyContaining<UpdateSiigoDocumentValidator>();
         services.AddScoped<ISiigoConnectionDirectory, SiigoConnectionDirectory>();
+        // Tarjeta 0pQhlDt5: editar la conexión con las credenciales de otra cuenta de Siigo. Siigo compara y borra su configuración;
+        // el adaptador de Bootstrapper une las dos bases en una transacción (Integrations no ve Siigo).
+        services.AddScoped<ISiigoAccountChange, SiigoAccountChange>();
+        services.AddScoped<IConnectionCredentialChangeGuard, SiigoCredentialChangeGuard>();
         services.AddScoped<ISiigoCompanyDirectory, SiigoCompanyDirectory>();
         services.AddScoped<ISiigoTaxRateDirectory, SiigoTaxRateDirectory>();
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
