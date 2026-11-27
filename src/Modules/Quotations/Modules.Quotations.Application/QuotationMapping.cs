@@ -171,7 +171,9 @@ internal static class QuotationMapping
         quotation.Currency,
         quotation.Total,
         quotation.CanBeSent,
-        hasItems && quotation.ValidUntil is not null && quotation.BillingAccount is not null,
+        // Un proyecto sin precio tiene su línea en 0: cuenta como línea, pero el envío lo rechaza.
+        hasItems && quotation.ValidUntil is not null && quotation.BillingAccount is not null
+            && (quotation.Kind != QuotationKind.Project || quotation.ProjectScope is { IsComplete: true }),
         order?.Id.Value,
         order?.Status.ToString(),
         quotation.ShippingDtoOf(),
