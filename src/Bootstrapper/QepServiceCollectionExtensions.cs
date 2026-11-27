@@ -557,6 +557,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetHrSettingsQuery, Modules.Hr.Application.HrSettingsDto>,
             Modules.Hr.Application.GetHrSettingsHandler>();
+        // Hr, birthday notices (spec 2026-11-26): the setting of who receives the daily digest.
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.BirthdayNoticesComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.BirthdayNotices.GetBirthdayNoticesQuery, Modules.Hr.Application.BirthdayNotices.BirthdayNoticesDto>,
+            Modules.Hr.Application.BirthdayNotices.GetBirthdayNoticesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.BirthdayNotices.SaveBirthdayNoticesCommand, Modules.Hr.Application.BirthdayNotices.BirthdayNoticesDto>,
+            Modules.Hr.Application.BirthdayNotices.SaveBirthdayNoticesHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.CreateSiteCommand, Modules.Hr.Application.SiteDto>,
             Modules.Hr.Application.CreateSiteHandler>();
@@ -2658,6 +2666,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        // Hr, birthday notices: the WhatsApp connections of the tenant and whether a manager has phone and email, by their own ports.
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.IHrWhatsAppConnections, HrWhatsAppConnections>();
+        services.AddScoped<Modules.Hr.Application.BirthdayNotices.IHrMemberContacts, HrMemberContacts>();
         services.AddScoped<Modules.Hr.Application.MedicalExams.IHrBusinessCalendar, HrBusinessCalendarSource>();
         // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
         services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();

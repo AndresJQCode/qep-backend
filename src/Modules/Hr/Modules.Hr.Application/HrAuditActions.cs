@@ -37,8 +37,12 @@ public static class HrAuditActions
     public const string SettingsUnarchived = "hr.settings.unarchived";
     public const string SettingsDeleted = "hr.settings.deleted";
 
+    // Birthday notices (spec 2026-11-26 §5.1): names of fields only. The resource id is the tenant id (one setting per tenant).
+    public const string BirthdayNoticesSaved = "hr.birthday_notices.saved";
+
     public static class Resources
     {
+        public const string BirthdayNotices = "birthday_notices";
         public const string Employee = "employee";
         public const string Contract = "contract";
         public const string Site = "site";

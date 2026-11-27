@@ -19,14 +19,16 @@ public sealed class BirthdayNoticeSetting
     public const int MaxLeadDays = 7;
     public const int DefaultLeadDays = 1;
 
+    private List<Guid> _managerMemberIds = [];
+
     private BirthdayNoticeSetting()
     {
     }
 
     public Guid TenantId { get; private set; }
 
-    /// <summary>Stored as <c>uuid[]</c>: a <see cref="List{T}"/> keeps the EF Core mapping simple.</summary>
-    public List<Guid> ManagerMemberIds { get; private set; } = [];
+    /// <summary>Stored as <c>uuid[]</c> through the <c>_managerMemberIds</c> field (EF Core maps lists, not read-only lists).</summary>
+    public IReadOnlyList<Guid> ManagerMemberIds => _managerMemberIds;
 
     public int LeadDays { get; private set; }
 
@@ -70,7 +72,7 @@ public sealed class BirthdayNoticeSetting
                 });
         }
 
-        ManagerMemberIds = values.ManagerMemberIds.Distinct().ToList();
+        _managerMemberIds = values.ManagerMemberIds.Distinct().ToList();
         LeadDays = values.LeadDays;
         WhatsAppEnabled = values.WhatsAppEnabled;
         WhatsAppConnectionId = values.WhatsAppEnabled ? values.WhatsAppConnectionId : null;

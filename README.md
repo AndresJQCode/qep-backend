@@ -2733,6 +2733,25 @@ enviarla, crea el pedido en el tenant mayorista (`source: "Wholesale"`, `externa
   anulación del mayorista (`quotations.order.wholesale-cancelled.v1`) cancela la orden salvo si ya se recibió.
 - **Proveedores** suma `linkedRelationshipStatus` (`Active`, `Blocked`, `Invited` o `null`) en la lista y el detalle.
 
+### RRHH: avisos de cumpleaños
+
+Spec `docs/superpowers/specs/2026-11-26-hr-birthday-notices-design.md`. Un resumen diario por persona designada, con los
+cumpleaños de hoy y los de dentro de `leadDays` días. Sin fila guardada la función está apagada.
+
+- **`GET /api/v1/tenants/{tenantId}/hr/birthday-notices`** (`hr.employee.read`): `200` con `managers`
+  (`{ memberId, displayName, hasPhone, hasEmail, hasHrAccess }`, en el orden guardado), `leadDays`, `whatsAppEnabled`,
+  `whatsAppConnectionId`, `emailEnabled` y `version`. Sin fila: sin personas, `leadDays` 1, canales apagados y `version` `null`.
+- **`PUT` a la misma ruta** (`hr.settings.manage` + `hr.employee.read`): cuerpo `{ managerMemberIds, leadDays, whatsAppEnabled,
+  whatsAppConnectionId, emailEnabled }` y la misma respuesta. Es un upsert: sin fila el primer `PUT` va **sin** `If-Match` (con él,
+  `412 concurrency.conflict`); con fila `If-Match` es obligatorio (`428 precondition.if_match_required`) y una versión vieja es `412`.
+- **`422`:** `validation.failed` (con el mapa `errors`: `managerMemberIds` nulo o con más de 20 personas, `leadDays` fuera de 0 a 7),
+  `hr.birthday_notice.manager_not_found` (no es un miembro activo del tenant), `hr.birthday_notice.manager_without_access` (sin
+  `hr.employee.read`), `hr.birthday_notice.connection_required` (WhatsApp prendido sin conexión) y
+  `hr.birthday_notice.connection_invalid` (no es una conexión de WhatsApp activa del tenant). Los cuatro marcan su campo.
+  `403` si el tenant de la ruta no es el activo o falta un permiso. Sin teléfono o sin correo **no** es error: el `GET` lo avisa con
+  `hasPhone` / `hasEmail`.
+- **Auditoría:** `hr.birthday_notices.saved` (recurso `birthday_notices`, id = el tenant), sólo nombres de campo.
+
 ## Arquitectura y persistencia
 
 ```txt

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Hr.Application;
+using Modules.Hr.Application.BirthdayNotices;
 using Modules.Hr.Application.MedicalExams;
 using Modules.Hr.Infrastructure.Excel;
 using Modules.Hr.Infrastructure.Persistence;
@@ -32,6 +33,7 @@ public static class HrInfrastructureExtensions
         services.AddScoped<ILegalParameterSource, LegalParameterSource>();
         services.AddScoped<ILegalParameterRepository, LegalParameterRepository>();
         services.AddScoped<IHrSettingsRepository, HrSettingsRepository>();
+        services.AddScoped<IBirthdayNoticeSettingRepository, BirthdayNoticeSettingRepository>();
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeActivityLog, EmployeeActivityLog>();
         services.AddScoped<IMedicalExamRepository, MedicalExamRepository>();

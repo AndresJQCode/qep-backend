@@ -61,6 +61,8 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
 
     internal DbSet<DailyDigest> DailyDigests => Set<DailyDigest>();
 
+    public DbSet<BirthdayNoticeSetting> BirthdayNoticeSettings => Set<BirthdayNoticeSetting>();
+
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -83,6 +85,28 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         ConfigureOutboxProjection(modelBuilder);
         ConfigureTenantRun(modelBuilder);
         ConfigureDailyDigest(modelBuilder);
+        ConfigureBirthdayNoticeSettings(modelBuilder);
+    }
+
+    // Spec 2026-11-26 §5.1: one row per tenant. `version` is the optimistic concurrency token of the PUT (If-Match). The managers
+    // are a `uuid[]` read and written whole through the `_managerMemberIds` field; they are never queried by member.
+    private static void ConfigureBirthdayNoticeSettings(ModelBuilder modelBuilder)
+    {
+        var setting = modelBuilder.Entity<BirthdayNoticeSetting>();
+        setting.ToTable("birthday_notice_settings", Schema);
+        setting.HasKey(value => value.TenantId);
+        setting.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        setting.Ignore(value => value.ManagerMemberIds);
+        setting.Property<List<Guid>>("_managerMemberIds").HasColumnName("manager_member_ids").HasColumnType("uuid[]");
+        setting.Property(value => value.LeadDays).HasColumnName("lead_days");
+        setting.Property(value => value.WhatsAppEnabled).HasColumnName("whatsapp_enabled");
+        // The id of a connection of Integrations: no FK, another module.
+        setting.Property(value => value.WhatsAppConnectionId).HasColumnName("whatsapp_connection_id");
+        setting.Property(value => value.EmailEnabled).HasColumnName("email_enabled");
+        setting.Property(value => value.UpdatedByMemberId).HasColumnName("updated_by_member_id");
+        setting.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        setting.Property(value => value.CreatedAt).HasColumnName("created_at");
+        setting.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     // `column IN ('A','B')` para un enum guardado como texto: la base no depende de quien escribe.
