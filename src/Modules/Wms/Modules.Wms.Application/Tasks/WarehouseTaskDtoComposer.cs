@@ -93,7 +93,9 @@ public sealed class WarehouseTaskDtoComposer(
                     line.QuantityConfirmed,
                     line.Remaining,
                     line.Status.ToString(),
-                    baseUoms.GetValueOrDefault(line.VariantId) ?? string.Empty);
+                    baseUoms.GetValueOrDefault(line.VariantId) ?? string.Empty,
+                    // Sólo lo que el operario contó; lo esperado nunca viaja (DA-39). Un Count muestra planeado y faltante en cero.
+                    line.QuantityCounted);
             })],
             [.. history.Select(value => new TaskEventDto(
                 value.Kind.ToString(),

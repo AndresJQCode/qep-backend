@@ -29,6 +29,10 @@ public sealed class WarehouseTaskLine
 
     public decimal QuantityConfirmed { get; private set; }
 
+    /// <summary>Lo que el operario contó, sólo en la línea de un <c>Count</c>; <c>null</c> mientras no cuenta. Cero es una cuenta
+    /// válida.</summary>
+    public decimal? QuantityCounted { get; private set; }
+
     public TaskLineStatus Status { get; private set; }
 
     public string? CancelReason { get; private set; }
@@ -63,7 +67,30 @@ public sealed class WarehouseTaskLine
         };
     }
 
+    /// <summary>La línea de un conteo: una clave sin destino y con lo planeado en cero. Lo esperado no vive en la línea: el servidor lo
+    /// calcula al contar, y así nada que llegue al operario lo revela (DA-39).</summary>
+    public static WarehouseTaskLine CreateCount(Guid variantId, LotId? lotId, StockStatus stockStatus, LocationId location) =>
+        new()
+        {
+            Id = Guid.CreateVersion7(),
+            VariantId = variantId,
+            LotId = lotId,
+            StockStatus = stockStatus,
+            FromLocationId = location,
+            ToLocationId = null,
+            QuantityPlanned = 0,
+            Status = TaskLineStatus.Open,
+        };
+
     internal void Place(int position) => Position = position;
+
+    /// <summary>La tarea ya validó la línea abierta, la cuenta y el lote. El lote escaneado completa una línea que no fijaba lote.</summary>
+    internal void RecordCount(decimal counted, LotId? lot)
+    {
+        QuantityCounted = counted;
+        LotId ??= lot;
+        Status = TaskLineStatus.Done;
+    }
 
     /// <summary>La tarea ya validó que la línea está abierta y que la cantidad no supera lo pendiente.</summary>
     internal void Confirm(decimal quantity)

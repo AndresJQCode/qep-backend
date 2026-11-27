@@ -101,11 +101,7 @@ public sealed class WarehouseTask
     {
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentException.ThrowIfNullOrWhiteSpace(number);
-
-        if (lines.Count is < 1 or > MaxLines)
-        {
-            throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, $"Una tarea lleva entre 1 y {MaxLines} líneas.");
-        }
+        EnsureLineCount(lines);
 
         if (lines.Any(line => line.ToLocationId is null))
         {
@@ -113,7 +109,67 @@ public sealed class WarehouseTask
                 WmsErrorCodes.TaskLocationInvalid, "Cada línea de un movimiento interno necesita una ubicación de destino.");
         }
 
-        var effectivePriority = priority ?? TaskTypePolicy.DefaultPriority(WarehouseTaskType.Move);
+        var task = NewTask(
+            WarehouseTaskType.Move, tenantId, number, warehouse, owner, priority, dueAt, note, lines, assignTo, createdBy,
+            TaskSourceType.Manual, null, now);
+
+        // Publicar al crear no es otra transición: la tarea nace con la versión 1.
+        if (publish)
+        {
+            task.Release(createdBy, now);
+        }
+
+        return task;
+    }
+
+    /// <summary>El conteo de verificación que genera una novedad (spec §6.2 y §8.4): nace publicado, sin asignado y del sistema
+    /// (<see cref="CreatedBy"/> es <see cref="Guid.Empty"/>, y sus hechos de creación no llevan persona). <paramref name="sourceId"/> es
+    /// la novedad que lo originó. Cada línea es una clave sin destino con lo planeado en cero (<see cref="WarehouseTaskLine.CreateCount"/>).</summary>
+    public static WarehouseTask CreateCount(
+        Guid tenantId,
+        string number,
+        WarehouseId warehouse,
+        OwnerId owner,
+        IReadOnlyList<WarehouseTaskLine> lines,
+        TaskSourceType sourceType,
+        Guid sourceId,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        ArgumentException.ThrowIfNullOrWhiteSpace(number);
+        EnsureLineCount(lines);
+
+        if (lines.Any(line => line.ToLocationId is not null || line.QuantityPlanned != 0))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.TaskLineInvalid, "Cada línea de un conteo es una ubicación sin destino y con lo planeado en cero.");
+        }
+
+        var task = NewTask(
+            WarehouseTaskType.Count, tenantId, number, warehouse, owner, null, null, null, lines, null, Guid.Empty, sourceType,
+            sourceId, now);
+        task.Release(Guid.Empty, now);
+        return task;
+    }
+
+    // Lo que comparten todos los tipos al nacer: prioridad, nota, líneas colocadas en orden y el hecho de creación.
+    private static WarehouseTask NewTask(
+        WarehouseTaskType type,
+        Guid tenantId,
+        string number,
+        WarehouseId warehouse,
+        OwnerId owner,
+        int? priority,
+        DateTimeOffset? dueAt,
+        string? note,
+        IReadOnlyList<WarehouseTaskLine> lines,
+        Guid? assignTo,
+        Guid createdBy,
+        TaskSourceType sourceType,
+        Guid? sourceId,
+        DateTimeOffset now)
+    {
+        var effectivePriority = priority ?? TaskTypePolicy.DefaultPriority(type);
         EnsurePriority(effectivePriority);
 
         var trimmedNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
@@ -129,11 +185,12 @@ public sealed class WarehouseTask
             WarehouseId = warehouse,
             OwnerId = owner,
             Number = number,
-            Type = WarehouseTaskType.Move,
+            Type = type,
             Status = WarehouseTaskStatus.Planned,
             Priority = effectivePriority,
             DueAt = dueAt?.ToUniversalTime(),
-            SourceType = TaskSourceType.Manual,
+            SourceType = sourceType,
+            SourceId = sourceId,
             Note = trimmedNote,
             AssignedMemberId = assignTo,
             CreatedBy = createdBy,
@@ -146,15 +203,16 @@ public sealed class WarehouseTask
             task._lines.Add(lines[index]);
         }
 
-        task.Record(TaskEventKind.Created, createdBy, now);
-
-        // Publicar al crear no es otra transición: la tarea nace con la versión 1.
-        if (publish)
-        {
-            task.Release(createdBy, now);
-        }
-
+        task.Record(TaskEventKind.Created, createdBy == Guid.Empty ? null : createdBy, now);
         return task;
+    }
+
+    private static void EnsureLineCount(IReadOnlyList<WarehouseTaskLine> lines)
+    {
+        if (lines.Count is < 1 or > MaxLines)
+        {
+            throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, $"Una tarea lleva entre 1 y {MaxLines} líneas.");
+        }
     }
 
     public WarehouseTaskLine? FindLine(Guid lineId) => _lines.Find(line => line.Id == lineId);
@@ -372,6 +430,7 @@ public sealed class WarehouseTask
         DateTimeOffset? occurredAt = null,
         bool memberIsBusy = false)
     {
+        EnsureLineActionOfType(false, "confirm-line");
         var (line, lease, device, scannedAt) = PrepareLineWrite(
             memberId,
             leaseToken,
@@ -418,6 +477,7 @@ public sealed class WarehouseTask
         DateTimeOffset? occurredAt = null,
         bool memberIsBusy = false)
     {
+        EnsureLineActionOfType(false, "short-line");
         var (line, lease, device, scannedAt) = PrepareLineWrite(
             memberId,
             leaseToken,
@@ -467,6 +527,69 @@ public sealed class WarehouseTask
         Record(TaskEventKind.LineShort, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: missing, recordedAt: now);
         CloseIfFinished(memberId, scannedAt, now);
         return line;
+    }
+
+    /// <summary>El operario cuenta lo que hay en la ubicación de la línea, a ciegas (DA-40): <paramref name="quantityCounted"/> puede
+    /// ser cero. El lote escaneado completa una línea que no fijaba lote; uno distinto del fijado es 422. Mismo lease, misma
+    /// reanudación, misma regla de DA-32 y misma ventana y piso de <paramref name="occurredAt"/> que <see cref="ConfirmLine"/>. No
+    /// toca stock: la diferencia con lo esperado la calcula el servidor al cerrarse el conteo.</summary>
+    public WarehouseTaskLine RecordCount(
+        Guid memberId,
+        Guid leaseToken,
+        string deviceId,
+        Guid lineId,
+        decimal quantityCounted,
+        LotId? lotId,
+        DateTimeOffset now,
+        DateTimeOffset? occurredAt = null,
+        bool memberIsBusy = false)
+    {
+        EnsureLineActionOfType(true, "count-line");
+        var (line, lease, device, scannedAt) = PrepareLineWrite(
+            memberId,
+            leaseToken,
+            deviceId,
+            lineId,
+            "count-line",
+            now,
+            occurredAt,
+            line =>
+            {
+                if (quantityCounted < 0)
+                {
+                    throw new WmsDomainException(WmsErrorCodes.TaskLineInvalid, "La cantidad contada no puede ser negativa.");
+                }
+
+                if (line.LotId is { } fixedLot && lotId is { } scanned && scanned != fixedLot)
+                {
+                    throw new WmsDomainException(WmsErrorCodes.TaskLotMismatch, "El lote escaneado no es el de la línea.");
+                }
+            });
+
+        var staysReleased = ApplyLease(lease, memberIsBusy, memberId, device, scannedAt, now);
+        line.RecordCount(quantityCounted, lotId);
+        FinishLineWrite(staysReleased, now);
+        Version++;
+        Record(
+            TaskEventKind.LineConfirmed,
+            memberId,
+            scannedAt,
+            deviceId: device,
+            lineId: lineId,
+            quantity: quantityCounted,
+            detail: "count",
+            recordedAt: now);
+        CloseIfFinished(memberId, scannedAt, now);
+        return line;
+    }
+
+    // Las líneas de un Count se cierran contando y las de un movimiento confirmando: la otra acción es una transición inválida.
+    private void EnsureLineActionOfType(bool byCount, string action)
+    {
+        if (TaskTypePolicy.ConfirmsByCount(Type) != byCount)
+        {
+            throw new TaskTransitionException(Status.ToString(), action);
+        }
     }
 
     /// <summary>Lo que comparten las acciones del operario sobre una línea: lease perdido (el llamador ya lo respondió), celular,
@@ -540,11 +663,12 @@ public sealed class WarehouseTask
         }
     }
 
+    // Guid.Empty es el sistema (un Count generado por una novedad): su hecho no lleva persona.
     private void Release(Guid by, DateTimeOffset now)
     {
         Status = AssignedMemberId is null ? WarehouseTaskStatus.Ready : WarehouseTaskStatus.Assigned;
         ReleasedAt = now;
-        Record(TaskEventKind.Published, by, now);
+        Record(TaskEventKind.Published, by == Guid.Empty ? null : by, now);
     }
 
     /// <summary>Sin líneas abiertas la tarea se cierra: <c>Done</c> si alguna quedó <c>Done</c> o <c>Short</c>, <c>Cancelled</c> si se

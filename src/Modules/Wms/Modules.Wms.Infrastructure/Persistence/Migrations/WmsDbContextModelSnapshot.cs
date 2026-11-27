@@ -1259,7 +1259,7 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_tasks_status", "status IN ('Planned','Ready','Assigned','InProgress','Done','Cancelled')");
 
-                            t.HasCheckConstraint("CK_tasks_type", "type IN ('Move')");
+                            t.HasCheckConstraint("CK_tasks_type", "type IN ('Move','Count')");
                         });
                 });
 
@@ -1351,6 +1351,11 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(18,6)")
                         .HasColumnName("quantity_confirmed");
 
+                    b.Property<decimal?>("QuantityCounted")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("quantity_counted");
+
                     b.Property<decimal>("QuantityPlanned")
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)")
@@ -1394,7 +1399,7 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                     b.ToTable("task_lines", "wms", t =>
                         {
-                            t.HasCheckConstraint("CK_task_lines_quantity", "quantity_planned > 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned");
+                            t.HasCheckConstraint("CK_task_lines_quantity", "quantity_planned >= 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned AND (quantity_counted IS NULL OR quantity_counted >= 0)");
 
                             t.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Short','Cancelled')");
                         });

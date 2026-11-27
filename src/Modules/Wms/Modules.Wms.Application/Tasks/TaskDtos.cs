@@ -62,7 +62,8 @@ public sealed record TaskLineDto(
     decimal QuantityConfirmed,
     decimal QuantityRemaining,
     string LineStatus,
-    string BaseUom);
+    string BaseUom,
+    decimal? QuantityCounted);
 
 public sealed record TaskEventDto(
     string Kind,

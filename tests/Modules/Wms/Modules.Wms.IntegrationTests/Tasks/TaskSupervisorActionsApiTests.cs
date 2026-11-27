@@ -160,7 +160,9 @@ public sealed class TaskSupervisorActionsApiTests
         Assert.Equal(6, board.ByStatus.Count);
         Assert.Equal(1, board.ByStatus.Single(slice => slice.Status == "InProgress").Count);
         Assert.Equal(0, board.ByStatus.Single(slice => slice.Status == "Done").Count);
-        Assert.Equal(2, Assert.Single(board.ByType).Open);
+        // El tablero lista todos los tipos, también el que está en cero (T2 agrega Count).
+        Assert.Equal(2, board.ByType.Single(slice => slice.Type == "Move").Open);
+        Assert.Equal(0, board.ByType.Single(slice => slice.Type == "Count").Open);
         var working = Assert.Single(board.Operators);
         Assert.Equal((worker, claimed.Id), (working.MemberId, working.TaskId));
         Assert.NotNull(working.Since);

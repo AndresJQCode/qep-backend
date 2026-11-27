@@ -87,6 +87,8 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
         return [.. counts.Select(value => new TaskStatusCount(value.Status, value.Count))];
     }
 
+    // «Abierta» es todo estado que no sea Done ni Cancelled: T2 (el tipo Count) no agrega ningún estado de tarea, así que esta lista y
+    // la de CatalogVariantUsageChecker no cambian. Un estado nuevo en el futuro obliga a revisar las dos.
     public async Task<IReadOnlyList<TaskTypeCount>> CountOpenByTypeAsync(
         Guid tenantId, Guid warehouseId, CancellationToken cancellationToken)
     {

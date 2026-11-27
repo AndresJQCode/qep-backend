@@ -167,7 +167,7 @@ public sealed class SupervisorTaskActionsTests
         Assert.Equal(
             [("Planned", 0), ("Ready", 1), ("Assigned", 0), ("InProgress", 1), ("Done", 0), ("Cancelled", 0)],
             board.ByStatus.Select(slice => (slice.Status, slice.Count)));
-        Assert.Equal([("Move", 2)], board.ByType.Select(slice => (slice.Type, slice.Open)));
+        Assert.Equal([("Move", 2), ("Count", 0)], board.ByType.Select(slice => (slice.Type, slice.Open)));
         var worker = Assert.Single(board.Operators);
         Assert.Equal(("Ana Operaria", claimed.Id, claimed.Number), (worker.Name, worker.TaskId, worker.TaskNumber));
         Assert.Equal(TaskWorld.Start.AddMinutes(1), worker.Since);
