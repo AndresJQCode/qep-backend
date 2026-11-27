@@ -225,6 +225,18 @@ public sealed class AssignmentRequestValidator : HrValidator<AssignmentRequest>
     }
 }
 
+// Las mismas reglas que el alta de un registro. `confirmRewrite` no se valida acá: su ausencia es el código de dominio
+// hr.assignment.rewrite_unconfirmed, para que el frontend abra la confirmación en vez de marcar un campo.
+public sealed class AssignmentRewriteRequestValidator : HrValidator<AssignmentRewriteRequest>
+{
+    public AssignmentRewriteRequestValidator()
+    {
+        RuleFor(request => request.EffectiveDate).NotNull().WithMessage("Escribe la fecha desde la que rige.");
+        RuleFor(request => request.PositionId).MustBeAnId("Elige un cargo.");
+        RuleFor(request => request.WorkplaceId).MustBeAnId("Elige un centro de trabajo.");
+    }
+}
+
 public sealed class RenewalRequestValidator : HrValidator<RenewalRequest>
 {
     public RenewalRequestValidator() =>

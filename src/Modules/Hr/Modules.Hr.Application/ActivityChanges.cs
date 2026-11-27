@@ -58,7 +58,7 @@ internal static class ActivityChanges
                 .. Diff(null, payment),
                 .. ContractFields(null, contract, names),
                 Change("amount", null, salary.Amount, sensitive: true),
-                .. AssignmentFields(null, assignment, names),
+                .. AssignmentFields(null, assignment.ToEntry(), names),
             ]);
     }
 
@@ -76,7 +76,22 @@ internal static class ActivityChanges
 
     public static IReadOnlyList<ActivityChange> AssignmentCreated(
         AssignmentRecord? previous, AssignmentRecord next, IReadOnlyDictionary<Guid, string> names) => Collect(
-        [Change("effectiveDate", null, next.EffectiveDate, sensitive: true), .. AssignmentFields(previous, next, names)]);
+        [Change("effectiveDate", null, next.EffectiveDate, sensitive: true), .. AssignmentFields(previous?.ToEntry(), next.ToEntry(), names)]);
+
+    /// <summary>
+    /// El registro se reescribe en su lugar: quien llama guarda lo que tenía antes. La fecha se lista siempre, aunque no cambie,
+    /// porque identifica el registro (como <see cref="SalaryRewritten"/>).
+    /// </summary>
+    public static IReadOnlyList<ActivityChange> AssignmentRewritten(
+        AssignmentEntry before, AssignmentRecord after, IReadOnlyDictionary<Guid, string> names) => Collect(
+        [
+            Change("effectiveDate", before.EffectiveDate, after.EffectiveDate, sensitive: true, alwaysList: true),
+            .. AssignmentFields(before, after.ToEntry(), names),
+        ]);
+
+    /// <summary>El registro quitado, del valor a nulo: fecha, cargo, área (sólo si tenía), sede y centro.</summary>
+    public static IReadOnlyList<ActivityChange> AssignmentDeleted(AssignmentRecord removed, IReadOnlyDictionary<Guid, string> names) => Collect(
+        [Change("effectiveDate", removed.EffectiveDate, null, sensitive: true), .. AssignmentFields(removed.ToEntry(), null, names)]);
 
     public static IReadOnlyList<ActivityChange> ContractRenewed(DateOnly previousEnd, DateOnly newEnd) => Collect([
         Change("endDate", previousEnd, newEnd, sensitive: true)]);
@@ -107,7 +122,7 @@ internal static class ActivityChanges
             Change("status", previousStatus, EmployeeStatus.Active),
             .. ContractFields(null, next, names),
             Change("amount", null, next.Salaries[0].Amount, sensitive: true),
-            .. AssignmentFields(null, next.Assignments[0], names),
+            .. AssignmentFields(null, next.Assignments[0].ToEntry(), names),
         ]);
 
     // Spec 2026-11-23 §10: type, date and whether there is a PDF; never restrictions, recommendations or the provider. None of these
@@ -148,12 +163,12 @@ internal static class ActivityChanges
     ];
 
     private static IEnumerable<ActivityChange?> AssignmentFields(
-        AssignmentRecord? before, AssignmentRecord after, IReadOnlyDictionary<Guid, string> names) =>
+        AssignmentEntry? before, AssignmentEntry? after, IReadOnlyDictionary<Guid, string> names) =>
     [
-        Change("position", NameOf(names, before?.PositionId.Value), NameOf(names, after.PositionId.Value), sensitive: true),
-        Change("area", NameOf(names, before?.AreaId?.Value), NameOf(names, after.AreaId?.Value), sensitive: true),
-        Change("site", NameOf(names, before?.SiteId.Value), NameOf(names, after.SiteId.Value), sensitive: true),
-        Change("workplace", NameOf(names, before?.WorkplaceId.Value), NameOf(names, after.WorkplaceId.Value), sensitive: true),
+        Change("position", NameOf(names, before?.PositionId.Value), NameOf(names, after?.PositionId.Value), sensitive: true),
+        Change("area", NameOf(names, before?.AreaId?.Value), NameOf(names, after?.AreaId?.Value), sensitive: true),
+        Change("site", NameOf(names, before?.SiteId.Value), NameOf(names, after?.SiteId.Value), sensitive: true),
+        Change("workplace", NameOf(names, before?.WorkplaceId.Value), NameOf(names, after?.WorkplaceId.Value), sensitive: true),
     ];
 
     // Un id sin nombre conocido se escribe tal cual: el historial nunca pierde el dato, sólo pierde la legibilidad.

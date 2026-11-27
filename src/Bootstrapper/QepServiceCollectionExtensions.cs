@@ -668,6 +668,12 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Hr.Application.AddAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
             Modules.Hr.Application.AddAssignmentHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RewriteAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RewriteAssignmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RemoveAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RemoveAssignmentHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Hr.Application.RenewContractCommand, Modules.Hr.Application.EmployeeDetailDto>,
             Modules.Hr.Application.RenewContractHandler>();
         services.AddScoped<
@@ -2510,6 +2516,8 @@ public static class QepServiceCollectionExtensions
         // La consola de valores legales de Hr sabe qué nóminas ya se calcularon por este puerto (PayrollLayerTests.NoPayrollLayerReferencesHr):
         // Payroll expone sus períodos calculados y este adaptador los traduce al puerto de Hr.
         services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
+        // Editar y eliminar registros de cargo y lugar mira las nóminas congeladas del empleado por este puerto (spec 2026-11-26).
+        services.AddScoped<Modules.Hr.Application.IFrozenPayrollPeriods, FrozenPayrollPeriods>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
         services.AddScoped<Modules.Payroll.Application.IPayrollHolidayCalendar, PayrollHolidayCalendar>();
@@ -2687,6 +2695,9 @@ public static class QepServiceCollectionExtensions
         // Y los archivos de chatbot (spec 2026-11-18): en uso mientras los nombre un chatbot, una versión, una plantilla guardada o un
         // mensaje de la bandeja.
         services.AddScoped<IChatbotMediaReferences, ChatbotMediaReferences>();
+        // Y los PDF de empleados (spec 2026-11-26): en uso mientras los nombre una de las cinco tablas de Hr del tenant. Es obligatorio
+        // para la purga de Storage (HrDocumentPurge): sin él, el contenedor no se arma y nada se borra.
+        services.AddScoped<IHrDocumentReferences, HrDocumentReferences>();
         // Spec 2026-11-20: el PDF de un contrato o de un registro de RRHH sobre Storage (dueño HrDocument, sin pasar por sus handlers ni
         // sus permisos: lo autoriza hr.contract.manage). Hr no referencia Storage (HrLayerTests).
         services.AddScoped<Modules.Hr.Application.IHrDocumentStore, HrDocumentStore>();

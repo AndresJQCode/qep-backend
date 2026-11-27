@@ -157,6 +157,15 @@ public sealed class FileResource
 
     public void SoftDelete(DateTimeOffset occurredAt)
     {
+        // Spec 2026-11-26, «Por qué Deleted y sin migración»: un HrDocument sólo pasa a Deleted por la marca de HrDocumentPurge
+        // (BeginHrDocumentPurge). Un camino que suelte un PDF de Hr pasa por hr.employee.documents-released.v1, nunca por acá.
+        if (OwnerType is FileOwnerType.HrDocument)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "An HR document is only removed through the HR document release.");
+        }
+
         if (Status is FileResourceStatus.Deleted or FileResourceStatus.Purged)
         {
             throw new StorageDomainException(
@@ -291,6 +300,42 @@ public sealed class FileResource
     {
         RequireProductImage();
         RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
+    // Spec 2026-11-26, «Por cada id», paso 3: la marca de la purga del PDF que Hr soltó. HrDocumentPurge la confirma antes de la segunda
+    // pregunta y de R2: desde ese commit, un adjunto que lea Storage no lo encuentra (hr.file.not_found). Un HrDocument sólo pasa a
+    // Deleted por esta marca (SoftDelete lo rechaza), así que Deleted en un HrDocument siempre significa «marcado para purgar».
+    public void BeginHrDocumentPurge(DateTimeOffset occurredAt)
+    {
+        RequireHrDocument();
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Deleted;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
+    // Spec 2026-11-26, «Por cada id», paso 4: un adjunto de Hr se cruzó con la marca. HrDocumentPurge sólo lo llama bajo el candado y
+    // después de comprobar con StatAsync que el objeto sigue en R2: ninguna fila vuelve a Available sin su objeto. Sólo un HrDocument
+    // marcado (Deleted, que para un HrDocument es la marca de la purga).
+    public void RestoreHrDocument(DateTimeOffset occurredAt)
+    {
+        RequireHrDocument();
+        RequireStatus(FileResourceStatus.Deleted);
+        Status = FileResourceStatus.Available;
+        DeletedAt = null;
+        UpdatedAt = occurredAt;
+    }
+
+    // Spec 2026-11-26, «Por cada id», paso 4: se purga el PDF que Hr soltó, con la marca Deleted ya confirmada, después de la segunda
+    // pregunta a IHrDocumentReferences y de borrar los objetos de R2 (o, si un intento anterior ya los borró, aunque Hr lo nombre).
+    // Sólo un HrDocument marcado: cualquier otro dueño o estado se rechaza, para que un aviso equivocado no purgue nada ajeno.
+    public void PurgeReleasedHrDocument(DateTimeOffset occurredAt)
+    {
+        RequireHrDocument();
+        RequireStatus(FileResourceStatus.Deleted);
         Status = FileResourceStatus.Purged;
         DeletedAt = occurredAt;
         UpdatedAt = occurredAt;
@@ -460,6 +505,16 @@ public sealed class FileResource
             throw new StorageDomainException(
                 "storage.file.invalid_state",
                 $"Expected a {FileOwnerType.Product} resource but it was {OwnerType}.");
+        }
+    }
+
+    private void RequireHrDocument()
+    {
+        if (OwnerType is not FileOwnerType.HrDocument)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                $"Expected a {FileOwnerType.HrDocument} resource but it was {OwnerType}.");
         }
     }
 

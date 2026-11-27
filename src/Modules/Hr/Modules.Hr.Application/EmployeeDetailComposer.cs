@@ -12,7 +12,8 @@ public sealed class EmployeeDetailComposer(
     IHrSettingsRepository settings,
     HrCompanyRefs companies,
     IHrGeographyLookup geography,
-    IHrMemberDirectory members)
+    IHrMemberDirectory members,
+    IFrozenPayrollPeriods frozenPayroll)
 {
     /// <summary>Lo que el directorio no devuelve (la membresía se quitó del todo) se pinta así, nunca se omite.</summary>
     internal const string UnknownMemberName = "Sin nombre";
@@ -44,11 +45,17 @@ public sealed class EmployeeDetailComposer(
         if (canReadContract && employee.Contracts.Count > 0)
         {
             var lookups = await LoadLookupsAsync(tenantId, employee.Contracts.Select(contract => contract.CompanyId), cancellationToken);
-            current = employee.ActiveContract is { } active ? ToContractDto(active, lookups, today) : null;
+            if (employee.ActiveContract is { } active)
+            {
+                // Una sola consulta, y sólo para el contrato vigente: los anteriores salen con canEdit y canDelete en false.
+                var frozen = await frozenPayroll.ListForEmployeeAsync(tenantId, employee.Id.Value, cancellationToken);
+                current = ToContractDto(active, lookups, today, frozen);
+            }
+
             previous = employee.Contracts
                 .Where(contract => contract.Status != ContractStatus.Active)
                 .OrderByDescending(contract => contract.StartDate)
-                .Select(contract => ToContractDto(contract, lookups, today))
+                .Select(contract => ToContractDto(contract, lookups, today, null))
                 .ToList();
         }
 
@@ -162,8 +169,21 @@ public sealed class EmployeeDetailComposer(
         employee.CreatedAt,
         employee.UpdatedAt);
 
-    private static ContractDto ToContractDto(EmploymentContract contract, Lookups lookups, DateOnly today)
+    // `frozen` nulo: no se consultó la nómina (contrato no vigente), así que ningún registro se edita ni se elimina.
+    private static ContractDto ToContractDto(
+        EmploymentContract contract, Lookups lookups, DateOnly today, IReadOnlyList<FrozenPayrollPeriod>? frozen)
     {
+        bool CanEdit(AssignmentRecord record)
+        {
+            if (frozen is null || contract.Status != ContractStatus.Active)
+            {
+                return false;
+            }
+
+            var (from, to) = AssignmentPayrollGuard.RangeOf(contract, record);
+            return !AssignmentPayrollGuard.Reaches(frozen, contract.CompanyId, from, to);
+        }
+
         var salary = EffectiveDated.CurrentOf(contract.Salaries, today);
         var assignment = EffectiveDated.CurrentOf(contract.Assignments, today);
         SettingRefDto Ref(Guid id) => lookups.Settings[id];
@@ -211,17 +231,23 @@ public sealed class EmployeeDetailComposer(
                 .ToList(),
             contract.Assignments
                 .OrderByDescending(record => record.EffectiveDate)
-                .Select(record => new AssignmentRecordDto(
-                    record.Id.Value,
-                    record.EffectiveDate,
-                    Ref(record.PositionId.Value),
-                    record.AreaId is { } area ? Ref(area.Value) : null,
-                    Ref(record.SiteId.Value),
-                    Ref(record.WorkplaceId.Value),
-                    FileOf(record.DocumentFileId, record.DocumentFileName),
-                    EffectiveDated.IsScheduled(record, today),
-                    record == assignment,
-                    record.CreatedAt))
+                .Select(record =>
+                {
+                    var canEdit = CanEdit(record);
+                    return new AssignmentRecordDto(
+                        record.Id.Value,
+                        record.EffectiveDate,
+                        Ref(record.PositionId.Value),
+                        record.AreaId is { } area ? Ref(area.Value) : null,
+                        Ref(record.SiteId.Value),
+                        Ref(record.WorkplaceId.Value),
+                        FileOf(record.DocumentFileId, record.DocumentFileName),
+                        EffectiveDated.IsScheduled(record, today),
+                        record == assignment,
+                        record.CreatedAt,
+                        canEdit,
+                        canEdit && contract.CanRemoveAssignment(record.Id));
+                })
                 .ToList(),
             contract.Renewals
                 .OrderByDescending(renewal => renewal.CreatedAt)

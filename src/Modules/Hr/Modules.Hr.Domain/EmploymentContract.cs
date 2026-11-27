@@ -177,23 +177,129 @@ public sealed class EmploymentContract
                 "A new assignment must take effect after the last one.");
         }
 
-        var placeChanges = entry.WorkplaceId != previous.WorkplaceId || entry.SiteId != previous.SiteId;
-        if (!placeChanges && entry.PositionId == previous.PositionId && entry.AreaId == previous.AreaId)
-        {
-            throw new HrDomainException(HrErrorCodes.AssignmentUnchanged, "The assignment does not change anything.");
-        }
-
-        // PILA, FI-EMP-012: el lugar de trabajo sólo cambia el día 1 del mes.
-        if (placeChanges && entry.EffectiveDate.Day != 1)
-        {
-            throw new HrDomainException(
-                HrErrorCodes.SiteChangeNotFirstOfMonth,
-                "The workplace can only change on the first day of a month.");
-        }
+        EnsurePair(previous.ToEntry(), entry);
 
         _assignments.Add(new AssignmentRecord(
             id, Id, entry.EffectiveDate, entry.PositionId, entry.AreaId, entry.SiteId, entry.WorkplaceId, document, now));
         UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Reescribe un registro de cargo y lugar (spec 2026-11-26, «Vecinos»). La fecha del primero es el inicio del contrato y no
+    /// cambia; la de los demás queda estrictamente entre la del anterior y la del siguiente. Se revisan los pares
+    /// anterior–editado y editado–siguiente.
+    /// </summary>
+    internal void RewriteAssignment(AssignmentRecordId id, AssignmentEntry entry, DateTimeOffset now)
+    {
+        EnsureActive();
+        var (previous, record, next) = Neighbours(id);
+        if (previous is null && entry.EffectiveDate != record.EffectiveDate)
+        {
+            throw new HrDomainException(
+                HrErrorCodes.AssignmentFirstRecordDateFixed,
+                "The first assignment record starts with the contract and its date cannot change.");
+        }
+
+        if ((previous is not null && entry.EffectiveDate <= previous.EffectiveDate)
+            || (next is not null && entry.EffectiveDate >= next.EffectiveDate))
+        {
+            throw new HrDomainException(
+                HrErrorCodes.AssignmentEffectiveDateOutOfOrder,
+                "The new date must stay between the previous and the next assignment records.");
+        }
+
+        if (previous is not null)
+        {
+            EnsurePair(previous.ToEntry(), entry);
+        }
+
+        if (next is not null)
+        {
+            EnsurePair(entry, next.ToEntry());
+        }
+
+        record.Rewrite(entry);
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Quita un registro de cargo y lugar y lo devuelve (quien llama lee su PDF). El primero no se quita; el anterior pasa a
+    /// regir los días del quitado, así que se revisa el par anterior–siguiente.
+    /// </summary>
+    internal AssignmentRecord RemoveAssignment(AssignmentRecordId id, DateTimeOffset now)
+    {
+        EnsureActive();
+        var (previous, record, next) = Neighbours(id);
+        if (previous is null)
+        {
+            throw new HrDomainException(
+                HrErrorCodes.AssignmentFirstRecordNotDeletable,
+                "The first assignment record starts with the contract and cannot be deleted.");
+        }
+
+        if (next is not null)
+        {
+            EnsurePair(previous.ToEntry(), next.ToEntry());
+        }
+
+        _assignments.Remove(record);
+        UpdatedAt = now;
+        return record;
+    }
+
+    /// <summary>
+    /// Consulta pura: si <see cref="RemoveAssignment"/> aceptaría quitar el registro por las reglas de vecinos. No mira si el
+    /// contrato está activo (eso lo suma <c>canEdit</c>) ni muta nada.
+    /// </summary>
+    public bool CanRemoveAssignment(AssignmentRecordId id)
+    {
+        var ordered = _assignments.OrderBy(assignment => assignment.EffectiveDate).ToList();
+        var index = ordered.FindIndex(assignment => assignment.Id == id);
+        if (index <= 0)
+        {
+            return false;
+        }
+
+        return index == ordered.Count - 1 || PairViolation(ordered[index - 1].ToEntry(), ordered[index + 1].ToEntry()) is null;
+    }
+
+    private (AssignmentRecord? Previous, AssignmentRecord Record, AssignmentRecord? Next) Neighbours(AssignmentRecordId id)
+    {
+        var ordered = _assignments.OrderBy(assignment => assignment.EffectiveDate).ToList();
+        var index = ordered.FindIndex(assignment => assignment.Id == id);
+        if (index < 0)
+        {
+            throw new HrDomainException(HrErrorCodes.AssignmentNotFound, "The assignment record was not found.");
+        }
+
+        return (index > 0 ? ordered[index - 1] : null, ordered[index], index < ordered.Count - 1 ? ordered[index + 1] : null);
+    }
+
+    private static void EnsurePair(AssignmentEntry earlier, AssignmentEntry later)
+    {
+        if (PairViolation(earlier, later) is { } violation)
+        {
+            throw new HrDomainException(violation.Code, violation.Message);
+        }
+    }
+
+    // La regla de un par de registros vecinos: el posterior cambia algo y, si cambia el lugar, empieza un día 1 (PILA,
+    // FI-EMP-012). La única copia de la regla: la usan AddAssignment (contra el último registro), RewriteAssignment,
+    // RemoveAssignment y CanRemoveAssignment.
+    private static (string Code, string Message)? PairViolation(AssignmentEntry earlier, AssignmentEntry later)
+    {
+        var placeChanges = later.WorkplaceId != earlier.WorkplaceId || later.SiteId != earlier.SiteId;
+        if (!placeChanges && later.PositionId == earlier.PositionId && later.AreaId == earlier.AreaId)
+        {
+            return (HrErrorCodes.AssignmentUnchanged, "Two neighbouring assignment records would be equal.");
+        }
+
+        if (placeChanges && later.EffectiveDate.Day != 1)
+        {
+            return (HrErrorCodes.SiteChangeNotFirstOfMonth, "The workplace can only change on the first day of a month.");
+        }
+
+        return null;
     }
 
     internal ContractRenewal Renew(ContractRenewalId id, DateOnly newEndDate, DocumentRef? document, DateTimeOffset now)

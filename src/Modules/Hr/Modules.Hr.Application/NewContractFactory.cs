@@ -44,6 +44,7 @@ public sealed class NewContractFactory(
             assignment.AreaId,
             assignment.WorkplaceId!.Value,
             new AssignmentKeys($"{errorPrefix}assignment.positionId", $"{errorPrefix}assignment.areaId", $"{errorPrefix}assignment.workplaceId"),
+            null,
             cancellationToken);
         ContractRules.EnsureWorkplaceOfCompany(site, companyId, $"{errorPrefix}assignment.workplaceId");
 
@@ -78,10 +79,15 @@ internal sealed record AssignmentKeys(string Position, string Area, string Workp
 
 /// <summary>
 /// Cargo, área y centro de un registro de cargo y lugar: existen, no están archivados y la sede del centro tampoco. Lo comparten el
-/// contrato nuevo y el registro nuevo de cargo y lugar, con las claves de error que cada uno pide.
+/// contrato nuevo, el registro nuevo y la edición de un registro, con las claves de error que cada uno pide.
 /// </summary>
 internal static class AssignmentLookups
 {
+    /// <param name="keeping">
+    /// Al editar, el registro que se reescribe: un cargo, área o centro <b>igual</b> al que ya tiene se acepta aunque se haya archivado
+    /// después (y la sede de ese centro también); uno distinto archivado sigue siendo 422 de campo (spec 2026-11-26, propuesta 6).
+    /// Nulo en el alta y en un registro nuevo.
+    /// </param>
     public static async Task<(Position Position, Area? Area, Workplace Workplace, Site Site)> ResolveAsync(
         IHrSettingsRepository settings,
         Guid tenantId,
@@ -89,10 +95,12 @@ internal static class AssignmentLookups
         Guid? areaId,
         Guid workplaceId,
         AssignmentKeys keys,
+        AssignmentRecord? keeping,
         CancellationToken cancellationToken)
     {
         var position = await settings.FindPositionAsync(tenantId, new PositionId(positionId), cancellationToken);
-        if (position is not { Archived: false })
+        var keepsPosition = keeping is not null && keeping.PositionId.Value == positionId;
+        if (position is null || (position.Archived && !keepsPosition))
         {
             HrFieldErrors.Throw(keys.Position, "Elige un cargo vigente.");
         }
@@ -101,21 +109,22 @@ internal static class AssignmentLookups
         if (areaId is { } id)
         {
             area = await settings.FindAreaAsync(tenantId, new AreaId(id), cancellationToken);
-            if (area is not { Archived: false })
+            var keepsArea = keeping?.AreaId is { } keptArea && keptArea.Value == id;
+            if (area is null || (area.Archived && !keepsArea))
             {
                 HrFieldErrors.Throw(keys.Area, "Elige un área vigente.");
             }
         }
 
         var workplace = await settings.FindWorkplaceAsync(tenantId, new WorkplaceId(workplaceId), cancellationToken);
-        var site = workplace is { Archived: false }
-            ? await settings.FindSiteAsync(tenantId, workplace.SiteId, cancellationToken)
-            : null;
-        if (workplace is not { Archived: false } || site is not { Archived: false })
+        var keepsWorkplace = keeping is not null && keeping.WorkplaceId.Value == workplaceId;
+        var usable = workplace is not null && (!workplace.Archived || keepsWorkplace);
+        var site = usable ? await settings.FindSiteAsync(tenantId, workplace!.SiteId, cancellationToken) : null;
+        if (!usable || site is null || (site.Archived && !keepsWorkplace))
         {
             HrFieldErrors.Throw(keys.Workplace, "Elige un centro de trabajo vigente.");
         }
 
-        return (position, area, workplace, site);
+        return (position, area, workplace!, site!);
     }
 }

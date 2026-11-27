@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure.ChatbotMedia;
+using Modules.Storage.Infrastructure.HrDocuments;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
@@ -541,6 +542,16 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
                     && descriptor.ImplementationType == typeof(ChatbotMediaReleaseWorker))
                 .ToList();
             foreach (var descriptor in chatbotMediaReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Y el de los PDF que Hr soltó (spec 2026-11-26): HrDocumentReleaseTests corre el lote a mano, y cuenta reclamos e intentos.
+            var hrDocumentReleaseWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(HrDocumentReleaseWorker))
+                .ToList();
+            foreach (var descriptor in hrDocumentReleaseWorkers)
             {
                 services.Remove(descriptor);
             }

@@ -286,4 +286,138 @@ public sealed class FileResourceTests
         Assert.Equal("storage.file.invalid_state", ex.Code);
         Assert.Equal(FileResourceStatus.Available, resource.Status);
     }
+
+    private static FileResource NewHrDocument(bool available = true)
+    {
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.HrDocument,
+            "contrato.pdf", "application/pdf", 1024, "staging/contrato", DateTimeOffset.UtcNow);
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        if (available)
+        {
+            resource.MarkClean(DateTimeOffset.UtcNow);
+        }
+
+        return resource;
+    }
+
+    // Spec 2026-11-26, «Por cada id»: el PDF que Hr soltó se marca Deleted (y se confirma) antes de la segunda pregunta y de R2.
+    private static FileResource MarkedHrDocument()
+    {
+        var resource = NewHrDocument();
+        resource.BeginHrDocumentPurge(DateTimeOffset.UtcNow);
+        return resource;
+    }
+
+    [Fact]
+    public void BeginHrDocumentPurgeMarksAnAvailableHrDocumentDeleted()
+    {
+        var resource = NewHrDocument();
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        resource.BeginHrDocumentPurge(now);
+
+        Assert.Equal(FileResourceStatus.Deleted, resource.Status);
+        Assert.Equal(now, resource.DeletedAt);
+        Assert.Equal(now, resource.UpdatedAt);
+    }
+
+    [Fact]
+    public void BeginHrDocumentPurgeRequiresAnAvailableHrDocument()
+    {
+        var pending = NewHrDocument(available: false);
+        var product = NewProductImage();
+
+        var notAvailable = Assert.Throws<StorageDomainException>(() => pending.BeginHrDocumentPurge(DateTimeOffset.UtcNow));
+        var notHr = Assert.Throws<StorageDomainException>(() => product.BeginHrDocumentPurge(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", notAvailable.Code);
+        Assert.Equal("storage.file.invalid_state", notHr.Code);
+        Assert.Equal(FileResourceStatus.PendingScan, pending.Status);
+        Assert.Equal(FileResourceStatus.Available, product.Status);
+    }
+
+    [Fact]
+    public void RestoreHrDocumentReturnsAMarkedHrDocumentToAvailable()
+    {
+        var resource = MarkedHrDocument();
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        resource.RestoreHrDocument(now);
+
+        Assert.Equal(FileResourceStatus.Available, resource.Status);
+        Assert.Null(resource.DeletedAt);
+        Assert.Equal(now, resource.UpdatedAt);
+    }
+
+    [Fact]
+    public void RestoreHrDocumentRequiresAMarkedHrDocument()
+    {
+        var available = NewHrDocument();
+        var purged = MarkedHrDocument();
+        purged.PurgeReleasedHrDocument(DateTimeOffset.UtcNow);
+        var product = NewProductImage();
+        product.SoftDelete(DateTimeOffset.UtcNow);
+
+        foreach (var resource in new[] { available, purged, product })
+        {
+            var ex = Assert.Throws<StorageDomainException>(() => resource.RestoreHrDocument(DateTimeOffset.UtcNow));
+            Assert.Equal("storage.file.invalid_state", ex.Code);
+        }
+
+        Assert.Equal(FileResourceStatus.Available, available.Status);
+        Assert.Equal(FileResourceStatus.Purged, purged.Status);
+        Assert.Equal(FileResourceStatus.Deleted, product.Status);
+    }
+
+    [Fact]
+    public void PurgeReleasedHrDocumentMarksAMarkedHrDocumentPurged()
+    {
+        var resource = MarkedHrDocument();
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        resource.PurgeReleasedHrDocument(now);
+
+        Assert.Equal(FileResourceStatus.Purged, resource.Status);
+        Assert.Equal(now, resource.DeletedAt);
+        Assert.Equal(now, resource.UpdatedAt);
+    }
+
+    [Fact]
+    public void PurgeReleasedHrDocumentRequiresTheMark()
+    {
+        var resource = NewHrDocument();
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedHrDocument(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+        Assert.Equal(FileResourceStatus.Available, resource.Status);
+        Assert.Null(resource.DeletedAt);
+    }
+
+    [Fact]
+    public void SoftDeleteRejectsAnHrDocument()
+    {
+        var resource = NewHrDocument();
+
+        var ex = Assert.Throws<StorageDomainException>(() => resource.SoftDelete(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+        Assert.Equal(FileResourceStatus.Available, resource.Status);
+        Assert.Null(resource.DeletedAt);
+    }
+
+    [Fact]
+    public void PurgeReleasedHrDocumentRequiresAnHrDocument()
+    {
+        var resource = NewProductImage();
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedHrDocument(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+        Assert.Equal(FileResourceStatus.Available, resource.Status);
+        Assert.Null(resource.DeletedAt);
+    }
 }

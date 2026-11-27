@@ -2789,6 +2789,52 @@ enviarla, crea el pedido en el tenant mayorista (`source: "Wholesale"`, `externa
   anulación del mayorista (`quotations.order.wholesale-cancelled.v1`) cancela la orden salvo si ya se recibió.
 - **Proveedores** suma `linkedRelationshipStatus` (`Active`, `Blocked`, `Invited` o `null`) en la lista y el detalle.
 
+### RRHH: editar y eliminar cargo y lugar de trabajo
+
+Spec [`2026-11-26-hr-editar-eliminar-cargo-lugar-design.md`](docs/superpowers/specs/2026-11-26-hr-editar-eliminar-cargo-lugar-design.md).
+Un registro de «Cargo y lugar de trabajo» mal cargado se corrige o se elimina, en vez de agregar otro posterior. Las dos rutas
+cuelgan de `/api/v1/tenants/{tenantId}/hr/employees/{employeeId}/contracts/{contractId}`, exigen `hr.contract.manage` y el
+`If-Match` con `employee.version` (sin el header, 428; con una versión vieja, 412, como las demás escrituras con `If-Match` de
+Hr), y responden la ficha completa (`EmployeeDetailDto`).
+
+| Ruta | Cuerpo |
+| --- | --- |
+| `PUT /assignments/{recordId}` | `{ effectiveDate, positionId, areaId, workplaceId, confirmRewrite }` (`areaId` opcional) |
+| `DELETE /assignments/{recordId}` | sin cuerpo |
+
+El PDF del registro se sigue cambiando con `PUT /assignments/{recordId}/document`. La fecha del primer registro no se edita (es
+el inicio del contrato) y el primero no se elimina. Un registro que ya rigió en una nómina `Approved` o `Closed` del empleado
+(con resultado guardado suyo, en la empresa del contrato) no se toca: primero se reabre el período. `Liquidated`, `Reopened` y
+`Draft` no bloquean.
+
+`AssignmentRecordDto` suma dos campos, calculados para que la pantalla no repita la regla (no miran permisos, como el resto de la
+ficha):
+
+- `canEdit`: el contrato está activo y ninguna nómina `Approved` o `Closed` usó los días que rige el registro. En `true` no
+  garantiza cualquier cambio: mover la fecha puede alcanzar días de otra nómina y se rechaza.
+- `canDelete`: `canEdit`, no es el primero y el historial sin él sigue siendo válido (`EmploymentContract.CanRemoveAssignment`,
+  la misma regla de vecinos que `RemoveAssignment`, sin mutar el agregado).
+
+Validación: 422 `validation.failed` con `effectiveDate`, `positionId`, `areaId` y `workplaceId` en el mapa `errors`, como el
+alta (incluye la fecha posterior a la terminación). Los códigos de dominio:
+
+| Código | Estado | Cuándo |
+| --- | --- | --- |
+| `hr.assignment.not_found` | 404 | el registro no es del contrato |
+| `hr.contract.not_active` | 422 | contrato terminado |
+| `hr.assignment.workplace_other_company` | 422 | el centro es de otra empresa; trae el mapa `errors` con `workplaceId` |
+| `hr.assignment.rewrite_unconfirmed` | 422 | `PUT` sin `confirmRewrite: true` |
+| `hr.assignment.first_record_date_fixed` | 422 | cambiar la fecha del primero |
+| `hr.assignment.first_record_not_deletable` | 422 | eliminar el primero |
+| `hr.assignment.effective_date_out_of_order` | 422 | la fecha nueva no queda entre el registro anterior y el siguiente |
+| `hr.assignment.unchanged` | 422 | dos registros vecinos quedarían iguales |
+| `hr.assignment.site_change_not_first_of_month` | 422 | un cambio de lugar quedaría en un día distinto del 1 |
+| `hr.assignment.used_by_payroll` | 422 | alcanza una nómina `Approved` o `Closed` |
+
+Cada cambio queda en el historial de actividad (`AssignmentRewritten`, `AssignmentDeleted`) y en la auditoría
+(`hr.contract.assignment_rewritten`, `hr.contract.assignment_deleted`). Eliminar un registro con PDF avisa a Storage para que lo
+purgue si ya nadie lo usa (ver [PDF de RRHH liberados](#biblioteca-de-archivos-cloudflare-r2)).
+
 ## Arquitectura y persistencia
 
 ```txt
@@ -3318,6 +3364,32 @@ siempre borra primero los objetos (clave del archivo, copia pública y cada vari
 el `FileResource` como `Purged`, auditado como `storage.file.purged` / `product_image_released`. Para
 la copia pública reutiliza la despublicación, así que una foto publicada pierde `PublicStorageKey` y
 `PublishedAt`; es a propósito.
+
+**PDF de RRHH liberados.** Eliminar un registro de cargo y lugar con PDF (ver [RRHH: editar y eliminar cargo y lugar de
+trabajo](#rrhh-editar-y-eliminar-cargo-y-lugar-de-trabajo)) escribe `hr.employee.documents-released.v1` (`{ tenantId, fileIds }`)
+en el outbox, en la misma transacción. `HrDocumentReleaseWorker` (Storage) lo consume con el consumidor
+`storage.hr-document-release`: reclama cada mensaje en `storage.inbox_messages` sumando `attempts` y fijando `claimed_until`, y
+una falla lo deja sin marcar hasta que vence el reclamo (5 s, 30 s y 5 min, y desde ahí 5 min; nunca se abandona; `Error` en el
+log desde el intento 3). Las referencias no salen de las `IFileReferenceProbe` sino de un puerto obligatorio,
+`IHrDocumentReferences` (adaptador `HrDocumentReferences` en Bootstrapper sobre `IHrDocumentUsage` de Hr, que mira las cinco
+tablas con `document_file_id`): sin él el procesador no se resuelve y no se borra nada. Por cada archivo, sólo `HrDocument` del
+tenant del aviso:
+
+1. Bajo el candado de la fila (`FOR UPDATE`), la primera pregunta: si Hr lo usa, se queda como está.
+2. Si no, lo marca `Deleted` (`FileResource.BeginHrDocumentPurge`) y **confirma** la marca. Desde ese commit, un adjunto de Hr
+   que lea Storage recibe `422 hr.file.not_found`, el mismo de un archivo que no existe.
+3. En una transacción nueva, otra vez bajo el candado, la segunda pregunta. Si nadie lo usa, borra el objeto de R2 (y después
+   cada variante), lo deja `Purged` y lo audita como `storage.file.purged` / `hr_document_released`. Si un adjunto se cruzó
+   con la marca, lo devuelve a `Available` **sólo si el objeto sigue en R2** (`StatAsync`), con un `Warning` en el log; si el
+   objeto ya no está (un intento anterior lo borró y no alcanzó a guardar), lo deja `Purged`, lo audita igual y lo registra en
+   `Error` con el id del archivo y el tenant, para no dejar nunca una fila `Available` sin objeto.
+
+Un reintento que encuentra la fila `Deleted` retoma en la segunda pregunta. Queda una ventana residual, aceptada por el owner: un
+adjunto que leyó el archivo como `Available` antes de que se confirmara la marca y que confirma su registro de Hr después de la
+pregunta que decidió borrar queda nombrando un PDF purgado (si eso cae en un reintento, el `Error` del log lo delata). La purga
+es inmediata, sin espera de gracia: un borrado equivocado no se recupera. Un `HrDocument` sólo pasa a `Deleted` por esta marca
+(`FileResource.SoftDelete` lo rechaza con `storage.file.invalid_state`). No hay métrica de cola: estos borrados pendientes no
+aparecen en la vista de colas ni en Grafana, y una falla sólo se ve en el log.
 
 **Archivos de dueño de sistema.** Los tipos de `SystemOwnedFiles` (Storage.Domain; hoy `SupportTicket`, los adjuntos del formulario
 público de Soporte) no existen para la consola: `GET /files` no los lista ni filtrando por ese dueño, toda ruta por id responde `404

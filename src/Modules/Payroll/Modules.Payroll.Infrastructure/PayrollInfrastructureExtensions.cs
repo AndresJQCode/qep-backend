@@ -30,6 +30,7 @@ public static class PayrollInfrastructureExtensions
         services.AddScoped<IPayrollConceptRepository, PayrollConceptRepository>();
         services.AddScoped<IPayrollPeriodRepository, PayrollPeriodRepository>();
         services.AddScoped<IPayrollCalculatedPeriods, PayrollCalculatedPeriods>();
+        services.AddScoped<IPayrollFrozenPeriods, PayrollFrozenPeriods>();
         services.AddScoped<IPayrollResultStore, PayrollResultStore>();
         services.AddScoped<IRecurringConceptRepository, RecurringConceptRepository>();
         services.AddScoped<IVacationRepository, VacationRepository>();

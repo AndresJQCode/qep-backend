@@ -20,4 +20,6 @@ public enum HrActivityAction
     MedicalExamUpdated,
     MedicalExamDeleted,
     ExitExamNotAttended,
+    AssignmentRewritten,
+    AssignmentDeleted,
 }

@@ -158,6 +158,32 @@ public sealed class Employee
         Touch(now);
     }
 
+    public void RewriteAssignment(
+        EmploymentContractId contractId,
+        AssignmentRecordId id,
+        AssignmentEntry entry,
+        bool confirmRewrite,
+        DateTimeOffset now)
+    {
+        // Como RewriteSalary: reescribir un registro histórico sin confirmar nunca llega a evaluar el resto.
+        if (!confirmRewrite)
+        {
+            throw new HrDomainException(
+                HrErrorCodes.AssignmentRewriteUnconfirmed,
+                "Rewriting an assignment record needs an explicit confirmation.");
+        }
+
+        FindContract(contractId).RewriteAssignment(id, entry, now);
+        Touch(now);
+    }
+
+    public AssignmentRecord RemoveAssignment(EmploymentContractId contractId, AssignmentRecordId id, DateTimeOffset now)
+    {
+        var removed = FindContract(contractId).RemoveAssignment(id, now);
+        Touch(now);
+        return removed;
+    }
+
     public ContractRenewal Renew(
         EmploymentContractId contractId,
         ContractRenewalId id,
