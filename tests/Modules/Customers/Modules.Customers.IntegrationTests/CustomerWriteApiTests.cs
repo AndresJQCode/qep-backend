@@ -972,6 +972,53 @@ public sealed class CustomerWriteApiTests(SharedCustomersHost sharedHost) : ICla
         Assert.Equal(HttpStatusCode.OK, fixedUp.StatusCode);
     }
 
+    // NIT, CC y CE solo admiten dígitos y separadores: el rechazo llega como validation.failed con la clave del campo.
+    [Fact]
+    public async Task CreatingACustomerWithALetteredNitIsRejectedOnTheNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, classification.Id, identificationNumber: "ACME SAS"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await ProblemCodeAsync(response));
+        Assert.Contains("IdentificationNumber", await ValidationFieldsAsync(response));
+    }
+
+    // Una fila guardada antes de la regla se sigue leyendo: la regla solo bloquea al escribir.
+    [Fact]
+    public async Task AStoredLetteredNitIsStillReadable()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var customer = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        await using (var connection = new Npgsql.NpgsqlConnection(connectionString))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE customers.customers SET identification_number = 'ACME SAS' WHERE id = @id";
+            command.Parameters.AddWithValue("id", customer.Id);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+        }
+
+        var read = await client.GetAsync($"{CustomersUrl()}/{customer.Id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        var stored = await read.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal("ACME SAS", stored?.IdentificationNumber);
+    }
+
     /// <summary>
     /// El CUC es <c>{prefijo}{depto}{consecutivo}</c> y un cliente de afuera no tiene departamento
     /// DIVIPOLA. Van <c>00</c> en ese lugar y **no** se omiten: los ultimos ocho caracteres son la
