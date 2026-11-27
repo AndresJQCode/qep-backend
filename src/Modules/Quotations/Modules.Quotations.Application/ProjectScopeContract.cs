@@ -132,11 +132,12 @@ public sealed class ProjectScopeRequestValidator : AbstractValidator<ProjectScop
             .When(HasPrices);
         RuleForEach(scope => scope.Phases).ChildRules(phase =>
         {
-            phase.RuleFor(value => value.Id).NotEmpty();
+            phase.RuleFor(value => value.Id).NotEmpty().WithMessage("Falta el identificador de la fase.");
             phase.RuleFor(value => value.Name)
                 .NotEmpty()
                 .WithMessage("Escribe el nombre de la fase.")
-                .MaximumLength(ProjectScopeLimits.PhaseNameMaxLength);
+                .MaximumLength(ProjectScopeLimits.PhaseNameMaxLength)
+                .WithMessage($"El nombre de la fase no puede pasar de {ProjectScopeLimits.PhaseNameMaxLength} caracteres.");
             phase.RuleFor(value => value.Price).Custom(CheckPrice);
             phase.RuleForEach(value => value.Items).ChildRules(AddItemRules);
         });
@@ -146,11 +147,12 @@ public sealed class ProjectScopeRequestValidator : AbstractValidator<ProjectScop
 
     private static void AddItemRules(InlineValidator<ProjectItemRequest> item)
     {
-        item.RuleFor(value => value.Id).NotEmpty();
+        item.RuleFor(value => value.Id).NotEmpty().WithMessage("Falta el identificador del ítem.");
         item.RuleFor(value => value.Text)
             .NotEmpty()
             .WithMessage("Escribe el texto del ítem.")
-            .MaximumLength(ProjectScopeLimits.ItemTextMaxLength);
+            .MaximumLength(ProjectScopeLimits.ItemTextMaxLength)
+            .WithMessage($"El texto del ítem no puede pasar de {ProjectScopeLimits.ItemTextMaxLength} caracteres.");
     }
 
     private static void CheckPrice<T>(decimal? price, ValidationContext<T> context)

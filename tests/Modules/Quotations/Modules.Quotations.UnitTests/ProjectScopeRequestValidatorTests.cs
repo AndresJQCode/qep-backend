@@ -77,6 +77,33 @@ public sealed class ProjectScopeRequestValidatorTests
             phases: [.. Enumerable.Range(0, 30).Select(_ => Phase(items: [.. Enumerable.Range(0, 10).Select(_ => Item())]))])));
     }
 
+    // Los mensajes del bloque van en español, también los de las reglas que FluentValidation trae en inglés.
+    [Theory]
+    [InlineData("phase-id", "Project.Phases[0].Id", "Falta el identificador de la fase.")]
+    [InlineData("phase-item-id", "Project.Phases[0].Items[0].Id", "Falta el identificador del ítem.")]
+    [InlineData("item-id", "Project.Items[0].Id", "Falta el identificador del ítem.")]
+    [InlineData("phase-name", "Project.Phases[0].Name", "El nombre de la fase no puede pasar de 200 caracteres.")]
+    [InlineData("phase-item-text", "Project.Phases[0].Items[0].Text", "El texto del ítem no puede pasar de 2000 caracteres.")]
+    [InlineData("item-text", "Project.Items[0].Text", "El texto del ítem no puede pasar de 2000 caracteres.")]
+    public void MissingIdsAndLongTextsSpeakSpanish(string wrong, string field, string message)
+    {
+        var longText = new string('a', 2001);
+        var scope = wrong switch
+        {
+            "phase-id" => Scope(phases: [Phase(id: Guid.Empty)]),
+            "phase-item-id" => Scope(phases: [Phase(items: [Item(id: Guid.Empty)])]),
+            "item-id" => Scope(items: [Item(id: Guid.Empty)]),
+            "phase-name" => Scope(phases: [Phase(name: new string('a', 201))]),
+            "phase-item-text" => Scope(phases: [Phase(items: [Item(text: longText)])]),
+            "item-text" => Scope(items: [Item(text: longText)]),
+            _ => throw new ArgumentOutOfRangeException(nameof(wrong), wrong, "Unknown case."),
+        };
+
+        var failure = Assert.Single(new SaveQuotationValidator().Validate(Command(scope)).Errors);
+
+        Assert.Equal((field, message), (failure.PropertyName, failure.ErrorMessage));
+    }
+
     // §12-F: la vista previa manda «-» en lo que todavía está vacío, y es un texto como cualquier otro.
     [Fact]
     public void ADashIsAValidText() =>
