@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -21,6 +22,7 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
     private static readonly Guid LooseItem = Guid.CreateVersion7();
     private static readonly string?[] PriceThenScopeHistory =
         ["Precio del proyecto actualizado.", "Alcance actualizado."];
+    private static readonly string[] RoundingCurrencies = ["COP", "USD", "EUR"];
 
     [Fact]
     public async Task CreatingAProjectBuildsOneServiceLineAtTheTotal()
@@ -363,6 +365,55 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
             await PostAsync(setup, Create(setup, Global(setup.ServiceId, 999_999_999_999.99m))), "Project.GlobalPrice");
         await AssertFieldErrorAsync(
             await PostAsync(setup, Create(setup, PerPhase(setup.ServiceId, 999_999_999_999m, 0.5m))), "Project.Phases");
+    }
+
+    // El precio cabía con centavos; con la regla nueva del tenant sube a la columna siguiente. Guardar sin `project` aplica
+    // la regla, así que es el mismo 422 en el campo, y la cotización queda como estaba.
+    [Fact]
+    public async Task ACoarserRuleOnASaveWithoutAProjectIsAFieldError()
+    {
+        var setup = await SetUpAsync(
+            await sharedHost.StartTestAsync(), [.. ManagerPermissions, TenancyPermissions.SettingsUpdate]);
+        using var _ = setup.Client;
+        // En dólares: el peso no admite centavos.
+        var usd = await CreateAccountAsync(setup, "USD");
+        var created = await ReadAsync(
+            await PostAsync(
+                setup,
+                Create(setup, Global(setup.ServiceId, 999_999_999_999.40m, currency: "USD")) with { BillingAccount = usd }),
+            HttpStatusCode.Created);
+        Assert.Equal(999_999_999_999.40m, created.Total);
+        await PutRoundingAsync(setup, "USD", decimals: 0, mode: "Up");
+
+        var saved = await PutAsync(setup, created, Save(null) with { Notes = "Sólo la nota" });
+        var preview = await setup.Client.PostAsJsonAsync(
+            $"{QuotationUrl(setup, created.Id)}/preview", Save(null), TestContext.Current.CancellationToken);
+
+        foreach (var response in new[] { saved, preview })
+        {
+            await AssertFieldErrorAsync(response, "Project.GlobalPrice");
+        }
+
+        var current = await GetAsync(setup, created.Id);
+        Assert.Equal((created.Version, 999_999_999_999.40m), (current.Version, current.Total));
+    }
+
+    private static async Task PutRoundingAsync(Setup setup, string currency, int decimals, string mode)
+    {
+        var response = await setup.Client.PutAsJsonAsync(
+            $"/api/v1/tenants/{setup.TenantId}/settings/price-rounding",
+            new
+            {
+                currencies = RoundingCurrencies.Select(code => new
+                {
+                    currency = code,
+                    // El peso no admite decimales; las otras dos, dos.
+                    decimals = code == currency ? decimals : code == "COP" ? 0 : 2,
+                    mode = code == currency ? mode : "Nearest",
+                }),
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -717,9 +768,9 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
 
     // Un tenant con el módulo prendido, un cliente activo y un servicio sin IVA. Sin cuenta de cobro, la cotización
     // nace en la moneda del tenant (COP).
-    private static async Task<Setup> SetUpAsync(QepApiFactory factory)
+    private static async Task<Setup> SetUpAsync(QepApiFactory factory, string[]? permissions = null)
     {
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, permissions ?? ManagerPermissions);
         await EnableModuleAsync(factory, tenantId, TenantModuleKeys.Projects);
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var serviceId = await CreateServiceAsync(client, tenantId);

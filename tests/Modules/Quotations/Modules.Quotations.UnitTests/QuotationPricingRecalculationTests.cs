@@ -1,5 +1,6 @@
 using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
+using FluentValidation;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -532,6 +533,44 @@ public sealed class QuotationPricingRecalculationTests
         var line = Assert.Single(quotation.Items);
         Assert.Equal((100_000m, 0m, 100_000m), (line.UnitPrice, line.DiscountPercentage, quotation.Total));
         Assert.Equal(new PriceRounding(0, PriceRoundingMode.Up), quotation.PriceRounding);
+    }
+
+    // Un precio que cabía con la regla guardada puede pasar del tope de la columna con la que el tenant puso después, y el
+    // guardado sin bloque `project` no vuelve a pasar por sus validaciones: es el mismo 422 de campo, no un desborde en la
+    // base.
+    [Theory]
+    [InlineData(ProjectPricingMode.Global, "Project.GlobalPrice")]
+    [InlineData(ProjectPricingMode.PerPhase, "Project.Phases[0].Price")]
+    public async Task ACoarserRuleCannotPushAProjectPricePastTheColumn(ProjectPricingMode mode, string field)
+    {
+        const decimal price = 999_999_999_999.40m;
+        var cents = new PriceRounding(2, PriceRoundingMode.Nearest);
+        var service = Guid.CreateVersion7();
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "QUO-2026-0003", ClientId, AdvisorId, new DateOnly(2026, 10, 31), null, null,
+            QuotationParties.Empty, null, "USD", customerVatSurplus: false, customerWithholdings: [],
+            MunicipalContext.None, AdvisorId, Now, QuotationKind.Project);
+        Assert.Equal(cents, quotation.PriceRounding);
+        quotation.ReplaceProjectScope(
+            mode == ProjectPricingMode.Global
+                ? ProjectScope.Create(service, mode, price, [], [])
+                : ProjectScope.Create(
+                    service, mode, null, [new ProjectPhase(Guid.CreateVersion7(), "Entrega", price, [])], []),
+            new ProjectServiceLine(service, Guid.CreateVersion7(), 19, ProductKind.Service, SalesUnit.Hour),
+            AdvisorId,
+            Now);
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => QuotationPricingRecalculation.ApplyAsync(
+            new UnreachablePricingLookup(),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", new PriceRounding(0, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(field, Assert.Single(error.Errors).PropertyName);
+        Assert.Equal((cents, price), (quotation.PriceRounding, Assert.Single(quotation.Items).UnitPrice));
     }
 
     private sealed class UnreachablePricingLookup : IQuotationProductPricingLookup

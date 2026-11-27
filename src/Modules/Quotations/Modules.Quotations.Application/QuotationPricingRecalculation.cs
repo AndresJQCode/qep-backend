@@ -34,8 +34,15 @@ internal static class QuotationPricingRecalculation
         // Primer paso, antes de cualquier salida temprana (spec 2026-10-27 §4): la regla es la de la moneda del
         // documento **después** de la mutación, así que cambiar de cuenta y de moneda toma la de la nueva. Si es la
         // que ya tiene, no hace nada; si cambió, rehace las líneas desde el precio guardado.
-        quotation.UsePriceRounding(
-            await priceRounding.GetAsync(tenantId, quotation.Currency, cancellationToken), occurredAt);
+        var rounding = await priceRounding.GetAsync(tenantId, quotation.Currency, cancellationToken);
+        // Los precios guardados de un proyecto no vuelven a pasar por las validaciones del bloque, y una regla más gruesa
+        // puede subirlos por encima del tope de la columna: 422 en su campo antes de tocar nada.
+        if (quotation.ProjectScope is { } scope)
+        {
+            ProjectScopeApplication.EnsurePricesFit(scope.RoundedWith(rounding));
+        }
+
+        quotation.UsePriceRounding(rounding, occurredAt);
 
         // En un proyecto el precio lo escribe el asesor (spec 2026-11-26 §5): ni escalas, ni piso, ni grupo, ni compra
         // mínima.

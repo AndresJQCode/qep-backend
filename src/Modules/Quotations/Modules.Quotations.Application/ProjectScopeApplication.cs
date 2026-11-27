@@ -93,8 +93,9 @@ internal static class ProjectScopeApplication
             variant.VariantId, variant.ProductId, variant.TaxPercentage ?? 0, variant.Kind, variant.SalesUnit);
     }
 
-    // El validador ya frena lo escrito por encima del tope; redondear puede subir un precio que cabía justo.
-    private static void EnsurePricesFit(ProjectScope rounded)
+    /// <summary>El validador ya frena lo escrito por encima del tope; redondear puede subir un precio que cabía justo,
+    /// al guardar el bloque o al aplicar la regla vigente a los precios guardados.</summary>
+    public static void EnsurePricesFit(ProjectScope rounded)
     {
         const string message = "El precio redondeado pasa del máximo que admite el documento.";
         var failures = new List<ValidationFailure>();
