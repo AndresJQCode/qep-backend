@@ -113,6 +113,17 @@ public sealed class FilePublicTicketValidatorTests
         Assert.Empty(Errors(Command(Natural(documentType: "NIF", country: "ES", cityName: "Madrid"))));
     }
 
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void ANumericTypeWithLettersFailsOnTheNumber(string type) =>
+        Assert.Contains("Requester.DocumentNumber", Errors(Command(Natural(documentType: type, documentNumber: "10203A4050"))));
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Empty(Errors(Command(Natural(documentType: "PASAPORTE", documentNumber: "AB123456"))));
+
     [Fact]
     public void WithoutTheDocumentPairTheDocumentIsNotRequired()
     {

@@ -143,6 +143,15 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
             RuleFor(command => command.Requester!.DocumentNumber)
                 .MustFit(1, TicketRequester.DocumentNumberMaxLength)
                 .When(command => Requires(command, SupportFormFields.DocumentNumber));
+            // NIT, CC y CE solo llevan dígitos. Corre con un tipo conocido y un número no vacío, y solo si el formulario muestra
+            // ambos campos (uno oculto no llega a la foto); marca DocumentNumber para que el 422 lleve el mapa errors.
+            RuleFor(command => command.Requester!.DocumentNumber)
+                .Must((command, number) => DocumentNumberFormat.IsValidFor(command.Requester!.DocumentType, number))
+                .When(command => Shows(command, SupportFormFields.DocumentType)
+                    && Shows(command, SupportFormFields.DocumentNumber)
+                    && DocumentTypesByCountry.IsKnown(command.Requester!.DocumentType)
+                    && !string.IsNullOrWhiteSpace(command.Requester!.DocumentNumber))
+                .WithMessage(DocumentNumberFormat.NumericTypesMessage);
 
             RuleFor(command => command.Requester!.FirstNames)
                 .MustFit(1, TicketRequester.NameMaxLength)

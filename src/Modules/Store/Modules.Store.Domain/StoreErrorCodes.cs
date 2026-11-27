@@ -38,6 +38,7 @@ public static class StoreErrorCodes
     public const string CountryNotSold = "store.order_request.country_not_sold";
     public const string CityInvalid = "store.order_request.city_invalid";
     public const string DocumentTypeNotAllowed = "store.order_request.document_type_not_allowed";
+    public const string IdentificationNumberNotNumeric = "store.order_request.identification_number_not_numeric";
     public const string PhoneInvalid = "store.order_request.phone_invalid";
     public const string LineUnavailable = "store.order_request.line_unavailable";
     public const string DailyCap = "store.order_request.daily_cap";
