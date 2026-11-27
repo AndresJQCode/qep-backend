@@ -2742,7 +2742,7 @@ cumpleaños de hoy y los de dentro de `leadDays` días. Sin fila guardada la fun
   (`{ memberId, displayName, hasPhone, hasEmail, hasHrAccess }`, en el orden guardado), `leadDays`, `whatsAppEnabled`,
   `whatsAppConnectionId`, `emailEnabled` y `version`. Sin fila: sin personas, `leadDays` 1, canales apagados y `version` `null`.
 - **`PUT` a la misma ruta** (`hr.settings.manage` + `hr.employee.read`): cuerpo `{ managerMemberIds, leadDays, whatsAppEnabled,
-  whatsAppConnectionId, emailEnabled }` y la misma respuesta. Es un upsert: sin fila el primer `PUT` va **sin** `If-Match` (con él,
+  whatsAppConnectionId, emailEnabled }` y la misma respuesta. El `PUT` reemplaza todo: un indicador omitido apaga ese canal. Es un upsert: sin fila el primer `PUT` va **sin** `If-Match` (con él,
   `412 concurrency.conflict`); con fila `If-Match` es obligatorio (`428 precondition.if_match_required`) y una versión vieja es `412`.
 - **`422`:** `validation.failed` (con el mapa `errors`: `managerMemberIds` nulo o con más de 20 personas, `leadDays` fuera de 0 a 7),
   `hr.birthday_notice.manager_not_found` (no es un miembro activo del tenant), `hr.birthday_notice.manager_without_access` (sin

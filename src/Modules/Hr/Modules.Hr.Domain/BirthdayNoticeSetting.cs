@@ -68,7 +68,7 @@ public sealed class BirthdayNoticeSetting
                 "A WhatsApp connection is required when WhatsApp notices are enabled.",
                 new Dictionary<string, string[]>(StringComparer.Ordinal)
                 {
-                    ["whatsAppConnectionId"] = [HrErrorCodes.BirthdayConnectionRequired],
+                    ["whatsAppConnectionId"] = ["Elige la conexión de WhatsApp desde la que se envían los avisos."],
                 });
         }
 

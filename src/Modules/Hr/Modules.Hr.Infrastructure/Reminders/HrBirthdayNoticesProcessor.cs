@@ -36,6 +36,14 @@ internal sealed partial class HrBirthdayNoticesProcessor(
 
     public async Task ProcessTenantAsync(Guid tenantId, CancellationToken cancellationToken)
     {
+        // First of all: a tenant without a setting (or without managers) exits at once, before any clock, status or module lookup.
+        // Nothing is claimed, so enabling it later the same day still runs.
+        var setting = await settings.FindAsync(tenantId, cancellationToken);
+        if (setting is null || setting.ManagerMemberIds.Count == 0)
+        {
+            return;
+        }
+
         var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
         if (calendar.ToLocal(calendar.UtcNow).Hour < options.Value.SendHourLocal)
         {
@@ -50,13 +58,6 @@ internal sealed partial class HrBirthdayNoticesProcessor(
 
         var modules = await tenantModules.FindAsync(tenantId, cancellationToken);
         if (modules is null || !modules.IsEnabled(TenantModuleKeys.Hr))
-        {
-            return;
-        }
-
-        // No setting, or nobody to tell: nothing is claimed, so enabling it later the same day still runs.
-        var setting = await settings.FindAsync(tenantId, cancellationToken);
-        if (setting is null || setting.ManagerMemberIds.Count == 0)
         {
             return;
         }

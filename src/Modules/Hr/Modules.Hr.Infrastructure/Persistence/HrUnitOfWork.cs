@@ -30,7 +30,7 @@ internal sealed class HrUnitOfWork(HrDbContext dbContext) : IHrUnitOfWork
     ];
 
     private const string BirthdayNoticeSettingKey = "PK_birthday_notice_settings";
-    private const string DocumentIndex ="IX_employees_tenant_document_number";
+    private const string DocumentIndex = "IX_employees_tenant_document_number";
     private const string MemberIndex = "IX_employees_tenant_member_id";
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)

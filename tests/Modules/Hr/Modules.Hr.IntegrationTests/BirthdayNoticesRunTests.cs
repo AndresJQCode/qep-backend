@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Authorization.Application;
@@ -169,14 +170,26 @@ public sealed class BirthdayNoticesRunTests : IClassFixture<HrApiFixture>
         Assert.False(channels.GetProperty("email").GetBoolean());
     }
 
+    // Moves the member to the advisor role, which has no hr.employee.read: the same revocation a role change does in the product.
+    private async Task RevokeHrAccessAsync(HrTenant tenant, Guid memberId)
+    {
+        await using var scope = _fixture.Factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+        var tenantEntity = await tenancy.Tenants.FindAsync([new Modules.Tenancy.Domain.TenantId(tenant.Id)], Ct);
+        var membership = await tenancy.Memberships.FirstAsync(candidate => candidate.Id == new Modules.Tenancy.Domain.MembershipId(memberId), Ct);
+        membership.ChangeRoles(tenantEntity!, ["advisor"], HrApiFixture.DefaultNow);
+        await tenancy.SaveChangesAsync(Ct);
+    }
+
     [Fact]
     public async Task ManagerWhoLostAccessIsSkipped()
     {
         var seeded = await SeedAsync();
         using var tenant = seeded.Tenant;
         await HireThreeAsync(seeded);
-        // Only the advisor is a manager: it has no hr.employee.read, so it never gets employee names.
-        await SaveSettingAsync(tenant, seeded.Admin, [seeded.Advisor]);
+        // The setting is saved while the admin reads employees; afterwards the role changes to one that does not.
+        await SaveSettingAsync(tenant, seeded.Admin, [seeded.Admin]);
+        await RevokeHrAccessAsync(tenant, seeded.Admin);
 
         await ProcessAsync(tenant);
 

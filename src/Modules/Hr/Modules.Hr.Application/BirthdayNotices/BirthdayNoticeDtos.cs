@@ -5,7 +5,8 @@ namespace Modules.Hr.Application.BirthdayNotices;
 
 /// <summary>
 /// The body of <c>PUT /birthday-notices</c>. Only <see cref="ManagerMemberIds"/> is required (an empty list means the feature is
-/// off): a missing <see cref="LeadDays"/> takes the default of 1 and a missing channel flag means off.
+/// off): a missing <see cref="LeadDays"/> takes the default of 1 and a missing channel flag means off. The PUT replaces
+/// everything, so an omitted flag turns that channel off.
 /// </summary>
 public sealed record BirthdayNoticeRequest(
     IReadOnlyList<Guid>? ManagerMemberIds,
