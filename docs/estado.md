@@ -634,6 +634,26 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-27 — Mergeado a `develop` (`84b2de722`, `--no-ff`, sin push) **Cotizaciones: la regla «jurídica → NIT» por el país
+  de la parte** (`fix/billing-party-country-nit`, `6304e3fc9`, rama borrada; tarjeta de Trello `Mp4DWqN6`).
+  `BillingPartyFiscalRules.EnsureConsistent` mira el país de la parte de facturación (en blanco = CO) y no el del tenant: una
+  jurídica de Costa Rica ya se guarda con `TAX_ID`. Aplica en crear y editar cotización, cotización externa, checkout de la
+  tienda, conversión y edición de pedido (guardado y vista previa). Sin cambio de contrato. **Cambio de comportamiento:** con
+  un tenant de otro país, una jurídica sin país en la parte y documento distinto de NIT ahora es 422. Pruebas: Quotations unit
+  2588/2588, `QuotationApiTests` 17/17 (incluye la nueva de Costa Rica, RED 422 antes del arreglo). ArchitectureTests
+  353/354: `EveryHostedServiceIsClassified` por `HrBirthdayDeliveryWorker`, roja ya en `develop` y ajena a este cambio.
+  Frontend en `develop` de `qep-frontend` (`8db282ff`), sin push.
+- 2026-11-27 — Mergeado a `develop` (`b11807318`, `--no-ff`, sin push) **Siigo: cambiar a otra cuenta en la conexión pide
+  confirmación y borra la configuración** (`feature/siigo-cambio-cuenta`, hasta `3ca96b957`, rama borrada; tarjeta de Trello
+  `OtqRAr9D`). Al editar una conexión de Siigo con credenciales nuevas, se leen con ellas los tipos de documento y las formas
+  de pago y se comparan sólo los ids guardados. Si falta alguno: 409 `siigo.connection.account_changed` con `mismatches`
+  (`[{kind: documentType|paymentType, id}]`) y no se guarda nada; con `confirmSiigoAccountChange: true` en el `PUT` se guardan
+  las credenciales y en la misma transacción se borra la configuración del asistente (auditoría `siigo.settings.account_reset`;
+  conserva empresa e interruptores). La caché de listas de Siigo ahora va por huella de credenciales. Puerto
+  `IConnectionCredentialChangeGuard` en Integrations con adaptador en Bootstrapper; sin referencias nuevas entre módulos.
+  Pruebas: Siigo unit 613, Integrations unit 796, `SiigoAccountChangeApiTests` 4/4, `ConnectionsApiTests` 16/16,
+  `SiigoSettingsApiTests` 34/34. **A saber:** una forma de pago desactivada en la misma cuenta cuenta como diferencia. **Falta:**
+  frontend (tarjeta `[frontend] Siigo: confirmar el cambio de cuenta…`).
 - 2026-11-27 — Mergeado a `develop` (`19a7a7014`, `--no-ff`, sin push) **Siigo exterior: seguimientos de pruebas**
   (`feature/siigo-foreign-followups`, rama borrada; tarjetas de Trello `bHQ4s7bl` y `b72PZMlt`). Sólo pruebas, sin cambio de
   producción ni de contrato: `ForeignCityHandlersAuthorizationTests` cubre la segunda capa (`IsOperator`) de los diez handlers de
