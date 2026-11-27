@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Domain.Localization;
+using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -56,6 +57,7 @@ public sealed class QuotationsExportProcessor(
     {
         var filters = ExportJobFilters.Read<QuotationsExportFilters>(job);
         var status = ParseStatus(filters.Status);
+        var kind = ParseKind(filters.Kind);
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         // El NIT se resuelve al generar, no al pedir: el archivo refleja los clientes de ahora.
         var clientIds = await QuotationListing.ResolveClientIdsByNitAsync(
@@ -83,6 +85,7 @@ public sealed class QuotationsExportProcessor(
                 created.From,
                 created.Before,
                 filters.QuotationNumber,
+                kind,
                 after,
                 limit,
                 ct),
@@ -117,6 +120,19 @@ public sealed class QuotationsExportProcessor(
             return QuotationListing.ParseStatus(status);
         }
         catch (QuotationsDomainException exception)
+        {
+            throw new ExportJobDefinitiveException($"UnreadableFilters: {exception.Message}", exception);
+        }
+    }
+
+    // Mismo criterio que el estado: un filtro guardado que ya no se entiende no se arregla reintentando.
+    private static QuotationKindFilter ParseKind(string? kind)
+    {
+        try
+        {
+            return QuotationListing.ParseKind(kind);
+        }
+        catch (ValidationException exception)
         {
             throw new ExportJobDefinitiveException($"UnreadableFilters: {exception.Message}", exception);
         }

@@ -1,4 +1,7 @@
+using FluentValidation;
+using FluentValidation.Results;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -25,6 +28,39 @@ internal static class QuotationListing
             : throw new QuotationsDomainException(
                 "quotation.quotation.status_invalid",
                 $"'{status}' is not a valid quotation status.");
+    }
+
+    /// <summary>El filtro <c>kind</c> de la lista y su Excel (spec 2026-11-26 §6.5): vacío es <c>Standard</c>, así que
+    /// nada que hoy lista cotizaciones cambia. Por nombre y no con <c>Enum.TryParse</c>, que aceptaría «1». Otro valor
+    /// es un 422 con el campo en <c>errors</c>.</summary>
+    public static QuotationKindFilter ParseKind(string? kind)
+    {
+        if (string.IsNullOrWhiteSpace(kind))
+        {
+            return QuotationKindFilter.Standard;
+        }
+
+        var name = Enum.GetNames<QuotationKindFilter>()
+            .FirstOrDefault(value => string.Equals(value, kind.Trim(), StringComparison.OrdinalIgnoreCase));
+        return name is not null
+            ? Enum.Parse<QuotationKindFilter>(name)
+            : throw new ValidationException([new ValidationFailure("kind", "Use Standard, Project or All.")]);
+    }
+
+    /// <summary>El filtro que de verdad se aplica según el módulo <c>projects</c>: pedir <c>Project</c> sin él es 403, y
+    /// <c>All</c> sin él trae sólo <c>Standard</c>. Con <c>Standard</c> no se consultan los módulos.</summary>
+    public static async Task<QuotationKindFilter> ApplyModuleAsync(
+        ITenantModules modules, Guid tenantId, QuotationKindFilter kind, CancellationToken cancellationToken)
+    {
+        if (kind == QuotationKindFilter.Project)
+        {
+            await ProjectModuleGuard.EnsureAsync(modules, tenantId, QuotationKind.Project, cancellationToken);
+        }
+
+        return kind == QuotationKindFilter.All
+            && !await ProjectModuleGuard.IsEnabledAsync(modules, tenantId, cancellationToken)
+                ? QuotationKindFilter.Standard
+                : kind;
     }
 
     // El NIT no vive en Quotation: se resuelve a ids contra Customers antes de filtrar, mismo

@@ -5,7 +5,8 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Limpia las cotizaciones cuando el catálogo borra variantes (spec 2026-11-08): congela el código y el
-/// nombre en las líneas que quedan y saca las líneas de los borradores.
+/// nombre en las líneas que quedan y saca las líneas de los borradores estándar. El borrador de un proyecto conserva su
+/// línea, congelada (spec 2026-11-26 §5).
 /// </summary>
 public interface IQuotationVariantDeletion
 {
@@ -28,13 +29,14 @@ public interface IQuotationVariantDeletion
 public interface IDeletedVariantLineStore
 {
     /// <summary>Completa <c>product_code</c> y <c>product_name</c> de las líneas de esas variantes que todavía no
-    /// los tienen (las de cotizaciones que no han salido del borrador). Devuelve cuántas líneas tocó.</summary>
+    /// los tienen: las de pedidos, las de cotizaciones que salieron del borrador y las de borradores de proyecto.
+    /// Devuelve cuántas líneas tocó.</summary>
     Task<int> BackfillProductSnapshotsAsync(
         Guid tenantId,
         IReadOnlyDictionary<Guid, QuotationProductSnapshot> snapshots,
         CancellationToken cancellationToken);
 
-    /// <summary>Las cotizaciones en borrador que tienen líneas de esas variantes, como agregados **rastreados** y
+    /// <summary>Las cotizaciones estándar en borrador que tienen líneas de esas variantes, como agregados **rastreados** y
     /// con sus líneas y partes cargadas.</summary>
     Task<IReadOnlyList<Quotation>> ListDraftsWithVariantsAsync(
         Guid tenantId,

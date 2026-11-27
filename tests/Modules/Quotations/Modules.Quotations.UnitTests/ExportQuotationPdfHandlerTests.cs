@@ -300,7 +300,8 @@ public sealed class ExportQuotationPdfHandlerTests
                 new RichTextHtmlReader()),
             storage,
             new StubExecutionContext(SubjectId, TenantId),
-            tenantDirectory ?? new StubTenantDirectory());
+            tenantDirectory ?? new StubTenantDirectory(),
+            FixedTenantModules.Simulated);
 
         return (handler, renderer, storage, repository, logoLookup, quotation);
     }

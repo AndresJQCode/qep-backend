@@ -28,7 +28,8 @@ public sealed class AddQuotationItemHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<AddQuotationItemCommand> validator)
+    IValidator<AddQuotationItemCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<AddQuotationItemCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -42,6 +43,9 @@ public sealed class AddQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
+        ProjectScopeApplication.EnsureManualLines(quotation);
 
         // US-3/US-4: precio base, descuento por escala e impuesto del producto, resueltos
         // contra el catálogo del tenant para la cantidad pedida — y en la moneda de la

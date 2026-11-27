@@ -17,7 +17,8 @@ public sealed class ExportQuotationPdfHandler(
     IQuotationPdfProvider pdfProvider,
     IQuotationPdfStorage storage,
     IExecutionContext executionContext,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    ITenantModules tenantModules)
     : ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>
 {
     public async Task<QuotationPdfExportDto> HandleAsync(
@@ -31,6 +32,8 @@ public sealed class ExportQuotationPdfHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         var pdf = await pdfProvider.EnsureCurrentAsync(quotation, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);

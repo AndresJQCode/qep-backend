@@ -30,9 +30,10 @@ public sealed partial class QuotationTemplateTests
 {
     // Los nombres con los que la plantilla desreferencia el payload: la raiz, la variable de cada
     // linea, la de cada parte (`parte(data.billing)`), las tres secciones configurables y el bloque
-    // y el tramo que recorren `bloques()` y `runs()`. Un binding nuevo que no figure aca no se
-    // verifica -- es un hueco de cobertura, no un falso rojo, y por eso vive a la vista.
-    private static readonly string[] Bindings = ["data", "item", "valor", "aviso", "terminos", "proceso", "bloque", "run"];
+    // y el tramo que recorren `bloques()` y `runs()`, y el alcance de un proyecto con su fase y su entrada. Un binding
+    // nuevo que no figure aca no se verifica -- es un hueco de cobertura, no un falso rojo, y por eso vive a la vista.
+    private static readonly string[] Bindings =
+        ["data", "item", "valor", "aviso", "terminos", "proceso", "bloque", "run", "alcance", "fase", "entrada"];
 
     /// <summary>
     /// El contrato entre el DTO y la plantilla, que hoy solo existe como un comentario en
@@ -44,7 +45,7 @@ public sealed partial class QuotationTemplateTests
     [Fact]
     public async Task EveryFieldTheTemplateReadsExistsInThePayload()
     {
-        var (source, data, _) = await CapturedRequestAsync(Complete());
+        var (source, data, _) = await CapturedRequestAsync(Complete() with { Scope = SampleScope(showPhasePrices: true) });
 
         // Los comentarios del `.typ` nombran campos a proposito ("la plantilla lee
         // data.quotationNumber"), y un ejemplo en un comentario no es un campo que haga falta.
@@ -578,6 +579,64 @@ public sealed partial class QuotationTemplateTests
         string.Empty,
         FinalConsumer.IdentificationNumber);
 
+    // Spec 2026-11-26 §6.5: los textos del alcance los escribe el asesor. Lo que en Typst sería código o matemática sale
+    // literal.
+    [Fact]
+    public async Task TheTemplateCompilesWithAScopeAndTypstSyntaxInItsTexts()
+    {
+        const string code = "#eval(\"1+1\")";
+        const string math = "$x$";
+        var document = Complete() with
+        {
+            Scope = new QuotationPdfScope(
+                ShowPhasePrices: true,
+                [
+                    new QuotationPdfScopePhase(
+                        "] #pagebreak() [", null, [new QuotationPdfScopeItem(code), new QuotationPdfScopeItem(math)]),
+                ],
+                [new QuotationPdfScopeItem("*c* _d_ @e <f>\nsegunda línea")]),
+        };
+
+        await AssertCompilesAsync(document);
+        var text = await RenderedTextAsync(document);
+
+        foreach (var expected in new[] { "] #pagebreak() [", code, math, "*c* _d_ @e <f>" })
+        {
+            Assert.Contains(expected, text, StringComparison.Ordinal);
+        }
+    }
+
+    // El precio de cada fase sale sólo por fase; en global, el único precio es el de la línea. Sin alcance no hay sección.
+    [Fact]
+    public async Task TheTemplatePrintsTheScopeWithPhasePricesOnlyPerPhase()
+    {
+        var perPhase = await RenderedTextAsync(Complete() with { Scope = SampleScope(showPhasePrices: true) });
+        var global = await RenderedTextAsync(Complete() with { Scope = SampleScope(showPhasePrices: false) });
+        var without = await RenderedTextAsync(Complete());
+        var empty = await RenderedTextAsync(Complete() with { Scope = new QuotationPdfScope(false, [], []) });
+
+        foreach (var text in new[] { perPhase, global })
+        {
+            Assert.Contains("Alcance", text, StringComparison.Ordinal);
+            Assert.Contains("Descubrimiento", text, StringComparison.Ordinal);
+            Assert.Contains("Talleres", text, StringComparison.Ordinal);
+            Assert.Contains("Soporte durante el lanzamiento", text, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("765.432", perPhase, StringComparison.Ordinal);
+        Assert.DoesNotContain("765.432", global, StringComparison.Ordinal);
+        Assert.DoesNotContain("Alcance", without, StringComparison.Ordinal);
+        Assert.DoesNotContain("Alcance", empty, StringComparison.Ordinal);
+    }
+
+    private static QuotationPdfScope SampleScope(bool showPhasePrices) => new(
+        showPhasePrices,
+        [
+            new QuotationPdfScopePhase("Descubrimiento", 765_432m, [new QuotationPdfScopeItem("Talleres")]),
+            new QuotationPdfScopePhase("Sin precio todavía", null, []),
+        ],
+        [new QuotationPdfScopeItem("Soporte durante el lanzamiento")]);
+
     // ------------------------------------------------------------------ compilacion
 
     private static async Task AssertCompilesAsync(QuotationPdfDocument document)
@@ -778,6 +837,9 @@ public sealed partial class QuotationTemplateTests
         "run" => data.GetProperty("sections").GetProperty("terms").GetProperty("blocks").EnumerateArray()
             .First(block => block.GetProperty("runs").ValueKind == JsonValueKind.Array)
             .GetProperty("runs")[0],
+        "alcance" => data.GetProperty("scope"),
+        "fase" => data.GetProperty("scope").GetProperty("phases")[0],
+        "entrada" => data.GetProperty("scope").GetProperty("items")[0],
         _ => data,
     };
 

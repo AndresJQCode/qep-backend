@@ -1,4 +1,6 @@
 using BuildingBlocks.Domain.Taxes;
+using FluentValidation;
+using FluentValidation.Results;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -55,6 +57,20 @@ internal static class QuotationEditsApplication
         CancellationToken cancellationToken,
         MunicipalContext? municipal = null)
     {
+        // Spec 2026-11-26 §6.5: en un proyecto se edita el bloque `project` y la línea sale de ahí; no hay escalas,
+        // piso, detal ni flete. Las dos contradicciones del cuerpo se rechazan antes de tocar nada.
+        var isProject = quotation.Kind == QuotationKind.Project;
+        if (isProject && edits.Items.Count > 0)
+        {
+            throw ProjectScopeApplication.ManualLinesRejected();
+        }
+
+        if (!isProject && edits.Project is not null)
+        {
+            throw new ValidationException(
+                [new ValidationFailure("Project", "El bloque de proyecto sólo va en una cotización de tipo Project.")]);
+        }
+
         // Una empresa sin cuenta (spec 2026-11-17, R3) sale en la moneda de la propia cotización: elegir sólo la empresa
         // nunca reprecia las líneas.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
@@ -79,7 +95,7 @@ internal static class QuotationEditsApplication
         // completo en vez de dejar la cotización con dos monedas adentro.
         var currency = quotation.CurrencyFor(billingAccount);
         var changesCurrency = currency != quotation.Currency;
-        var repricing = !changesCurrency
+        var repricing = !changesCurrency || isProject
             ? null
             : await QuotationProductPricingResolver.ResolveManyAsync(
                 pricingLookup,
@@ -129,12 +145,20 @@ internal static class QuotationEditsApplication
             parties,
             billingAccount,
             repricing,
-            edits.IsRetail,
-            edits.GlobalScaleFloor,
+            !isProject && edits.IsRetail,
+            isProject ? null : edits.GlobalScaleFloor,
             municipal,
             updatedBy,
             now,
             freightTaxPercentageWithVat);
+        // Después del encabezado, que es el que fija la moneda en la que quedan los precios del alcance.
+        if (isProject)
+        {
+            await ProjectScopeApplication.ApplyAsync(
+                quotation, edits.Project, changesCurrency, pricingLookup, priceRounding, tenantId, updatedBy, now,
+                cancellationToken);
+        }
+
         // Los selectores después del encabezado: se validan contra el país de la cuenta que acaba de quedar (spec
         // impuestos por tipo §7.5), y antes de la foto de después, para que el historial cuente el cambio.
         var selection = await ApplyBillingWithholdingsAsync(
@@ -153,9 +177,11 @@ internal static class QuotationEditsApplication
         var shippingRequest = changesCurrency && edits.Shipping is { } requested
             ? requested with { FreightChargeMode = null, FreightAmount = 0m }
             : edits.Shipping;
-        var shipping = await shippingResolver.ResolveAsync(
-            tenantId, shippingRequest, quotation.ShippingDetails, quotation.IsStorePickup, quotation.Currency,
-            quotation.ChargesVat, "quotation.quotation", cancellationToken);
+        var shipping = isProject
+            ? null
+            : await shippingResolver.ResolveAsync(
+                tenantId, shippingRequest, quotation.ShippingDetails, quotation.IsStorePickup, quotation.Currency,
+                quotation.ChargesVat, "quotation.quotation", cancellationToken);
         if (shipping is not null)
         {
             quotation.SetShipping(shipping, updatedBy, now);
@@ -163,8 +189,11 @@ internal static class QuotationEditsApplication
 
         var after = QuotationHeaderSnapshot.Of(quotation);
 
-        var itemEdits = await QuotationItemEdits.ApplyAsync(
-            quotation, edits.Items, pricingLookup, tenantId, updatedBy, now, edits.IsRetail, cancellationToken);
+        // La lista vacía de un proyecto no es «sin productos»: su línea no se compara con ella.
+        IReadOnlyList<QuotationItemEdit> itemEdits = isProject
+            ? []
+            : await QuotationItemEdits.ApplyAsync(
+                quotation, edits.Items, pricingLookup, tenantId, updatedBy, now, edits.IsRetail, cancellationToken);
 
         // Una sola pasada al final: el descuento por escala depende de la cotización entera, así
         // que resolverlo en medio del diff lo calcularía contra un estado a medio aplicar. Y el

@@ -29,7 +29,8 @@ public sealed record SaveQuotationCommand(
     ShippingRequest? Shipping = null,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<QuotationDto>, IQuotationEdits;
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    ProjectScopeRequest? Project = null) : ICommand<QuotationDto>, IQuotationEdits;
 
 public sealed class SaveQuotationValidator : QuotationEditsValidator<SaveQuotationCommand>;
 
@@ -61,7 +62,8 @@ public sealed class SaveQuotationHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<SaveQuotationCommand> validator)
+    IValidator<SaveQuotationCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<SaveQuotationCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -70,11 +72,19 @@ public sealed class SaveQuotationHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, QuotationsPermissions.QuotationManage);
+        if (await ProjectIgnoredShipping.WouldFailAsync(
+            repository, command.Shipping, command.TenantId, command.QuotationId, cancellationToken))
+        {
+            command = command with { Shipping = null };
+        }
+
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         QuotationEditable.Ensure(quotation);
 
@@ -113,6 +123,7 @@ public sealed class SaveQuotationHandler(
         string[] summaryParts =
         [
             .. new[] { QuotationChangeSummary.HeaderChanged(outcome.HeaderBefore, outcome.HeaderAfter, format) }.OfType<string>(),
+            .. QuotationChangeSummary.ProjectChanged(outcome.HeaderBefore.ProjectScope, outcome.HeaderAfter.ProjectScope),
             .. await QuotationMunicipalHistory.SummaryPartsAsync(geographyLookup, outcome, cancellationToken),
         ];
         if (summaryParts.Length > 0)

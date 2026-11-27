@@ -25,7 +25,8 @@ public sealed record PreviewQuotationQuery(
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
-    Guid? BillingCompanyId = null) : IQuery<QuotationDto>, IQuotationEdits;
+    Guid? BillingCompanyId = null,
+    ProjectScopeRequest? Project = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las mismas reglas que el guardado salvo el documento de la facturación, que el cálculo
 /// previo no exige: corre mientras la persona escribe (ver <c>Quotation.EnsureBillingIdentified</c>).</summary>
@@ -54,7 +55,8 @@ public sealed class PreviewQuotationHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<PreviewQuotationQuery> validator)
+    IValidator<PreviewQuotationQuery> validator,
+    ITenantModules tenantModules)
     : IQueryHandler<PreviewQuotationQuery, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -63,6 +65,12 @@ public sealed class PreviewQuotationHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, QuotationsPermissions.QuotationManage);
+        if (await ProjectIgnoredShipping.WouldFailAsync(
+            repository, query.Shipping, query.TenantId, query.QuotationId, cancellationToken))
+        {
+            query = query with { Shipping = null };
+        }
+
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         // Sin rastreo: el cálculo muta el agregado en memoria, así que la lectura no puede dejar
@@ -70,6 +78,8 @@ public sealed class PreviewQuotationHandler(
         var quotation = await repository.FindUntrackedAsync(
             query.TenantId, new QuotationId(query.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(query.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, query.TenantId, quotation.Kind, cancellationToken);
 
         QuotationEditable.Ensure(quotation);
 

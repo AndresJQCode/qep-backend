@@ -16,7 +16,9 @@ public sealed record ListQuotationsQuery(
     string? ClientNit,
     string? QuotationNumber,
     int Page,
-    int PageSize) : IQuery<QuotationPage>;
+    int PageSize,
+    /// <summary><c>Standard</c> (por defecto), <c>Project</c> o <c>All</c> (spec 2026-11-26 §6.5).</summary>
+    string? Kind = null) : IQuery<QuotationPage>;
 
 /// <summary>Fila resumida del listado (US-8): "cada fila muestra número de cotización, cliente,
 /// asesora, fecha, total y estado" -- no hace falta traer las líneas de producto de cada
@@ -66,7 +68,11 @@ public sealed record QuotationListItemDto(
     ShippingDto Shipping,
     /// <summary>Ver <see cref="Quotation.RequiresShipping"/> (spec 2026-11-18 §5). Lo resuelve el handler con una consulta
     /// por página, por la misma razón que <see cref="IsComplete"/>: la fila no trae las líneas.</summary>
-    bool RequiresShipping);
+    bool RequiresShipping,
+    /// <summary>Ver <see cref="QuotationDto.Kind"/>.</summary>
+    string Kind,
+    /// <summary>Ver <see cref="QuotationListItemResponse.PricingMode"/>.</summary>
+    string? PricingMode);
 
 /// <summary>Una página del listado y el total que la UI necesita para paginar. Mismo criterio
 /// que <c>CustomerPage</c> en Customers.</summary>
@@ -101,7 +107,8 @@ public sealed class ListQuotationsHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ITenantModules tenantModules)
     : IQueryHandler<ListQuotationsQuery, QuotationPage>
 {
     public async Task<QuotationPage> HandleAsync(
@@ -111,6 +118,8 @@ public sealed class ListQuotationsHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, QuotationsPermissions.QuotationRead);
 
+        var kind = await QuotationListing.ApplyModuleAsync(
+            tenantModules, query.TenantId, QuotationListing.ParseKind(query.Kind), cancellationToken);
         var page = QuotationPaging.NormalizePage(query.Page);
         var pageSize = QuotationPaging.NormalizePageSize(query.PageSize);
         var status = QuotationListing.ParseStatus(query.Status);
@@ -132,6 +141,7 @@ public sealed class ListQuotationsHandler(
             created.From,
             created.Before,
             query.QuotationNumber,
+            kind,
             page,
             pageSize,
             cancellationToken);

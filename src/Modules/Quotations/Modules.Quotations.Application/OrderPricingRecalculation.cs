@@ -20,8 +20,15 @@ internal static class OrderPricingRecalculation
         DateTimeOffset occurredAt,
         CancellationToken cancellationToken)
     {
-        // Primer paso, antes de cualquier salida temprana (spec 2026-10-27 §4). Un pedido de una integración
-        // (Shopify y las que vengan) se precia siempre con el valor por defecto de su moneda, aun editado:
+        // Antes que la regla de redondeo (spec 2026-11-26 §5, P4): un pedido de proyecto no cambia de precio, tampoco si el
+        // tenant cambió la regla después de convertirlo.
+        if (order.Kind == QuotationKind.Project)
+        {
+            return;
+        }
+
+        // Primer paso de un pedido estándar, antes de cualquier otra salida temprana (spec 2026-10-27 §4). Un pedido de
+        // una integración (Shopify y las que vengan) se precia siempre con el valor por defecto de su moneda, aun editado:
         // decisión del owner. El manual, el que nació de una cotización y el de la tienda pública (decisión del owner,
         // 2026-11-03) toman la regla vigente del tenant.
         // El pedido mayorista también (D-6): es la regla con que Wholesale redondea el precio de lista, así que el pedido y la

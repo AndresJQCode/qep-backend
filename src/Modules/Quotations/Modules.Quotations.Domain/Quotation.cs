@@ -1487,7 +1487,9 @@ public sealed class Quotation
         }
     }
 
-    private bool ProjectIsIncomplete => ProjectScope is { IsComplete: false };
+    // Completo es con servicio, precio y la línea que lo cobra: sin cualquiera de los tres no hay qué enviar ni vender.
+    private bool ProjectIsIncomplete =>
+        Kind == QuotationKind.Project && (ProjectScope is not { IsComplete: true } || _items.Count == 0);
 
     // Enviar y convertir un proyecto exigen servicio y precio (spec 2026-11-26 §6.5).
     private void EnsureProjectComplete()

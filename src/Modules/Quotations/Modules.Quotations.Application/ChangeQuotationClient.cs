@@ -39,7 +39,8 @@ public sealed class ChangeQuotationClientHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<ChangeQuotationClientCommand> validator)
+    IValidator<ChangeQuotationClientCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<ChangeQuotationClientCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -53,6 +54,8 @@ public sealed class ChangeQuotationClientHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         var customer = await customerLookup.FindAsync(
             command.TenantId, command.ClientId, cancellationToken);

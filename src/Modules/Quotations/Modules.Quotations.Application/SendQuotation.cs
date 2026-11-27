@@ -49,7 +49,8 @@ public sealed class SendQuotationHandler(
     IMembershipDirectory membershipDirectory,
     IQuotationSendFailureLog sendFailureLog,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITenantModules tenantModules)
     : ICommandHandler<SendQuotationCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -62,6 +63,8 @@ public sealed class SendQuotationHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         // Antes de cualquier efecto externo: firmar la URL del PDF y entregarle el mensaje a
         // WhatsApp no se deshacen, y una cotización que no puede pasar a Sent no puede haberle

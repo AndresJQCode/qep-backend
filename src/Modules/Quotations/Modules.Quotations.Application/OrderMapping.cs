@@ -80,7 +80,9 @@ internal static class OrderMapping
         WholesaleOf(order),
         order.InvoiceProvider,
         order.InvoiceNumber,
-        order.IsEditable);
+        order.IsEditable,
+        order.Kind.ToString(),
+        ProjectScopeDto.From(order.ProjectScope, order.Currency));
 
     /// <summary>Mayorista fase 3: el vínculo del pedido con la orden del distribuidor; null fuera de un pedido mayorista.</summary>
     public static OrderWholesaleState? WholesaleOf(Order order) =>
@@ -138,7 +140,8 @@ internal static class OrderMapping
         order.ShippingDtoOf(),
         order.OrderDate,
         requiresShipping,
-        WholesaleOf(order) is { } wholesale ? new OrderListWholesaleDto(wholesale.PurchaseOrderNumber, wholesale.Approval) : null);
+        WholesaleOf(order) is { } wholesale ? new OrderListWholesaleDto(wholesale.PurchaseOrderNumber, wholesale.Approval) : null,
+        order.Kind.ToString());
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
         entry.Id.Value,

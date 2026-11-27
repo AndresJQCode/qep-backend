@@ -20,7 +20,8 @@ public sealed class RemoveQuotationItemHandler(
     ITenantPriceRounding priceRounding,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITenantModules tenantModules)
     : ICommandHandler<RemoveQuotationItemCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -33,6 +34,9 @@ public sealed class RemoveQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
+        ProjectScopeApplication.EnsureManualLines(quotation);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

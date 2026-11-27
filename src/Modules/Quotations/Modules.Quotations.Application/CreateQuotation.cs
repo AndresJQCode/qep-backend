@@ -24,7 +24,9 @@ public sealed record CreateQuotationCommand(
     bool IsRetail = false,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<QuotationDto>, IQuotationEdits
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    string? Kind = null,
+    ProjectScopeRequest? Project = null) : ICommand<QuotationDto>, IQuotationEdits
 {
     IReadOnlyList<QuotationItemAddition> IQuotationEdits.Items => Items ?? [];
 }
@@ -37,6 +39,7 @@ public sealed class CreateQuotationValidator : QuotationEditsValidator<CreateQuo
         : base(requireBillingIdentification: true)
     {
         RuleFor(command => command.ClientId).NotEmpty();
+        QuotationKindRules.AddTo(this, command => command.Kind);
     }
 }
 
@@ -58,7 +61,8 @@ public sealed class CreateQuotationHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
-    IValidator<CreateQuotationCommand> validator)
+    IValidator<CreateQuotationCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<CreateQuotationCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -70,6 +74,16 @@ public sealed class CreateQuotationHandler(
         // para otro tenant.
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, QuotationsPermissions.QuotationManage);
+        // Un `kind` que no se entiende no pide módulo: lo informa el validador en su campo.
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, QuotationKindNames.Parse(command.Kind) ?? QuotationKind.Standard,
+            cancellationToken);
+        // Un proyecto ignora el envío del cuerpo (§6.5): se quita antes de validar.
+        if (QuotationKindNames.Parse(command.Kind) == QuotationKind.Project)
+        {
+            command = command with { Shipping = null };
+        }
+
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(
@@ -95,7 +109,8 @@ public sealed class CreateQuotationHandler(
 
         var draft = await drafts.BuildAsync(
             new QuotationDraftInput(
-                command.TenantId, command.ClientId, quotationNumber, advisorId, command, calendar.Today, now),
+                command.TenantId, command.ClientId, quotationNumber, advisorId, command, calendar.Today, now,
+                QuotationKindNames.Parse(command.Kind)!.Value),
             cancellationToken);
         var quotation = draft.Quotation;
         // El armado no lo exige para que el cálculo previo no falle mientras la persona escribe. Crear sí,

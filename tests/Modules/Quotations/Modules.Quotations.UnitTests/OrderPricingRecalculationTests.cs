@@ -203,6 +203,36 @@ public sealed class OrderPricingRecalculationTests
                 "1:1001", null, OrderLineCosts.None);
     }
 
+    // Spec 2026-11-26 §5 (P4): un pedido de proyecto no cambia de precio. La pasada sale antes de todo, también antes de
+    // bajar la regla de redondeo vigente del tenant, y no lee el catálogo.
+    [Fact]
+    public async Task AProjectOrderIsNeverRepriced()
+    {
+        var order = ProjectOrders.Converted(Guid.CreateVersion7(), 100_001m);
+        var sold = order.PriceRounding;
+        var tenantRule = new PriceRounding(2, PriceRoundingMode.Up);
+        Assert.NotEqual(tenantRule, sold);
+
+        await OrderPricingRecalculation.ApplyAsync(
+            new UnreachablePricingLookup(), new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(("COP", tenantRule)),
+            order.TenantId, order, ProjectOrders.Now.AddDays(1), TestContext.Current.CancellationToken);
+
+        var line = Assert.Single(order.Items);
+        Assert.Equal((100_001m, 0m, 100_001m), (line.UnitPrice, line.DiscountPercentage, order.Total));
+        Assert.Equal(sold, order.PriceRounding);
+    }
+
+    private sealed class UnreachablePricingLookup : IQuotationProductPricingLookup
+    {
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
+            Guid tenantId, Guid variantId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A project order never reads the catalog to recalculate.");
+
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A project order never reads the catalog to recalculate.");
+    }
+
     private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup
     {
         private readonly Dictionary<Guid, QuotationVariantPricingRef> _products = products.ToDictionary(product => product.VariantId);
