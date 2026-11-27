@@ -228,7 +228,8 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return found.Select(id => id.Value).ToHashSet();
     }
 
-    // La regla de Quotation.RequiresShipping en SQL (spec 2026-11-18 §5): dos EXISTS por fila en la misma consulta.
+    // La regla de Quotation.RequiresShipping en SQL (spec 2026-11-18 §5): dos EXISTS por fila en la misma consulta. Un
+    // proyecto nunca se despacha (spec 2026-11-26 §6.4).
     public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -244,6 +245,7 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
             .AsNoTracking()
             .Where(quotation => quotation.TenantId == tenantId
                 && ids.Contains(quotation.Id)
+                && quotation.Kind != QuotationKind.Project
                 && (!quotation.Items.Any() || quotation.Items.Any(item => item.Kind == ProductKind.Physical)))
             .Select(quotation => quotation.Id)
             .ToListAsync(cancellationToken);
