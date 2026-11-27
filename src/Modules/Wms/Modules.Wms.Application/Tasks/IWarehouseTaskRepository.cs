@@ -70,6 +70,10 @@ public interface IWarehouseTaskRepository
     /// <see cref="GetAsync"/>.</summary>
     Task<WarehouseTask?> FindInProgressOfMemberAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
 
+    /// <summary>Si la membresía reclamó alguna vez esa tarea (un hecho <c>Claimed</c> suyo en la historia), sin cargarla. Decide si una
+    /// acción con el lease perdido deja novedad.</summary>
+    Task<bool> HasMemberClaimedAsync(Guid tenantId, Guid taskId, Guid memberId, CancellationToken cancellationToken);
+
     /// <summary>La mejor tarea elegible que nadie tenga bloqueada, y la deja bloqueada por esta transacción (exige la de
     /// <see cref="IWmsUnitOfWork.BeginTransactionAsync"/>); <c>null</c> si no hay ninguna. El orden es el de
     /// <see cref="TaskPriority"/> (spec §6.6) calculado en la base con <paramref name="now"/>: primero lo asignado a la membresía,

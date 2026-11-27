@@ -203,6 +203,9 @@ internal sealed partial class TaskWorld
             Task.FromResult(world.Tasks.Find(task =>
                 task.Status == WarehouseTaskStatus.InProgress && task.ClaimedByMemberId == memberId));
 
+        public Task<bool> HasMemberClaimedAsync(Guid tenantId, Guid taskId, Guid memberId, CancellationToken cancellationToken) =>
+            Task.FromResult(Find(tenantId, taskId)?.Events.Any(value => value.Kind == TaskEventKind.Claimed && value.MemberId == memberId) == true);
+
         public Task<Guid?> LockNextCandidateAsync(
             Guid tenantId,
             Guid warehouseId,

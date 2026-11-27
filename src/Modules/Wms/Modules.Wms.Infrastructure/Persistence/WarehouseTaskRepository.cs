@@ -149,6 +149,14 @@ internal sealed class WarehouseTaskRepository(WmsDbContext dbContext) : IWarehou
             .FirstOrDefaultAsync(
                 task => task.ClaimedByMemberId == memberId && task.Status == WarehouseTaskStatus.InProgress, cancellationToken);
 
+    public Task<bool> HasMemberClaimedAsync(Guid tenantId, Guid taskId, Guid memberId, CancellationToken cancellationToken) =>
+        dbContext.Set<WarehouseTaskEvent>()
+            .AsNoTracking()
+            .AnyAsync(
+                value => value.TenantId == tenantId && value.TaskId == taskId && value.MemberId == memberId
+                    && value.Kind == TaskEventKind.Claimed,
+                cancellationToken);
+
     // Los pesos (10 de urgente, un punto por cada 1200 s en el pool con tope 3, y los tramos del corte) repiten TaskPriority:
     // TaskCandidateQueryTests amarra las dos versiones y cambiar una sin la otra lo pone en rojo. SKIP LOCKED hace que dos operarios
     // que piden a la vez reciban tareas distintas sin esperarse. Como en LockAsync, va sin composición de EF encima.

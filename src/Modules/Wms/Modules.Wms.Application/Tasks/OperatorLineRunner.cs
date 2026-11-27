@@ -79,19 +79,25 @@ public sealed class OperatorLineRunner(
         var lease = task.CheckLease(member, request.LeaseToken);
         if (lease == LeaseCheck.Lost)
         {
-            await recorder.RecordSyncConflictAsync(
-                task,
-                task.FindLine(request.LineId),
-                member,
-                request.DeviceId,
-                key,
-                request.Action,
-                request.RawCommand,
-                request.Quantity,
-                request.OccurredAt,
-                now,
-                cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+            // Sólo quien tuvo el reclamo deja novedad (decisión del agente, por confirmar): con cualquier token y una clave nueva cada
+            // vez, cualquiera con el permiso inundaría la bandeja. Para el resto es el mismo 409 y no se guarda nada.
+            if (await tasks.HasMemberClaimedAsync(request.TenantId, request.TaskId, member, cancellationToken))
+            {
+                await recorder.RecordSyncConflictAsync(
+                    task,
+                    task.FindLine(request.LineId),
+                    member,
+                    request.DeviceId,
+                    key,
+                    request.Action,
+                    request.RawCommand,
+                    request.Quantity,
+                    request.OccurredAt,
+                    now,
+                    cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
             throw new TaskLeaseLostException(resumable: false);
         }
 

@@ -155,4 +155,20 @@ public sealed class TaskClosedNotifierTests
         var conflict = Assert.Single(world.Incidents);
         Assert.Equal((IncidentType.SyncConflict, "key-1", TaskWorld.Member), (conflict.Type, conflict.OperationKey, conflict.ReportedBy));
     }
+
+    // Sólo quien tuvo el reclamo deja novedad: si no, cambiando la Idempotency-Key se inundaría la bandeja.
+    [Fact]
+    public async Task ACallerWhoNeverClaimedTheTaskLeavesNoConflict()
+    {
+        var world = new TaskWorld();
+        var (_, command) = Claimed(world, 5);
+        world.CallerMember = TaskWorld.OtherMember;
+
+        var error = await Assert.ThrowsAsync<TaskLeaseLostException>(
+            () => ConfirmAsync(world, command with { LeaseToken = Guid.NewGuid() }));
+
+        Assert.False(error.Resumable);
+        Assert.Empty(world.Incidents);
+        Assert.DoesNotContain("save", world.Log);
+    }
 }

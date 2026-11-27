@@ -280,4 +280,29 @@ public sealed class TaskSyncConflictApiTests
         var payload = JsonNode.Parse(conflict.RawPayload!)!.AsObject();
         Assert.Equal(ancient, payload["occurredAt"]!.GetValue<DateTimeOffset>(), TimeSpan.FromSeconds(1));
     }
+
+    // Sólo quien tuvo el reclamo deja novedad: B nunca reclamó esta tarea.
+    [Fact]
+    public async Task AMemberWhoNeverClaimedTheTaskLeavesNoConflictEvenWithManyKeys()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeReassignedAsync(database, factory);
+        using var _c = floor.ClientA;
+        using var stranger = CreateClient(
+            factory, SecondOperatorSubject, TenantId, WmsPermissions.DocumentRead, WmsPermissions.PutawayPerform);
+        var forged = floor with { Task = floor.Task with { LeaseToken = Guid.NewGuid() } };
+
+        foreach (var _k in Enumerable.Range(0, 3))
+        {
+            var response = await ConfirmRawAsync(stranger, forged, Guid.NewGuid().ToString());
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("wms.task.lease_lost", await CodeOfAsync(response));
+            Assert.False(await ResumableOfAsync(response));
+        }
+
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.incidents"));
+    }
 }
