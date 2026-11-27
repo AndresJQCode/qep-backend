@@ -634,6 +634,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-27 — Mergeado a `develop` (`19a7a7014`, `--no-ff`, sin push) **Siigo exterior: seguimientos de pruebas**
+  (`feature/siigo-foreign-followups`, rama borrada; tarjetas de Trello `bHQ4s7bl` y `b72PZMlt`). Sólo pruebas, sin cambio de
+  producción ni de contrato: `ForeignCityHandlersAuthorizationTests` cubre la segunda capa (`IsOperator`) de los diez handlers de
+  `/operator/cities/foreign` (`c9c52f3fc`, RED por mutación: sin `EnsureAuthorized` fallan las diez), y
+  `SiigoInvoiceApiTests.RetryingAPendingInvoiceWithoutConnectionLeavesItPending` espera `ToConfirm` con la fila y
+  `siigo.connection_unavailable`, como decidió `ac267cacb`, en vez del `Failed` de antes (`ef584a532`). Pruebas
+  (`test-feature.ps1`): Geography unit 209/209, Siigo unit 598/598, Siigo integración 52/52 (`SiigoInvoiceApiTests` completa).
+  ArchitectureTests 353/354: `MultiReplicaInventoryTests.EveryHostedServiceIsClassified` ya estaba rojo en `develop`, porque
+  `HrBirthdayDeliveryWorker` (merge `8a48f3147`) no está en `MultiReplicaInventory.Workers`.
 - 2026-11-27 — Mergeado a `develop` (`f8673c363`, `--no-ff`, sin push) **Siigo: el token en caché ya no sobrevive al
   cambio de credenciales** (`fix/siigo-token-credenciales`, `9d576b127`, rama borrada; tarjeta de Trello `0pQhlDt5`).
   `SiigoTokenCache` guarda con cada token la huella SHA-256 de usuario + clave y sólo lo sirve a esas mismas credenciales:
