@@ -65,6 +65,12 @@ public sealed class PreviewQuotationHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, QuotationsPermissions.QuotationManage);
+        if (await ProjectIgnoredShipping.WouldFailAsync(
+            repository, query.Shipping, query.TenantId, query.QuotationId, cancellationToken))
+        {
+            query = query with { Shipping = null };
+        }
+
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         // Sin rastreo: el cálculo muta el agregado en memoria, así que la lectura no puede dejar

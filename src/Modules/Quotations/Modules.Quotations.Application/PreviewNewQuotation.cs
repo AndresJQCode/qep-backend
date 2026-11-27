@@ -67,6 +67,12 @@ public sealed class PreviewNewQuotationHandler(
         await ProjectModuleGuard.EnsureAsync(
             tenantModules, query.TenantId, QuotationKindNames.Parse(query.Kind) ?? QuotationKind.Standard,
             cancellationToken);
+        // Un proyecto ignora el envío del cuerpo (§6.5): se quita antes de validar.
+        if (QuotationKindNames.Parse(query.Kind) == QuotationKind.Project)
+        {
+            query = query with { Shipping = null };
+        }
+
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(

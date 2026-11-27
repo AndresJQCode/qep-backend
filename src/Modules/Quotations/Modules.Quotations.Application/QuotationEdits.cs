@@ -235,3 +235,21 @@ internal static class QuotationEditable
             "The quotation cannot be edited in its current status.");
     }
 }
+
+/// <summary>
+/// Una cotización de proyecto ignora el envío del cuerpo (spec 2026-11-26 §6.5), así que tampoco lo valida: el guardado y
+/// su cálculo previo lo quitan antes de validar. El tipo no viene en el cuerpo, y sólo se consulta cuando el bloque no
+/// pasaría: un envío bien escrito llega igual a la edición, que en un proyecto no lo aplica.
+/// </summary>
+internal static class ProjectIgnoredShipping
+{
+    public static async Task<bool> WouldFailAsync(
+        IQuotationRepository repository,
+        ShippingRequest? shipping,
+        Guid tenantId,
+        Guid quotationId,
+        CancellationToken cancellationToken) =>
+        !ShippingRequestValidator.Accepts(shipping)
+        && await repository.FindKindAsync(tenantId, new QuotationId(quotationId), cancellationToken)
+            == QuotationKind.Project;
+}

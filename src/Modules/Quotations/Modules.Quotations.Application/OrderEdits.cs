@@ -544,8 +544,13 @@ internal static class OrderEditsValidation
 {
     public const string ProjectOrderKey = "ProjectOrder";
 
-    /// <param name="order">El pedido, si ya se leyó. Sólo hace falta cuando <see cref="IOrderEdits.Items"/> llega vacía:
-    /// con líneas, el tipo no cambia ninguna regla.</param>
+    /// <summary>Las dos reglas que cambian en un pedido de proyecto (§12-C): admite la lista de líneas vacía e ignora el
+    /// envío. Sin ninguno de los dos casos en el cuerpo, el tipo del pedido no cambia nada y no hace falta leerlo antes de
+    /// validar.</summary>
+    public static bool NeedsTheOrder(IOrderEdits edits) =>
+        edits.Items.Count == 0 || !ShippingRequestValidator.Accepts(edits.Shipping);
+
+    /// <param name="order">El pedido, si ya se leyó; ver <see cref="NeedsTheOrder"/>.</param>
     public static async Task ValidateAsync<TEdits>(
         IValidator<TEdits> validator, TEdits edits, Order? order, CancellationToken cancellationToken)
         where TEdits : IOrderEdits
@@ -626,7 +631,9 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
 
         RuleFor(edits => edits.Shipping!)
             .SetValidator(new ShippingRequestValidator())
-            .When(edits => edits.Shipping is not null);
+            .When((edits, context) =>
+                edits.Shipping is not null
+                && !context.RootContextData.ContainsKey(OrderEditsValidation.ProjectOrderKey));
 
         // Las notas no tienen tope (plan 2026-10-15, P2): heredan las de la cotización.
     }

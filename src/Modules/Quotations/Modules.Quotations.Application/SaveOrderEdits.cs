@@ -74,10 +74,10 @@ public sealed class SaveOrderEditsHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
-        // Un pedido de proyecto se edita sin líneas (spec 2026-11-26 §12-C): con la lista vacía hay que saber el tipo antes
-        // de validar.
+        // Un pedido de proyecto se edita sin líneas y con cualquier envío (spec 2026-11-26 §12-C): en esos dos casos hay
+        // que saber el tipo antes de validar.
         var orderId = new OrderId(command.OrderId);
-        var order = command.Items.Count == 0
+        var order = OrderEditsValidation.NeedsTheOrder(command)
             ? await orderRepository.FindByIdAsync(command.TenantId, orderId, cancellationToken)
             : null;
         await OrderEditsValidation.ValidateAsync(validator, command, order, cancellationToken);

@@ -102,6 +102,28 @@ public sealed class ProjectOrdersApiTests(SharedQuotationsHost sharedHost)
         AssertUntouchedLine(setup, current);
     }
 
+    // §12-C: «se ignora el envío del cuerpo» incluye no validarlo.
+    [Fact]
+    public async Task AnInvalidShippingBlockIsIgnoredOnAProjectOrder()
+    {
+        var setup = await SetUpAsync(await sharedHost.StartTestAsync());
+        using var _ = setup.Client;
+        var order = await ConvertProjectAsync(setup);
+        var request = new SaveOrderEditsRequest(
+            [new OrderEditItemRequest(setup.ServiceId, 1m)], null, "Con un envío mal escrito",
+            Shipping: new ShippingRequest(null, "Teleport", 15_000.123m, false));
+
+        var preview = await ReadDetailAsync(await PreviewAsync(setup, order.Id, request));
+        var saved = await ReadDetailAsync(await PutAsync(setup, order.Id, order.Version, request));
+
+        foreach (var detail in new[] { preview, saved })
+        {
+            Assert.Equal("Con un envío mal escrito", detail.Order.Notes);
+            Assert.Null(detail.Order.Shipping.ChargeMode);
+            Assert.Equal(ProjectTotal, detail.Order.Total);
+        }
+    }
+
     // P9: un pedido de proyecto existente se opera siempre.
     [Fact]
     public async Task ProjectOrdersKeepWorkingWithTheModuleOff()

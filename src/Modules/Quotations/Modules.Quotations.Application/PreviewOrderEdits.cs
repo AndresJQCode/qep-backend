@@ -63,10 +63,9 @@ public sealed class PreviewOrderEditsHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, OrdersPermissions.OrderManage);
         // Sin tracking: el preview muta el agregado en memoria y nada de eso puede llegar a un
-        // SaveChangesAsync del mismo scope. Como en el guardado, con la lista de líneas vacía hay que saber el tipo del
-        // pedido antes de validar.
+        // SaveChangesAsync del mismo scope. Como en el guardado, a veces hay que saber el tipo del pedido antes de validar.
         var orderId = new OrderId(query.OrderId);
-        var order = query.Items.Count == 0
+        var order = OrderEditsValidation.NeedsTheOrder(query)
             ? await orderRepository.FindUntrackedByIdAsync(query.TenantId, orderId, cancellationToken)
             : null;
         await OrderEditsValidation.ValidateAsync(validator, query, order, cancellationToken);

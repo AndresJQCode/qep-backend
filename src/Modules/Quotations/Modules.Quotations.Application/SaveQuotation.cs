@@ -72,6 +72,12 @@ public sealed class SaveQuotationHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, QuotationsPermissions.QuotationManage);
+        if (await ProjectIgnoredShipping.WouldFailAsync(
+            repository, command.Shipping, command.TenantId, command.QuotationId, cancellationToken))
+        {
+            command = command with { Shipping = null };
+        }
+
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var quotation = await repository.FindAsync(

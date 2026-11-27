@@ -354,6 +354,49 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
         }
     }
 
+    // §6.5: «se ignoran» incluye no validarlo. Un envío mal escrito es 422 sólo en una cotización estándar.
+    [Fact]
+    public async Task AnInvalidShippingBlockIsIgnoredOnAProject()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var invalid = new ShippingRequest(null, "Teleport", 15_000.123m, false);
+        var create = Create(setup, Global(setup.ServiceId, 100_000m)) with { Shipping = invalid };
+
+        var created = await ReadAsync(await PostAsync(setup, create), HttpStatusCode.Created);
+        var newPreview = await ReadAsync(
+            await setup.Client.PostAsJsonAsync(
+                $"{QuotationsUrl(setup.TenantId)}/preview", create, TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+        var edit = Save(Global(setup.ServiceId, 200_000m)) with { Shipping = invalid };
+        var preview = await ReadAsync(
+            await setup.Client.PostAsJsonAsync(
+                $"{QuotationUrl(setup, created.Id)}/preview", edit, TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+        var saved = await ReadAsync(await PutAsync(setup, created, edit), HttpStatusCode.OK);
+
+        foreach (var document in new[] { created, newPreview, preview, saved })
+        {
+            Assert.Null(document.Shipping.ChargeMode);
+            Assert.Equal(0m, document.Shipping.FreightAmount);
+        }
+
+        Assert.Equal(200_000m, saved.Total);
+
+        var standard = await CreateQuotationAsync(setup.Client, setup.TenantId, setup.ClientId);
+        await AssertFieldErrorAsync(
+            await PutAsync(setup, standard, Save(null) with { Shipping = invalid }), "Shipping.FreightChargeMode");
+        await AssertFieldErrorAsync(
+            await setup.Client.PostAsJsonAsync(
+                $"{QuotationUrl(setup, standard.Id)}/preview",
+                Save(null) with { Shipping = invalid },
+                TestContext.Current.CancellationToken),
+            "Shipping.FreightChargeMode");
+        await AssertFieldErrorAsync(
+            await PostAsync(setup, new CreateQuotationRequest(setup.ClientId, null, null, null, null, null, Shipping: invalid)),
+            "Shipping.FreightChargeMode");
+    }
+
     // El precio cabe en la columna tal como se escribió, pero redondeado a pesos ya no: 422 en el campo y no un 500.
     [Fact]
     public async Task APriceThatRoundsPastTheColumnIsAFieldError()
