@@ -2033,6 +2033,8 @@ public static class QepServiceCollectionExtensions
         // Support task notices: the assignment notice template, sibling of the wholesale invitation notice.
         services.AddScoped<ICommandHandler<ProvisionTaskNoticeTemplateCommand, ManagedTemplateDto>, ProvisionTaskNoticeTemplateHandler>();
         services.AddScoped<IQueryHandler<GetTaskNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetTaskNoticeTemplateDraftHandler>();
+        services.AddScoped<ICommandHandler<ProvisionHrBirthdayNoticeTemplateCommand, ManagedTemplateDto>, ProvisionHrBirthdayNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetHrBirthdayNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetHrBirthdayNoticeTemplateDraftHandler>();
         // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista.
         services.AddScoped<ICommandHandler<ProvisionAppointmentReminderTemplateCommand, ManagedTemplateDto>, ProvisionAppointmentReminderTemplateHandler>();
         services.AddScoped<IQueryHandler<GetAppointmentReminderTemplateDraftQuery, SystemTemplateDraftDto>, GetAppointmentReminderTemplateDraftHandler>();

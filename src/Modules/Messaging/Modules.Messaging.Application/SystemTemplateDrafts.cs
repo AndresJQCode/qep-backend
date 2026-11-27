@@ -272,6 +272,34 @@ public sealed class GetTaskNoticeTemplateDraftHandler(
     }
 }
 
+/// <summary>HR birthday notices, <c>GET …/template-management/hr-birthday-notice/draft</c>: the draft of the birthday notice template.</summary>
+public sealed record GetHrBirthdayNoticeTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetHrBirthdayNoticeTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetHrBirthdayNoticeTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetHrBirthdayNoticeTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindHrBirthdayNoticeAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(
+                query.TenantId, query.ConnectionId, HrBirthdayNoticeTemplateDefinition.Name, HrBirthdayNoticeTemplateDefinition.Language,
+                cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(
+            current, external, HrBirthdayNoticeTemplateDefinition.BaseBody, SystemTemplateVariables.HrBirthdayNotice,
+            HrBirthdayNoticeTemplateDefinition.IsAdoptable);
+    }
+}
+
 /// <summary>Agenda, <c>GET …/template-management/appointment-reminder/draft</c>: el borrador de la plantilla del recordatorio de cita de la
 /// conexión.</summary>
 public sealed record GetAppointmentReminderTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;

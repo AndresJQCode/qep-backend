@@ -40,6 +40,9 @@ public enum MessageTemplateKind
     /// <summary>Support task notices: the WhatsApp notice that a ticket or internal task was assigned to a member, body only (stored by name:
     /// it goes at the end).</summary>
     TaskNotice,
+
+    /// <summary>HR birthday notices: the WhatsApp digest of the employees' birthdays sent to a manager, body only (stored by name: it goes at the end).</summary>
+    HrBirthdayNotice,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -147,6 +150,11 @@ public static partial class MessageTemplateName
 
     public const string TaskNoticePrefix = "qep_tarea_asignada_";
 
+    /// <summary>HR birthday notices: <c>qep_cumpleanos_equipo</c> and its versions (<c>qep_cumpleanos_equipo_v2</c>…).</summary>
+    public const string HrBirthdayNoticeName = "qep_cumpleanos_equipo";
+
+    public const string HrBirthdayNoticePrefix = "qep_cumpleanos_equipo_";
+
     /// <summary>Agenda: <c>qep_agenda_recordatorio</c> y sus versiones (<c>qep_agenda_recordatorio_v2</c>…).</summary>
     public const string AppointmentReminderName = "qep_agenda_recordatorio";
 
@@ -171,6 +179,8 @@ public static partial class MessageTemplateName
             || name.StartsWith(InvoicePrefix, StringComparison.Ordinal)
             || string.Equals(name, TaskNoticeName, StringComparison.Ordinal)
             || name.StartsWith(TaskNoticePrefix, StringComparison.Ordinal)
+            || string.Equals(name, HrBirthdayNoticeName, StringComparison.Ordinal)
+            || name.StartsWith(HrBirthdayNoticePrefix, StringComparison.Ordinal)
             || string.Equals(name, AppointmentReminderName, StringComparison.Ordinal)
             || name.StartsWith(AppointmentReminderPrefix, StringComparison.Ordinal));
 
@@ -469,6 +479,18 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.TaskNotice;
+        UpdatedAt = now;
+    }
+
+    /// <summary>HR birthday notices: the same as <see cref="AdoptAsTaskNotice"/> for a <c>qep_cumpleanos_equipo</c> created in Meta's console.</summary>
+    public void AdoptAsHrBirthdayNotice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateHrBirthdayNoticeConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.HrBirthdayNotice;
         UpdatedAt = now;
     }
 
