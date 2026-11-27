@@ -31,6 +31,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
+| Cotizaciones de proyecto (módulo `projects`) | **Backend construido y mergeado en `develop`** (2026-11-26, merge `8603d6e9a`, `--no-ff`, sin push; rama `feature/cotizaciones-de-proyecto` hasta `424cafd75`). Cotización `kind: Project` con alcance editable (fases e ítems), precio global o por fase y una línea de facturación con el servicio elegido; conversión a pedido con líneas bloqueadas (`order.project.items_locked`), filtro `kind` en listados y exports, sección «Alcance» en los PDF. Cambios de contrato A-H (§12) y comportamientos I-L (§13) aprobados por el owner. Migraciones aditivas `AddProjectQuotations` y `AddProjectsModuleKey`. **Falta:** frontend (spec y plan aprobados en `qep-frontend`, `090acaef`), suite completa, despliegue | `docs/superpowers/specs/2026-11-26-cotizaciones-de-proyecto-design.md` |
 | Shopify: parte de envío de pedidos de otros países | **Backend construido y mergeado en `develop`** (2026-11-26, merge `bef48e2b2`, ya en `origin/develop`; rama `feature/shopify-foreign-shipping` hasta `c4df3c93e`, rama y worktree borrados). Un pedido de fuera de Colombia nace con su parte de envío (país, ciudad escrita, código postal y, en España, región) y toma las ediciones de esa dirección; aviso nuevo `shipping_region_unresolved`. Sin migraciones ni backfill; el alta del cliente extranjero queda fuera. Una edición extranjera con un campo más largo que la parte de Quotations es conflicto `party_incomplete` (`98b1d85ad`). **Falta el frontend** | `ShopifyForeignAddress`, `ShopifyOrderImporter`, `ShopifyEditPlanner`; [plan](superpowers/plans/2026-11-26-shopify-parte-de-envio-otros-paises-backend.md), [handoff](superpowers/specs/2026-11-24-shopify-parte-de-envio-otros-paises-backend-handoff.md) |
 | Siigo: liberar el pedido cuando la factura se anuló en Siigo | **Backend construido y mergeado en `develop`** (2026-11-26, `--no-ff`, sin push; merge `70363e0d5`, rama `feature/siigo-anular-factura` borrada). **Sin `test-feature.ps1`** (orden del owner). Falta el frontend | `ConfirmSiigoAnnulmentHandler`, `POST …/orders/{orderId}/siigo-invoice/annulment`; spec y plan `2026-11-25-siigo-anular-factura` |
 | Roles por tenant: `admin` como único rol de sistema | **Backend construido y mergeado en `develop`** (2026-11-25, `--no-ff`, sin push; merge `5fdf11863`, rama `feature/roles-por-tenant` borrada). `advisor`, `billing`, `cashier`, `scheduling_manager` y `scheduling_provider` pasan a ser plantillas que se siembran en cada tenant (alta y arranque, marca en `authorization.role_seeds`), editables y borrables. **Mergeado sin `test-feature.ps1` ni integración** (orden del owner); el frontend no cambia | [spec](superpowers/specs/2026-11-25-roles-por-tenant-design.md), [plan](superpowers/plans/2026-11-25-roles-por-tenant.md) |
@@ -327,6 +328,12 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
   y por correo.
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
+
+- **Cotizaciones de proyecto (`8603d6e9a`): correr las pruebas antes.** `test-feature.ps1` quedó en verde sobre
+  `67946f756`; lo que entró después (un addendum del spec y `develop` con un arreglo de Shopify sin archivos en común) se
+  mergeó sin volver a correrlo, por pedido del owner. Falta la integración completa de Quotations y Tenancy. Al desplegar:
+  backend primero; prender `projects` en la consola del operador sólo cuando no quede un pod viejo
+  (`TenantModuleKey.Parse` lanza con una clave que no conoce); el frontend sale después.
 
 - **Anulación de facturas de Siigo (`70363e0d5`): correr las pruebas antes.** Se mergeó sin `test-feature.ps1`; después de
   integrar `develop` no corrieron `SiigoInvoiceBatchApiTests`, buena parte de `SiigoInvoiceApiTests`, la clase
@@ -626,6 +633,14 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`8603d6e9a`, `--no-ff`, sin push) **cotizaciones de proyecto, backend**
+  (`feature/cotizaciones-de-proyecto`, hasta `424cafd75`; las Tareas 1-4 ya estaban por `ab3b73cba` y `ba090092e`).
+  Tres bloques con revisión cada uno y revisión final de solo lectura: sin críticos ni importantes. El owner aprobó los
+  cambios de contrato A-H (§12) y los comportamientos I-L (§13: tope de precio `999999999999.99`, `null` en las
+  listas, 422 por redondeo al guardar sin `project`, export encolado sin revisar el módulo). Pruebas:
+  `.\scripts\test-feature.ps1` en verde sobre `67946f756` (ArchitectureTests 354/354, Quotations.UnitTests 2582/2582,
+  Tenancy.UnitTests 578/578, Bootstrapper.UnitTests 1355/1355, Quotations integración filtrada 90/90, Tenancy
+  integración filtrada 23/23); sin volver a correr sobre `424cafd75` por pedido del owner. Pendiente: frontend.
 - 2026-11-26 — Mergeado a `develop` (`98b1d85ad`, `--no-ff`, sin push) **guarda de largo en ediciones de Shopify fuera
   de Colombia** (`fix/shopify-edit-length-guard`, `d75205829`). Una edición de dirección extranjera con nombre, teléfono,
   dirección o correo más largo que la parte de Quotations salía `Apply`, Quotations la rechazaba y el cambio quedaba
