@@ -110,6 +110,40 @@ public sealed class SaveOrderEditsValidatorTests
         Assert.Equal("The identification type is not allowed for the country.", error.ErrorMessage);
     }
 
+    [Theory]
+    [InlineData("NIT", "ACME SAS")]
+    [InlineData("CC", "12A45")]
+    public void ALetteredNumberForANumericTypeIsAFieldError(string type, string number)
+    {
+        var party = Party(type, null) with { IdentificationNumber = number };
+
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(party)));
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Billing.Party.IdentificationNumber");
+        Assert.Equal(BuildingBlocks.Domain.Identification.DocumentNumberFormat.NumericTypesMessage, error.ErrorMessage);
+    }
+
+    // Review Focus 1: reenviar sin cambios la parte de un pedido con un NIT viejo con letras también se bloquea.
+    [Fact]
+    public void EditingAnOrderWithAStoredLetteredNitIsRejectedOnTheNumber()
+    {
+        var party = Party("NIT", null) with { IdentificationNumber = "ACME SAS" };
+
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(party)));
+
+        AssertFailsOn(result, "Billing.Party.IdentificationNumber");
+    }
+
+    [Fact]
+    public void APassportNumberWithLettersIsAccepted()
+    {
+        var party = Party("PASAPORTE", null) with { IdentificationNumber = "AB123" };
+
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(party)));
+
+        Assert.DoesNotContain(result.Errors, e => e.PropertyName == "Billing.Party.IdentificationNumber");
+    }
+
     [Fact]
     public void AMalformedCountryLeavesTheTypeAlone()
     {

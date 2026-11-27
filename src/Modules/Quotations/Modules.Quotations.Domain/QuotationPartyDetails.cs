@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -91,6 +93,7 @@ public sealed record QuotationPartyDetails
         var normalized = this with { Country = country };
         normalized.EnsureLane(fieldPrefix);
         normalized.EnsureDocumentTypeAllowed(fieldPrefix);
+        normalized.EnsureDocumentNumberIsNumeric(fieldPrefix);
         normalized.EnsurePostalCodeFits(fieldPrefix);
         return normalized.NormalizedFields(country);
     }
@@ -149,6 +152,25 @@ public sealed record QuotationPartyDetails
                 new Dictionary<string, string[]>(StringComparer.Ordinal)
                 {
                     [$"{fieldPrefix}.IdentificationType"] = [message]
+                });
+        }
+    }
+
+    // Siempre se comprueba al escribir, también con un número viejo reenviado sin cambios: sólo se lee sin pasar por acá.
+    // Un número vacío no se toca (que falte lo dice otra regla) y los tipos no numéricos pasan siempre.
+    private void EnsureDocumentNumberIsNumeric(string fieldPrefix)
+    {
+        if (IdentificationType is { } type
+            && !string.IsNullOrWhiteSpace(IdentificationNumber)
+            && !DocumentNumberFormat.IsValidFor(type.ToWireValue(), IdentificationNumber))
+        {
+            var message = DocumentNumberFormat.NumericTypesMessage;
+            throw new QuotationsDomainException(
+                "quotations.party.identification_number_not_numeric",
+                message,
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    [$"{fieldPrefix}.IdentificationNumber"] = [message]
                 });
         }
     }

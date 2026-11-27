@@ -92,6 +92,34 @@ public sealed class CreateQuotationValidatorTests
     }
 
     [Theory]
+    [InlineData("NIT", "ACME SAS")]
+    [InlineData("CC", "12A45")]
+    [InlineData("CE", "abc")]
+    public async Task ALetteredNumberForANumericTypeIsAFieldError(string type, string number)
+    {
+        var parties = new QuotationPartiesRequest(Party(type, null) with { IdentificationNumber = number }, null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Parties.Billing.IdentificationNumber");
+        Assert.Equal(BuildingBlocks.Domain.Identification.DocumentNumberFormat.NumericTypesMessage, error.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("NIT", "900.123.456-1")]
+    [InlineData("PASAPORTE", "AB123")]
+    public async Task ANumberTheTypeAllowsHasNoNumberError(string type, string number)
+    {
+        var parties = new QuotationPartiesRequest(Party(type, null) with { IdentificationNumber = number }, null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(result.Errors, e => e.PropertyName == "Parties.Billing.IdentificationNumber");
+    }
+
+    [Theory]
     [InlineData("CC", "ES", "Madrid")]
     [InlineData("NIF", null, null)]
     [InlineData("TAX_ID", "CO", null)]
