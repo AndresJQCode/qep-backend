@@ -17,7 +17,8 @@ public sealed record ShortTaskLineCommand(
     string IncidentType,
     string? Note,
     DateTimeOffset? OccurredAt,
-    string DeviceId) : ICommand<TaskDto>
+    string DeviceId,
+    IReadOnlyList<Guid>? PhotoFileIds) : ICommand<TaskDto>
 {
     public static ShortTaskLineCommand From(Guid tenantId, Guid taskId, Guid lineId, ShortTaskLineRequest request)
     {
@@ -34,7 +35,8 @@ public sealed record ShortTaskLineCommand(
             request.IncidentType ?? string.Empty,
             request.Note,
             request.OccurredAt,
-            request.DeviceId ?? string.Empty);
+            request.DeviceId ?? string.Empty,
+            request.PhotoFileIds);
     }
 }
 
@@ -136,6 +138,7 @@ public sealed class ShortTaskLineHandler(
             command.QuantityFound,
             lot is { } lotId ? new LotId(lotId) : null,
             command.Note,
+            command.PhotoFileIds,
             member,
             command.DeviceId,
             context.OperationKey,

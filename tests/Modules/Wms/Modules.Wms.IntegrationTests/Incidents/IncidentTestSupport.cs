@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Testcontainers.PostgreSql;
+using Modules.Storage.Application;
+using Modules.Storage.Domain;
 using Modules.Wms.Application;
 using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Inventory;
@@ -27,11 +29,12 @@ internal static class IncidentTestSupport
         Guid? reportedBy = null,
         string? operationKey = null,
         Guid? tenantId = null,
-        DateTimeOffset? reportedAt = null) =>
+        DateTimeOffset? reportedAt = null,
+        Guid? warehouseId = null) =>
         Incident.Report(
             tenantId ?? s.TenantId,
             number,
-            new WarehouseId(s.WarehouseId),
+            new WarehouseId(warehouseId ?? s.WarehouseId),
             new OwnerId(s.OwnerId),
             type,
             subject ?? new IncidentSubject(null, null, new LocationId(s.BinA), s.VariantId, null, StockStatus.Available, null, null),
@@ -135,8 +138,30 @@ internal static class IncidentTestSupport
 
     /// <summary>El cuerpo de <c>short</c>: lo que el operario escaneó al no encontrar todo.</summary>
     public static ShortTaskLineRequest ShortBody(
-        Guid token, decimal found, string type = "ShortMove", Guid? lotId = null, DateTimeOffset? occurredAt = null, string? note = null) =>
-        new(token, found, lotId, type, note, occurredAt ?? DateTimeOffset.UtcNow, "zebra-01");
+        Guid token,
+        decimal found,
+        string type = "ShortMove",
+        Guid? lotId = null,
+        DateTimeOffset? occurredAt = null,
+        string? note = null,
+        IReadOnlyList<Guid>? photos = null) =>
+        new(token, found, lotId, type, note, occurredAt ?? DateTimeOffset.UtcNow, "zebra-01", photos);
+
+    /// <summary>Un archivo de evidencia sembrado como lo deja <c>CreateUploadSession</c>: queda <c>PendingUpload</c>, que es el estado
+    /// en que llega una foto tomada sin conexión (DA-49). Un <paramref name="ownerType"/> distinto de <c>WmsEvidence</c> siembra el
+    /// archivo que no es evidencia.</summary>
+    public static async Task<Guid> SeedEvidenceFileAsync(
+        QepApiFactory factory, Guid tenantId, FileOwnerType ownerType = FileOwnerType.WmsEvidence)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var files = scope.ServiceProvider.GetRequiredService<IFileResourceRepository>();
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), tenantId, tenantId, ownerType, "foto.jpg", "image/jpeg", 1024,
+            $"staging/{Guid.CreateVersion7():N}", DateTimeOffset.UtcNow);
+        files.Add(resource);
+        await scope.ServiceProvider.GetRequiredService<IStorageUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        return resource.Id.Value;
+    }
 
     public static async Task<HttpResponseMessage> ShortRawAsync(
         HttpClient client, Guid taskId, Guid lineId, object body, string? key = null)

@@ -47,13 +47,31 @@ public sealed class TaskShortApiTests
         ScalarAsync<long>(database, "SELECT count(*) FROM wms.incidents");
 
     private static async Task<HttpResponseMessage> ShortAsync(
-        Floor floor, decimal found, string type = "ShortMove", Guid? lotId = null, DateTimeOffset? occurredAt = null, string? key = null) =>
+        Floor floor,
+        decimal found,
+        string type = "ShortMove",
+        Guid? lotId = null,
+        DateTimeOffset? occurredAt = null,
+        string? key = null,
+        IReadOnlyList<Guid>? photos = null) =>
         await ShortRawAsync(
             floor.Client,
             floor.Task.Id,
             floor.Task.Lines[0].Id,
-            ShortBody(floor.Task.LeaseToken!.Value, found, type, lotId, occurredAt),
+            ShortBody(floor.Task.LeaseToken!.Value, found, type, lotId, occurredAt, photos: photos),
             key ?? NewKey());
+
+    private static Task<long> EvidenceCountAsync(PostgreSqlContainer database) =>
+        ScalarAsync<long>(database, "SELECT count(*) FROM wms.incident_evidence");
+
+    private static async Task AssertEvidenceInvalidAsync(HttpResponseMessage response, PostgreSqlContainer database)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.incident.evidence_invalid", await CodeOfAsync(response));
+        Assert.Equal(0L, await IncidentCountAsync(database));
+        Assert.Equal(0L, await EvidenceCountAsync(database));
+        Assert.Equal(0L, await TaskMovementsAsync(database));
+    }
 
     [Fact]
     public async Task ShortWithTwoFoundMovesTwoAndClosesTheTask()
@@ -352,5 +370,108 @@ public sealed class TaskShortApiTests
         var history = (await GetAsync(floor.Setup.Manager, floor.Task.Id)).Events.Select(value => value.Kind).ToList();
         var resumed = history.IndexOf("LeaseResumed");
         Assert.Equal(["LeaseResumed", "LineConfirmed", "LineShort", "Completed"], history.Skip(resumed).Take(4));
+    }
+
+    [Fact]
+    public async Task AShortKeepsItsPhotosEvenWhileUploading()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var tenant = Guid.Parse(TenantId);
+        Guid[] photos = [await SeedEvidenceFileAsync(factory, tenant), await SeedEvidenceFileAsync(factory, tenant)];
+
+        var response = await ShortAsync(floor, 2, photos: photos);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2L, await EvidenceCountAsync(database));
+        foreach (var photo in photos)
+        {
+            Assert.Equal(1L, await ScalarAsync<long>(
+                database, "SELECT count(*) FROM wms.incident_evidence WHERE file_id = @id AND kind = 'Photo'", ("id", photo)));
+        }
+    }
+
+    [Fact]
+    public async Task APhotoOfAnotherTenantIs422EvidenceInvalid()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        await SeedTenantAsync(factory, OtherTenantId);
+        var foreign = await SeedEvidenceFileAsync(factory, Guid.Parse(OtherTenantId));
+        var own = await SeedEvidenceFileAsync(factory, Guid.Parse(TenantId));
+
+        var response = await ShortAsync(floor, 2, photos: [own, foreign]);
+
+        await AssertEvidenceInvalidAsync(response, database);
+    }
+
+    [Fact]
+    public async Task AFileThatIsNotEvidenceIs422EvidenceInvalid()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var export = await SeedEvidenceFileAsync(factory, Guid.Parse(TenantId), Modules.Storage.Domain.FileOwnerType.WmsExport);
+
+        var response = await ShortAsync(floor, 2, photos: [export]);
+
+        await AssertEvidenceInvalidAsync(response, database);
+    }
+
+    [Fact]
+    public async Task AnUnknownPhotoIs422EvidenceInvalid()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+
+        var response = await ShortAsync(floor, 2, photos: [Guid.NewGuid()]);
+
+        await AssertEvidenceInvalidAsync(response, database);
+    }
+
+    [Fact]
+    public async Task SixPhotosAre422EvidenceInvalid()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var photos = new List<Guid>();
+        for (var index = 0; index < 6; index++)
+        {
+            photos.Add(await SeedEvidenceFileAsync(factory, Guid.Parse(TenantId)));
+        }
+
+        var response = await ShortAsync(floor, 2, photos: photos);
+
+        await AssertEvidenceInvalidAsync(response, database);
+    }
+
+    [Fact]
+    public async Task TheSamePhotoTwiceCountsOnce()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var photo = await SeedEvidenceFileAsync(factory, Guid.Parse(TenantId));
+
+        var response = await ShortAsync(floor, 2, photos: [photo, photo, photo, photo, photo, photo]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await EvidenceCountAsync(database));
     }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Modules.Wms.Domain;
 using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
@@ -9,8 +10,33 @@ namespace Modules.Wms.Application;
 /// <summary>Arma la novedad que nace de una línea de tarea (spec 2026-11-26 §8.4). No guarda: comparte la transacción del handler que
 /// la llama, con la misma <c>Idempotency-Key</c>. La numeración toma un lock de transacción, así que va antes de cualquier llamada
 /// al ledger (orden de bloqueos: números antes que saldos).</summary>
-public sealed class TaskIncidentRecorder(IIncidentRepository incidents)
+public sealed class TaskIncidentRecorder(IIncidentRepository incidents, IWmsEvidenceLookup evidenceLookup)
 {
+    /// <summary>Las fotos que el operario adjuntó, como evidencia (DA-49). Se de-duplican primero; más de
+    /// <see cref="Incident.MaxEvidence"/> distintas, una de otro tenant, de otro tipo de dueño o que no existe es 422
+    /// <c>wms.incident.evidence_invalid</c>. Cuentan en cualquier estado: pueden estar subiendo todavía.</summary>
+    public async Task<IReadOnlyList<IncidentEvidence>> ResolveEvidenceAsync(
+        Guid tenantId, IReadOnlyList<Guid>? photoFileIds, CancellationToken cancellationToken)
+    {
+        var distinct = (photoFileIds ?? []).Distinct().ToArray();
+        if (distinct.Length == 0)
+        {
+            return [];
+        }
+
+        if (distinct.Length > Incident.MaxEvidence)
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentEvidenceInvalid, $"Una novedad lleva a lo sumo {Incident.MaxEvidence} evidencias.");
+        }
+
+        var found = await evidenceLookup.FindEvidenceAsync(tenantId, distinct, cancellationToken);
+        return distinct.All(found.Contains)
+            ? [.. distinct.Select(fileId => IncidentEvidence.Create(fileId, IncidentEvidenceKind.Photo, null))]
+            : throw new WmsDomainException(
+                WmsErrorCodes.IncidentEvidenceInvalid, "Una de las fotos no es evidencia de bodega de este tenant.");
+    }
+
     /// <param name="expected">Lo que faltaba de la línea.</param>
     /// <param name="actual">Lo que el operario encontró.</param>
     /// <param name="reportedAt">La hora del escaneo.</param>
@@ -23,6 +49,7 @@ public sealed class TaskIncidentRecorder(IIncidentRepository incidents)
         decimal actual,
         LotId? lot,
         string? note,
+        IReadOnlyList<Guid>? photoFileIds,
         Guid member,
         string deviceId,
         string operationKey,
@@ -33,6 +60,8 @@ public sealed class TaskIncidentRecorder(IIncidentRepository incidents)
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(line);
 
+        // La evidencia se valida antes de numerar: una foto ajena no toma el lock de numeración.
+        var evidence = await ResolveEvidenceAsync(task.TenantId, photoFileIds, cancellationToken);
         var number = await incidents.NextNumberAsync(task.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
         var subject = new IncidentSubject(
             task.Id, line.Id, line.FromLocationId, line.VariantId, lot, line.StockStatus, expected, actual);
@@ -46,7 +75,7 @@ public sealed class TaskIncidentRecorder(IIncidentRepository incidents)
             note,
             null,
             null,
-            [],
+            evidence,
             member,
             deviceId,
             operationKey,

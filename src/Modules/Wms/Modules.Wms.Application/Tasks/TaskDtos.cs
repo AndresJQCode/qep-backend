@@ -173,7 +173,8 @@ public sealed record ConfirmTaskLineRequest(
 
 /// <summary>Lo que el operario escaneó al no encontrar todo. <c>QuantityFound</c> va al destino planeado; para otro destino se
 /// confirma antes con motivo y se declara el faltante con 0 (DA-41). <c>IncidentType</c> es el nombre del tipo: <c>ShortMove</c> o
-/// <c>LocationMismatch</c>.</summary>
+/// <c>LocationMismatch</c>. <c>PhotoFileIds</c> son archivos <c>WmsEvidence</c> del tenant, en cualquier estado (una foto sin conexión
+/// puede estar subiendo todavía, DA-49): a lo sumo 5 distintos, o 422 <c>wms.incident.evidence_invalid</c>.</summary>
 public sealed record ShortTaskLineRequest(
     Guid LeaseToken,
     decimal QuantityFound,
@@ -181,7 +182,8 @@ public sealed record ShortTaskLineRequest(
     string? IncidentType,
     string? Note,
     DateTimeOffset? OccurredAt,
-    string? DeviceId) : IIdempotentRequest;
+    string? DeviceId,
+    IReadOnlyList<Guid>? PhotoFileIds = null) : IIdempotentRequest;
 
 /// <summary>Cuerpo de <c>publish</c> y <c>unassign</c>. Las acciones del supervisor llevan la versión que leyó (412 si cambió).
 /// </summary>
