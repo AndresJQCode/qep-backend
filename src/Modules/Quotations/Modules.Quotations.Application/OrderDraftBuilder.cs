@@ -63,8 +63,7 @@ public sealed class OrderDraftBuilder(
         var (header, parties, lines) = await PriceAsync(
             input, customer, account, account.Currency, orderDate, cancellationToken);
         // Sólo al guardar: el cálculo previo corre mientras la persona escribe (spec 2026-10-26).
-        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(input.TenantId), cancellationToken);
-        BillingPartyFiscalRules.EnsureConsistent(parties.Billing, regional?.Country);
+        BillingPartyFiscalRules.EnsureConsistent(parties.Billing);
         await PartyRegionRules.EnsureAsync(geographyLookup, parties, cancellationToken);
         var shipping = await ResolveShippingAsync(input, parties, account.Currency, account.ChargesVat, cancellationToken);
         var order = Order.CreateManual(
