@@ -177,19 +177,7 @@ public sealed class EmploymentContract
                 "A new assignment must take effect after the last one.");
         }
 
-        var placeChanges = entry.WorkplaceId != previous.WorkplaceId || entry.SiteId != previous.SiteId;
-        if (!placeChanges && entry.PositionId == previous.PositionId && entry.AreaId == previous.AreaId)
-        {
-            throw new HrDomainException(HrErrorCodes.AssignmentUnchanged, "The assignment does not change anything.");
-        }
-
-        // PILA, FI-EMP-012: el lugar de trabajo sólo cambia el día 1 del mes.
-        if (placeChanges && entry.EffectiveDate.Day != 1)
-        {
-            throw new HrDomainException(
-                HrErrorCodes.SiteChangeNotFirstOfMonth,
-                "The workplace can only change on the first day of a month.");
-        }
+        EnsurePair(previous.ToEntry(), entry);
 
         _assignments.Add(new AssignmentRecord(
             id, Id, entry.EffectiveDate, entry.PositionId, entry.AreaId, entry.SiteId, entry.WorkplaceId, document, now));
@@ -296,7 +284,8 @@ public sealed class EmploymentContract
     }
 
     // La regla de un par de registros vecinos: el posterior cambia algo y, si cambia el lugar, empieza un día 1 (PILA,
-    // FI-EMP-012). Es la misma que aplica AddAssignment contra el último registro.
+    // FI-EMP-012). La única copia de la regla: la usan AddAssignment (contra el último registro), RewriteAssignment,
+    // RemoveAssignment y CanRemoveAssignment.
     private static (string Code, string Message)? PairViolation(AssignmentEntry earlier, AssignmentEntry later)
     {
         var placeChanges = later.WorkplaceId != earlier.WorkplaceId || later.SiteId != earlier.SiteId;
