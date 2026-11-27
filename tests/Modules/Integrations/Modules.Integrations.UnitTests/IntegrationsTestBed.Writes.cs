@@ -15,8 +15,12 @@ internal sealed partial class IntegrationsTestBed
         new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, Modules, Providers, Memberships, AuthorNames,
             context ?? Context(), Clock, new CreateConnectionValidator(Catalog));
 
+    public FakeCredentialChangeGuard CredentialGuard => _credentialGuard ??= new(UnitOfWork);
+
+    private FakeCredentialChangeGuard? _credentialGuard;
+
     public UpdateConnectionHandler UpdateHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, Modules, Providers, AuthorNames,
+        new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, CredentialGuard, Modules, Providers, AuthorNames,
             context ?? Context(), Clock, new UpdateConnectionValidator());
 
     public FakeWhatsAppSignupGateway Gateway { get; } = new();
@@ -32,6 +36,48 @@ internal sealed partial class IntegrationsTestBed
     public ConnectInstagramHandler InstagramHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, Routes, UnitOfWork, Audit, Protector, Gateway.Instagram, InstagramApp, Modules, Memberships, AuthorNames,
             context ?? Context(), Clock, new ConnectInstagramValidator());
+}
+
+/// <summary>El guardián del cambio de credenciales: por defecto no pide borrar nada. Anota cada consulta y en qué estado de la
+/// transacción corrió el borrado.</summary>
+internal sealed class FakeCredentialChangeGuard(FakeUnitOfWork unitOfWork) : IConnectionCredentialChangeGuard
+{
+    public sealed record Check(
+        string ProviderKey,
+        Guid ConnectionId,
+        IReadOnlyDictionary<string, string> Fields,
+        IReadOnlyDictionary<string, string> Secrets,
+        bool Confirmed);
+
+    public bool MustReset { get; set; }
+
+    public Exception? FailWith { get; set; }
+
+    public List<Check> Checks { get; } = [];
+
+    public List<Guid> Resets { get; } = [];
+
+    public bool? InTransactionAtReset { get; private set; }
+
+    public Task<bool> MustResetConfigurationAsync(
+        string providerKey,
+        Guid tenantId,
+        Guid connectionId,
+        IReadOnlyDictionary<string, string> fields,
+        IReadOnlyDictionary<string, string> secrets,
+        bool confirmed,
+        CancellationToken cancellationToken)
+    {
+        Checks.Add(new Check(providerKey, connectionId, fields, secrets, confirmed));
+        return FailWith is { } failure ? throw failure : Task.FromResult(MustReset);
+    }
+
+    public Task ResetConfigurationAsync(string providerKey, Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        Resets.Add(connectionId);
+        InTransactionAtReset = unitOfWork.InTransaction;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>El caso de uso Instagram (spec 2026-10-14): configurado por defecto, con el origen de producción y el de local

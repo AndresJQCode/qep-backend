@@ -6,18 +6,21 @@ using Modules.Tenancy.Application;
 namespace Modules.Integrations.Application;
 
 /// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por If-Match.</param>
+/// <param name="ConfirmSiigoAccountChange">Tarjeta 0pQhlDt5: la persona confirmó que las credenciales nuevas de Siigo son de otra cuenta y
+/// que se borra la configuración guardada. Sin cambio de cuenta (o en otro proveedor) se ignora.</param>
 public sealed record UpdateConnectionCommand(
     Guid TenantId,
     Guid ConnectionId,
     long ExpectedVersion,
     string? Name,
     IReadOnlyDictionary<string, string?>? Fields,
-    IReadOnlyDictionary<string, string?>? Secrets) : ICommand<ConnectionResponse>
+    IReadOnlyDictionary<string, string?>? Secrets,
+    bool ConfirmSiigoAccountChange = false) : ICommand<ConnectionResponse>
 {
     public override string ToString() =>
         $"UpdateConnectionCommand {{ TenantId = {TenantId}, ConnectionId = {ConnectionId}, "
         + $"ExpectedVersion = {ExpectedVersion}, Name = {Name}, Fields = [{CommandText.Keys(Fields)}], "
-        + $"Secrets = [{CommandText.Keys(Secrets)}] }}";
+        + $"Secrets = [{CommandText.Keys(Secrets)}], ConfirmSiigoAccountChange = {ConfirmSiigoAccountChange} }}";
 }
 
 /// <summary>
@@ -36,6 +39,8 @@ public sealed class UpdateConnectionValidator : AbstractValidator<UpdateConnecti
 }
 
 /// <summary>
+/// Con credenciales de otra cuenta del proveedor (<see cref="IConnectionCredentialChangeGuard"/>): sin confirmación no se guarda nada (409);
+/// con ella, la configuración del proveedor se borra en la misma transacción que la conexión.
 /// Spec 2026-10-08, <c>PUT /connections/{id}</c>: secreto ausente conserva (D5); prueba sólo si cambió
 /// un campo público o llegó un secreto (P9), con los secretos guardados descifrados para lo que no
 /// llegó; una prueba fallida no guarda nada; sin cambios, no-op. Un diccionario <c>fields</c> o
@@ -48,6 +53,7 @@ public sealed class UpdateConnectionHandler(
     IIntegrationsAuditRecorder auditRecorder,
     ISecretProtector protector,
     IConnectionTester tester,
+    IConnectionCredentialChangeGuard credentialChangeGuard,
     ITenantModules tenantModules,
     ITenantProviders tenantProviders,
     IConnectionAuthorNames authorNames,
@@ -82,9 +88,10 @@ public sealed class UpdateConnectionHandler(
         var fields = ConnectionInputRules.Normalize(provider, requestedFields, secret: false);
         var replacedSecrets = ConnectionInputRules.Normalize(provider, command.Secrets, secret: true);
         var mustTest = replacedSecrets.Count > 0 || !SameValues(connection.Fields, fields);
+        Dictionary<string, string>? merged = null;
         if (mustTest)
         {
-            var merged = ConnectionSecrets.ReadForTest(protector, connection, replacedSecrets);
+            merged = ConnectionSecrets.ReadForTest(protector, connection, replacedSecrets);
             await ConnectionVerification.EnsurePassesAsync(tester, provider, fields, merged, cancellationToken);
         }
 
@@ -96,13 +103,30 @@ public sealed class UpdateConnectionHandler(
             return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled: true, cancellationToken);
         }
 
+        // Credenciales de otra cuenta: antes de dejar nada pendiente, para que el 409 no guarde nada.
+        var resetConfiguration = merged is not null
+            && await credentialChangeGuard.MustResetConfigurationAsync(
+                provider.Key, command.TenantId, connection.Id, fields, merged, command.ConfirmSiigoAccountChange, cancellationToken);
+
         ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Updated, changed, now);
         if (mustTest)
         {
             ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Verified, [], now);
         }
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        if (resetConfiguration)
+        {
+            // Una sola transacción: el borrado de la configuración del proveedor y la conexión confirman juntos (guardar la confirma).
+            // Si el guardado de la conexión pierde, al disponerla se deshace también el borrado.
+            await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+            await credentialChangeGuard.ResetConfigurationAsync(provider.Key, command.TenantId, connection.Id, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
         return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled: true, cancellationToken);
     }
 

@@ -31,6 +31,10 @@ public static class SiigoErrorCodes
     /// <summary>409: la conexión no se puede usar (pausada, con la clave rechazada, ilegible…); el motivo viaja en <c>details</c>.</summary>
     public const string ConnectionUnavailable = "siigo.connection_unavailable";
 
+    /// <summary>409: las credenciales nuevas de la conexión son de otra cuenta de Siigo (los ids guardados no están en ella) y la
+    /// edición no trae la confirmación; <c>mismatches</c> dice qué ids no aparecieron. No se guarda nada.</summary>
+    public const string ConnectionAccountChanged = "siigo.connection.account_changed";
+
     /// <summary>503: Siigo no contestó o respondió un error transitorio.</summary>
     public const string Unavailable = "siigo.unavailable";
 

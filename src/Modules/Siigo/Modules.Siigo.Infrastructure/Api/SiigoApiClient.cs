@@ -368,7 +368,9 @@ internal sealed class SiigoApiClient(
     private async Task<IReadOnlyList<T>> CachedAsync<T>(
         SiigoCredentials credentials, string list, bool refresh, Func<Task<IReadOnlyList<T>>> read)
     {
-        var key = $"siigo:{credentials.ConnectionId}:{list}";
+        // La huella va en la llave: editar la conexión con las credenciales de otra cuenta deja el mismo connectionId, y sin ella se
+        // servían 5 minutos las listas de la cuenta anterior.
+        var key = $"siigo:{credentials.ConnectionId}:{SiigoTokenCache.Fingerprint(credentials)}:{list}";
         if (!refresh && cache.TryGetValue(key, out IReadOnlyList<T>? cached) && cached is not null)
         {
             return cached;

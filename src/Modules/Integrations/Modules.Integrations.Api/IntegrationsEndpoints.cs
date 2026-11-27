@@ -57,6 +57,7 @@ public static class IntegrationsEndpoints
             .Produces<ConnectionResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
@@ -253,7 +254,8 @@ public static class IntegrationsEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new UpdateConnectionCommand(
-                tenantId, connectionId, RequireVersion(httpContext), request.Name, request.Fields, request.Secrets),
+                tenantId, connectionId, RequireVersion(httpContext), request.Name, request.Fields, request.Secrets,
+                request.ConfirmSiigoAccountChange),
             cancellationToken));
 
     private static async Task<IResult> TestAsync(
@@ -318,16 +320,20 @@ public sealed record CreateConnectionRequest(
         + $"Secrets = [{(Secrets is null ? string.Empty : string.Join(", ", Secrets.Keys))}] }}";
 }
 
-/// <summary>El cuerpo de <c>PUT /connections/{id}</c>: un secreto ausente conserva el guardado (D5).</summary>
+/// <summary>El cuerpo de <c>PUT /connections/{id}</c>: un secreto ausente conserva el guardado (D5). <c>confirmSiigoAccountChange</c>
+/// (opcional, falso de fábrica) autoriza que, si las credenciales de Siigo son de otra cuenta, se borre la configuración guardada; sin
+/// cambio de cuenta o en otro proveedor se ignora.</summary>
 public sealed record UpdateConnectionRequest(
     string? Name,
     Dictionary<string, string?>? Fields,
-    Dictionary<string, string?>? Secrets)
+    Dictionary<string, string?>? Secrets,
+    bool ConfirmSiigoAccountChange = false)
 {
     public override string ToString() =>
         $"UpdateConnectionRequest {{ Name = {Name}, "
         + $"Fields = [{(Fields is null ? string.Empty : string.Join(", ", Fields.Keys))}], "
-        + $"Secrets = [{(Secrets is null ? string.Empty : string.Join(", ", Secrets.Keys))}] }}";
+        + $"Secrets = [{(Secrets is null ? string.Empty : string.Join(", ", Secrets.Keys))}], "
+        + $"ConfirmSiigoAccountChange = {ConfirmSiigoAccountChange} }}";
 }
 
 /// <summary>El cuerpo de <c>POST /integrations/whatsapp/embedded-signup</c> (spec 2026-10-09 §5.2).

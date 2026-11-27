@@ -292,6 +292,23 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.Contains("api@otra-empresa.test", auths[1].Body, StringComparison.Ordinal);
     }
 
+    // La caché de listas va por huella de credenciales: con las de otra cuenta en la misma conexión no se sirven las listas de la anterior.
+    [Fact]
+    public async Task ListsOfAnotherAccountOnTheSameConnectionAreNotServedFromCache()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/document-types", HttpStatusCode.OK, Fixture.Read("document-types.json"));
+
+        await _client.ListDocumentTypesAsync(Credentials, TestContext.Current.CancellationToken);
+        await _client.ListDocumentTypesAsync(Credentials, TestContext.Current.CancellationToken);
+        Assert.Single(_api.Requests, request => request.Path == "/v1/document-types");
+
+        await _client.ListDocumentTypesAsync(
+            Credentials with { Username = "api@otra-empresa.test", AccessKey = "otra-clave" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, _api.Requests.Count(request => request.Path == "/v1/document-types"));
+    }
+
     // Review Focus 4: el 401 de una creación no la pierde ni la duplica: se reautentica y se repite con la MISMA clave.
     [Fact]
     public async Task A401RenewsTheTokenOnceAndRetriesWithTheSameKey()

@@ -231,4 +231,73 @@ public sealed class SiigoSettingsTests
         Assert.Equal((At, At.AddMinutes(1)), (settings.SellersAutoLinkedAt, settings.ProductsAutoLinkedAt));
         Assert.Equal(0, settings.Version);
     }
+
+    private static SiigoSettings ConfiguredSettings()
+    {
+        var settings = NewSettings();
+        settings.AssignCompany(Guid.CreateVersion7());
+        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "cc-1", "wh-1", true, true, true, "FLETE", SiigoPriceMode.DiscountedPrice));
+        settings.ReplaceTaxLinks([new SiigoTaxLink(19, "tax-19")]);
+        settings.ReplaceWithholdingLinks([new SiigoWithholdingLink(Guid.CreateVersion7(), "tax-rf")]);
+        settings.UpdatePayments(new SiigoPaymentSettings(
+            [new SiigoPaymentLink("BANCO|1", "pay-1"), new SiigoPaymentLink("BANCO|2", null)], "credit", 30, "cod", "default"));
+        settings.ReplaceSellerLinks([new SiigoSellerLink(Guid.CreateVersion7(), "u-1", "Ana")]);
+        settings.LinkVariant(Guid.CreateVersion7(), "AB-1", "p-1", "Producto", SiigoLinkOrigin.Manual, Guid.CreateVersion7(), At);
+        settings.MarkSellersAutoLinked(At);
+        settings.MarkProductsAutoLinked(At);
+        return settings;
+    }
+
+    [Fact]
+    public void SavedPaymentTypeIdsListsEveryDistinctSavedIdAndSkipsTheEmptyOnes()
+    {
+        var settings = ConfiguredSettings();
+
+        Assert.Equal(["pay-1", "credit", "cod", "default"], settings.SavedPaymentTypeIds());
+    }
+
+    [Fact]
+    public void ResetForAnotherAccountClearsTheAccountDataAndKeepsTheCompanyAndTheSwitches()
+    {
+        var settings = ConfiguredSettings();
+        var companyId = settings.CompanyId;
+        var before = settings.Version;
+
+        settings.ResetForAnotherAccount();
+
+        Assert.Null(settings.DocumentTypeId);
+        Assert.Null(settings.CostCenterId);
+        Assert.Null(settings.WarehouseId);
+        Assert.Null(settings.FreightProductCode);
+        Assert.Null(settings.CreditPaymentTypeId);
+        Assert.Null(settings.CreditDays);
+        Assert.Null(settings.CashOnDeliveryPaymentTypeId);
+        Assert.Null(settings.DefaultPaymentTypeId);
+        Assert.Empty(settings.TaxLinks);
+        Assert.Empty(settings.WithholdingLinks);
+        Assert.Empty(settings.PaymentLinks);
+        Assert.Empty(settings.SellerLinks);
+        Assert.Empty(settings.VariantLinks);
+        Assert.Null(settings.SellersAutoLinkedAt);
+        Assert.Null(settings.ProductsAutoLinkedAt);
+        Assert.Equal(companyId, settings.CompanyId);
+        Assert.True(settings.SendToDian);
+        Assert.True(settings.SendMail);
+        Assert.True(settings.FreightSeparateInvoice);
+        Assert.Equal(SiigoPriceMode.DiscountedPrice, settings.PriceMode);
+        Assert.Equal(before + 1, settings.Version);
+    }
+
+    [Fact]
+    public void AfterTheResetTheDocumentTaxesPaymentsAndSellersStepsAreIncomplete()
+    {
+        var settings = ConfiguredSettings();
+
+        settings.ResetForAnotherAccount();
+
+        var incomplete = SiigoSettingsReadiness.Evaluate(settings).Where(step => !step.Complete).Select(step => step.Step);
+        Assert.Equal(
+            [SiigoSetupStep.Document, SiigoSetupStep.Taxes, SiigoSetupStep.Payments, SiigoSetupStep.Sellers],
+            incomplete);
+    }
 }
