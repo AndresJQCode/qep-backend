@@ -96,6 +96,8 @@ internal static class IncidentModel
             .HasFilter("status IN ('Open','InReview')");
         incident.HasIndex(value => value.VerificationTaskId, "IX_incidents_verification")
             .HasFilter("verification_task_id IS NOT NULL");
+        // La bandeja (GET /incidents) ordena por reported_at y number descendentes dentro del tenant.
+        incident.HasIndex(value => new { value.TenantId, value.ReportedAt, value.Number }, "IX_incidents_tenant_reported");
         incident.HasIndex(value => value.AdjustmentId, "IX_incidents_adjustment")
             .HasFilter("adjustment_id IS NOT NULL");
         // «¿La variante tiene novedades abiertas?» (DA-51: no se puede desactivar con una novedad abierta).

@@ -530,6 +530,8 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("operation_key IS NOT NULL");
 
+                    b.HasIndex(new[] { "TenantId", "ReportedAt", "Number" }, "IX_incidents_tenant_reported");
+
                     b.HasIndex(new[] { "TenantId", "VariantId" }, "IX_incidents_variant_open")
                         .HasFilter("status IN ('Open','InReview') AND variant_id IS NOT NULL");
 
