@@ -55,7 +55,8 @@ public sealed class PreviewQuotationHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<PreviewQuotationQuery> validator)
+    IValidator<PreviewQuotationQuery> validator,
+    ITenantModules tenantModules)
     : IQueryHandler<PreviewQuotationQuery, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -71,6 +72,8 @@ public sealed class PreviewQuotationHandler(
         var quotation = await repository.FindUntrackedAsync(
             query.TenantId, new QuotationId(query.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(query.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, query.TenantId, quotation.Kind, cancellationToken);
 
         QuotationEditable.Ensure(quotation);
 

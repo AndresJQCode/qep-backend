@@ -62,7 +62,8 @@ public sealed class SaveQuotationHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<SaveQuotationCommand> validator)
+    IValidator<SaveQuotationCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<SaveQuotationCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -76,6 +77,8 @@ public sealed class SaveQuotationHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         QuotationEditable.Ensure(quotation);
 

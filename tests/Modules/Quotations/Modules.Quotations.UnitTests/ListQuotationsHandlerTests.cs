@@ -189,7 +189,8 @@ public sealed class ListQuotationsHandlerTests
             NewCustomerLookup(),
             new StubQuotationAdvisorLookup(),
             new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.OrderRead),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            FixedTenantModules.Simulated);
 
         var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
 
@@ -288,5 +289,6 @@ public sealed class ListQuotationsHandlerTests
             customers,
             advisors,
             new StubExecutionContext(SubjectId, TenantId),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            FixedTenantModules.Simulated);
 }

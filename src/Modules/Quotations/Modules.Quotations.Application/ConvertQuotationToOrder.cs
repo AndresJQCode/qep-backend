@@ -57,7 +57,8 @@ public sealed class ConvertQuotationToOrderHandler(
     ITenantClock tenantClock,
     ITenantDirectory tenantDirectory,
     IQuotationWithholdingLookup withholdingLookup,
-    IValidator<ConvertQuotationToOrderCommand> validator)
+    IValidator<ConvertQuotationToOrderCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -71,6 +72,8 @@ public sealed class ConvertQuotationToOrderHandler(
         var quotation = await quotationRepository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         // US-18 rest: revalidar CUC/activo al aprobar, por si el estado del cliente cambió
         // después de enviar la cotización.

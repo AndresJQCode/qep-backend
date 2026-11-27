@@ -54,7 +54,8 @@ public sealed class BatchUpdateQuotationItemsHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<BatchUpdateQuotationItemsCommand> validator)
+    IValidator<BatchUpdateQuotationItemsCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<BatchUpdateQuotationItemsCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -68,6 +69,9 @@ public sealed class BatchUpdateQuotationItemsHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
+        ProjectScopeApplication.EnsureManualLines(quotation);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

@@ -391,18 +391,293 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
         Assert.Equal(PriceThenScopeHistory, edits);
     }
 
-    private sealed record Setup(HttpClient Client, Guid TenantId, Guid ClientId, Guid ServiceId);
+    // Spec §7 (P9): con el módulo apagado, toda operación sobre una cotización de proyecto es 403; las demás siguen.
+    [Theory]
+    [InlineData("get")]
+    [InlineData("history")]
+    [InlineData("save")]
+    [InlineData("preview")]
+    [InlineData("change-client")]
+    [InlineData("add-item")]
+    [InlineData("batch-items")]
+    [InlineData("update-item")]
+    [InlineData("remove-item")]
+    [InlineData("send")]
+    [InlineData("mark-sent")]
+    [InlineData("pdf")]
+    [InlineData("void")]
+    [InlineData("convert")]
+    [InlineData("convert-preview")]
+    [InlineData("create")]
+    [InlineData("create-preview")]
+    [InlineData("list")]
+    [InlineData("export")]
+    public async Task WithTheModuleOffEveryProjectQuotationRouteIs403(string route)
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var project = await CreateProjectAsync(setup, Global(setup.ServiceId, 100_000m));
+        var standard = await CreateQuotationAsync(setup.Client, setup.TenantId, setup.ClientId);
+        await DisableModuleAsync(setup.Factory, setup.TenantId, TenantModuleKeys.Projects);
+
+        var response = await CallAsync(setup, project, route);
+
+        await AssertProblemAsync(response, HttpStatusCode.Forbidden, "tenancy.module_not_enabled");
+        Assert.Equal("Standard", (await GetAsync(setup, standard.Id)).Kind);
+    }
+
+    [Fact]
+    public async Task ListsDefaultToStandardAndRowsCarryKindAndMode()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var project = await CreateProjectAsync(setup, PerPhase(setup.ServiceId, 600_000m, 400_000m));
+        var standard = await CreateQuotationAsync(setup.Client, setup.TenantId, setup.ClientId);
+
+        var byDefault = await ListAsync(setup, string.Empty);
+        var projects = await ListAsync(setup, "?kind=Project");
+        var all = await ListAsync(setup, "?kind=all");
+
+        var standardRow = Assert.Single(byDefault.Items);
+        Assert.Equal((standard.Id, "Standard", null), (standardRow.Id, standardRow.Kind, standardRow.PricingMode));
+        Assert.Equal(1, byDefault.Total);
+        var projectRow = Assert.Single(projects.Items);
+        Assert.Equal(
+            (project.Id, "Project", "PerPhase", false),
+            (projectRow.Id, projectRow.Kind, projectRow.PricingMode, projectRow.RequiresShipping));
+        Assert.Equal(2, all.Total);
+        Assert.Equal(
+            new HashSet<(Guid, string?)> { (project.Id, "PerPhase"), (standard.Id, null) },
+            all.Items.Select(item => (item.Id, item.PricingMode)).ToHashSet());
+        await AssertFieldErrorAsync(
+            await setup.Client.GetAsync(
+                $"{QuotationsUrl(setup.TenantId)}?kind=Other", TestContext.Current.CancellationToken),
+            "kind");
+
+        await DisableModuleAsync(setup.Factory, setup.TenantId, TenantModuleKeys.Projects);
+
+        Assert.Equal(standard.Id, Assert.Single((await ListAsync(setup, "?kind=All")).Items).Id);
+        Assert.Equal(standard.Id, Assert.Single((await ListAsync(setup, string.Empty)).Items).Id);
+    }
+
+    // El worker reclama jobs de toda la base: esta prueba levanta su propio host.
+    [Fact]
+    public async Task TheExportFollowsTheKindFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        using var _ = setup.Client;
+        var project = await CreateProjectAsync(setup, Global(setup.ServiceId, 100_000m));
+        var standard = await CreateQuotationAsync(setup.Client, setup.TenantId, setup.ClientId);
+
+        Assert.Equal([project.QuotationNumber], await ExportedNumbersAsync(setup, "&kind=Project"));
+        Assert.Equal([standard.QuotationNumber], await ExportedNumbersAsync(setup, string.Empty));
+        // El proyecto se creó primero: ordenados por número, va antes.
+        Assert.Equal(
+            [project.QuotationNumber, standard.QuotationNumber], await ExportedNumbersAsync(setup, "&kind=All"));
+
+        await DisableModuleAsync(factory, setup.TenantId, TenantModuleKeys.Projects);
+
+        Assert.Equal([standard.QuotationNumber], await ExportedNumbersAsync(setup, "&kind=All"));
+    }
+
+    [Fact]
+    public async Task ItemRoutesOnAProjectAreRejected()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var project = await CreateProjectAsync(setup, Global(setup.ServiceId, 100_000m));
+
+        foreach (var route in new[] { "add-item", "batch-items", "update-item", "remove-item" })
+        {
+            await AssertProblemAsync(
+                await CallAsync(setup, project, route),
+                HttpStatusCode.UnprocessableEntity,
+                "quotation.project.items_not_allowed");
+        }
+
+        // Antes de leer el catálogo: una variante que no existe responde lo mismo.
+        await AssertProblemAsync(
+            await setup.Client.PostAsJsonAsync(
+                $"{QuotationUrl(setup, project.Id)}/items",
+                new AddQuotationItemRequest(Guid.CreateVersion7(), 1m),
+                TestContext.Current.CancellationToken),
+            HttpStatusCode.UnprocessableEntity,
+            "quotation.project.items_not_allowed");
+        Assert.Equal(project.Version, (await GetAsync(setup, project.Id)).Version);
+    }
+
+    [Fact]
+    public async Task SendingOrConvertingWithoutServiceOrTotalIsIncomplete()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var account = await CreateAccountAsync(setup, "COP");
+        var withoutService = await ReadAsync(
+            await PostAsync(
+                setup,
+                Create(setup, new ProjectScopeRequest(null, "Global", 100_000m, null, null, "COP")) with
+                {
+                    BillingAccount = account,
+                }),
+            HttpStatusCode.Created);
+        var withoutPrice = await ReadAsync(
+            await PostAsync(
+                setup,
+                Create(setup, new ProjectScopeRequest(setup.ServiceId, "Global", null, null, null, null)) with
+                {
+                    BillingAccount = account,
+                }),
+            HttpStatusCode.Created);
+
+        foreach (var quotation in new[] { withoutService, withoutPrice })
+        {
+            Assert.False(quotation.CanBeConvertedToOrder);
+            foreach (var route in new[] { "send", "mark-sent", "convert", "convert-preview" })
+            {
+                await AssertProblemAsync(
+                    await CallAsync(setup, quotation, route),
+                    HttpStatusCode.UnprocessableEntity,
+                    "quotation.project.incomplete");
+            }
+
+            Assert.Equal("Draft", (await GetAsync(setup, quotation.Id)).Status);
+        }
+    }
+
+    [Fact]
+    public async Task ConvertingCopiesKindScopeAndLine()
+    {
+        var setup = await SetUpAsync();
+        using var _ = setup.Client;
+        var account = await CreateAccountAsync(setup, "COP");
+        var quotation = await ReadAsync(
+            await PostAsync(
+                setup, Create(setup, PerPhase(setup.ServiceId, 600_000m, 400_000m)) with { BillingAccount = account }),
+            HttpStatusCode.Created);
+        var sent = await ReadAsync(await CallAsync(setup, quotation, "mark-sent"), HttpStatusCode.OK);
+        Assert.Equal("Sent", sent.Status);
+
+        var response = await CallAsync(setup, sent, "convert");
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var converted = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(converted);
+        var ordersUrl = $"/api/v1/tenants/{setup.TenantId}/orders/{converted.Id}";
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            ordersUrl, TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        foreach (var order in new[] { converted, detail.Order })
+        {
+            Assert.Equal("Project", order.Kind);
+            Assert.False(order.RequiresShipping);
+            Assert.NotNull(order.Project);
+            Assert.Equal(("PerPhase", 1_000_000m, "COP"), (order.Project.PricingMode, order.Project.Total!.Value, order.Project.PricesCurrency));
+            Assert.Equal([FirstPhase, SecondPhase], order.Project.Phases.Select(phase => phase.Id));
+            Assert.Equal(PhaseItem, Assert.Single(order.Project.Phases[0].Items).Id);
+        }
+
+        var line = Assert.Single(detail.Items);
+        Assert.Equal((setup.ServiceId, 1m, 1_000_000m), (line.VariantId, line.Quantity, line.UnitPrice));
+        var rows = await setup.Client.GetFromJsonAsync<OrdersPageResponse>(
+            $"/api/v1/tenants/{setup.TenantId}/orders", TestContext.Current.CancellationToken);
+        Assert.Equal("Project", Assert.Single(rows!.Items).Kind);
+
+        // P9: el pedido de proyecto se sigue viendo con el módulo apagado.
+        await DisableModuleAsync(setup.Factory, setup.TenantId, TenantModuleKeys.Projects);
+
+        foreach (var url in new[] { ordersUrl, $"{QuotationUrl(setup, quotation.Id)}/order" })
+        {
+            var after = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+                url, TestContext.Current.CancellationToken);
+            Assert.Equal("Project", after!.Order.Kind);
+        }
+    }
+
+    private static Task<HttpResponseMessage> CallAsync(Setup setup, QuotationResponse quotation, string route)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var url = QuotationUrl(setup, quotation.Id);
+        var quotations = QuotationsUrl(setup.TenantId);
+        var itemId = quotation.Items.FirstOrDefault()?.Id ?? Guid.CreateVersion7();
+        var scope = Global(setup.ServiceId, 100_000m);
+
+        return route switch
+        {
+            "get" => setup.Client.GetAsync(url, token),
+            "history" => setup.Client.GetAsync($"{url}/history", token),
+            "save" => PutAsync(setup, quotation, Save(scope)),
+            "preview" => setup.Client.PostAsJsonAsync($"{url}/preview", Save(scope), token),
+            "change-client" => setup.Client.PutAsJsonAsync(
+                $"{url}/client", new ChangeQuotationClientRequest(setup.ClientId), token),
+            "add-item" => setup.Client.PostAsJsonAsync(
+                $"{url}/items", new AddQuotationItemRequest(setup.ServiceId, 1m), token),
+            "batch-items" => setup.Client.PostAsJsonAsync(
+                $"{url}/items/batch",
+                new BatchUpdateQuotationItemsRequest([new(setup.ServiceId, 1m)], []),
+                token),
+            "update-item" => setup.Client.PutAsJsonAsync(
+                $"{url}/items/{itemId}", new UpdateQuotationItemRequest(2m), token),
+            "remove-item" => setup.Client.DeleteAsync($"{url}/items/{itemId}", token),
+            "send" => setup.Client.PostAsync($"{url}/send", content: null, token),
+            "mark-sent" => setup.Client.PostAsync($"{url}/mark-sent", content: null, token),
+            "pdf" => setup.Client.PostAsync($"{url}/pdf", content: null, token),
+            "void" => setup.Client.PostAsync($"{url}/void", content: null, token),
+            "convert" => setup.Client.PostAsJsonAsync($"{url}/order", new ConvertQuotationToOrderRequest(null, []), token),
+            "convert-preview" => setup.Client.GetAsync($"{url}/order/preview", token),
+            "create" => PostAsync(setup, Create(setup, scope)),
+            "create-preview" => setup.Client.PostAsJsonAsync($"{quotations}/preview", Create(setup, scope), token),
+            "list" => setup.Client.GetAsync($"{quotations}?kind=Project", token),
+            "export" => setup.Client.PostAsync($"{quotations}/export?{ExportRange()}&kind=Project", content: null, token),
+            _ => throw new ArgumentOutOfRangeException(nameof(route), route, "Unknown route."),
+        };
+    }
+
+    private static string ExportRange() =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"createdFrom={TodayInBogota().AddDays(-1):yyyy-MM-dd}&createdTo={TodayInBogota():yyyy-MM-dd}");
+
+    private static async Task<QuotationsPageResponse> ListAsync(Setup setup, string query)
+    {
+        var page = await setup.Client.GetFromJsonAsync<QuotationsPageResponse>(
+            $"{QuotationsUrl(setup.TenantId)}{query}", TestContext.Current.CancellationToken);
+        Assert.NotNull(page);
+        return page;
+    }
+
+    // Pide el Excel, corre el job y devuelve la columna «Numero» ordenada.
+    private static async Task<string[]> ExportedNumbersAsync(Setup setup, string kind)
+    {
+        var response = await setup.Client.PostAsync(
+            $"{QuotationsUrl(setup.TenantId)}/export?{ExportRange()}{kind}",
+            content: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var accepted = await response.Content.ReadFromJsonAsync<ExportJobAcceptedResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(setup.Factory));
+        var sheet = ExportWorkbookReader.Read(await setup.Factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{setup.TenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        return [.. sheet.Rows.Skip(1).Select(row => row[0]).Order(StringComparer.Ordinal).Select(number => number!)];
+    }
+
+    private sealed record Setup(
+        QepApiFactory Factory, HttpClient Client, Guid TenantId, Guid ClientId, Guid ServiceId);
+
+    private async Task<Setup> SetUpAsync() => await SetUpAsync(await sharedHost.StartTestAsync());
 
     // Un tenant con el módulo prendido, un cliente activo y un servicio sin IVA. Sin cuenta de cobro, la cotización
     // nace en la moneda del tenant (COP).
-    private async Task<Setup> SetUpAsync()
+    private static async Task<Setup> SetUpAsync(QepApiFactory factory)
     {
-        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         await EnableModuleAsync(factory, tenantId, TenantModuleKeys.Projects);
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var serviceId = await CreateServiceAsync(client, tenantId);
-        return new Setup(client, tenantId, clientId, serviceId);
+        return new Setup(factory, client, tenantId, clientId, serviceId);
     }
 
     private static async Task<Guid> CreateServiceAsync(HttpClient client, Guid tenantId)

@@ -765,7 +765,8 @@ public sealed class SendQuotationHandlerTests
             new StubMembershipDirectory(AdvisorId.Value),
             failureLog,
             new StubExecutionContext(SubjectId, TenantId),
-            new FixedClock(Now));
+            new FixedClock(Now),
+            FixedTenantModules.Simulated);
 
         return new Harness(handler, sender, storage, repository, audit, failureLog, lifecycle, renderer, customerLookup);
     }

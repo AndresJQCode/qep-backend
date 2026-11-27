@@ -16,7 +16,9 @@ public sealed record ListQuotationsQuery(
     string? ClientNit,
     string? QuotationNumber,
     int Page,
-    int PageSize) : IQuery<QuotationPage>;
+    int PageSize,
+    /// <summary><c>Standard</c> (por defecto), <c>Project</c> o <c>All</c> (spec 2026-11-26 §6.5).</summary>
+    string? Kind = null) : IQuery<QuotationPage>;
 
 /// <summary>Fila resumida del listado (US-8): "cada fila muestra número de cotización, cliente,
 /// asesora, fecha, total y estado" -- no hace falta traer las líneas de producto de cada
@@ -105,7 +107,8 @@ public sealed class ListQuotationsHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ITenantModules tenantModules)
     : IQueryHandler<ListQuotationsQuery, QuotationPage>
 {
     public async Task<QuotationPage> HandleAsync(
@@ -115,6 +118,8 @@ public sealed class ListQuotationsHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, QuotationsPermissions.QuotationRead);
 
+        var kind = await QuotationListing.ApplyModuleAsync(
+            tenantModules, query.TenantId, QuotationListing.ParseKind(query.Kind), cancellationToken);
         var page = QuotationPaging.NormalizePage(query.Page);
         var pageSize = QuotationPaging.NormalizePageSize(query.PageSize);
         var status = QuotationListing.ParseStatus(query.Status);
@@ -136,6 +141,7 @@ public sealed class ListQuotationsHandler(
             created.From,
             created.Before,
             query.QuotationNumber,
+            kind,
             page,
             pageSize,
             cancellationToken);

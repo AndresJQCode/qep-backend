@@ -105,7 +105,8 @@ public sealed class BatchUpdateQuotationItemsHandlerTests
             new StubTenantDirectory(),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now),
-            new BatchUpdateQuotationItemsValidator())
+            new BatchUpdateQuotationItemsValidator(),
+            FixedTenantModules.Simulated)
             .HandleAsync(
                 new BatchUpdateQuotationItemsCommand(TenantId, quotation.Id.Value, toAdd, toRemoveItemIds),
                 TestContext.Current.CancellationToken);

@@ -166,7 +166,8 @@ public sealed class PreviewNewQuotationHandlerTests
             new StubMembershipDirectory(MembershipId),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedTenantClock(Now),
-            new PreviewNewQuotationValidator());
+            new PreviewNewQuotationValidator(),
+            FixedTenantModules.Simulated);
 
     private static CreateQuotationHandler CreateHandler(StubQuotationProductPricingLookup pricing) =>
         new(
@@ -185,5 +186,6 @@ public sealed class PreviewNewQuotationHandlerTests
             new StubTenantDirectory(),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedTenantClock(Now),
-            new CreateQuotationValidator());
+            new CreateQuotationValidator(),
+            FixedTenantModules.Simulated);
 }

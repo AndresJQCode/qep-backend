@@ -19,6 +19,15 @@ internal static class ProjectScopeApplication
         ProjectErrors.ItemsNotAllowed,
         "En una cotización de proyecto no agregas ni cambias productos a mano: la línea sale del alcance.");
 
+    /// <summary>La guarda de las rutas de líneas: va antes de leer el catálogo.</summary>
+    public static void EnsureManualLines(Quotation quotation)
+    {
+        if (quotation.Kind == QuotationKind.Project)
+        {
+            throw ManualLinesRejected();
+        }
+    }
+
     public static async Task ApplyAsync(
         Quotation quotation,
         ProjectScopeRequest? request,

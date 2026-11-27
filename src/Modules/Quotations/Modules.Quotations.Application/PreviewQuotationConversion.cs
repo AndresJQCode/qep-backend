@@ -67,7 +67,8 @@ public sealed class PreviewQuotationConversionHandler(
     IQuotationRepository quotationRepository,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
-    IQuotationWithholdingLookup withholdingLookup)
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantModules tenantModules)
     : IQueryHandler<PreviewQuotationConversionQuery, QuotationConversionPreviewDto>
 {
     // El pedido de la vista previa nunca se guarda ni sale en la respuesta: el número sólo tiene que no estar vacío, y no
@@ -82,6 +83,8 @@ public sealed class PreviewQuotationConversionHandler(
         var quotation = await quotationRepository.FindAsync(
             query.TenantId, new QuotationId(query.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(query.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, query.TenantId, quotation.Kind, cancellationToken);
 
         // Las mismas precondiciones que la conversión revisa antes de pedir el número. La elegibilidad del cliente y el
         // tipo de persona no (spec alerta UVT §5.3): son errores del POST, y el asistente ya los muestra ahí.

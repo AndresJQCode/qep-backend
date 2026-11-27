@@ -53,7 +53,8 @@ public sealed class PreviewNewQuotationHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
-    IValidator<PreviewNewQuotationQuery> validator)
+    IValidator<PreviewNewQuotationQuery> validator,
+    ITenantModules tenantModules)
     : IQueryHandler<PreviewNewQuotationQuery, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -63,6 +64,9 @@ public sealed class PreviewNewQuotationHandler(
         // Antes de validar, como la creación: 403 para un tenant ajeno, nunca un 422 que hable de su cuerpo.
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, QuotationsPermissions.QuotationManage);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, query.TenantId, QuotationKindNames.Parse(query.Kind) ?? QuotationKind.Standard,
+            cancellationToken);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(

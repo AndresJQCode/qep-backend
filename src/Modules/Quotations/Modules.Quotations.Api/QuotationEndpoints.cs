@@ -200,12 +200,13 @@ public static class QuotationEndpoints
         string? clientNit = null,
         string? quotationNumber = null,
         int page = 1,
-        int pageSize = QuotationPaging.DefaultPageSize)
+        int pageSize = QuotationPaging.DefaultPageSize,
+        string? kind = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListQuotationsQuery(
                 tenantId, clientId, advisorId, status, createdFrom, createdTo, clientNit,
-                quotationNumber, page, pageSize),
+                quotationNumber, page, pageSize, kind),
             cancellationToken);
 
         return Results.Ok(new QuotationsPageResponse(
@@ -225,12 +226,13 @@ public static class QuotationEndpoints
         DateOnly? createdFrom = null,
         DateOnly? createdTo = null,
         string? clientNit = null,
-        string? quotationNumber = null)
+        string? quotationNumber = null,
+        string? kind = null)
     {
         var accepted = await dispatcher.SendAsync(
             new ExportQuotationsCommand(
                 tenantId, clientId, advisorId, status, createdFrom, createdTo, clientNit,
-                quotationNumber),
+                quotationNumber, kind),
             cancellationToken);
 
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));

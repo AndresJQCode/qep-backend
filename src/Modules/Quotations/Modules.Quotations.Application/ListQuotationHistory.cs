@@ -33,7 +33,8 @@ public sealed record QuotationHistoryEntryDto(
 public sealed class ListQuotationHistoryHandler(
     IQuotationRepository repository,
     IQuotationAdvisorLookup advisorLookup,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules)
     : IQueryHandler<ListQuotationHistoryQuery, IReadOnlyList<QuotationHistoryEntryDto>>
 {
     public async Task<IReadOnlyList<QuotationHistoryEntryDto>> HandleAsync(
@@ -42,6 +43,13 @@ public sealed class ListQuotationHistoryHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, QuotationsPermissions.QuotationRead);
+
+        // Sólo el tipo, para la guarda de módulo. Un id que no existe sigue respondiendo un historial vacío.
+        if (await repository.FindKindAsync(query.TenantId, new QuotationId(query.QuotationId), cancellationToken)
+            is { } kind)
+        {
+            await ProjectModuleGuard.EnsureAsync(tenantModules, query.TenantId, kind, cancellationToken);
+        }
 
         var entries = await repository.ListHistoryAsync(
             query.TenantId, new QuotationId(query.QuotationId), cancellationToken);

@@ -61,7 +61,8 @@ public sealed class CreateQuotationHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
-    IValidator<CreateQuotationCommand> validator)
+    IValidator<CreateQuotationCommand> validator,
+    ITenantModules tenantModules)
     : ICommandHandler<CreateQuotationCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -73,6 +74,10 @@ public sealed class CreateQuotationHandler(
         // para otro tenant.
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, QuotationsPermissions.QuotationManage);
+        // Un `kind` que no se entiende no pide módulo: lo informa el validador en su campo.
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, QuotationKindNames.Parse(command.Kind) ?? QuotationKind.Standard,
+            cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(

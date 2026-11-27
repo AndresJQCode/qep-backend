@@ -380,6 +380,10 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(quotation);
 
+    public Task<QuotationKind?> FindKindAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<QuotationKind?>(quotation.Kind);
+
     public Task<IReadOnlySet<Guid>> FindIdsWithItemsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -420,6 +424,7 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         int page,
         int pageSize,
         CancellationToken cancellationToken) =>
@@ -434,6 +439,7 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         QuotationExportCursor? after,
         int limit,
         CancellationToken cancellationToken) =>
@@ -448,6 +454,7 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         CancellationToken cancellationToken) =>
         Task.FromResult(true);
 
@@ -642,7 +649,8 @@ internal sealed record RecordedExportSearch(
     QuotationStatus? Status,
     DateTimeOffset? CreatedFrom,
     DateTimeOffset? CreatedBefore,
-    string? QuotationNumber);
+    string? QuotationNumber,
+    QuotationKindFilter Kind = QuotationKindFilter.Standard);
 
 /// <summary>Varias cotizaciones para el listado — <see cref="StubQuotationRepository"/> devuelve
 /// siempre una sola, y lo que verifica <c>ListQuotationsHandlerTests</c> es justamente cómo se
@@ -658,6 +666,10 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(quotations.FirstOrDefault());
 
+    public Task<QuotationKind?> FindKindAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
+        Task.FromResult<QuotationKind?>(quotations.FirstOrDefault()?.Kind);
+
     public Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -667,6 +679,7 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         int page,
         int pageSize,
         CancellationToken cancellationToken) =>
@@ -697,6 +710,7 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         QuotationExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
@@ -704,7 +718,7 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedExportSearch(
-            clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
+            clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber, kind);
         IReadOnlyList<Quotation> rows = (clientIds is null
                 ? quotations
                 : quotations.Where(quotation => clientIds.Contains(quotation.ClientId)))
@@ -733,11 +747,12 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
         LastExportSearch = new RecordedExportSearch(
-            clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber);
+            clientId, clientIds, advisorId, status, createdFrom, createdBefore, quotationNumber, kind);
         return Task.FromResult(clientIds is null
             ? quotations.Length > 0
             : quotations.Any(quotation => clientIds.Contains(quotation.ClientId)));
