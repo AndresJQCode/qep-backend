@@ -85,7 +85,8 @@ public sealed class ConfirmTaskLineHandler(
                 command.DeviceId,
                 occurredAt,
                 "confirm",
-                command),
+                command,
+                command.Quantity),
             (context, ct) => ApplyAsync(command, occurredAt, context, ct),
             cancellationToken);
     }

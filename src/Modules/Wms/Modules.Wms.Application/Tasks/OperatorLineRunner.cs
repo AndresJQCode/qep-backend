@@ -13,7 +13,8 @@ public sealed record OperatorLineRequest(
     string DeviceId,
     DateTimeOffset OccurredAt,
     string Action,
-    object RawCommand);
+    object RawCommand,
+    decimal? Quantity);
 
 public sealed record OperatorLineContext(
     WarehouseTask Task,
@@ -41,7 +42,8 @@ public sealed class OperatorLineRunner(
     IWmsConfirmMetrics metrics,
     IClock clock,
     WarehouseTaskDtoComposer composer,
-    TaskClosedNotifier closed)
+    TaskClosedNotifier closed,
+    TaskIncidentRecorder recorder)
 {
     /// <summary>La ruta exige <c>wms.document.read</c>; se comprueba antes del validador.</summary>
     public Task AuthorizeAsync(Guid tenantId, CancellationToken cancellationToken) =>
@@ -69,7 +71,29 @@ public sealed class OperatorLineRunner(
         var task = await tasks.GetAsync(request.TenantId, request.TaskId, cancellationToken)
             ?? throw WmsNotFound.Task(request.TaskId);
         await guard.EnsureCanPerformAsync(request.TenantId, task, cancellationToken);
-        var lease = OperatorTaskGuard.EnsureLease(task, member, request.LeaseToken);
+        var now = clock.UtcNow;
+
+        // Spec §6.7 y DA-48: la acción rechazada queda como novedad aunque el hecho no se aplique. La transacción sólo tiene la
+        // novedad (nada más se tocó), así que guardarla y lanzar después no deja nada a medias. El filtro IK no encuentra recibo y
+        // devuelve este 409 tal cual; un reintento con la misma clave no duplica la novedad (operation_key, bajo el lock del operario).
+        var lease = task.CheckLease(member, request.LeaseToken);
+        if (lease == LeaseCheck.Lost)
+        {
+            await recorder.RecordSyncConflictAsync(
+                task,
+                task.FindLine(request.LineId),
+                member,
+                request.DeviceId,
+                key,
+                request.Action,
+                request.RawCommand,
+                request.Quantity,
+                request.OccurredAt,
+                now,
+                cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            throw new TaskLeaseLostException(resumable: false);
+        }
 
         // El dominio trata una línea ajena como error de cableado: el 404 sale de acá.
         var line = task.FindLine(request.LineId) ?? throw WmsNotFound.TaskLine(request.LineId);
@@ -77,7 +101,6 @@ public sealed class OperatorLineRunner(
         // anota igual.
         var busy = lease == LeaseCheck.Resumable
             && await tasks.FindInProgressOfMemberAsync(request.TenantId, member, cancellationToken) is not null;
-        var now = clock.UtcNow;
         var before = task.Status;
 
         await apply(new OperatorLineContext(task, line, member, lease, busy, key, now), cancellationToken);

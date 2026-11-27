@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Tasks;
@@ -52,5 +54,61 @@ public sealed class TaskIncidentRecorder(IIncidentRepository incidents)
             now);
         incidents.Add(incident);
         return incident;
+    }
+
+    /// <summary>La acción que llegó con un lease perdido, tal cual llegó (DA-48), sin el <c>leaseToken</c>. Si esa
+    /// <c>Idempotency-Key</c> ya dejó su novedad no agrega otra. No guarda: el runner confirma la transacción con sólo esto y después
+    /// responde 409. Una línea que no es de la tarea no pone sujeto de línea: la tarea existe y lo que importa es el hecho físico.
+    /// El lote que viaja en la acción queda sólo en el JSON: la FK de la novedad al lote no mira el tenant y un id cualquiera
+    /// rompería el guardado.</summary>
+    public async Task RecordSyncConflictAsync(
+        WarehouseTask task,
+        WarehouseTaskLine? line,
+        Guid member,
+        string deviceId,
+        string operationKey,
+        string action,
+        object rawCommand,
+        decimal? quantity,
+        DateTimeOffset occurredAt,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        ArgumentNullException.ThrowIfNull(rawCommand);
+
+        if (await incidents.ExistsWithOperationKeyAsync(task.TenantId, operationKey, cancellationToken))
+        {
+            return;
+        }
+
+        var payload = JsonSerializer.SerializeToNode(rawCommand, rawCommand.GetType(), JsonSerializerOptions.Web) as JsonObject
+            ?? new JsonObject();
+        payload["action"] = action;
+        payload.Remove("leaseToken");
+
+        var subject = line is null
+            ? new IncidentSubject(task.Id, null, null, null, null, null, null, quantity)
+            : new IncidentSubject(
+                task.Id, line.Id, line.FromLocationId, line.VariantId, line.LotId, line.StockStatus, null, quantity);
+        var inWindow = occurredAt >= now.AddDays(-LedgerEntryRules.MaxPastDays)
+            && occurredAt <= now.AddMinutes(LedgerEntryRules.MaxFutureMinutes);
+        var number = await incidents.NextNumberAsync(task.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
+        incidents.Add(Incident.Report(
+            task.TenantId,
+            number,
+            task.WarehouseId,
+            task.OwnerId,
+            IncidentType.SyncConflict,
+            subject,
+            $"La acción '{action}' llegó con el reclamo de la tarea perdido y no se aplicó.",
+            null,
+            payload.ToJsonString(),
+            [],
+            member,
+            deviceId,
+            operationKey,
+            inWindow ? occurredAt : now,
+            now));
     }
 }

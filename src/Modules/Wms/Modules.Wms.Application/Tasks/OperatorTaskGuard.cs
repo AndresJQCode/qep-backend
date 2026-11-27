@@ -28,14 +28,6 @@ public sealed class OperatorTaskGuard(IExecutionContext executionContext, WmsAut
         }
     }
 
-    /// <summary>El reclamo vigente o uno que una confirmación puede reanudar; si no, 409.</summary>
-    public static LeaseCheck EnsureLease(WarehouseTask task, Guid memberId, Guid leaseToken)
-    {
-        ArgumentNullException.ThrowIfNull(task);
-        var lease = task.CheckLease(memberId, leaseToken);
-        return lease == LeaseCheck.Lost ? throw new TaskLeaseLostException(resumable: false) : lease;
-    }
-
     /// <summary>Sólo el reclamo vigente: latir y soltar no reanudan nada (sólo una confirmación trae un hecho físico que no se puede
     /// descartar). Si no, 409 con <c>resumable</c>.</summary>
     public static void EnsureActiveLease(WarehouseTask task, Guid memberId, Guid leaseToken)

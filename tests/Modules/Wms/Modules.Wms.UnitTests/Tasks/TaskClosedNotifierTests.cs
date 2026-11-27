@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.UnitTests.Tasks;
@@ -132,5 +133,26 @@ public sealed class TaskClosedNotifierTests
 
         Assert.DoesNotContain("receipt", world.Log);
         Assert.DoesNotContain("save", world.Log);
+    }
+
+    [Fact]
+    public async Task ALostLeaseCommitsOnlyTheConflictAndNeverNotifies()
+    {
+        var world = new TaskWorld();
+        var spy = new SpyHook(world);
+        world.Hooks.Add(spy);
+        var (_, command) = Claimed(world, 5);
+
+        var error = await Assert.ThrowsAsync<TaskLeaseLostException>(
+            () => ConfirmAsync(world, command with { LeaseToken = Guid.NewGuid() }));
+
+        Assert.False(error.Resumable);
+        Assert.Equal(
+            ["begin", $"lock task-member:{TaskWorld.Member:D}", "lock-task", "load-task", "save"], world.Log);
+        Assert.Empty(spy.Closed);
+        Assert.Empty(world.Posted);
+        Assert.Empty(world.Receipts);
+        var conflict = Assert.Single(world.Incidents);
+        Assert.Equal((IncidentType.SyncConflict, "key-1", TaskWorld.Member), (conflict.Type, conflict.OperationKey, conflict.ReportedBy));
     }
 }

@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Control;
 using Modules.Wms.Domain.Tasks;
 
 namespace Modules.Wms.UnitTests.Tasks;
@@ -52,7 +53,14 @@ internal sealed partial class TaskWorld
             Metrics,
             Clock(),
             Composer(),
-            Notifier());
+            Notifier(),
+            IncidentRecorder());
+
+    /// <summary>Las novedades que se agregaron, en orden. El doble no anota nada en <see cref="Log"/>: el orden que importa en las
+    /// pruebas es el de los bloqueos, el ledger, el recibo y el guardado.</summary>
+    public List<Incident> Incidents { get; } = [];
+
+    public TaskIncidentRecorder IncidentRecorder() => new(new FakeIncidents(this));
 
     public SupervisorTaskRunner SupervisorRunner() =>
         new(Context(), Authorization, Repository(), UnitOfWork(), Recorder(), Clock(), Caller(), Composer(), Notifier());
@@ -146,6 +154,20 @@ internal sealed partial class TaskWorld
         {
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class FakeIncidents(TaskWorld world) : IIncidentRepository
+    {
+        public void Add(Incident incident) => world.Incidents.Add(incident);
+
+        public Task<Incident?> GetWithEventsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(world.Incidents.Find(incident => incident.TenantId == tenantId && incident.Id == id));
+
+        public Task<bool> ExistsWithOperationKeyAsync(Guid tenantId, string operationKey, CancellationToken cancellationToken) =>
+            Task.FromResult(world.Incidents.Exists(incident => incident.TenantId == tenantId && incident.OperationKey == operationKey));
+
+        public Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken) =>
+            Task.FromResult($"NOV-{today:yyyyMMdd}-{world.Incidents.Count + 1:D4}");
     }
 
     private sealed class FakeTasks(TaskWorld world) : IWarehouseTaskRepository

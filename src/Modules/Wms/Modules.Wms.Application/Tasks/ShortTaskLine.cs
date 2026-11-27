@@ -90,7 +90,8 @@ public sealed class ShortTaskLineHandler(
                 command.DeviceId,
                 occurredAt,
                 "short",
-                command),
+                command,
+                command.QuantityFound),
             (context, ct) => ApplyAsync(command, type, occurredAt, context, ct),
             cancellationToken);
     }
