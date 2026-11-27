@@ -746,6 +746,57 @@ Decisiones aceptadas al cerrar el trabajo; ninguna se arregla sola.
   `POST synonyms/{id}/retry` los trabajos `Failed` vuelven a `Pending` en una sentencia que se confirma sola, antes de guardar la
   auditoría: si ésta falla, los trabajos ya se reintentan sin su rastro.
 
+## Ciudades del exterior para Siigo
+
+Una parte facturada de otro país sale a Siigo con su `country_code`, `state_code` y `city_code` de la lista de Siigo, y lo que
+no coincide queda en una bandeja del operador que lo vincula **una sola vez para todos los tenants** (spec `2026-11-26`).
+Colombia no cambia: sigue con DANE, `city_synonyms` y `unresolved_cities`.
+
+**El catálogo.** `geography.billing_cities` se siembra desde un JSON embebido (`Seed/Data/siigo-billing-cities.json`, sin
+Colombia) al arrancar, de forma idempotente por huella, y **nunca borra**: un sinónimo apunta a una de sus filas. Los códigos
+se guardan y se envían tal cual vienen (`Us`, `09`, `1`); la lista no se corrige.
+
+**Orden de resolución** (`ForeignBillingCityResolver`, sólo lee; el país se recorta y se pone en mayúscula):
+
+1. País que no está en el catálogo: no hay ciudad que elegir; la factura queda en `customer_city_unlinked` y **no** se anota.
+2. Coincidencia **única** por nombre normalizado (sin tildes, mayúsculas ni espacios de más) dentro del país.
+3. Sinónimo vivo del texto, confirmado por un operador.
+4. Nada de lo anterior, o un nombre repetido en el país (Boston, Berlín): `customer_city_unlinked` y a la bandeja. Una factura
+   nunca sale con una ciudad que nadie eligió.
+
+**Quién anota.** Resolver es lectura (`SiigoOrderSource`); anotar es escritura (`ISiigoForeignCityInbox` →
+`ForeignCityReporter`), idempotente por pedido, y **sólo la vista previa y la emisión** de Siigo lo llaman. La disponibilidad
+(`/availability`) no lo recibe, así que mirar la pantalla no llena la bandeja. Un fallo al anotar deja un warning con el tipo
+de la excepción y la facturación sigue.
+
+**Consola del operador.** Todo bajo `/api/v1/tenants/{tenantId}/operator/cities/foreign`, con el tenant operador en la ruta y
+doble capa (política + handler), con los permisos `operator.cities.read` y `operator.cities.manage` de siempre.
+
+| Ruta | Permiso | Qué hace |
+| --- | --- | --- |
+| `GET countries` | read | Los países del catálogo, ordenados por nombre sin tildes. |
+| `GET catalog?country=&search=` | read | Las ciudades de un país para el modal de confirmar. `country` es obligatorio (422 si falta). |
+| `GET unresolved` | read | La bandeja, con filtros de país, estado y búsqueda, paginada. |
+| `GET unresolved/{id}` | read | El detalle: la fila, los tenants que la vieron y hasta tres sugerencias. |
+| `GET synonyms` | read | La lista de sinónimos del exterior, por país y búsqueda, paginada. |
+| `POST unresolved/{id}/resolve` `{ billingCityId }` | manage | Crea el sinónimo. 409 si ya hay uno vivo; 422 `geography.billing_city.not_in_country` si la ciudad es de otro país. |
+| `POST unresolved/{id}/discard`, `.../restore` | manage | Saca o devuelve una fila de la bandeja. |
+| `PUT synonyms/{id}` `{ billingCityId, expectedVersion }` | manage | Cambia la ciudad del sinónimo. 412 si la versión cambió. |
+| `DELETE synonyms/{id}` | manage | Borrado lógico: el texto deja de casar. |
+
+Confirmar un texto es `geography.synonym.matches_city` sólo si coincide con **una** ciudad del país; con dos o más (Boston) sí se
+puede confirmar. No hay vista de impacto ni eventos: Colombia los necesita para corregir pedidos de Shopify y el exterior no.
+
+**Regenerar el JSON** con la lista de Siigo (el `.xlsx` va en una carpeta nueva, el script corre aislado y sólo usa la
+biblioteca estándar):
+
+```powershell
+$dl = Join-Path $env:TEMP ("siigo-list-" + (Get-Date -Format yyyyMMddHHmmss))
+New-Item -ItemType Directory $dl | Out-Null
+curl.exe -sSL -o "$dl\cities.xlsx" "https://saprodcentralassets.blob.core.windows.net/siigoapi/documentation/Lista-de-ciudades.xlsx"
+python -I scripts\geography\convert_siigo_cities.py "$dl\cities.xlsx" src\Modules\Geography\Modules.Geography.Infrastructure\Seed\Data\siigo-billing-cities.json
+```
+
 ## Numeración de documentos por tenant
 
 El número de cotización y el de pedido salen de un formato **por tenant y por tipo de documento**,
