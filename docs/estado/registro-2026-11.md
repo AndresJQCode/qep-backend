@@ -3,6 +3,13 @@
 Entradas del registro de [`docs/estado.md`](../estado.md) de este mes, la más reciente arriba. Lo que vale hoy está en
 `estado.md`; esto es historia y no se corrige.
 
+- 2026-11-27 — Mergeado a `develop` y llevado a `main` **número de documento numérico** (`feature/documento-solo-digitos`:
+  `cd5cbcabc` hasta `11a128f34`, correcciones `931c795d0` hasta `56a8204ef`). NIT, CC y CE (RRHH: CC, CE, PEP y PPT) sólo
+  admiten dígitos, puntos, guiones y espacios (RRHH sin espacios); pasaporte, NIF, NIE y TAX_ID siguen libres. Validador
+  con el campo y dominio con código `*.identification_number_not_numeric` en Customers, Pos, Suppliers, Companies
+  (`tax_id_not_numeric`), Wholesale, Support, Store, Buyers, Quotations, Hr y ServiceContracts. **Decisión del owner:** se
+  bloquea siempre, también datos viejos. **Pruebas:** `test-feature.ps1` en verde sobre `11a128f34`; falta la suite
+  completa. **Falta:** frontend.
 - 2026-11-27 — **Contabilidad confirmó el `id_type` de Siigo:** Tax ID `50` y NIF/NIE `42`, como ya los manda
   `SiigoIdentificationTypes`; sin cambio de código. Mergeado a `develop` (`dcf0bb4ea`, `docs/siigo-id-type-confirmado`
   hasta `8bb3b4d20`, sin push). Sigue pendiente la prueba contra Siigo real.

@@ -32,6 +32,7 @@ correr (también en su sección).
 | Teléfono con indicativo del país | En `main` (backend `da98b8e20`, frontend `494cbeed4`), sin despliegue registrado. **Falta:** el selector todavía no ofrece todos los países; verificar contra Siigo real el cliente con `indicative` y `number` | [spec Siigo](superpowers/specs/2026-11-25-siigo-telefono-indicativo-design.md), [spec Excel](superpowers/specs/2026-11-25-excel-pedidos-indicativo-design.md), [plan](superpowers/plans/2026-11-25-siigo-telefono-indicativo.md) |
 | RRHH: editar y eliminar registros de «Cargo y lugar de trabajo» | En `main` (`4a4d5eec6`, tarjeta Trello `W4Ijr9DW`), sin despliegue registrado; frontend en `main` del frontend (`22f8e9fd`, `15ec1a21`). **Por confirmar:** el texto de la confirmación al borrar un registro con PDF | [spec](superpowers/specs/2026-11-26-hr-editar-eliminar-cargo-lugar-design.md), [plan](superpowers/plans/2026-11-26-hr-editar-eliminar-cargo-lugar.md) |
 | RRHH: recordatorio de cumpleaños de empleados | En `main` (`bc2502615`, tarjeta Trello `KNdEXvgF`), sin despliegue registrado. **Falta:** frontend (tarjeta `4kvFw8GV`); las pruebas están escritas y sin correr. **Orden de salida:** backend primero | [spec](superpowers/specs/2026-11-26-hr-birthday-notices-design.md), [plan](superpowers/plans/2026-11-26-hr-birthday-notices.md) |
+| Número de documento numérico en NIT, CC y CE (en RRHH: CC, CE, PEP y PPT) | En `main` (`cd5cbcabc` y correcciones `931c795d0`), sin despliegue registrado. Se bloquea siempre, también un número viejo con letras que vuelve sin cambios (decisión del owner). **Falta:** frontend (prompt entregado al owner) y la suite completa | [spec](superpowers/specs/2026-11-27-numero-documento-solo-digitos-design.md), [plan](superpowers/plans/2026-11-27-numero-documento-solo-digitos.md) |
 | Integración con Siigo | En `main` y desplegada (`6f56c7265`); cliente con indicativo (`da98b8e20`), clientes de otros países (`840c5e719`, frontend `8e0fb497`) y token por credenciales (`f8673c363`) sin despliegue registrado. **Falta:** verificar contra Siigo real el cliente con indicativo y el extranjero. **Enviar la factura por WhatsApp** (`POST …/siigo-invoice/{invoiceId}/send-whatsapp`): **por confirmar** el botón del detalle del pedido en el frontend; antes de usarlo en producción, la plantilla `Invoice` aprobada en Meta o en Zenvia (más `invoiceTemplateId` en cada conexión de Zenvia) y la regla de lifecycle de `invoices/` en R2 | Specs y planes `2026-11-18-integracion-siigo`, `2026-11-21-siigo-invoice-whatsapp`, `2026-11-26-siigo-ciudades-exterior`; README § Integración con Siigo |
 | Servicios en cotizaciones y pedidos | En `main` (`bd7458c8`) con frontend (`31dd3ec1`). **Sin empezar:** fase 2 del spec, ReteICA separada por actividad (hoy una por municipio) | `docs/superpowers/specs/2026-11-18-servicios-en-cotizaciones-design.md` |
 | Menos consultas por request | En `main` (`52ab991f`, `f562db4f`). **Pendientes:** `FindActiveMembershipIdAsync` (1 consulta por request); membresía por usuario en `CustomersAuthorNames`/`CopilotMemberNames` (sin puerto por lote); caché de sesión del comprador. Mientras `Valkey__Areas__Permissions` siga apagada, un cambio de permisos tarda ≤ 60 s en los otros pods | [plan fase 2](superpowers/plans/2026-11-17-consultas-por-request-fase-2.md), [README § Verificación › Consultas por request](../README.md) |
@@ -290,6 +291,9 @@ posterior al del 2026-11-25 (`TestResults\report.md` del checkout principal, fue
 - **Reajuste de precio de contratos** (`9e57559cc`) y su seguimiento (`fe01048d7`): `.\scripts\test-feature.ps1 -Base 3906398e6`
   e integraciones de ServiceContracts, `InAppBillingTests`, `BillingEmailTemplatesTests` y `ArchitectureTests`.
 - **RRHH: cargo y lugar** (`4a4d5eec6`): suite completa (aviso «Cambio transversal»). **Cumpleaños** (`bc2502615`): todas.
+- **Número de documento numérico** (`cd5cbcabc`, `931c795d0`): suite completa (aviso «Cambio transversal»; 9 módulos
+  sin integración en el nivel rápido). `test-feature.ps1` quedó en verde sobre `11a128f34`; las correcciones sólo
+  corrieron unitarias de Customers y Quotations.
 - **Código postal en la entrega** (`1dfaaf3c4`): integración, `test-feature.ps1` y revisión de código.
 - **Regalo en el pedido** (`230d8f6af`): integración completa de Quotations (se colgó en
   `WhatsAppChannelApiTests.ChannelsForOrdersAreFilteredByDocumentAndReadableWithOrderManage`) y `ArchitectureTests`.
@@ -369,6 +373,9 @@ Pasos y orden para lo que entró a `main` después de `6f56c7265`.
 - **WMS** (`c7e03f03f` … `a5f7ce066`): migraciones aditivas `AddTaskBoardIndexes` y `AddTaskEventRecordedAt` (relleno de
   `recorded_at`).
 - **RRHH: cumpleaños** (`bc2502615`): backend primero.
+- **Número de documento numérico** (`cd5cbcabc`, `931c795d0`): sin migraciones. Desde el despliegue, un NIT/CC/CE guardado
+  con letras impide volver a guardar ese registro (pedido, cotización, cliente, invitación de distribuidor) hasta corregirlo.
+  Conviene contar antes en producción cuántos hay (sólo el conteo).
 - **Valkey `Permissions`:** en `main` sin desplegar; se prende un área por despliegue (Registro 2026-11-22 a 2026-11-26).
 
 ## Después de desplegar
