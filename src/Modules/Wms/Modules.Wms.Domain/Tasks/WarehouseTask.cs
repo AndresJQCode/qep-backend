@@ -166,11 +166,15 @@ public sealed class WarehouseTask
         Version++;
     }
 
-    /// <summary>La saca del pool; conserva a quién está asignada.</summary>
+    /// <summary>La saca del pool; conserva a quién está asignada y borra el reclamo que haya quedado de un lease vencido.</summary>
     public void Hold(Guid by, string? reason, DateTimeOffset now)
     {
         EnsureStatus("hold", WarehouseTaskStatus.Ready, WarehouseTaskStatus.Assigned);
         var detail = OptionalReason(reason);
+
+        // B1: un reclamo que quedó de un lease vencido no sobrevive a la retención. Al publicar otra vez, una confirmación tardía de
+        // antes ya no la reanuda ni conserva el token (DA-35).
+        ClearClaim();
         Status = WarehouseTaskStatus.Planned;
         ReleasedAt = null;
         Version++;

@@ -25,7 +25,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`Heartbeat` no sube `version` a propósito**: si la subiera, cada latido (2 min) dejaría en 412 la pantalla del supervisor.
 - **El barrido conserva `claimed_by_member_id` y `lease_token` al vencer**: es lo que deja reanudar una confirmación tardía y conservar
   el token al retomar. No los «limpies»; por eso el composer sólo muestra el reclamo con la tarea `InProgress`, y `leaseToken` sólo a
-  quien la tiene.
+  quien la tiene. **Retener (`hold`) sí los limpia** (revisión T1, B1): sin eso, retener y volver a publicar dejaba reanudable una confirmación de
+  antes de la retención.
 - **Los números de `TaskPriority` están repetidos en el SQL de `LockNextCandidateAsync`**; `TaskCandidateQueryTests` los amarra. Cambiar
   uno sin el otro lo pone en rojo. El mismo SQL excluye lo saltado leyendo `task_events` por nombre (`kind = 'Unclaimed'`,
   `detail = 'Skipped'`): renombrar un valor de `TaskEventKind` o de `TaskUnclaimReason` compila y rompe el filtro sin error.

@@ -635,6 +635,24 @@ public sealed class WarehouseTaskLeaseTests
         Assert.Equal(LeaseCheck.Resumable, task.CheckLease(Member, token));
     }
 
+    // B1: retener borra el reclamo que dejó un lease vencido; si no, al volver a publicar la confirmación tardía de antes la reanudaría.
+    [Fact]
+    public void HoldingAndPublishingAgainRevokesTheExpiredClaim()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        task.Hold(Supervisor, null, Expired);
+        task.Publish(Supervisor, Expired.AddMinutes(1));
+
+        Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
+        Assert.Null(task.ClaimedByMemberId);
+        Assert.Null(task.ClaimedDeviceId);
+        Assert.Null(task.LeaseToken);
+        task.Claim(Member, Device, Expired.AddMinutes(2));
+        Assert.NotEqual(token, task.LeaseToken);
+    }
+
     [Fact]
     public void AHeldTaskIsLostForItsLastClaimer()
     {
