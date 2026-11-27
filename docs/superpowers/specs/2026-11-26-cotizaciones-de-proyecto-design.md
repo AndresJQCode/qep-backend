@@ -356,11 +356,13 @@ Los nueve se aprobaron como se propusieron; no se reabren.
 - El texto del historial («Alcance actualizado», «Precio del proyecto actualizado»).
 - Actualizar `docs/estado.md` en `develop` al mergear (la rama de feature no lo toca).
 
-## 12. Cambios de contrato que el código obliga (pendientes de llevar a los dos specs)
+## 12. Cambios de contrato que el código obliga (aprobados por el owner el 2026-11-26)
 
 §6 quedó como en el frontend salvo los estados de P1–P9 y la frase de `requiresShipping` de §6.4 (punto 5 del owner).
-Lo que sigue cambia o precisa §6 y necesita el visto bueno del owner antes de copiarlo a los dos specs. El plan
-implementa la versión «después».
+Lo que sigue cambia o precisa §6; el owner lo aprobó, junto con las dos decisiones de diseño nuevas (borrar el producto
+del servicio deja intacta la línea del borrador de proyecto, y en un pedido de proyecto se ignoran `isRetail`,
+`globalScaleFloor` y `shipping`). El spec y el código del frontend se actualizan con estos textos. El plan implementa la
+versión «después».
 
 - **A. Moneda resultante (§6.5).** Antes: «la de su cuenta de cobro, o la por defecto del tenant sin cuenta». Después:
   «la de su cuenta de cobro si trae banco y número; sin cuenta, o con una empresa sin cuenta, la moneda actual del
