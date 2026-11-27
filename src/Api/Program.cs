@@ -372,6 +372,8 @@ app.MapCustomerEngagementEndpoints();
 app.MapGeographyEndpoints();
 // Spec 2026-10-26 §6: la consola de ciudades sin resolver y sinónimos del operador.
 app.MapCityOperatorEndpoints();
+// Spec 2026-11-26: la consola de ciudades del exterior (bandeja, sinónimos y catálogo de Siigo).
+app.MapForeignCityOperatorEndpoints();
 // Spec 2026-11-10: la consola de la unidad tributaria del operador.
 app.MapTaxUnitOperatorEndpoints();
 // Spec 2026-11-22: la consola de valores legales de nómina del operador.

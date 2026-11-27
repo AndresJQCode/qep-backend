@@ -1605,6 +1605,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteCitySynonymCommand, bool>, DeleteCitySynonymHandler>();
         services.AddScoped<ICommandHandler<RetryCitySynonymCorrectionsCommand, CitySynonymDto>, RetryCitySynonymCorrectionsHandler>();
         services.AddScoped<ICommandHandler<RunCityBackfillCommand, CityBackfillResultDto>, RunCityBackfillHandler>();
+        // Spec 2026-11-26: las lecturas de la consola de ciudades del exterior, con la misma doble capa. Sin el registro de un
+        // handler su ruta responde 500; los validadores entran por el escaneo de ensamblado.
+        services.AddScoped<IQueryHandler<ListBillingCountriesQuery, IReadOnlyList<BillingCountryDto>>, ListBillingCountriesHandler>();
+        services.AddScoped<IQueryHandler<SearchBillingCitiesQuery, IReadOnlyList<BillingCityRefDto>>, SearchBillingCitiesHandler>();
+        services.AddScoped<IQueryHandler<ListUnresolvedForeignCitiesQuery, UnresolvedForeignCityPageDto>, ListUnresolvedForeignCitiesHandler>();
+        services.AddScoped<IQueryHandler<GetUnresolvedForeignCityQuery, UnresolvedForeignCityDetailDto>, GetUnresolvedForeignCityHandler>();
+        services.AddScoped<IQueryHandler<ListForeignCitySynonymsQuery, ForeignCitySynonymPageDto>, ListForeignCitySynonymsHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
