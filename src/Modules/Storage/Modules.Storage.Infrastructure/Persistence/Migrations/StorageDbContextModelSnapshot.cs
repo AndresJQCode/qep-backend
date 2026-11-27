@@ -178,7 +178,17 @@ namespace Modules.Storage.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("message_id");
 
-                    b.Property<DateTimeOffset>("ProcessedAt")
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("processed_at");
 

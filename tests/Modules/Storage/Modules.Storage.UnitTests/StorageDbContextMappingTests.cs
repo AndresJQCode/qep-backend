@@ -23,6 +23,22 @@ public sealed class StorageDbContextMappingTests
         var key = inbox.FindPrimaryKey();
         Assert.NotNull(key);
         Assert.Equal(["Consumer", "MessageId"], key.Properties.Select(property => property.Name));
+
+        // Spec 2026-11-26 («Consumidor»): una fila reclamada y sin terminar lleva processed_at en null, hasta cuándo nadie la vuelve a
+        // tomar (claimed_until) y cuántos reclamos lleva (attempts). StorageInboxClaims escribe estas columnas en SQL crudo.
+        var processedAt = inbox.FindProperty("ProcessedAt");
+        Assert.NotNull(processedAt);
+        Assert.Equal("processed_at", processedAt.GetColumnName());
+        Assert.True(processedAt.IsNullable);
+        var claimedUntil = inbox.FindProperty("ClaimedUntil");
+        Assert.NotNull(claimedUntil);
+        Assert.Equal("claimed_until", claimedUntil.GetColumnName());
+        Assert.True(claimedUntil.IsNullable);
+        var attempts = inbox.FindProperty("Attempts");
+        Assert.NotNull(attempts);
+        Assert.Equal("attempts", attempts.GetColumnName());
+        Assert.False(attempts.IsNullable);
+        Assert.Equal(1, attempts.GetDefaultValue());
     }
 
     [Fact]
