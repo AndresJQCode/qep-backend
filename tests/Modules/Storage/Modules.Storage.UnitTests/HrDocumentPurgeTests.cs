@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
 using Modules.Storage.Infrastructure.HrDocuments;
@@ -6,10 +6,11 @@ using Modules.Storage.Infrastructure.HrDocuments;
 namespace Modules.Storage.UnitTests;
 
 /// <summary>
-/// Spec 2026-11-26 («PDF del registro eliminado», «Por cada id»): la purga del PDF que Hr soltó, con dobles. Un borrado equivocado no se
-/// recupera, así que cada prueba fija una forma de no borrar: la referencia que aparece bajo el candado, el archivo de otro dueño, de otro
-/// tenant o que ya no está <c>Available</c>, y la falla de R2 o de la pregunta, que no marcan el mensaje. Regla R1 del plan: cada archivo
-/// cierra su propia transacción, también el que se salta, y el mensaje se marca con el último guardado.
+/// Spec 2026-11-26 («PDF del registro eliminado», «Por cada id», «Reintentos»): la purga del PDF que Hr soltó, con dobles. Un borrado
+/// equivocado no se recupera, así que cada prueba fija una forma de no borrar o de no dejar una fila <c>Available</c> sin objeto: la
+/// referencia de la primera pregunta (sin marca), la marca <c>Deleted</c> confirmada antes de la segunda pregunta y de R2, la devolución
+/// sólo con el objeto todavía en R2, el archivo de otro dueño, de otro tenant o en otro estado, y las fallas, que no marcan el mensaje.
+/// Regla R1 del plan: cada archivo cierra sus transacciones (dos si se marca) y el mensaje se marca con el último guardado.
 /// </summary>
 public sealed class HrDocumentPurgeTests
 {
@@ -18,7 +19,8 @@ public sealed class HrDocumentPurgeTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static FileResource NewFile(Guid tenantId, FileOwnerType ownerType = FileOwnerType.HrDocument, bool withVariant = false)
+    private static FileResource NewFile(
+        Guid tenantId, FileOwnerType ownerType = FileOwnerType.HrDocument, bool withVariant = false, bool available = true)
     {
         var id = FileResourceId.New();
         var resource = FileResource.CreatePendingUpload(
@@ -29,13 +31,29 @@ public sealed class HrDocumentPurgeTests
             resource.AddVariant("thumb", $"files/{id}/thumb", "image/webp", 10, 10, 10);
         }
 
-        resource.MarkClean(Now.AddDays(-3));
+        if (available)
+        {
+            resource.MarkClean(Now.AddDays(-3));
+        }
+
+        return resource;
+    }
+
+    /// <summary>Un PDF que un intento anterior (u otra réplica) ya marcó y confirmó.</summary>
+    private static FileResource MarkedFile(Guid tenantId)
+    {
+        var resource = NewFile(tenantId);
+        resource.BeginHrDocumentPurge(Now.AddMinutes(-1));
         return resource;
     }
 
     private sealed class World
     {
-        public World() => References.Store = Store;
+        public World()
+        {
+            References.Store = Store;
+            Objects.Store = Store;
+        }
 
         public InMemoryPurgeStore Store { get; } = new();
 
@@ -45,11 +63,13 @@ public sealed class HrDocumentPurgeTests
 
         public RecordingStorageAuditPublisher Audit { get; } = new();
 
+        public RecordingLogger Logger { get; } = new();
+
         public int Marks { get; private set; }
 
         public int SavesAtMark { get; private set; } = -1;
 
-        public HrDocumentPurge Purge => new(Store, References, Objects, Audit, new FixedClock(Now), NullLogger<HrDocumentPurge>.Instance);
+        public HrDocumentPurge Purge => new(Store, References, Objects, Audit, new FixedClock(Now), Logger);
 
         public Task MarkProcessed()
         {
@@ -73,29 +93,151 @@ public sealed class HrDocumentPurgeTests
         var audit = Assert.Single(world.Audit.SystemEntries);
         Assert.Equal((TenantId, "storage.file.purged", "file", file.Id.ToString(), "hr_document_released"), audit);
         Assert.Equal(1, world.Marks);
-        // Marcado antes del único guardado, que es el último: el inbox viaja con el archivo.
-        Assert.Equal(0, world.SavesAtMark);
-        Assert.Equal(1, world.Store.Saves);
+        // Dos transacciones (la marca y la decisión); el inbox viaja con la última.
+        Assert.Equal(1, world.SavesAtMark);
+        Assert.Equal(2, world.Store.Saves);
         Assert.Equal(0, world.Store.Abandons);
-        Assert.Equal([file.Id.Value], Assert.Single(world.References.Asked));
+        Assert.Equal(2, world.References.Asked.Count);
+        Assert.All(world.References.Asked, asked => Assert.Equal([file.Id.Value], asked));
     }
 
     [Fact]
-    public async Task AReferenceThatAppearsUnderTheLockKeepsTheFile()
+    public async Task TheMarkIsCommittedBeforeTheSecondQuestionAndR2()
     {
         var world = new World();
         var file = world.Store.Add(NewFile(TenantId));
-        world.References.Respond([file.Id.Value]);
 
         await world.Purge.PurgeAsync(TenantId, [file.Id.Value], world.MarkProcessed, Ct);
 
+        Assert.Equal([FileResourceStatus.Deleted, FileResourceStatus.Purged], world.Store.SavedStatuses[file.Id]);
+        Assert.Equal(2, world.References.Asked.Count);
+        Assert.Equal([0, 1], world.References.SavesWhenAsked);
+        Assert.Equal([1], world.Objects.SavesWhenDeleted);
+        Assert.Equal(1, world.SavesAtMark);
+        Assert.Equal(2, world.Store.Saves);
+    }
+
+    [Fact]
+    public async Task AReferenceInTheFirstQuestionKeepsTheFileUnmarked()
+    {
+        var world = new World();
+        var file = world.Store.Add(NewFile(TenantId));
+        world.References.Respond(file.Id.Value);
+
+        await world.Purge.PurgeAsync(TenantId, [file.Id.Value], world.MarkProcessed, Ct);
+
+        Assert.Equal([FileResourceStatus.Available], world.Store.SavedStatuses[file.Id]);
         Assert.Empty(world.Objects.Deleted);
-        Assert.Equal(FileResourceStatus.Available, file.Status);
         Assert.Empty(world.Audit.SystemEntries);
+        Assert.Single(world.References.Asked);
         Assert.Equal(1, world.Marks);
         Assert.Equal(1, world.Store.Saves);
         // La pregunta se hace con el candado tomado, no antes.
-        Assert.Equal(1, world.References.LocksHeldWhenAsked.Single());
+        Assert.Equal([1], world.References.LocksHeldWhenAsked);
+    }
+
+    [Fact]
+    public async Task AReferenceInTheSecondQuestionRestoresTheFile()
+    {
+        var world = new World();
+        var file = world.Store.Add(NewFile(TenantId));
+        world.References.Respond();
+        world.References.Respond(file.Id.Value);
+
+        await world.Purge.PurgeAsync(TenantId, [file.Id.Value], world.MarkProcessed, Ct);
+
+        Assert.Equal([FileResourceStatus.Deleted, FileResourceStatus.Available], world.Store.SavedStatuses[file.Id]);
+        Assert.Null(file.DeletedAt);
+        Assert.Empty(world.Objects.Deleted);
+        Assert.Empty(world.Audit.SystemEntries);
+        Assert.Single(world.Logger.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Equal(1, world.Marks);
+    }
+
+    [Fact]
+    public async Task AFailedSaveAfterR2LeavesTheFileDeleted()
+    {
+        var world = new World();
+        var file = world.Store.Add(NewFile(TenantId));
+        world.Store.FailSaveWhen = candidate => candidate.Status == FileResourceStatus.Purged;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => world.Purge.PurgeAsync(TenantId, [file.Id.Value], world.MarkProcessed, Ct));
+
+        Assert.Equal([FileResourceStatus.Deleted], world.Store.SavedStatuses[file.Id]);
+        Assert.Contains(file.StorageKey, world.Objects.Deleted);
+        Assert.Equal(1, world.Store.Abandons);
+    }
+
+    [Theory]
+    [InlineData(false, false)] // tras la marca, antes de la segunda pregunta o con falla de R2: objeto presente, sin uso → borra y Purged
+    [InlineData(true, false)] // tras borrar en R2 con guardado fallido: objeto ausente, sin uso → DeleteAsync igual (idempotente) y Purged
+    [InlineData(false, true)] // objeto presente, con uso → RestoreHrDocument
+    [InlineData(true, true)] // objeto ausente, con uso → Purged, auditoría y un Error en el logger
+    public async Task AMarkedFileIsResumedAtTheSecondQuestion(bool objectMissing, bool referenced)
+    {
+        var world = new World();
+        var file = world.Store.Add(MarkedFile(TenantId));
+        if (objectMissing)
+        {
+            world.Objects.Missing.Add(file.StorageKey);
+        }
+
+        if (referenced)
+        {
+            world.References.Respond(file.Id.Value);
+        }
+
+        await world.Purge.PurgeAsync(TenantId, [file.Id.Value], world.MarkProcessed, Ct);
+
+        // Sin primera pregunta ni nueva marca: retoma en la segunda, en una sola transacción.
+        Assert.Single(world.References.Asked);
+        Assert.Equal(1, world.Store.Saves);
+        Assert.Equal(1, world.Marks);
+        Assert.Equal(0, world.SavesAtMark);
+        var restored = referenced && !objectMissing;
+        Assert.Equal([restored ? FileResourceStatus.Available : FileResourceStatus.Purged], world.Store.SavedStatuses[file.Id]);
+        if (restored)
+        {
+            Assert.Empty(world.Objects.Deleted);
+            Assert.Empty(world.Audit.SystemEntries);
+            Assert.Single(world.Logger.Entries, entry => entry.Level == LogLevel.Warning);
+            return;
+        }
+
+        Assert.Equal((TenantId, "storage.file.purged", "file", file.Id.ToString(), "hr_document_released"), Assert.Single(world.Audit.SystemEntries));
+        if (referenced)
+        {
+            // El objeto ya no estaba: no hay nada que borrar, y el riesgo residual queda a la vista.
+            Assert.Empty(world.Objects.Deleted);
+            Assert.Single(world.Logger.Entries, entry => entry.Level == LogLevel.Error);
+        }
+        else
+        {
+            Assert.Equal([file.StorageKey], world.Objects.Deleted);
+            Assert.DoesNotContain(world.Logger.Entries, entry => entry.Level == LogLevel.Error);
+        }
+    }
+
+    [Fact]
+    public async Task AMarkFinishedByAnotherReplicaIsSkipped()
+    {
+        var world = new World();
+        var file = world.Store.Add(NewFile(TenantId));
+        world.Store.BeforeLock = number =>
+        {
+            if (number == 2)
+            {
+                file.PurgeReleasedHrDocument(Now);
+            }
+        };
+
+        await world.Purge.PurgeAsync(TenantId, [file.Id.Value], world.MarkProcessed, Ct);
+
+        Assert.Single(world.References.Asked);
+        Assert.Empty(world.Objects.Deleted);
+        Assert.Empty(world.Audit.SystemEntries);
+        Assert.Equal(2, world.Store.Saves);
+        Assert.Equal(1, world.Marks);
     }
 
     [Fact]
@@ -107,18 +249,21 @@ public sealed class HrDocumentPurgeTests
         var purged = world.Store.Add(NewFile(TenantId));
         purged.BeginHrDocumentPurge(Now.AddDays(-1));
         purged.PurgeReleasedHrDocument(Now.AddDays(-1));
+        var pending = world.Store.Add(NewFile(TenantId, available: false));
 
-        await world.Purge.PurgeAsync(TenantId, [product.Id.Value, foreign.Id.Value, purged.Id.Value, Guid.CreateVersion7()], world.MarkProcessed, Ct);
+        await world.Purge.PurgeAsync(
+            TenantId, [product.Id.Value, foreign.Id.Value, purged.Id.Value, pending.Id.Value, Guid.CreateVersion7()], world.MarkProcessed, Ct);
 
         Assert.Empty(world.Objects.Deleted);
         Assert.Empty(world.Audit.SystemEntries);
         Assert.Empty(world.References.Asked);
         Assert.Equal(FileResourceStatus.Available, product.Status);
         Assert.Equal(FileResourceStatus.Available, foreign.Status);
+        Assert.Equal(FileResourceStatus.PendingScan, pending.Status);
         Assert.Equal(1, world.Marks);
         // R1: cada id cierra su transacción, también los saltados; la marca va con el último.
-        Assert.Equal(4, world.Store.Saves);
-        Assert.Equal(3, world.SavesAtMark);
+        Assert.Equal(5, world.Store.Saves);
+        Assert.Equal(4, world.SavesAtMark);
     }
 
     [Fact]
@@ -142,10 +287,12 @@ public sealed class HrDocumentPurgeTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => r2.Purge.PurgeAsync(TenantId, [r2File.Id.Value], r2.MarkProcessed, Ct));
 
+        // La marca ya confirmada queda; la segunda transacción se revierte y el mensaje vuelve cuando vence su reclamo.
+        Assert.Equal([FileResourceStatus.Deleted], r2.Store.SavedStatuses[r2File.Id]);
         Assert.Equal(0, r2.Marks);
         Assert.Equal(1, r2.Store.Abandons);
-        Assert.Equal(0, r2.Store.Saves);
-        Assert.Equal(FileResourceStatus.Available, r2File.Status);
+        Assert.Equal(1, r2.Store.Saves);
+        Assert.Equal(FileResourceStatus.Deleted, r2File.Status);
         Assert.Empty(r2.Audit.SystemEntries);
 
         var query = new World();
@@ -172,30 +319,34 @@ public sealed class HrDocumentPurgeTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => world.Purge.PurgeAsync(TenantId, [first.Id.Value, second.Id.Value], world.MarkProcessed, Ct));
 
-        Assert.Equal(FileResourceStatus.Purged, first.Status);
-        Assert.Equal([FileResourceStatus.Purged], world.Store.SavedStatuses[first.Id]);
-        Assert.False(world.Store.SavedStatuses.ContainsKey(second.Id));
-        Assert.Equal(FileResourceStatus.Available, second.Status);
-        Assert.Equal(1, world.Store.Saves);
+        Assert.Equal([FileResourceStatus.Deleted, FileResourceStatus.Purged], world.Store.SavedStatuses[first.Id]);
+        Assert.Equal([FileResourceStatus.Deleted], world.Store.SavedStatuses[second.Id]);
+        Assert.Equal(3, world.Store.Saves);
         Assert.Equal(1, world.Store.Abandons);
         Assert.Equal(0, world.Marks);
     }
 
     /// <summary>
     /// El candado en memoria: filtra por tenant como el <c>SELECT … FOR UPDATE</c>, cuenta guardados y abandonos y anota el estado de
-    /// cada archivo bloqueado en el momento de guardarlo. Un abandono no deshace lo que cambió en memoria; por eso la purga borra en R2
-    /// antes de tocar el estado.
+    /// cada archivo bloqueado en el momento de confirmar. Un abandono no deshace lo que cambió en memoria: lo que vale es
+    /// <see cref="SavedStatuses"/>, lo confirmado. <see cref="FailSaveWhen"/> simula un commit que falla (no anota nada) y
+    /// <see cref="BeforeLock"/>, otra réplica que actúa entre la marca y el segundo candado.
     /// </summary>
     private sealed class InMemoryPurgeStore : IHrDocumentPurgeStore
     {
         private readonly List<FileResource> _files = [];
         private readonly List<FileResource> _locked = [];
+        private int _lockCalls;
 
         public int Saves { get; private set; }
 
         public int Abandons { get; private set; }
 
         public int LocksHeld => _locked.Count;
+
+        public Func<FileResource, bool>? FailSaveWhen { get; set; }
+
+        public Action<int>? BeforeLock { get; set; }
 
         public Dictionary<FileResourceId, List<FileResourceStatus>> SavedStatuses { get; } = [];
 
@@ -207,6 +358,7 @@ public sealed class HrDocumentPurgeTests
 
         public Task<FileResource?> LockAsync(Guid tenantId, FileResourceId id, CancellationToken ct)
         {
+            BeforeLock?.Invoke(++_lockCalls);
             var file = _files.SingleOrDefault(candidate => candidate.Id == id && candidate.TenantId == tenantId);
             if (file is not null)
             {
@@ -218,6 +370,11 @@ public sealed class HrDocumentPurgeTests
 
         public Task SaveAsync(CancellationToken ct)
         {
+            if (FailSaveWhen is { } fail && _locked.Any(fail))
+            {
+                throw new InvalidOperationException("The commit failed.");
+            }
+
             Saves++;
             foreach (var file in _locked)
             {
@@ -255,6 +412,8 @@ public sealed class HrDocumentPurgeTests
 
         public List<int> LocksHeldWhenAsked { get; } = [];
 
+        public List<int> SavesWhenAsked { get; } = [];
+
         public void Respond(params Guid[] referenced) => _responses.Enqueue(referenced.ToHashSet());
 
         public Task<IReadOnlySet<Guid>> FindReferencedAsync(Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken)
@@ -266,16 +425,24 @@ public sealed class HrDocumentPurgeTests
 
             Asked.Add([.. fileIds]);
             LocksHeldWhenAsked.Add(Store!.LocksHeld);
+            SavesWhenAsked.Add(Store.Saves);
             return Task.FromResult(_responses.TryDequeue(out var response) ? response : new HashSet<Guid>());
         }
     }
 
-    /// <summary>El bucket privado: anota cada clave borrada y puede fallar en una.</summary>
+    /// <summary>El bucket privado: anota cada clave borrada (y cuántos guardados había), puede fallar en una y responde
+    /// <c>StatAsync</c> nulo para lo que falta o ya se borró.</summary>
     private sealed class RecordingObjectStorage : IObjectStorage
     {
+        public InMemoryPurgeStore? Store { get; set; }
+
         public string? FailingKey { get; set; }
 
+        public HashSet<string> Missing { get; } = new(StringComparer.Ordinal);
+
         public List<string> Deleted { get; } = [];
+
+        public List<int> SavesWhenDeleted { get; } = [];
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken)
         {
@@ -285,8 +452,12 @@ public sealed class HrDocumentPurgeTests
             }
 
             Deleted.Add(key);
+            SavesWhenDeleted.Add(Store!.Saves);
             return Task.CompletedTask;
         }
+
+        public Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken) =>
+            Task.FromResult(Missing.Contains(key) || Deleted.Contains(key) ? null : new StoredObject(1024, "abc"));
 
         public Task<Uri> CreatePresignedUploadUrlAsync(string key, string contentType, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -297,8 +468,6 @@ public sealed class HrDocumentPurgeTests
         public Task<Uri> CreatePresignedDownloadUrlAsync(
             string key, TimeSpan expiry, string? downloadFileName, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-
-        public Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task PromoteAsync(string sourceKey, string destinationKey, string expectedChecksum, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -312,5 +481,20 @@ public sealed class HrDocumentPurgeTests
             throw new NotSupportedException();
 
         public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    /// <summary>Anota nivel y mensaje de cada entrada (calco del de <c>HrDocumentReleaseProcessorTests</c>).</summary>
+    private sealed class RecordingLogger : ILogger<HrDocumentPurge>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
     }
 }

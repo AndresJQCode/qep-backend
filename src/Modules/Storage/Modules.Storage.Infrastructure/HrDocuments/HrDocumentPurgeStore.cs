@@ -6,8 +6,8 @@ using Modules.Storage.Infrastructure.Persistence;
 namespace Modules.Storage.Infrastructure.HrDocuments;
 
 /// <summary>
-/// Las filas que toca <see cref="HrDocumentPurge"/>, separadas para probarla sin base. Un archivo a la vez: <see cref="LockAsync"/> abre la
-/// transacción y <see cref="SaveAsync"/> o <see cref="AbandonAsync"/> la cierran.
+/// Las filas que toca <see cref="HrDocumentPurge"/>, separadas para probarla sin base. Un archivo a la vez: <see cref="LockAsync"/> abre una
+/// transacción y <see cref="SaveAsync"/> o <see cref="AbandonAsync"/> la cierran; un archivo que se marca usa dos (la marca y la decisión).
 /// </summary>
 internal interface IHrDocumentPurgeStore
 {
@@ -23,8 +23,8 @@ internal interface IHrDocumentPurgeStore
 }
 
 // Patrón de UnreferencedFileCandidates, con FOR UPDATE sin SKIP LOCKED: el mensaje ya es de una sola réplica (su reclamo), y si dos avisos
-// distintos nombran el mismo archivo, el segundo espera al primero y lo relee Purged. El candado se sostiene mientras se pregunta a Hr y se
-// borran los objetos de un solo archivo.
+// distintos nombran el mismo archivo, el segundo espera al primero y lo relee. El candado de la segunda transacción se sostiene mientras se
+// pregunta a Hr y se borran los objetos de un solo archivo. No frena al adjunto de Hr, que lee sin él: lo frena la marca Deleted confirmada.
 internal sealed class HrDocumentPurgeStore(StorageDbContext dbContext) : IHrDocumentPurgeStore
 {
     private IDbContextTransaction? _transaction;

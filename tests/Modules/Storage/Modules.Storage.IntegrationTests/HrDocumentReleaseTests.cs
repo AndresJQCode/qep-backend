@@ -86,9 +86,16 @@ public sealed class HrDocumentReleaseTests
         Assert.False(claimed.Processed);
         Assert.Equal(1, claimed.Attempts);
         Assert.True(claimed.ClaimedUntil >= beforeClaim.AddSeconds(4), $"claimed_until {claimed.ClaimedUntil:O}, before {beforeClaim:O}");
-        Assert.Equal("Available", (await ReadFileAsync(connectionString, fileId)).Status);
+        // La marca quedó confirmada: la fila es Deleted (nunca Available sin objeto) y, entretanto, un adjunto de Hr no la encuentra.
+        Assert.Equal("Deleted", (await ReadFileAsync(connectionString, fileId)).Status);
         Assert.True(factory.ObjectStorage.Exists(storageKey));
         Assert.DoesNotContain(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var attach = await scope.ServiceProvider.GetRequiredService<IStorageSystemUploads>()
+                .CompleteAsync(TenantId, fileId, FileOwnerType.HrDocument, TenantId, Ct);
+            Assert.Equal(SystemUploadOutcome.NotFound, attach.Outcome);
+        }
 
         factory.ObjectStorage.FailingDeleteKey = null;
         await ExecuteAsync(
@@ -103,6 +110,29 @@ public sealed class HrDocumentReleaseTests
         Assert.Equal("Purged", (await ReadFileAsync(connectionString, fileId)).Status);
         Assert.False(factory.ObjectStorage.Exists(storageKey));
         Assert.Single(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+    }
+
+    // Spec 2026-11-26, «Por cada id», paso 3: desde el commit de la marca, un adjunto que lea Storage recibe NotFound (en Hr,
+    // hr.file.not_found). El doble de Hr hace, en cada pregunta, lo que hace el adjunto (CompleteAsync en un scope propio, sin candado).
+    [Fact]
+    public async Task AnAttachAfterTheMarkDoesNotFindTheFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        var fileId = await AvailableHrDocumentAsync(factory, database.GetConnectionString());
+        await AddReleasedEventAsync(factory, TenantId, fileId);
+        var outcomes = new List<SystemUploadOutcome>();
+        using var host = factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IHrDocumentReferences>();
+            services.AddScoped<IHrDocumentReferences>(provider =>
+                new ProbingReferences(provider.GetRequiredService<IServiceScopeFactory>(), outcomes));
+        }));
+
+        Assert.Equal(1, await host.Services.GetRequiredService<IHrDocumentReleaseProcessor>().ProcessPendingAsync(Ct));
+
+        Assert.Equal([SystemUploadOutcome.Available, SystemUploadOutcome.NotFound], outcomes);
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), fileId)).Status);
     }
 
     [Fact]
@@ -197,6 +227,28 @@ public sealed class HrDocumentReleaseTests
         await connection.OpenAsync(Ct);
         await using var command = new NpgsqlCommand(sql, connection);
         Assert.Equal(1, await command.ExecuteNonQueryAsync(Ct));
+    }
+
+    /// <summary>Hr de mentira que, en cada pregunta, intenta adjuntar el archivo como lo hace Hr (<c>HrDocumentStore.CompleteAsync</c>, en
+    /// su propio scope y sin candado), anota lo que Storage le respondió y contesta que nadie lo usa.</summary>
+    private sealed class ProbingReferences(IServiceScopeFactory scopes, List<SystemUploadOutcome> outcomes) : IHrDocumentReferences
+    {
+        public async Task<IReadOnlySet<Guid>> FindReferencedAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken)
+        {
+            foreach (var fileId in fileIds)
+            {
+                await using var scope = scopes.CreateAsyncScope();
+                var result = await scope.ServiceProvider.GetRequiredService<IStorageSystemUploads>()
+                    .CompleteAsync(tenantId, fileId, FileOwnerType.HrDocument, tenantId, cancellationToken);
+                lock (outcomes)
+                {
+                    outcomes.Add(result.Outcome);
+                }
+            }
+
+            return new HashSet<Guid>();
+        }
     }
 
     /// <summary>Hr de mentira: responde con los ids que la prueba dice en uso y anota por cuáles le preguntaron.</summary>
