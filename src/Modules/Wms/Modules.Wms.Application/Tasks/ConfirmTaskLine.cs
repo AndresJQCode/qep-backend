@@ -41,7 +41,7 @@ public sealed record ConfirmTaskLineCommand(
     }
 }
 
-/// <summary>La ventana de <c>OccurredAt</c> no se mira aquí: la aplican la tarea y el ledger, con el código del ledger.</summary>
+/// <summary>La ventana y el piso de <c>OccurredAt</c> no se miran aquí: los aplican la tarea y el ledger, con el código del ledger.</summary>
 public sealed class ConfirmTaskLineValidator : AbstractValidator<ConfirmTaskLineCommand>
 {
     public const int OverrideReasonMaxLength = 200;

@@ -653,6 +653,31 @@ public sealed class WarehouseTaskLeaseTests
         Assert.NotEqual(token, task.LeaseToken);
     }
 
+    // B2: nadie escanea una tarea antes de que exista en el pool.
+    [Fact]
+    public void AScanEarlierThanTheReleaseIsRejectedWithoutResuming()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        var error = Assert.Throws<WmsDomainException>(() => task.ConfirmLine(
+            Member, token, Device, task.Lines[0].Id, 1, Expired, Now.AddSeconds(-1)));
+
+        Assert.Equal(WmsErrorCodes.MovementOccurredAtOutOfRange, error.Code);
+        Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
+        Assert.Equal(0, task.Lines[0].QuantityConfirmed);
+    }
+
+    [Fact]
+    public void AScanAtTheReleaseInstantIsAccepted()
+    {
+        var (task, token) = Claimed();
+
+        task.ConfirmLine(Member, token, Device, task.Lines[0].Id, 1, Now.AddMinutes(1), Now);
+
+        Assert.Equal(1, task.Lines[0].QuantityConfirmed);
+    }
+
     [Fact]
     public void AHeldTaskIsLostForItsLastClaimer()
     {
