@@ -442,6 +442,35 @@
 
 #v(14pt)
 
+// ---------------------------------------------------------------------------- alcance
+
+// Sólo en un documento de proyecto (spec 2026-11-26 §6.5): lo que cubre la línea de arriba, con las fases primero y los
+// ítems sueltos al final. `data.scope` llega en `none` en los demás, y un borrador sin fases ni ítems no pinta ni el título.
+// Los nombres y los textos los escribe el asesor: se insertan como cadena (`[#entrada.text]`), nunca como markup. El precio
+// de cada fase sale sólo por fase y cuando ya lo tiene.
+#let alcance = data.scope
+#let entradas(lista) = list(..lista.map(entrada => [#entrada.text]))
+
+#if alcance != none and (alcance.phases.len() > 0 or alcance.items.len() > 0) [
+  #text(size: 10pt, weight: "bold")[Alcance]
+  #v(6pt, weak: true)
+  #for fase in alcance.phases {
+    // Sin separarse de su primer ítem: un nombre de fase solo al pie de la hoja no dice qué cubre.
+    block(sticky: true, width: 100%)[
+      #grid(
+        columns: (1fr, auto),
+        column-gutter: 6mm,
+        align: (left, right),
+        strong[#fase.name],
+        if alcance.showPhasePrices and fase.price != none [#strong[#moneda#importe(fase.price)]] else [],
+      )
+    ]
+    if fase.items.len() > 0 { entradas(fase.items) }
+  }
+  #if alcance.items.len() > 0 { entradas(alcance.items) }
+  #v(14pt)
+]
+
 // ---------------------------------------------------------------------------- totales
 
 // Sin corte de página en el medio: un total separado de sus sumandos se lee como otra cosa.

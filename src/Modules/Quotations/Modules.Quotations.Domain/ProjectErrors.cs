@@ -15,4 +15,8 @@ public static class ProjectErrors
 
     /// <summary>Cambiar las líneas o los regalos de un pedido de proyecto.</summary>
     public const string ItemsLocked = "order.project.items_locked";
+
+    /// <summary>El mensaje de <see cref="ItemsLocked"/>: lo lanzan el agregado y la edición del pedido.</summary>
+    public const string ItemsLockedMessage =
+        "En un pedido de proyecto no puedes cambiar productos ni regalos. Para cambiar lo vendido, anula y cotiza de nuevo.";
 }

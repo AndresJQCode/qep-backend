@@ -54,6 +54,10 @@ public static class ProjectScopeLimits
     public const int Items = 300;
     public const int PhaseNameMaxLength = 200;
     public const int ItemTextMaxLength = 2000;
+
+    /// <summary>El mayor precio que cabe en las columnas <c>numeric(14,2)</c> de la línea y los totales; vale para cada
+    /// precio y para la suma de las fases.</summary>
+    public const decimal MaxPrice = 999_999_999_999.99m;
 }
 
 /// <summary>

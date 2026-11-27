@@ -30,7 +30,8 @@ public sealed class MarkQuotationSentHandler(
     ITenantDirectory tenantDirectory,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITenantModules tenantModules)
     : ICommandHandler<MarkQuotationSentCommand, QuotationDto>
 {
     public const string AuditAction = "quotation.quotation.marked_sent";
@@ -45,6 +46,8 @@ public sealed class MarkQuotationSentHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         // Las mismas precondiciones que el envío por WhatsApp, y antes de pagar el PDF: una cotización anulada,
         // vencida o convertida no se marca enviada. `Send` vuelve a comprobarlo al final.

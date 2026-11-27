@@ -12,7 +12,8 @@ public sealed class VoidQuotationHandler(
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITenantModules tenantModules)
     : ICommandHandler<VoidQuotationCommand, QuotationDto>
 {
     public async Task<QuotationDto> HandleAsync(
@@ -25,6 +26,8 @@ public sealed class VoidQuotationHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
+        await ProjectModuleGuard.EnsureAsync(
+            tenantModules, command.TenantId, quotation.Kind, cancellationToken);
 
         var voidedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

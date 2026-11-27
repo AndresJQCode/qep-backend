@@ -293,6 +293,7 @@ public sealed class QuotationExportApiTests(SharedQuotationsHost sharedHost) : I
             now.AddDays(-7),
             now.AddDays(2),
             quotationNumber: null,
+            QuotationKindFilter.Standard,
             after,
             limit,
             TestContext.Current.CancellationToken);

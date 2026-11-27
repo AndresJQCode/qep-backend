@@ -1917,6 +1917,33 @@ public sealed class QuotationTests
         Assert.False(quotation.RequiresShipping);
     }
 
+    // Sin alcance guardado, o completo pero sin su línea, tampoco está completo: lo que se envía y se convierte es la
+    // línea del servicio. Ningún método del agregado deja esos estados; llegan por la base.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AProjectWithoutItsScopeOrItsLineIsIncomplete(bool withoutScope)
+    {
+        var quotation = NewProjectQuotation();
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1000m), Service, AdvisorId, Now);
+        Assert.True(quotation.CanBeConvertedToOrder);
+        if (withoutScope)
+        {
+            typeof(Quotation).GetProperty(nameof(Quotation.ProjectScope))!.SetValue(quotation, null);
+        }
+        else
+        {
+            ((List<QuotationItem>)quotation.Items).Clear();
+        }
+
+        var send = Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable);
+        var convert = Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToOrder);
+
+        Assert.Equal("quotation.project.incomplete", send.Code);
+        Assert.Equal("quotation.project.incomplete", convert.Code);
+        Assert.False(quotation.CanBeConvertedToOrder);
+    }
+
     [Fact]
     public void SendingOrConvertingAnIncompleteProjectSaysIncomplete()
     {

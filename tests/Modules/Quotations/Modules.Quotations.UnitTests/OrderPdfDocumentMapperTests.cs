@@ -222,6 +222,22 @@ public sealed class OrderPdfDocumentMapperTests
         Assert.Equal((string.Empty, string.Empty), (document.CustomerName, document.CustomerContact));
     }
 
+    // Spec 2026-11-26 §6.5: el pedido de un proyecto imprime el alcance que vendió, igual que su cotización.
+    [Theory]
+    [InlineData("PerPhase", true)]
+    [InlineData("Global", false)]
+    public void AProjectOrderCarriesItsScope(string pricingMode, bool showPhasePrices)
+    {
+        var scope = QuotationPdfDocumentMapperTests.ProjectScope(pricingMode);
+        var detail = Detail();
+
+        var document = Map(detail with { Order = detail.Order with { Kind = "Project", Project = scope } });
+
+        QuotationPdfDocumentMapperTests.AssertCarries(scope, document.Scope);
+        Assert.Equal(showPhasePrices, document.Scope!.ShowPhasePrices);
+        Assert.Null(Map(detail).Scope);
+    }
+
     // Spec 2026-11-18 §6: el pedido imprime la unidad con la misma regla que la cotización.
     [Fact]
     public void AnOrderWithAServiceLabelsItsLine()

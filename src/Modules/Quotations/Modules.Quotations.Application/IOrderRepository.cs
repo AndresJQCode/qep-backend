@@ -84,6 +84,7 @@ public interface IOrderRepository
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         bool? wholesaleApproved,
         int page,
         int pageSize,
@@ -106,6 +107,7 @@ public interface IOrderRepository
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         CancellationToken cancellationToken);
 
     /// <summary>Los pedidos de un comprador de la tienda, del más reciente al más viejo, sin tracking.</summary>
@@ -147,6 +149,7 @@ public interface IOrderRepository
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<Order>> ListForExportAsync(
@@ -162,6 +165,7 @@ public interface IOrderRepository
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken);

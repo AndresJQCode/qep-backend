@@ -256,6 +256,7 @@ public sealed class CreateQuotationHandlerTests
             tenantDirectory ?? new StubTenantDirectory(),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedTenantClock(Now),
-            new CreateQuotationValidator());
+            new CreateQuotationValidator(),
+            FixedTenantModules.Simulated);
     }
 }

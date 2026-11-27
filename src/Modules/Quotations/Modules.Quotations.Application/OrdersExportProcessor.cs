@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Domain.Taxes;
+using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -47,7 +48,7 @@ public sealed class OrdersExportProcessor(
     public async Task<ExportJobResult> ProcessAsync(ExportJob job, CancellationToken cancellationToken)
     {
         var filters = ExportJobFilters.Read<OrdersExportFilters>(job);
-        var (status, paymentStatus, fulfillmentStatus, invoiced, source) = ParseFilters(filters);
+        var (status, paymentStatus, fulfillmentStatus, invoiced, source, kind) = ParseFilters(filters);
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
@@ -81,6 +82,7 @@ public sealed class OrdersExportProcessor(
                 filters.ConvertedTo,
                 filters.OrderNumber,
                 source,
+                kind,
                 after,
                 limit,
                 ct),
@@ -120,7 +122,8 @@ public sealed class OrdersExportProcessor(
         OrderPaymentStatus? PaymentStatus,
         OrderFulfillmentStatus? FulfillmentStatus,
         bool? Invoiced,
-        OrderSource? Source) ParseFilters(
+        OrderSource? Source,
+        QuotationKind? Kind) ParseFilters(
         OrdersExportFilters filters)
     {
         try
@@ -130,9 +133,10 @@ public sealed class OrdersExportProcessor(
                 OrderListing.ParsePaymentStatus(filters.PaymentStatus),
                 OrderListing.ParseFulfillmentStatus(filters.FulfillmentStatus),
                 OrderListing.ParseInvoiced(filters.Invoiced),
-                OrderListing.ParseSource(filters.Source));
+                OrderListing.ParseSource(filters.Source),
+                OrderListing.ParseKind(filters.Kind));
         }
-        catch (QuotationsDomainException exception)
+        catch (Exception exception) when (exception is QuotationsDomainException or ValidationException)
         {
             throw new ExportJobDefinitiveException($"UnreadableFilters: {exception.Message}", exception);
         }

@@ -2,6 +2,15 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
+/// <summary>Qué tipos de documento trae el listado y su Excel (spec 2026-11-26 §6.5). Llega ya resuelto contra el
+/// módulo <c>projects</c>: el repositorio sólo filtra.</summary>
+public enum QuotationKindFilter
+{
+    Standard,
+    Project,
+    All
+}
+
 // Todo metodo recibe tenantId primero: el filtro de tenant es parte de la consulta, nunca un
 // argumento opcional que el llamador se pueda olvidar. Mismo criterio que ICustomerRepository.
 //
@@ -10,6 +19,11 @@ namespace Modules.Quotations.Application;
 // repositorio no decide husos.
 public interface IQuotationRepository
 {
+    /// <summary>Sólo el tipo de la cotización, sin cargarla; <c>null</c> si no existe en el tenant. Lo usa el historial
+    /// para la guarda de módulo (spec 2026-11-26 §7).</summary>
+    Task<QuotationKind?> FindKindAsync(
+        Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
+
     Task<Quotation?> FindAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 
@@ -40,6 +54,7 @@ public interface IQuotationRepository
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
@@ -63,6 +78,7 @@ public interface IQuotationRepository
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         QuotationExportCursor? after,
         int limit,
         CancellationToken cancellationToken);
@@ -79,6 +95,7 @@ public interface IQuotationRepository
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdBefore,
         string? quotationNumber,
+        QuotationKindFilter kind,
         CancellationToken cancellationToken);
 
     /// <summary>

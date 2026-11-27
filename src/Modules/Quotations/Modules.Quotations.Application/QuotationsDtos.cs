@@ -145,7 +145,11 @@ public sealed record QuotationDto(
     IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null,
     /// <summary>Ver <c>Quotation.RequiresShipping</c> (spec 2026-11-18 §5). Con default por el mismo motivo que los de
     /// arriba: QuotationMapping.ToDto la llena siempre.</summary>
-    bool RequiresShipping = true);
+    bool RequiresShipping = true,
+    /// <summary>El tipo de documento, por nombre: <c>Standard</c> o <c>Project</c> (spec 2026-11-26 §6.2).</summary>
+    string Kind = "Standard",
+    /// <summary>El alcance y el precio de un proyecto; null en una <c>Standard</c>.</summary>
+    ProjectScopeDto? Project = null);
 
 /// <summary>Una retención que aplicó (spec impuestos por tipo §9.3): la tasa congelada, la base sobre la que se
 /// calculó y su monto. <c>Type</c> viaja como texto ("Retefuente", "ReteICA").</summary>
@@ -457,7 +461,12 @@ public record CreateQuotationRequest(
     /// catálogo. En la creación se valida contra la empresa y el municipio de este mismo cuerpo (§7.6, «En la creación»).</summary>
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     /// <summary>Los tipos municipales con «Sin retención» elegido (owner 2026-11-13); ausente, null o vacío = sin marca.</summary>
-    IReadOnlyList<string>? ClearedWithholdingTypes = null)
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary><c>Standard</c> o <c>Project</c> (spec 2026-11-26 §6.5 y §12-G); ausente = <c>Standard</c>. No cambia
+    /// después de crear.</summary>
+    string? Kind = null,
+    /// <summary>El alcance y el precio de un proyecto; sólo con <c>kind: "Project"</c>. Ausente nace vacío.</summary>
+    ProjectScopeRequest? Project = null)
 {
     /// <summary>
     /// El municipio de la operación (plan P1): ausente = el de la empresa, <c>null</c> = el de la empresa, un id = ése. Un
@@ -490,10 +499,12 @@ public sealed record PreviewNewQuotationRequest(
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
     /// <summary>The billing company chosen before its bank account: the preview paints its withholdings and answers
     /// <c>billingAccount: null</c>. Ignored when <c>billingAccount</c> is present.</summary>
-    Guid? BillingCompanyId = null)
+    Guid? BillingCompanyId = null,
+    string? Kind = null,
+    ProjectScopeRequest? Project = null)
     : CreateQuotationRequest(
         ClientId, ValidUntil, PaymentMethod, Notes, Parties, BillingAccount, Shipping, Items, GlobalScaleFloor, IsRetail,
-        WithholdingPercentages, ClearedWithholdingTypes);
+        WithholdingPercentages, ClearedWithholdingTypes, Kind, Project);
 
 /// <summary>
 /// La entrega por envío de una cotización tal como la pide el editor (spec 2026-10-17 §5.1). Viaja aparte de
@@ -629,7 +640,10 @@ public record SaveQuotationRequest(
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     /// <summary>Los tipos municipales con «Sin retención» elegido (owner 2026-11-13): quitan la fila de ese tipo de los
     /// selectores de facturación propia. Ausente, null o vacío = sin marca.</summary>
-    IReadOnlyList<string>? ClearedWithholdingTypes = null)
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary>El alcance y el precio de una cotización de proyecto: reemplaza el bloque entero y <b>ausente conserva
+    /// el guardado</b> (spec 2026-11-26 §6.5). En una <c>Standard</c> es 422 <c>validation.failed</c>.</summary>
+    ProjectScopeRequest? Project = null)
 {
     /// <summary>
     /// El municipio de la operación (plan P1): ausente conserva el guardado (o el de la empresa si cambia, A6),
@@ -659,10 +673,11 @@ public sealed record PreviewQuotationRequest(
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
     /// <summary>The billing company chosen before its bank account: the preview paints its withholdings and answers
     /// <c>billingAccount: null</c>. Ignored when <c>billingAccount</c> is present.</summary>
-    Guid? BillingCompanyId = null)
+    Guid? BillingCompanyId = null,
+    ProjectScopeRequest? Project = null)
     : SaveQuotationRequest(
         ValidUntil, PaymentMethod, Notes, Parties, BillingAccount, Items, GlobalScaleFloor, IsRetail, Shipping,
-        WithholdingPercentages, ClearedWithholdingTypes);
+        WithholdingPercentages, ClearedWithholdingTypes, Project);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
@@ -936,7 +951,12 @@ public sealed record QuotationResponse(
     /// <summary>This backend stores the delivery postal code (spec 2026-11-24). BFF: a new document has no party to look
     /// at, and the screen only draws the field, and only sends it, when the document says so; a backend without it would
     /// silently drop what the person typed. Always true.</summary>
-    bool PostalCodeSupported = true);
+    bool PostalCodeSupported = true,
+    /// <summary>Ver <see cref="QuotationDto.Kind"/>. BFF: con <c>Project</c> la pantalla abre el editor de alcance en vez
+    /// del de productos.</summary>
+    string Kind = "Standard",
+    /// <summary>Ver <see cref="ProjectScopeDto"/>; null en una <c>Standard</c>.</summary>
+    ProjectScopeDto? Project = null);
 
 /// <summary>Una referencia de municipio (spec ReteICA por empresa §9.1): la misma forma en tasas, empresas, clientes y
 /// documentos.</summary>
@@ -1089,7 +1109,12 @@ public sealed record QuotationListItemResponse(
     ShippingResponse Shipping,
     /// <summary>Mismo campo y mismo significado que en <see cref="QuotationResponse"/> (spec 2026-11-18 §5): la fila no
     /// trae las líneas, así que viaja resuelto.</summary>
-    bool RequiresShipping);
+    bool RequiresShipping,
+    /// <summary>Ver <see cref="QuotationDto.Kind"/>.</summary>
+    string Kind,
+    /// <summary><c>Global</c> o <c>PerPhase</c>; null en una <c>Standard</c> (spec 2026-11-26 §6.5). BFF: es la columna
+    /// «Modo» de la lista de proyectos, que no trae el alcance.</summary>
+    string? PricingMode);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>

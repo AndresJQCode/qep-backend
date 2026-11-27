@@ -68,6 +68,9 @@ public sealed class AddOrderItemsHandler(
                 "Products can only be added while the order is editable.");
         }
 
+        // Antes de leer el catálogo (spec 2026-11-26 §6.6).
+        ProjectOrderLines.EnsureAcceptsNewItems(order);
+
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);

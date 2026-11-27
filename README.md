@@ -1913,6 +1913,11 @@ la API con su nombre:
   (`order.order.not_paid`); no exige preparado.
 - **El listado oculta los archivados** si no se pide `status`. Filtros nuevos: `fulfillmentStatus` e
   `invoiced` (`true`/`false`), también en la exportación.
+- **Pedidos de proyecto** (spec 2026-11-26): cada pedido y cada fila traen `kind` (`Standard` \| `Project`) y el
+  detalle, `order.project`. `GET /orders` y `export` aceptan `kind` (`Standard`, `Project` o `All`; sin valor, todos;
+  otro es `422 validation.failed` con `errors.kind`). En un pedido `Project`, `PUT` y `preview` aceptan `items`
+  ausente, vacío o con la línea tal cual, e ignoran `isRetail`, `globalScaleFloor` y `shipping`; cambiar la línea,
+  mandar regalos o `POST …/items` es `422 order.project.items_locked`. No exigen el módulo `projects`.
 - **Ajustes por tenant** en `GET`/`PUT /orders-settings` (`tenancy.settings.read` / `.update`; los tres
   campos son obligatorios en el `PUT`):
 

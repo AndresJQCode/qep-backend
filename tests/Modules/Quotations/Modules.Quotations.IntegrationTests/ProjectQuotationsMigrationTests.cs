@@ -132,10 +132,11 @@ public sealed class ProjectQuotationsMigrationTests
         var (converted, order) = ConvertedProject();
         var empty = Draft(QuotationKind.Project, "COT-2026-0002");
         var standard = Draft(QuotationKind.Standard, "COT-2026-0003");
+        var (standardQuotation, standardOrder) = ConvertedStandard();
         await using (var context = NewContext(connectionString))
         {
             await context.Database.MigrateAsync(TestContext.Current.CancellationToken);
-            context.AddRange(converted, order, empty, standard);
+            context.AddRange(converted, order, empty, standard, standardQuotation, standardOrder);
             await context.SaveChangesAsync(TestContext.Current.CancellationToken);
             // La línea del pedido como física: la regla mira el tipo del documento y no sólo sus líneas.
             await context.Database.ExecuteSqlRawAsync(
@@ -146,10 +147,25 @@ public sealed class ProjectQuotationsMigrationTests
         var quotations = await new QuotationRepository(reading).FindIdsRequiringShippingAsync(
             converted.TenantId, [converted.Id, empty.Id, standard.Id], TestContext.Current.CancellationToken);
         var orders = await new OrderRepository(reading).FindIdsRequiringShippingAsync(
-            order.TenantId, [order.Id], TestContext.Current.CancellationToken);
+            order.TenantId, [order.Id, standardOrder.Id], TestContext.Current.CancellationToken);
 
         Assert.Equal(new[] { standard.Id.Value }, quotations);
-        Assert.Empty(orders);
+        // El control positivo: la misma consulta sí devuelve el pedido estándar con línea física.
+        Assert.Equal(new[] { standardOrder.Id.Value }, orders);
+    }
+
+    private static (Quotation Quotation, Order Order) ConvertedStandard()
+    {
+        var member = new MemberId(Guid.Parse(MemberId));
+        var quotation = Draft(QuotationKind.Standard, "COT-2026-0004");
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 100_000m, 0m, 19, member, Now);
+        quotation.ConvertToOrder(member, Now, QuotationProductSnapshot.None);
+        var order = Order.FromQuotation(
+            OrderId.New(), quotation.TenantId, "PED-2026-0002", quotation, null, member, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+
+        return (quotation, order);
     }
 
     private static Quotation Draft(QuotationKind kind, string number) =>

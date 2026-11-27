@@ -102,7 +102,9 @@ public sealed record QuotationPdfDocument(
     /// <summary>El idioma del tenant (spec 2026-11-22, i18n): <c>es-419</c> o <c>es-ES</c>. La plantilla decide con él el
     /// nombre del documento («Cotización» o «Presupuesto»), su concordancia y el rótulo del asesor («Comercial» en España).
     /// El documento es del tenant, no de quien lo descarga.</summary>
-    string Language = SupportedLanguages.Default);
+    string Language = SupportedLanguages.Default,
+    /// <summary>El alcance de un proyecto (spec 2026-11-26 §6.5); null en un documento estándar.</summary>
+    QuotationPdfScope? Scope = null);
 
 /// <summary>
 /// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara
@@ -114,6 +116,20 @@ public enum QuotationPdfKind
     Quotation,
     Order
 }
+
+/// <summary>El alcance de un documento de proyecto como se imprime bajo la tabla de líneas (spec 2026-11-26 §6.5): fases
+/// e ítems en el orden en que se escribieron, en texto plano y sin ids.</summary>
+/// <param name="ShowPhasePrices">Sólo con precio por fase: con precio global, el único precio es el de la línea.</param>
+/// <param name="Items">Los ítems sueltos, que van después de las fases.</param>
+public sealed record QuotationPdfScope(
+    bool ShowPhasePrices,
+    IReadOnlyList<QuotationPdfScopePhase> Phases,
+    IReadOnlyList<QuotationPdfScopeItem> Items);
+
+/// <summary>Una fase del alcance. <c>Price</c> con IVA incluido; null en precio global o mientras falte.</summary>
+public sealed record QuotationPdfScopePhase(string Name, decimal? Price, IReadOnlyList<QuotationPdfScopeItem> Items);
+
+public sealed record QuotationPdfScopeItem(string Text);
 
 /// <summary>Una retención que aplicó, tal como el documento la imprime: el nombre de la tasa, lo que resta y su porcentaje
 /// efectivo ya escrito (spec ReteICA por empresa §7.9, R13).</summary>
