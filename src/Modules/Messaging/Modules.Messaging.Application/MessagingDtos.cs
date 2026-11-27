@@ -179,8 +179,8 @@ public sealed record AutomationHandoffDto(
 public sealed record AutomationHandoffHttpDto(
     string? NodeId, string? NodeTitle, string? Outcome, string? ErrorCode, int? Status, string? ConnectionName);
 
-/// <param name="UnsupportedReason">Sólo en un <c>Unsupported</c> cuyo error de Meta tiene texto (<c>131060</c>, <c>131051</c>);
-/// si no, <c>null</c> y la burbuja dibuja la etiqueta del kind. BFF: viaja en español, como <c>failureReason</c>, porque
+/// <param name="UnsupportedReason">Sólo en un <c>Unsupported</c> cuyo error de Meta tiene texto (<c>131060</c>, <c>131051</c>) o que es
+/// un <c>revoke</c> (el contacto borró un mensaje: «Se eliminó este mensaje.»); si no, <c>null</c> y la burbuja dibuja la etiqueta del kind. BFF: viaja en español, como <c>failureReason</c>, porque
 /// «Mensaje no compatible» no le dice al asesor que el cliente sí escribió y que hay que pedirle que reenvíe; el
 /// frontend no tendría con qué saberlo sin conocer los códigos de Meta.</param>
 public sealed record MessageDto(
