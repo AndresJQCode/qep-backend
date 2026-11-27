@@ -385,6 +385,7 @@ public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClas
             today.AddDays(2),
             orderNumber: null,
             source: null,
+            kind: null,
             after,
             limit,
             TestContext.Current.CancellationToken);

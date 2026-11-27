@@ -22,7 +22,9 @@ public sealed record ExportOrdersCommand(
     /// <summary>La zona IANA de quien pide el archivo, igual que en <see cref="ListOrdersQuery"/>.</summary>
     string? TimeZone = null,
     string? FulfillmentStatus = null,
-    string? Invoiced = null) : ICommand<ExportJobAccepted>;
+    string? Invoiced = null,
+    /// <summary>Spec 2026-11-26 §12-D: el mismo <c>kind</c> de la lista.</summary>
+    string? Kind = null) : ICommand<ExportJobAccepted>;
 
 /// <summary>Lo que viaja serializado en el trabajo y el procesador vuelve a leer.</summary>
 public sealed record OrdersExportFilters(
@@ -40,7 +42,9 @@ public sealed record OrdersExportFilters(
     string? TimeZone = null,
     /// <summary>Nulos en los jobs encolados antes de los filtros del spec 2026-11-10: exportan sin filtrarlos.</summary>
     string? FulfillmentStatus = null,
-    string? Invoiced = null);
+    string? Invoiced = null,
+    /// <summary>Nulo en los jobs encolados antes de los pedidos de proyecto: exportan los dos tipos.</summary>
+    string? Kind = null);
 
 public sealed class ExportOrdersValidator : AbstractValidator<ExportOrdersCommand>
 {
@@ -95,6 +99,7 @@ public sealed class ExportOrdersHandler(
         var fulfillmentStatus = OrderListing.ParseFulfillmentStatus(command.FulfillmentStatus);
         var invoiced = OrderListing.ParseInvoiced(command.Invoiced);
         var source = OrderListing.ParseSource(command.Source);
+        var kind = OrderListing.ParseKind(command.Kind);
         var advisorId = command.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, command.TenantId, command.ClientCuc, cancellationToken);
@@ -118,6 +123,7 @@ public sealed class ExportOrdersHandler(
             command.ConvertedTo,
             command.OrderNumber,
             source,
+            kind,
             cancellationToken);
         if (!anyRow)
         {
@@ -152,7 +158,8 @@ public sealed class ExportOrdersHandler(
                 command.Source,
                 command.TimeZone,
                 command.FulfillmentStatus,
-                command.Invoiced)),
+                command.Invoiced,
+                command.Kind)),
             calendar.UtcNow);
         queue.Add(job);
         await unitOfWork.SaveChangesAsync(cancellationToken);

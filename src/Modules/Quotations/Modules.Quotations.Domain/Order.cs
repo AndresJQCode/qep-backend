@@ -2555,9 +2555,7 @@ public sealed class Order
     {
         if (Kind == QuotationKind.Project)
         {
-            throw new QuotationsDomainException(
-                ProjectErrors.ItemsLocked,
-                "En un pedido de proyecto no puedes cambiar productos ni regalos. Para cambiar lo vendido, anula y cotiza de nuevo.");
+            throw new QuotationsDomainException(ProjectErrors.ItemsLocked, ProjectErrors.ItemsLockedMessage);
         }
     }
 

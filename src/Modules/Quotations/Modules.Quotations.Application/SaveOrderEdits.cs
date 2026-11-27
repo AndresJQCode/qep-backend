@@ -74,10 +74,15 @@ public sealed class SaveOrderEditsHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        // Un pedido de proyecto se edita sin líneas (spec 2026-11-26 §12-C): con la lista vacía hay que saber el tipo antes
+        // de validar.
+        var orderId = new OrderId(command.OrderId);
+        var order = command.Items.Count == 0
+            ? await orderRepository.FindByIdAsync(command.TenantId, orderId, cancellationToken)
+            : null;
+        await OrderEditsValidation.ValidateAsync(validator, command, order, cancellationToken);
 
-        var order = await orderRepository.FindByIdAsync(
-            command.TenantId, new OrderId(command.OrderId), cancellationToken)
+        order ??= await orderRepository.FindByIdAsync(command.TenantId, orderId, cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
         // Con entrega en el cuerpo, el motivo exacto (facturado o preparado) gana a la guarda general de abajo.
         if (command.Delivery is not null)
@@ -111,6 +116,10 @@ public sealed class SaveOrderEditsHandler(
                 "concurrency.conflict",
                 "The order changed after it was loaded.");
         }
+
+        // Un pedido de proyecto no cambia de líneas ni de regalos, e ignora detal, piso de escala y envío del cuerpo (spec
+        // 2026-11-26 §12-C). Antes de publicar nada.
+        var keepsProjectLine = ProjectOrderLines.KeepsTheLine(order, command.Items, command.Gifts);
 
         // El neto de antes de tocar nada: el recálculo del pago compara contra él (spec 2026-11-10 §3.2).
         var previousNetTotal = order.NetTotal;
@@ -153,14 +162,19 @@ public sealed class SaveOrderEditsHandler(
         var copies = new PaymentProofCopies(paymentProofPublisher);
         try
         {
-            var paidItemEdits = await OrderItemEdits.ApplyAsync(
-                order, command.Items, pricingLookup, costLookup, wholesalePricing, command.TenantId, updatedBy, now, command.IsRetail,
-                cancellationToken);
-            // Spec 2026-11-23: los regalos van después de las pagadas y sólo si el cuerpo los trae (null no toca nada). Sus
-            // ediciones se suman a las de las líneas: «nada cambió», el historial y las fotos de producto las ven igual.
-            var giftEdits = await OrderGiftEdits.ApplyAsync(
-                order, command.Gifts, pricingLookup, costLookup, command.TenantId, updatedBy, now, cancellationToken);
-            IReadOnlyList<OrderItemEdit> itemEdits = [.. paidItemEdits, .. giftEdits];
+            IReadOnlyList<OrderItemEdit> itemEdits = [];
+            if (!keepsProjectLine)
+            {
+                var paidItemEdits = await OrderItemEdits.ApplyAsync(
+                    order, command.Items, pricingLookup, costLookup, wholesalePricing, command.TenantId, updatedBy, now,
+                    command.IsRetail, cancellationToken);
+                // Spec 2026-11-23: los regalos van después de las pagadas y sólo si el cuerpo los trae (null no toca nada).
+                // Sus ediciones se suman a las de las líneas: «nada cambió», el historial y las fotos de producto las ven
+                // igual.
+                var giftEdits = await OrderGiftEdits.ApplyAsync(
+                    order, command.Gifts, pricingLookup, costLookup, command.TenantId, updatedBy, now, cancellationToken);
+                itemEdits = [.. paidItemEdits, .. giftEdits];
+            }
 
             foreach (var proofId in removedProofIds)
             {
@@ -197,13 +211,13 @@ public sealed class SaveOrderEditsHandler(
             var orderDateChanged = command.OrderDate is { } orderDate
                 && order.ChangeOrderDate(
                     orderDate, (await tenantClock.GetAsync(command.TenantId, cancellationToken)).Today, now);
-            var retailChanged = order.IsRetail != command.IsRetail;
+            var retailChanged = !keepsProjectLine && order.IsRetail != command.IsRetail;
             if (retailChanged)
             {
                 order.SetIsRetail(command.IsRetail, updatedBy, now);
             }
 
-            var floorChanged = order.GlobalScaleFloor != command.GlobalScaleFloor;
+            var floorChanged = !keepsProjectLine && order.GlobalScaleFloor != command.GlobalScaleFloor;
             if (floorChanged)
             {
                 order.SetGlobalScaleFloor(command.GlobalScaleFloor, updatedBy, now);
@@ -256,9 +270,11 @@ public sealed class SaveOrderEditsHandler(
             // Pasar a recoger ya limpió el envío en SetDelivery: ese cambio se cuenta contra lo que había antes.
             var clearedByPickup = deliveryChanged && order.IsStorePickup && shippingBeforeDelivery != ShippingDetails.None;
             var shippingBefore = clearedByPickup ? shippingBeforeDelivery : order.ShippingDetails;
-            var shipping = await shippingResolver.ResolveAsync(
-                command.TenantId, command.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
-                order.ChargesVat, "order.order", cancellationToken);
+            var shipping = keepsProjectLine
+                ? null
+                : await shippingResolver.ResolveAsync(
+                    command.TenantId, command.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
+                    order.ChargesVat, "order.order", cancellationToken);
             var shippingResolved = shipping is not null && shipping != order.ShippingDetails;
             if (shippingResolved)
             {

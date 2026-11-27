@@ -1183,6 +1183,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         bool? wholesaleApproved,
         int page,
         int pageSize,
@@ -1210,6 +1211,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         CancellationToken cancellationToken) =>
         Task.FromResult(rows.Count(row => row.IsAwaitingWholesaleApproval));
 
@@ -1282,6 +1284,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
@@ -1304,6 +1307,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        QuotationKind? kind,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken)

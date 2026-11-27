@@ -680,7 +680,7 @@ public sealed class ProjectQuotationsApiTests(SharedQuotationsHost sharedHost) :
         return new Setup(factory, client, tenantId, clientId, serviceId);
     }
 
-    private static async Task<Guid> CreateServiceAsync(HttpClient client, Guid tenantId)
+    internal static async Task<Guid> CreateServiceAsync(HttpClient client, Guid tenantId)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",

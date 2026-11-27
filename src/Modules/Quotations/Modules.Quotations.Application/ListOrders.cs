@@ -28,7 +28,10 @@ public sealed record ListOrdersQuery(
     string? Invoiced = null,
     /// <summary>Mayorista fase 3: <c>Pending</c> o <c>Approved</c> (sin distinguir mayúsculas); otro valor es 422
     /// <c>validation.failed</c> con <c>errors.WholesaleApproval</c>.</summary>
-    string? WholesaleApproval = null) : IQuery<OrderPage>;
+    string? WholesaleApproval = null,
+    /// <summary>Spec 2026-11-26 §6.6: <c>Standard</c>, <c>Project</c> o <c>All</c> (sin distinguir mayúsculas); sin valor,
+    /// todos. Otro valor es 422 <c>validation.failed</c> con <c>errors.kind</c>.</summary>
+    string? Kind = null) : IQuery<OrderPage>;
 
 /// <summary>Fila de la lista. <c>QuotationId</c> y <c>QuotationNumber</c> son nulos en un pedido manual
 /// o externo; <c>Source</c> y <c>ExternalReference</c> dicen de dónde vino. <c>FulfillmentStatus</c> e
@@ -99,6 +102,7 @@ public sealed class ListOrdersHandler(
         var invoiced = OrderListing.ParseInvoiced(query.Invoiced);
         var source = OrderListing.ParseSource(query.Source);
         var wholesaleApproved = OrderListing.ParseWholesaleApproval(query.WholesaleApproval);
+        var kind = OrderListing.ParseKind(query.Kind);
         var advisorId = query.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, query.TenantId, query.ClientCuc, cancellationToken);
@@ -124,6 +128,7 @@ public sealed class ListOrdersHandler(
             query.ConvertedTo,
             query.OrderNumber,
             source,
+            kind,
             wholesaleApproved,
             page,
             pageSize,
@@ -140,6 +145,7 @@ public sealed class ListOrdersHandler(
             query.ConvertedTo,
             query.OrderNumber,
             source,
+            kind,
             cancellationToken);
 
         var items = await OrderListing.ToListItemsAsync(

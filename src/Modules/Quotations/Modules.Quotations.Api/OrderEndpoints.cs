@@ -232,12 +232,14 @@ public static class OrderEndpoints
         string? timeZone = null,
         string? fulfillmentStatus = null,
         string? invoiced = null,
-        string? wholesaleApproval = null)
+        string? wholesaleApproval = null,
+        string? kind = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersQuery(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, source, page, pageSize, timeZone, fulfillmentStatus, invoiced, wholesaleApproval),
+                clientCuc, orderNumber, source, page, pageSize, timeZone, fulfillmentStatus, invoiced, wholesaleApproval,
+                kind),
             cancellationToken);
         return Results.Ok(new OrdersPageResponse(
             result.Items.Select(ToListItemResponse).ToArray(),
@@ -262,12 +264,13 @@ public static class OrderEndpoints
         string? source = null,
         string? timeZone = null,
         string? fulfillmentStatus = null,
-        string? invoiced = null)
+        string? invoiced = null,
+        string? kind = null)
     {
         var accepted = await dispatcher.SendAsync(
             new ExportOrdersCommand(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, source, timeZone, fulfillmentStatus, invoiced),
+                clientCuc, orderNumber, source, timeZone, fulfillmentStatus, invoiced, kind),
             cancellationToken);
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));
     }
