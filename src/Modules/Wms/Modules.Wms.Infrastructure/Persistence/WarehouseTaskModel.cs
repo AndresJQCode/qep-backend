@@ -121,7 +121,7 @@ internal static class WarehouseTaskModel
         var line = modelBuilder.Entity<WarehouseTaskLine>();
         line.ToTable("task_lines", Schema, table =>
         {
-            table.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Cancelled')");
+            table.HasCheckConstraint("CK_task_lines_status", "line_status IN ('Open','Done','Short','Cancelled')");
             table.HasCheckConstraint(
                 "CK_task_lines_quantity",
                 "quantity_planned > 0 AND quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned");

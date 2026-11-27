@@ -45,6 +45,7 @@ public static class WmsInfrastructureExtensions
         services.AddSingleton<IWmsConfirmMetrics, WmsMetrics>(provider => provider.GetRequiredService<WmsMetrics>());
         services.AddScoped<IAdjustmentRepository, AdjustmentRepository>();
         services.AddScoped<IWarehouseTaskRepository, WarehouseTaskRepository>();
+        services.AddScoped<IIncidentRepository, IncidentRepository>();
         services.AddScoped<IWmsEventPublisher, WmsEventPublisher>();
         services.AddScoped<AdjustmentDtoComposer>();
         services.AddScoped<WarehouseTaskDtoComposer>();

@@ -116,4 +116,9 @@ public static class WmsErrorCodes
     public const string TaskLotMismatch = "wms.task.lot_mismatch";
     public const string TaskQuantityExceedsRemaining = "wms.task.quantity_exceeds_remaining";
     public const string TaskLineInvalid = "wms.task.line_invalid";
+
+    // Novedades (spec 2026-11-26 §8).
+    public const string IncidentTypeNotAllowed = "wms.incident.type_not_allowed";
+    public const string IncidentInvalid = "wms.incident.invalid";
+    public const string IncidentEvidenceInvalid = "wms.incident.evidence_invalid";
 }

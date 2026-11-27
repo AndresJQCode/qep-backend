@@ -106,6 +106,31 @@ public sealed class WarehouseTaskPersistenceTests
         Assert.Equal((task.Lines[0].Id, 2m), (confirmed.LineId, confirmed.Quantity));
     }
 
+    [Fact]
+    public async Task AShortLineRoundTrips()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var destination = await CreateDestinationAsync(s);
+        var member = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        var task = NewMove(s, s.BinA, destination, createdAt: now.AddMinutes(-1));
+        task.Claim(member, "device-1", now);
+        task.ShortLine(member, task.LeaseToken!.Value, "device-1", task.Lines[0].Id, 2, now);
+        await SaveAsync(factory, task);
+
+        var reloaded = await ReloadAsync(factory, task);
+
+        Assert.Equal(WarehouseTaskStatus.Done, reloaded.Status);
+        var line = Assert.Single(reloaded.Lines);
+        Assert.Equal((TaskLineStatus.Short, 5m, 2m), (line.Status, line.QuantityPlanned, line.QuantityConfirmed));
+        var shortEvent = Assert.Single(History(reloaded), value => value.Kind == TaskEventKind.LineShort);
+        Assert.Equal((task.Lines[0].Id, 3m), (shortEvent.LineId, shortEvent.Quantity));
+        Assert.Equal("Short", await ScalarAsync<string>(database, "SELECT line_status FROM wms.task_lines"));
+    }
+
     // El camino de un handler: la tarea se carga sin su historia, cambia, y sólo se insertan los hechos nuevos.
     [Fact]
     public async Task AChangeOnALoadedTaskAppendsItsEventAndBumpsTheVersion()

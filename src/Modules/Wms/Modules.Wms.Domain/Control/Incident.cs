@@ -1,0 +1,178 @@
+using Modules.Wms.Domain.Inventory;
+using Modules.Wms.Domain.Warehousing;
+
+namespace Modules.Wms.Domain.Control;
+
+/// <summary>
+/// Una novedad: algo que el operario o el sistema encontró distinto de lo esperado (spec 2026-11-26 §8). Vive en el área
+/// <c>Control</c>, junto al ajuste, y conoce las tareas sólo por <see cref="Guid"/>: las tareas no saben de novedades. Cada
+/// transición sube la versión, que es el token de concurrencia (412) de las acciones del supervisor.
+/// </summary>
+public sealed class Incident
+{
+    public const int NoteMaxLength = 500;
+    public const int RawCodeMaxLength = 200;
+    public const int MaxEvidence = 5;
+
+    private readonly List<IncidentEvidence> _evidence = [];
+    private readonly List<IncidentEvent> _events = [];
+
+    private Incident()
+    {
+    }
+
+    public Guid Id { get; private set; }
+
+    public Guid TenantId { get; private set; }
+
+    public WarehouseId WarehouseId { get; private set; }
+
+    public OwnerId OwnerId { get; private set; }
+
+    public string Number { get; private set; } = string.Empty;
+
+    public IncidentType Type { get; private set; }
+
+    public IncidentStatus Status { get; private set; }
+
+    public Guid? SourceTaskId { get; private set; }
+
+    public Guid? SourceTaskLineId { get; private set; }
+
+    /// <summary>El <c>Count</c> que verifica lo declarado, si la novedad pidió uno.</summary>
+    public Guid? VerificationTaskId { get; private set; }
+
+    public LocationId? LocationId { get; private set; }
+
+    public Guid? VariantId { get; private set; }
+
+    public LotId? LotId { get; private set; }
+
+    public StockStatus? StockStatus { get; private set; }
+
+    public decimal? ExpectedQty { get; private set; }
+
+    public decimal? ActualQty { get; private set; }
+
+    /// <summary>Lo que se escaneó y no se pudo leer o resolver.</summary>
+    public string? RawCode { get; private set; }
+
+    /// <summary>JSON tal cual llegó (jsonb): la acción rechazada de un <c>SyncConflict</c>.</summary>
+    public string? RawPayload { get; private set; }
+
+    public string? Note { get; private set; }
+
+    /// <summary>La membresía que la reportó; <see cref="Guid.Empty"/> es el sistema.</summary>
+    public Guid ReportedBy { get; private set; }
+
+    public string? DeviceId { get; private set; }
+
+    public DateTimeOffset ReportedAt { get; private set; }
+
+    /// <summary>La <c>Idempotency-Key</c> de la acción que la originó: deduplica un <c>SyncConflict</c> reintentado.</summary>
+    public string? OperationKey { get; private set; }
+
+    public IncidentResolution? Resolution { get; private set; }
+
+    public Guid? ResolvedBy { get; private set; }
+
+    public DateTimeOffset? ResolvedAt { get; private set; }
+
+    public string? ResolutionNote { get; private set; }
+
+    public Guid? BatchId { get; private set; }
+
+    public Guid? AdjustmentId { get; private set; }
+
+    public Guid? ParentIncidentId { get; private set; }
+
+    public long Version { get; private set; }
+
+    public IReadOnlyList<IncidentEvidence> Evidence => _evidence;
+
+    /// <summary>Sólo se agrega: la historia de la novedad.</summary>
+    public IReadOnlyList<IncidentEvent> Events => _events;
+
+    /// <summary>El <paramref name="number"/> lo asigna quien reporta, dentro de la transacción que numera. <paramref name="reportedAt"/>
+    /// es la hora del escaneo; <paramref name="now"/>, la del servidor. <paramref name="reportedBy"/> es una membresía, o
+    /// <see cref="Guid.Empty"/> si la reporta el sistema.</summary>
+    public static Incident Report(
+        Guid tenantId,
+        string number,
+        WarehouseId warehouse,
+        OwnerId owner,
+        IncidentType type,
+        IncidentSubject subject,
+        string? note,
+        string? rawCode,
+        string? rawPayload,
+        IReadOnlyList<IncidentEvidence> evidence,
+        Guid reportedBy,
+        string? deviceId,
+        string? operationKey,
+        DateTimeOffset reportedAt,
+        DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(number);
+        ArgumentNullException.ThrowIfNull(subject);
+        ArgumentNullException.ThrowIfNull(evidence);
+
+        var trimmedNote = Trimmed(note, NoteMaxLength, "La nota");
+        var trimmedCode = Trimmed(rawCode, RawCodeMaxLength, "El código escaneado");
+        if (subject.ExpectedQty < 0 || subject.ActualQty < 0)
+        {
+            throw new WmsDomainException(WmsErrorCodes.IncidentInvalid, "Las cantidades de una novedad no pueden ser negativas.");
+        }
+
+        if (evidence.Count > MaxEvidence)
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.IncidentEvidenceInvalid, $"Una novedad lleva a lo sumo {MaxEvidence} evidencias.");
+        }
+
+        var at = reportedAt.ToUniversalTime();
+        var incident = new Incident
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            WarehouseId = warehouse,
+            OwnerId = owner,
+            Number = number,
+            Type = type,
+            Status = IncidentStatus.Open,
+            SourceTaskId = subject.SourceTaskId,
+            SourceTaskLineId = subject.SourceTaskLineId,
+            LocationId = subject.Location,
+            VariantId = subject.VariantId,
+            LotId = subject.LotId,
+            StockStatus = subject.StockStatus,
+            ExpectedQty = subject.ExpectedQty,
+            ActualQty = subject.ActualQty,
+            RawCode = trimmedCode,
+            RawPayload = string.IsNullOrWhiteSpace(rawPayload) ? null : rawPayload,
+            Note = trimmedNote,
+            ReportedBy = reportedBy,
+            DeviceId = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId.Trim(),
+            ReportedAt = at,
+            OperationKey = string.IsNullOrWhiteSpace(operationKey) ? null : operationKey,
+            Version = 1,
+        };
+        for (var index = 0; index < evidence.Count; index++)
+        {
+            evidence[index].Place(index);
+            incident._evidence.Add(evidence[index]);
+        }
+
+        incident._events.Add(IncidentEvent.Record(
+            tenantId, incident.Id, IncidentEventKind.Reported, reportedBy == Guid.Empty ? null : reportedBy, null, at, now));
+        return incident;
+    }
+
+    private static string? Trimmed(string? value, int maxLength, string what)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        return trimmed?.Length > maxLength
+            ? throw new WmsDomainException(WmsErrorCodes.IncidentInvalid, $"{what} tiene a lo sumo {maxLength} caracteres.")
+            : trimmed;
+    }
+}

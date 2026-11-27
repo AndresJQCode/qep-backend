@@ -1,6 +1,8 @@
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Application;
+using Modules.Wms.Domain.Control;
+using Modules.Wms.IntegrationTests.Incidents;
 using Modules.Wms.IntegrationTests.Tasks;
 using static Modules.Wms.IntegrationTests.AdjustmentTestSupport;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
@@ -121,6 +123,48 @@ public sealed class WmsUserReferenceProbeTests
                 await WithMemberInAsync("UPDATE wms.tasks SET assigned_member_id = @member"),
                 await WithMemberInAsync("UPDATE wms.tasks SET claimed_by_member_id = @member"),
                 await WithMemberInAsync("UPDATE wms.task_events SET member_id = @member"),
+                await WithMemberInAsync(null)));
+    }
+
+    // Las columnas de novedades que nombran a una membresía: quien la reportó, quien la resolvió y los hechos de su historia.
+    [Fact]
+    public async Task AMemberWhoOnlyReportedAnIncidentRetainsTheUser()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var user = Guid.Parse(SubjectId);
+        Guid membership;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var directory = scope.ServiceProvider.GetRequiredService<IMembershipDirectory>();
+            membership = Assert.Single(await directory.ListMembershipIdsByUserAsync(user, Ct));
+        }
+
+        Assert.False(await HasReferencesAsync(factory, user));
+        var stranger = Guid.CreateVersion7();
+        await IncidentTestSupport.SaveAsync(
+            factory, IncidentTestSupport.NewIncident(s, "NOV-PROBE-1", IncidentType.UnreadableLabel, reportedBy: stranger));
+
+        async Task<bool> WithMemberInAsync(string? update)
+        {
+            await ExecuteAsync(
+                database,
+                "UPDATE wms.incidents SET reported_by = @stranger, resolved_by = NULL; "
+                + "UPDATE wms.incident_events SET member_id = @stranger; "
+                + update,
+                ("stranger", stranger),
+                ("member", membership));
+            return await HasReferencesAsync(factory, user);
+        }
+
+        Assert.Equal(
+            (true, true, true, false),
+            (
+                await WithMemberInAsync("UPDATE wms.incidents SET reported_by = @member"),
+                await WithMemberInAsync("UPDATE wms.incidents SET resolved_by = @member"),
+                await WithMemberInAsync("UPDATE wms.incident_events SET member_id = @member"),
                 await WithMemberInAsync(null)));
     }
 }

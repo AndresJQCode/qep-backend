@@ -59,7 +59,7 @@ public sealed class WmsPersistenceTests
                AND tablename NOT LIKE 'stock_movements%'
                AND tablename NOT IN ('stock_balances', 'lots', 'serial_units', 'reservations', 'operation_receipts', 'balance_checks',
                                      'import_previews', 'adjustments', 'adjustment_lines', 'balance_change_queue', 'tasks', 'task_lines',
-                                     'task_events')
+                                     'task_events', 'incidents', 'incident_evidence', 'incident_events')
              ORDER BY tablename
             """);
         var indexes = await QueryStringsAsync(factory, "SELECT indexname FROM pg_indexes WHERE schemaname = 'wms'");
