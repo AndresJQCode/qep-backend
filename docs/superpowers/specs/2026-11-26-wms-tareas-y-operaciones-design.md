@@ -16,6 +16,10 @@
 - **Lo que este documento reemplaza del spec de arquitectura:** la orden de compra propia del WMS (§9.1 «documento origen», corte
   WMS-C) por la de `Purchases` (§9.1); `putaway-tasks` de §24.4 por el motor de tareas (§6); el agregado `Discrepancy` de §9.3 por la
   novedad unificada `Incident` (§8), que conserva sus cinco resoluciones y la regla de los dos momentos. Lo demás sigue vigente.
+- **Vocabulario (decisión del owner, 2026-11-26):** la unidad logística identificada con etiqueta propia (LPN, `HandlingUnit`, la
+  «unidad» de D-12: caja o palet) se llama **Placa** en todo texto que vea una persona: pantallas de la web y de la app, etiquetas,
+  mensajes de error, reportes y correos. El código y el contrato no cambian: el agregado sigue siendo `HandlingUnit` y los campos
+  `handlingUnitId`. Donde este documento dice «unidad», «caja / palet» o LPN refiriéndose a ella, en la interfaz es «Placa».
 
 ---
 
