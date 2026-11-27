@@ -27,6 +27,18 @@ public sealed class BirthdayDigestTests
     }
 
     [Fact]
+    public void NamesAreOrderedIgnoringAccentsAndCase()
+    {
+        var zoe = Employee("Zoe Díaz", 11, 26);
+        var alvaro = Employee("Álvaro Soto", 11, 26);
+        var beatriz = Employee("beatriz Mora", 11, 26);
+
+        var digest = BirthdayDigest.Compose([zoe, alvaro, beatriz], Today, leadDays: 0);
+
+        Assert.Equal(["Álvaro Soto", "beatriz Mora", "Zoe Díaz"], digest.Today.Select(person => person.EmployeeName));
+    }
+
+    [Fact]
     public void LeadZeroHasNoUpcoming()
     {
         var digest = BirthdayDigest.Compose([Employee("Ana Pérez", 11, 26), Employee("Luis Gómez", 11, 27)], Today, leadDays: 0);

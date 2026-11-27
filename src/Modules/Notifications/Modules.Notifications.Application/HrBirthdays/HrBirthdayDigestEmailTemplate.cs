@@ -35,12 +35,10 @@ public static class HrBirthdayDigestEmailTemplate
             AppendGroup(text, html, "Hoy cumplen años en tu equipo:", today, todayTotal, appBaseUrl);
         }
 
-        if (upcoming.Count > 0)
+        // Without a lead there is no upcoming group at all: the section is left out instead of saying «nadie».
+        if (upcomingDate is { } date && upcoming.Count > 0)
         {
-            var heading = upcomingDate is { } date
-                ? $"Próximos cumpleaños ({HrBirthdayWhatsAppText.Date(date)}):"
-                : "Próximos cumpleaños:";
-            AppendGroup(text, html, heading, upcoming, upcomingTotal, appBaseUrl);
+            AppendGroup(text, html, $"Próximos cumpleaños ({HrBirthdayWhatsAppText.Date(date)}):", upcoming, upcomingTotal, appBaseUrl);
         }
 
         text.Append("\nPuedes ver el detalle en la campana de QEP.\n");

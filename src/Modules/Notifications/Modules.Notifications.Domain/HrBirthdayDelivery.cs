@@ -25,6 +25,9 @@ public static class HrBirthdayDeliverySkipReasons
     public const string NoEmail = "no_email";
     public const string MemberInactive = "member_inactive";
     public const string AttemptsExhausted = "attempts_exhausted";
+
+    /// <summary>The manager no longer holds <c>hr.employee.read</c>: the digest carries employee names, so it is not sent.</summary>
+    public const string AccessRevoked = "access_revoked";
 }
 
 /// <summary>
@@ -107,6 +110,14 @@ public sealed class HrBirthdayDelivery
         EnsurePending();
         Attempts++;
         ClaimedUntil = until;
+    }
+
+    /// <summary>A transient send failure: the row stays <see cref="HrBirthdayDeliveryStatus.Pending"/> and the lease is dropped, so the next pass
+    /// takes it again (the attempt was already counted when it was claimed).</summary>
+    public void Release()
+    {
+        EnsurePending();
+        ClaimedUntil = null;
     }
 
     public void MarkSent(DateTimeOffset now) => Complete(HrBirthdayDeliveryStatus.Sent, null, now);

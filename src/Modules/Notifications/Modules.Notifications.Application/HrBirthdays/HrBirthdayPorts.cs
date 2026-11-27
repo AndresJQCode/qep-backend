@@ -24,3 +24,11 @@ public interface IHrBirthdayWhatsApp
 {
     Task<TaskNoticeWhatsAppResult> SendAsync(HrBirthdayWhatsAppSend send, CancellationToken cancellationToken);
 }
+
+/// <summary>Whether a manager can still read HR data. Checked right before a digest is sent, because the digest carries employee names and the
+/// permission may have been revoked after the run enqueued it. Implemented in Bootstrapper (Tenancy roles); Notifications does not reference HR.</summary>
+public interface IHrBirthdayAccess
+{
+    /// <returns><c>true</c> when the member is active in the tenant and holds <c>hr.employee.read</c>.</returns>
+    Task<bool> CanReadEmployeesAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
+}
