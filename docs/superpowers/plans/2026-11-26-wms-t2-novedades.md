@@ -1334,7 +1334,7 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
     which go before balances), then locks the adjustment's balance rows in ledger order (`StockKeyComparer`) and re-reads; if it
     changed in between it answers 412 `concurrency.conflict` (rolled back) and the retry takes the clean 422 path. A key with no
     balance row has nothing to lock (a concurrent first insert is not covered).
-39. (Final review, decisión del agente, por confirmar) M1: reporters of a `CountVariance` are `ListReportersVerifiedByAsync(sourceCount)`
+39. (Final review, confirmed by the owner 2026-11-27) M1: reporters of a `CountVariance` are `ListReportersVerifiedByAsync(sourceCount)`
     (replaces `ListReportersOfChildrenAsync`).
 40. (Final review, decisión del agente, por confirmar) M3/L3: `AcceptIntoStock` is not offered nor accepted when the raw payload's
     `toLocationId` differs from the line destination (an unreadable value counts as different), when the variant is lot-tracked and
@@ -1343,9 +1343,12 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
     `Resolved` with `AcceptIntoStock` on the same source line (read from `wms.incidents`). Resolutions of one line are serialized
     with the lock `task-line:{lineId}`, taken after the document lock and before the ledger balances (extension of decision 27;
     `resolve` takes no operator, task or `count-key` lock).
-42. (Final review, decisión del agente, por confirmar) L5: index `IX_incidents_tenant_reported` on `(tenant_id, reported_at, number)`
+42. (Final review, confirmed by the owner 2026-11-27) L5: index `IX_incidents_tenant_reported` on `(tenant_id, reported_at, number)`
     (the order of `GET /incidents` is `reported_at DESC, number DESC`; `number` added so a backward scan serves the whole order),
     migration `AddIncidentsTenantReportedIndex`, expand-only.
+
+**Owner confirmation, 2026-11-27:** the owner reviewed decisions 27, 29, 34, 35, 39, 41 and 42 one by one against the code and
+confirmed all seven as implemented. They are no longer pending.
 
 ## Deviations
 
