@@ -1372,6 +1372,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.ShortTaskLineCommand, Modules.Wms.Application.TaskDto>,
             Modules.Wms.Application.ShortTaskLineHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CountTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CountTaskLineHandler>();
         // Novedades (spec 2026-11-26 §8.5).
         services.AddScoped<
             IQueryHandler<Modules.Wms.Application.ListIncidentsQuery, Modules.Wms.Application.IncidentPageDto>,

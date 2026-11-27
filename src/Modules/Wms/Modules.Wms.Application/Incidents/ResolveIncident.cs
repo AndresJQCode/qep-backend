@@ -136,9 +136,14 @@ public sealed class ResolveIncidentHandler(
         Incident incident, Guid member, string key, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var lineId = incident.SourceTaskLineId;
-        Guid? destination = lineId is { } id
-            ? (await tasks.FindLineDestinationsAsync(incident.TenantId, [id], cancellationToken)).GetValueOrDefault(id)
-            : null;
+        // TryGetValue y no GetValueOrDefault: una línea sin destino (la de un Count) daría Guid.Empty, que no es null.
+        Guid? destination = null;
+        if (lineId is { } id)
+        {
+            var destinations = await tasks.FindLineDestinationsAsync(incident.TenantId, [id], cancellationToken);
+            destination = destinations.TryGetValue(id, out var found) ? found : null;
+        }
+
         if (!IncidentResolutionRules.CanAcceptIntoStock(incident, destination))
         {
             throw new WmsDomainException(

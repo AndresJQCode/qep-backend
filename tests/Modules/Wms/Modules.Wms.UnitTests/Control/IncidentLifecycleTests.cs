@@ -116,6 +116,59 @@ public sealed class IncidentLifecycleTests
     }
 
     [Fact]
+    public void ASystemResolutionHasNoMemberAndCanPointToAParent()
+    {
+        var incident = Report(IncidentType.ShortMove);
+        var parent = Guid.CreateVersion7();
+
+        incident.ResolveBySystem(IncidentResolution.Accept, "Verificada por TSK-1: ver NOV-2.", parent, Now.AddMinutes(3));
+
+        Assert.Equal((IncidentStatus.Resolved, IncidentResolution.Accept, Guid.Empty, 2L), (incident.Status, incident.Resolution, incident.ResolvedBy, incident.Version));
+        Assert.Equal((parent, Now.AddMinutes(3), "Verificada por TSK-1: ver NOV-2."), (incident.ParentIncidentId, incident.ResolvedAt, incident.ResolutionNote));
+        var last = incident.Events[^1];
+        Assert.Equal((IncidentEventKind.Resolved, (Guid?)null, "Accept"), (last.Kind, last.MemberId, last.Detail));
+    }
+
+    [Fact]
+    public void ASystemResolutionStillObeysTheCatalogAndTheState()
+    {
+        var variance = Report(IncidentType.CountVariance);
+        Assert.Equal(
+            WmsErrorCodes.IncidentResolutionNotAllowed,
+            Assert.Throws<WmsDomainException>(() => variance.ResolveBySystem(IncidentResolution.Accept, "x", null, Now)).Code);
+
+        var rejected = Report();
+        rejected.Reject(Supervisor, "descartada", Now);
+        Assert.Throws<InvalidTransitionException>(() => rejected.ResolveBySystem(IncidentResolution.AcceptIntoStock, "x", null, Now));
+    }
+
+    [Fact]
+    public void UnlinkingKeepsTheIncidentOpenAndBumpsTheVersion()
+    {
+        var incident = Report(IncidentType.ShortMove);
+        incident.LinkVerification(Guid.CreateVersion7(), Now, "TSK-1");
+
+        incident.UnlinkVerification("TSK-1", Now.AddMinutes(4));
+
+        Assert.Null(incident.VerificationTaskId);
+        Assert.Equal((IncidentStatus.Open, 2L), (incident.Status, incident.Version));
+        var last = incident.Events[^1];
+        Assert.Equal((IncidentEventKind.VerificationCancelled, (Guid?)null, "TSK-1"), (last.Kind, last.MemberId, last.Detail));
+    }
+
+    [Fact]
+    public void AttachingAnAdjustmentOnlyFitsACountVariance()
+    {
+        var adjustment = Guid.CreateVersion7();
+        var variance = Report(IncidentType.CountVariance);
+
+        variance.AttachAdjustment(adjustment);
+
+        Assert.Equal(adjustment, variance.AdjustmentId);
+        Assert.Throws<InvalidOperationException>(() => Report(IncidentType.ShortMove).AttachAdjustment(adjustment));
+    }
+
+    [Fact]
     public void ALinkOnAClosedIncidentIsAnInvalidTransition()
     {
         var incident = Report();

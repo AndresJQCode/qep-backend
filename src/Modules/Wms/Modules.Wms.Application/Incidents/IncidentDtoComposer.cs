@@ -77,8 +77,9 @@ public sealed class IncidentDtoComposer(
             && incident.Type == IncidentType.SyncConflict
             && !IncidentResolutionRules.IsClosed(incident))
         {
-            destination = (await tasks.FindLineDestinationsAsync(incident.TenantId, [lineId], cancellationToken))
-                .GetValueOrDefault(lineId);
+            // TryGetValue y no GetValueOrDefault: una línea sin destino (la de un Count) daría Guid.Empty, que no es null.
+            var destinations = await tasks.FindLineDestinationsAsync(incident.TenantId, [lineId], cancellationToken);
+            destination = destinations.TryGetValue(lineId, out var found) ? found : null;
         }
 
         return new IncidentDto(

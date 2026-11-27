@@ -95,6 +95,13 @@ public sealed class ConfirmTaskLineHandler(
         ConfirmTaskLineCommand command, DateTimeOffset occurredAt, OperatorLineContext context, CancellationToken cancellationToken)
     {
         var (task, line, member) = (context.Task, context.Line, context.MemberId);
+
+        // Una línea de conteo no se confirma: el operario recibe la transición inválida y no un location_mismatch confuso.
+        if (TaskTypePolicy.ConfirmsByCount(task.Type))
+        {
+            throw new TaskTransitionException(task.Status.ToString(), "confirm-line");
+        }
+
         var (to, overrideReason) = await ResolveDestinationAsync(task, line, command, cancellationToken);
         if (line.LotId is { } planned && command.LotId != planned.Value)
         {

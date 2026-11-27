@@ -155,6 +155,41 @@ public sealed class TaskSyncConflictApiTests
     }
 
     [Fact]
+    public async Task ACountWithALostLeaseLeavesAConflict()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var shortage = await TaskCountApiTests.ArrangeShortageAsync(database, factory);
+        using var _r = shortage.ReporterClient;
+        var (counterA, clientA) = await SeedCounterAsync(factory);
+        using var _a = clientA;
+        var (counterB, clientB) = await SeedMemberAsync(
+            factory, "01900000-0000-7000-8000-000000000005", WmsPermissions.DocumentRead, WmsPermissions.CountPerform);
+        clientB.Dispose();
+        var count = await ReadAsync<TaskDto>(await NextRawAsync(clientA, shortage.Setup.WarehouseId));
+        var current = await GetAsync(shortage.Setup.Manager, count.Id);
+        await ActionAsync(
+            shortage.Setup.Manager, count.Id, "assign", new { memberId = counterB, version = current.Version, reason = "Cambio de turno" });
+        var key = Guid.NewGuid().ToString();
+
+        var response = await CountRawAsync(
+            clientA, count.Id, count.Lines[0].Id, CountBody(count.LeaseToken!.Value, shortage.Setup.BinA, 5), key);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("wms.task.lease_lost", await CodeOfAsync(response));
+        var conflict = Assert.Single(await IncidentsOfTaskAsync(database, count.Id));
+        Assert.Equal(("SyncConflict", "Open", 5m, counterA, key), (conflict.Type, conflict.Status, conflict.ActualQty, conflict.ReportedBy, conflict.OperationKey));
+        var payload = JsonNode.Parse(conflict.RawPayload!)!.AsObject();
+        Assert.Equal("count", payload["action"]!.GetValue<string>());
+        Assert.Equal(5m, payload["quantityCounted"]!.GetValue<decimal>());
+        Assert.False(payload.ContainsKey("leaseToken"));
+        // Lo rechazado no se aplica: ni conteo, ni ajuste.
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.adjustments"));
+        Assert.Null((await GetAsync(shortage.Setup.Manager, count.Id)).Lines[0].QuantityCounted);
+    }
+
+    [Fact]
     public async Task AShortWithALostLeaseAlsoLeavesAConflict()
     {
         var (database, factory) = await OpenAsync();

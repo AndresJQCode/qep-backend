@@ -43,6 +43,11 @@ public sealed class IncidentTenantIsolationApiTests
                 leaseToken = Guid.NewGuid(), quantityFound = 1, incidentType = "ShortMove", occurredAt = DateTimeOffset.UtcNow,
                 deviceId = "zebra-01",
             }),
+            (HttpMethod.Post, $"{TasksUrl()}/{task.Id}/lines/{task.Lines[0].Id}/count", new
+            {
+                leaseToken = Guid.NewGuid(), locationId = s.BinA, quantityCounted = 1, occurredAt = DateTimeOffset.UtcNow,
+                deviceId = "zebra-01",
+            }),
         ];
         var failures = new List<string>();
 

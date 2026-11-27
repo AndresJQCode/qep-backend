@@ -106,6 +106,13 @@ public sealed class ShortTaskLineHandler(
         CancellationToken cancellationToken)
     {
         var (task, line, member) = (context.Task, context.Line, context.MemberId);
+
+        // Una línea de conteo no declara faltante: se cuenta. Antes que el tipo de novedad, que tampoco admite un Count.
+        if (TaskTypePolicy.ConfirmsByCount(task.Type))
+        {
+            throw new TaskTransitionException(task.Status.ToString(), "short-line");
+        }
+
         if (!IncidentCatalog.DeclarableOnShort(task.Type.ToString()).Contains(type))
         {
             throw new WmsDomainException(

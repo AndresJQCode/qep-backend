@@ -189,6 +189,17 @@ public sealed record ShortTaskLineRequest(
     string? DeviceId,
     IReadOnlyList<Guid>? PhotoFileIds = null) : IIdempotentRequest;
 
+/// <summary>Lo que el operario contó en la ubicación de la línea de un <c>Count</c>, a ciegas (DA-40): no recibe lo esperado y contar
+/// cero es válido. <c>LocationId</c> es la ubicación escaneada (tiene que ser la de la línea); <c>LotId</c> es el lote escaneado,
+/// obligatorio si la variante se controla por lote y la línea no lo fija. Ruta IK.</summary>
+public sealed record CountTaskLineRequest(
+    Guid LeaseToken,
+    Guid LocationId,
+    Guid? LotId,
+    decimal QuantityCounted,
+    DateTimeOffset? OccurredAt,
+    string? DeviceId) : IIdempotentRequest;
+
 /// <summary>Cuerpo de <c>publish</c> y <c>unassign</c>. Las acciones del supervisor llevan la versión que leyó (412 si cambió).
 /// </summary>
 public sealed record TaskVersionRequest(long Version);

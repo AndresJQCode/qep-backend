@@ -742,6 +742,32 @@ public sealed class IncidentApiTests
     }
 
     [Fact]
+    public async Task AConflictFromACountCannotBeAcceptedIntoStock()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var shortage = await Tasks.TaskCountApiTests.ArrangeShortageAsync(database, factory);
+        using var _r = shortage.ReporterClient;
+        var count = await GetAsync(shortage.Setup.Manager, shortage.CountId);
+        var s = shortage.Setup;
+        // Un conteo rechazado por lease perdido: su línea no tiene destino, así que no hay movimiento que aplicar.
+        var subject = new IncidentSubject(
+            count.Id, count.Lines[0].Id, new LocationId(s.BinA), s.VariantId, null, StockStatus.Available, null, 4);
+        var conflict = await NumberAndSaveAsync(
+            factory, s, number => NewIncident(s, number, IncidentType.SyncConflict, subject, operationKey: NewKey()));
+
+        var response = await IncidentActionAsync(s.Manager, conflict.Id, "resolve", new { version = 1, resolution = "AcceptIntoStock" });
+
+        Assert.True(response.StatusCode == HttpStatusCode.UnprocessableEntity, await BodyAsync(response));
+        Assert.Equal("wms.incident.resolution_not_allowed", await CodeOfAsync(response));
+        Assert.Equal(0L, await IncidentMovementsAsync(database));
+        var stored = await GetIncidentAsync(s.Manager, conflict.Id);
+        Assert.Empty(stored.AllowedResolutions);
+        Assert.True(stored.CanBeRejected);
+    }
+
+    [Fact]
     public async Task RepeatingTheResolveReturnsTheSavedResponse()
     {
         var (database, factory) = await OpenAsync();

@@ -179,6 +179,44 @@ public sealed class Incident
             TenantId, Id, IncidentEventKind.VerificationLinked, null, taskNumber, now, now));
     }
 
+    /// <summary>El <c>Count</c> que la verificaba se canceló: deja de apuntarle y la novedad sigue abierta para que el supervisor la
+    /// acepte (la próxima novedad sobre la clave genera otro conteo). Sube la versión: un supervisor ya pudo haberla visto.</summary>
+    public void UnlinkVerification(string taskNumber, DateTimeOffset now)
+    {
+        EnsureUnresolved("unlink-verification");
+        VerificationTaskId = null;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.VerificationCancelled, null, taskNumber, now, now));
+    }
+
+    /// <summary>Lo resuelve el sistema (<see cref="Guid.Empty"/>, sin persona en el evento) con una resolución que el tipo admite, por
+    /// el resultado de un conteo. <paramref name="parentIncidentId"/> es la <c>CountVariance</c> que la sigue, si el conteo encontró
+    /// una diferencia.</summary>
+    public void ResolveBySystem(IncidentResolution resolution, string note, Guid? parentIncidentId, DateTimeOffset now)
+    {
+        EnsureCanResolve(resolution);
+        Status = IncidentStatus.Resolved;
+        Resolution = resolution;
+        ResolvedBy = Guid.Empty;
+        ResolvedAt = now.ToUniversalTime();
+        ResolutionNote = Trimmed(note, NoteMaxLength, "La nota de la resolución");
+        ParentIncidentId = parentIncidentId;
+        Version++;
+        _events.Add(IncidentEvent.Record(TenantId, Id, IncidentEventKind.Resolved, null, resolution.ToString(), now, now));
+    }
+
+    /// <summary>El ajuste que propuso el conteo y que cerrará esta <c>CountVariance</c>. Sólo ese tipo lo lleva; se llama al nacer la
+    /// novedad, antes de guardarla.</summary>
+    public void AttachAdjustment(Guid adjustmentId)
+    {
+        if (Type != IncidentType.CountVariance)
+        {
+            throw new InvalidOperationException($"Only a {nameof(IncidentType.CountVariance)} carries an adjustment, not a {Type}.");
+        }
+
+        AdjustmentId = adjustmentId;
+    }
+
     /// <summary>Un supervisor la toma: <c>Open</c> pasa a <c>InReview</c> (spec §8.3).</summary>
     public void Review(Guid by, DateTimeOffset now)
     {
