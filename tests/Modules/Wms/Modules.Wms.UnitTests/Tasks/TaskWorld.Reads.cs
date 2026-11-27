@@ -105,7 +105,8 @@ internal sealed partial class TaskWorld
         public Task<IReadOnlyList<Guid>> ListWithPermissionAsync(Guid tenantId, string permission, CancellationToken ct)
         {
             world.PermissionLookups++;
-            return Task.FromResult<IReadOnlyList<Guid>>([.. world.Eligible]);
+            return Task.FromResult<IReadOnlyList<Guid>>(
+                [.. world.Eligible.Where(member => permission != WmsPermissions.DocumentRead || !world.WithoutDocumentRead.Contains(member))]);
         }
     }
 

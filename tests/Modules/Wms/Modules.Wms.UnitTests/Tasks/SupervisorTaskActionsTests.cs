@@ -203,8 +203,28 @@ public sealed class SupervisorTaskActionsTests
             [(assigned.Id, assigned.Number, TaskWorld.OtherMember, "Luis Exoperario"),
              (planned.Id, planned.Number, TaskWorld.OtherMember, "Luis Exoperario")],
             board.StaleAssignments.Select(item => (item.TaskId, item.TaskNumber, item.MemberId, item.Name)));
-        // Una consulta de elegibles por permiso, no una por tarea.
-        Assert.Equal(1, world.PermissionLookups);
+        // Una consulta de elegibles por permiso (el del tipo y wms.document.read), no una por tarea.
+        Assert.Equal(2, world.PermissionLookups);
+    }
+
+    // M1: toda ruta de tareas exige wms.document.read; quien lo perdió no puede reclamar su asignada aunque conserve el del proceso.
+    [Fact]
+    public async Task TheBoardListsAssignmentsOfSomeoneWhoLostDocumentRead()
+    {
+        var world = new TaskWorld();
+        world.Eligible.Add(TaskWorld.OtherMember);
+        world.WithoutDocumentRead.Add(TaskWorld.OtherMember);
+        world.Names[TaskWorld.OtherMember] = "Luis Sin Lectura";
+        var lost = world.AddTask(assignTo: TaskWorld.OtherMember);
+        world.AddTask(assignTo: TaskWorld.Member);
+        var handler = new GetTaskBoardHandler(
+            world.Context(), world.Authorization, world.Warehouses(), world.Repository(), world.Members());
+
+        var board = await handler.HandleAsync(new GetTaskBoardQuery(TaskWorld.Tenant, world.Warehouse.Id.Value), Ct);
+
+        var stale = Assert.Single(board.StaleAssignments);
+        Assert.Equal((lost.Id, TaskWorld.OtherMember, "Luis Sin Lectura"), (stale.TaskId, stale.MemberId, stale.Name));
+        Assert.Equal(2, world.PermissionLookups);
     }
 
     [Fact]

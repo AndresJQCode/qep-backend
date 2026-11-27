@@ -33,16 +33,24 @@ public sealed class GetTaskBoardHandler(
         var claimedAt = await tasks.FindClaimedAtAsync(
             query.TenantId, [.. working.Select(task => task.Id)], cancellationToken);
 
-        // M1: una consulta de asignadas y una de elegibles por permiso (tantas como tipos distintos, nunca una por tarea).
+        // M1: una consulta de asignadas y una de elegibles por permiso (el de cada tipo distinto y wms.document.read, que exige toda
+        // ruta de tareas; nunca una por tarea). Sin wms.document.read tampoco puede reclamar su asignada.
         var assigned = await tasks.ListAssignedOpenAsync(query.TenantId, query.WarehouseId, cancellationToken);
         var eligible = new Dictionary<string, HashSet<Guid>>(StringComparer.Ordinal);
-        foreach (var permission in assigned.Select(task => TaskTypePermissions.For(task.Type)).Distinct(StringComparer.Ordinal))
+        if (assigned.Count > 0)
         {
-            eligible[permission] = [.. await members.ListWithPermissionAsync(query.TenantId, permission, cancellationToken)];
+            foreach (var permission in assigned
+                         .Select(task => TaskTypePermissions.For(task.Type))
+                         .Append(WmsPermissions.DocumentRead)
+                         .Distinct(StringComparer.Ordinal))
+            {
+                eligible[permission] = [.. await members.ListWithPermissionAsync(query.TenantId, permission, cancellationToken)];
+            }
         }
 
         var stale = assigned
-            .Where(task => !eligible[TaskTypePermissions.For(task.Type)].Contains(task.AssignedMemberId))
+            .Where(task => !eligible[TaskTypePermissions.For(task.Type)].Contains(task.AssignedMemberId)
+                || !eligible[WmsPermissions.DocumentRead].Contains(task.AssignedMemberId))
             .ToList();
         var names = await members.FindNamesAsync(
             query.TenantId,

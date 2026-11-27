@@ -18,6 +18,10 @@ internal sealed partial class TaskWorld
     /// <summary>Las membresías que pueden hacer una tarea.</summary>
     public HashSet<Guid> Eligible { get; } = [Member];
 
+    /// <summary>Las membresías que pueden hacer una tarea pero ya no tienen <c>wms.document.read</c>, que exige toda ruta de tareas.
+    /// </summary>
+    public HashSet<Guid> WithoutDocumentRead { get; } = [];
+
     /// <summary>Cuántas veces se pidió la lista de elegibles de un permiso.</summary>
     public int PermissionLookups { get; set; }
 
