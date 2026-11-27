@@ -6982,7 +6982,7 @@ detecta el índice único). 422 `wms.task.invalid_transition` (con `from` y `act
 
 Una variante con una línea abierta en una tarea sin terminar no se borra de Catalog.
 
-**Migraciones:** `Wms` `AddWarehouseTasks`.
+**Migraciones:** `Wms` `AddWarehouseTasks`, `AddTaskBoardIndexes` (índices del tablero y del listado) y `AddTaskEventRecordedAt` (`recorded_at` en `task_events`, el orden de la historia).
 
 ## Verificación
 

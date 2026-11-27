@@ -83,7 +83,8 @@ internal static class WarehouseTaskModel
         // El barrido de leases vencidos.
         task.HasIndex(value => value.LeaseExpiresAt, "IX_tasks_lease").HasFilter("status = 'InProgress'");
         task.HasIndex(value => new { value.TenantId, value.SourceType, value.SourceId }, "IX_tasks_source");
-        // Los conteos del tablero (por estado y abiertas por tipo) y las asignadas, sin tocar la tabla (revisión T1, M4).
+        // Los conteos del tablero (por estado y abiertas por tipo) salen sólo del índice; ListAssignedOpenAsync lo usa para acotar
+        // por bodega y estado, pero sí lee la tabla para traer el asignado (revisión T1, M4).
         task.HasIndex(value => new { value.TenantId, value.WarehouseId, value.Status, value.Type }, "IX_tasks_board");
         // El listado del supervisor: la página sale del índice en el orden de ListAsync.
         task.HasIndex(value => new { value.TenantId, value.WarehouseId, value.CreatedAt, value.Number }, "IX_tasks_list")
