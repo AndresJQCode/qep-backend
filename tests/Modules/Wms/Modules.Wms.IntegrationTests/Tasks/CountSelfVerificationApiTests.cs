@@ -38,8 +38,12 @@ public sealed class CountSelfVerificationApiTests
         using var __ = factory;
         var shortage = await ArrangeShortageAsync(database, factory);
         using var _r = shortage.ReporterClient;
-        var (_, counter) = await SeedCounterAsync(factory);
+        var (counterId, counter) = await SeedCounterAsync(factory);
         using var _c = counter;
+        // M3: por id sólo se reclama lo que se le ofreció, así que el supervisor se lo asigna antes.
+        var count = await GetAsync(shortage.Setup.Manager, shortage.CountId);
+        await ActionAsync(
+            shortage.Setup.Manager, shortage.CountId, "assign", new { memberId = counterId, version = count.Version, reason = (string?)null });
 
         var response = await ActionRawAsync(counter, shortage.CountId, "claim", new { deviceId = "zebra-01" });
 

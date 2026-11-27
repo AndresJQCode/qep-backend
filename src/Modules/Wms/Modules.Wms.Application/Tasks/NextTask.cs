@@ -70,7 +70,7 @@ public sealed class NextTaskHandler(
                     || (mine.Status == WarehouseTaskStatus.Assigned && mine.AssignedMemberId == member);
                 if (mine.Status == WarehouseTaskStatus.InProgress)
                 {
-                    mine.RenewClaim(member, clock.UtcNow);
+                    mine.RenewClaim(member, command.DeviceId, clock.UtcNow);
                 }
                 else if (swept && mine.LeaseToken is not null)
                 {

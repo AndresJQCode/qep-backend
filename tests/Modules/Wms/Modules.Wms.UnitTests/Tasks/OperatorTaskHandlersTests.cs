@@ -434,21 +434,52 @@ public sealed class OperatorTaskHandlersTests
         Assert.Equal(WarehouseTaskStatus.Planned, task.Status);
     }
 
-    // Pendiente del owner: otro celular de la misma persona sobre su propia tarea en curso recibe el token y el reclamo sigue en el
-    // celular original. Esta prueba documenta el comportamiento actual; no lo decide.
+    // Dos celulares, opción A (owner, 2026-11-27): reclamar o pedir «siguiente» desde otro celular mueve la tarea a ese celular con un
+    // token nuevo. El primer celular queda con un token que ya no vale: 409 lease_lost no reanudable.
     [Fact]
-    public async Task ClaimOrNextFromAnotherDeviceOfTheSameMemberHandsOverTheTokenAndKeepsTheClaimedDevice()
+    public async Task ClaimFromAnotherDeviceOfTheSameMemberMovesTheTaskWithANewToken()
+    {
+        var world = new TaskWorld();
+        var (task, command) = ClaimedByCaller(world);
+        var token = task.LeaseToken;
+
+        var claimed = await ClaimAsync(world, task.Id, "otro-celular");
+
+        Assert.NotEqual(token, claimed.LeaseToken);
+        Assert.Equal(task.LeaseToken, claimed.LeaseToken);
+        Assert.Equal("otro-celular", task.ClaimedDeviceId);
+        var error = await Assert.ThrowsAsync<TaskLeaseLostException>(() => ConfirmAsync(world, command));
+        Assert.False(error.Resumable);
+        Assert.Empty(world.Posted);
+    }
+
+    [Fact]
+    public async Task NextFromAnotherDeviceOfTheSameMemberMovesTheTaskWithANewToken()
+    {
+        var world = new TaskWorld();
+        var (task, command) = ClaimedByCaller(world);
+        var token = task.LeaseToken;
+
+        var next = await NextAsync(world, device: "otro-celular");
+
+        Assert.NotEqual(token, next.Task!.LeaseToken);
+        Assert.Equal(task.LeaseToken, next.Task.LeaseToken);
+        Assert.Equal("otro-celular", task.ClaimedDeviceId);
+        var error = await Assert.ThrowsAsync<TaskLeaseLostException>(() => ConfirmAsync(world, command));
+        Assert.False(error.Resumable);
+    }
+
+    [Fact]
+    public async Task ClaimOrNextFromTheSameDeviceKeepsTheToken()
     {
         var world = new TaskWorld();
         var (task, _) = ClaimedByCaller(world);
         var token = task.LeaseToken;
 
-        var claimed = await ClaimAsync(world, task.Id, "otro-celular");
-        var next = await NextAsync(world, device: "otro-celular");
+        var claimed = await ClaimAsync(world, task.Id);
+        var next = await NextAsync(world);
 
-        Assert.Equal(token, claimed.LeaseToken);
-        Assert.Equal(token, next.Task!.LeaseToken);
-        Assert.Equal(TaskWorld.Device, task.ClaimedDeviceId);
+        Assert.Equal((token, token), (claimed.LeaseToken, next.Task!.LeaseToken));
     }
 
     [Fact]
@@ -496,6 +527,73 @@ public sealed class OperatorTaskHandlersTests
         Assert.Equal((task.LeaseToken, 2L), (dto.LeaseToken, dto.Version));
         Assert.Equal(TaskWorld.Start.AddMinutes(35), dto.LeaseExpiresAt);
         Assert.Contains("save", world.Log);
+    }
+
+    // M3 (owner, 2026-11-27): el reclamo por id sólo acepta lo que se le ofreció a quien llama; el trabajo nuevo llega por «siguiente».
+    [Fact]
+    public async Task ClaimingATaskOfThePoolIsNotOffered()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+
+        var error = await Assert.ThrowsAsync<WmsDomainException>(() => ClaimAsync(world, task.Id));
+
+        Assert.Equal(WmsErrorCodes.TaskNotOffered, error.Code);
+        Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
+        Assert.DoesNotContain("save", world.Log);
+    }
+
+    [Fact]
+    public async Task ClaimingATaskWhoseExpiredClaimIsSomeoneElsesIsNotOffered()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask();
+        task.Claim(TaskWorld.OtherMember, "otro-celular", TaskWorld.Start);
+        task.ExpireLease(TaskWorld.Start.AddMinutes(16));
+        world.Now = TaskWorld.Start.AddMinutes(17);
+
+        var error = await Assert.ThrowsAsync<WmsDomainException>(() => ClaimAsync(world, task.Id));
+
+        Assert.Equal(WmsErrorCodes.TaskNotOffered, error.Code);
+        Assert.Equal(WarehouseTaskStatus.Ready, task.Status);
+    }
+
+    [Fact]
+    public async Task ClaimingATaskAssignedToTheCallerWorks()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask(assignTo: TaskWorld.Member);
+
+        var dto = await ClaimAsync(world, task.Id);
+
+        Assert.Equal("InProgress", dto.Status);
+        Assert.Contains("save", world.Log);
+    }
+
+    [Fact]
+    public async Task ClaimingATaskAssignedToSomeoneElseKeepsItsOwnError()
+    {
+        var world = new TaskWorld();
+        var task = world.AddTask(assignTo: TaskWorld.OtherMember);
+
+        var error = await Assert.ThrowsAsync<WmsDomainException>(() => ClaimAsync(world, task.Id));
+
+        Assert.Equal(WmsErrorCodes.TaskAssignedToOther, error.Code);
+    }
+
+    // El barrido devuelve al pool la tarea de quien se quedó sin conexión: retomarla por id sigue valiendo.
+    [Fact]
+    public async Task ClaimingMyOwnExpiredClaimWorksAndKeepsTheToken()
+    {
+        var world = new TaskWorld();
+        var (task, _) = ClaimedByCaller(world);
+        var token = task.LeaseToken;
+        task.ExpireLease(TaskWorld.Start.AddMinutes(16));
+        world.Now = TaskWorld.Start.AddMinutes(17);
+
+        var dto = await ClaimAsync(world, task.Id);
+
+        Assert.Equal(("InProgress", token), (dto.Status, dto.LeaseToken));
     }
 
     [Fact]

@@ -114,6 +114,7 @@ public static class WmsErrorCodes
     public const string TaskLeaseLost = "wms.task.lease_lost";
     public const string TaskMemberBusy = "wms.task.member_busy";
     public const string TaskAssignedToOther = "wms.task.assigned_to_other";
+    public const string TaskNotOffered = "wms.task.not_offered";
     public const string TaskAssigneeNotEligible = "wms.task.assignee_not_eligible";
     public const string TaskLocationInvalid = "wms.task.location_invalid";
     public const string TaskLocationMismatch = "wms.task.location_mismatch";

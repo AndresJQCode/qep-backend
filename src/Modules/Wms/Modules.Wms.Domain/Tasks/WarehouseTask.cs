@@ -369,10 +369,11 @@ public sealed class WarehouseTask
         Renew(now);
     }
 
-    /// <summary>Quien ya tiene la tarea en curso la vuelve a pedir («siguiente» o «reclamar»): renueva el lease con el mismo token, sin
-    /// evento ni versión, como el latido. Vale también con el lease vencido mientras el barrido no haya pasado: sigue en curso y nadie
-    /// más pudo tomarla.</summary>
-    public void RenewClaim(Guid memberId, DateTimeOffset now)
+    /// <summary>Quien ya tiene la tarea en curso la vuelve a pedir («siguiente» o «reclamar»). Desde el mismo celular renueva el lease con
+    /// el mismo token, sin evento ni versión, como el latido. Desde otro celular (dos celulares, opción A del owner, 2026-11-27) la tarea
+    /// se mueve a ese celular: token nuevo, versión y un evento <c>Claimed</c> con el celular nuevo, y el primero queda con un token que
+    /// ya no vale. Vale también con el lease vencido mientras el barrido no haya pasado: sigue en curso y nadie más pudo tomarla.</summary>
+    public void RenewClaim(Guid memberId, string deviceId, DateTimeOffset now)
     {
         EnsureStatus("claim", WarehouseTaskStatus.InProgress);
         if (ClaimedByMemberId != memberId)
@@ -380,7 +381,18 @@ public sealed class WarehouseTask
             throw new InvalidOperationException($"Task {Id} is in progress for another member.");
         }
 
+        var device = RequiredDevice(deviceId);
+        if (ClaimedDeviceId == device)
+        {
+            Renew(now);
+            return;
+        }
+
+        ClaimedDeviceId = device;
+        LeaseToken = Guid.NewGuid();
         Renew(now);
+        Version++;
+        Record(TaskEventKind.Claimed, memberId, now, deviceId: device);
     }
 
     /// <summary>El operario devuelve la tarea al pool; deja de estar asignada si lo estaba a él. Conserva su antigüedad.</summary>
