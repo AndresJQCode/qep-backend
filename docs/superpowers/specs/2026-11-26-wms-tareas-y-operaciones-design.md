@@ -1074,6 +1074,11 @@ ubicaciones de las líneas e índices del tablero y del listado (M4), `hold` que
 - **M3. Decidido e implementado.** `claim` por id sólo admite la tarea asignada a quien reclama y su propio reclamo vencido
   (devuelto al pool por el barrido, con su token). Una tarea del pool, o una cuyo reclamo vencido es de otra persona, responde 422
   `wms.task.not_offered`. El trabajo nuevo llega sólo por «Siguiente tarea»: DA-09 queda impuesta en el servidor, no sólo en la app.
+- **Dos celulares, opción A. Decidido e implementado.** Reclamar (o pedir «Siguiente tarea») desde otro celular una tarea que la
+  misma persona ya tiene en curso mueve la tarea a ese celular: `claimed_device_id` nuevo, `lease_token` nuevo, lease renovado,
+  `version + 1` y un evento `Claimed` con el celular nuevo (sin un `TaskEventKind` nuevo). El primer celular recibe 409
+  `wms.task.lease_lost` con `resumable: false` al confirmar, reportar faltante, contar, latir o soltar. Desde el mismo celular
+  nada cambia (mismo token, sin evento ni versión). Reemplaza el comportamiento provisional de T1.
 
 **Pendientes del owner** (no se implementan sin respuesta):
 

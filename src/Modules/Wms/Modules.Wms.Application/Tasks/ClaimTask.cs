@@ -63,8 +63,9 @@ public sealed class ClaimTaskHandler(
                 throw new TaskMemberBusyException(current.Id);
             }
 
-            // M2: reclamar la que ya tiene en curso renueva el lease con el mismo token, como el latido.
-            task.RenewClaim(member, clock.UtcNow);
+            // M2: reclamar la que ya tiene en curso renueva el lease con el mismo token, como el latido. Desde otro celular, la tarea
+            // se mueve a ese celular con un token nuevo (dos celulares, opción A del owner, 2026-11-27).
+            task.RenewClaim(member, command.DeviceId, clock.UtcNow);
             var renewed = await composer.ComposeAsync(task, member, withEvents: false, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return renewed;

@@ -7032,6 +7032,9 @@ la misma `Idempotency-Key`; nunca ajusta stock. `count` sólo existe para el tip
 lease de `Move` dura 15 minutos; el latido y cada confirmación lo renuevan. Al vencer, el barrido devuelve la tarea y conserva quién la
 reclamó y su token: una **confirmación tardía** con ese token la reanuda si nadie más la tomó (si quien confirma ya tiene otra en curso,
 se aplica sin reanudar). Latir y soltar exigen el lease vigente. La misma persona que retoma desde el mismo celular conserva el token.
+**Dos celulares:** si la persona reclama (o pide `next`) con otro `deviceId` una tarea que ya tiene en curso, la tarea se mueve a ese
+celular con un `leaseToken` nuevo (sube la versión y queda un evento `Claimed`); el primer celular recibe 409 `wms.task.lease_lost` con
+`resumable: false` en `confirm`, `short`, `count`, `heartbeat` y `unclaim`.
 `next` no vuelve a ofrecer durante 15 minutos lo que la persona soltó con `Skipped`, salvo que se lo asignen. Los eventos de una
 confirmación llevan la hora del escaneo (`occurredAt`).
 

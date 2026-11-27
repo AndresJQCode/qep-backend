@@ -236,7 +236,7 @@ public sealed class WarehouseTaskLeaseTests
         var events = task.Events.Count;
 
         // Vencido pero sin barrer: sigue InProgress y nadie más pudo tomarlo.
-        task.RenewClaim(Member, Expired);
+        task.RenewClaim(Member, $" {Device} ", Expired);
 
         Assert.Equal((WarehouseTaskStatus.InProgress, token, 2L), (task.Status, task.LeaseToken!.Value, task.Version));
         Assert.Equal(Expired.AddMinutes(15), task.LeaseExpiresAt);
@@ -249,9 +249,33 @@ public sealed class WarehouseTaskLeaseTests
     {
         var (task, _) = Claimed();
 
-        Assert.Throws<InvalidOperationException>(() => task.RenewClaim(Other, Expired));
-        Assert.Throws<TaskTransitionException>(() => NewMove().RenewClaim(Member, Now));
+        Assert.Throws<InvalidOperationException>(() => task.RenewClaim(Other, Device, Expired));
+        Assert.Throws<TaskTransitionException>(() => NewMove().RenewClaim(Member, Device, Now));
     }
+
+    // Dos celulares, opción A (owner, 2026-11-27): el segundo celular se lleva la tarea con un token nuevo; el primero ya no vale.
+    [Fact]
+    public void RenewingMyClaimFromAnotherDeviceMovesTheTaskToItWithANewToken()
+    {
+        var (task, token) = Claimed();
+        var later = Now.AddMinutes(3);
+
+        task.RenewClaim(Member, "zebra-02", later);
+
+        Assert.Equal("zebra-02", task.ClaimedDeviceId);
+        Assert.NotEqual(token, task.LeaseToken);
+        Assert.Equal(WarehouseTaskStatus.InProgress, task.Status);
+        Assert.Equal(later.AddMinutes(15), task.LeaseExpiresAt);
+        Assert.Equal(3L, task.Version);
+        var claimed = task.Events[^1];
+        Assert.Equal((TaskEventKind.Claimed, Member, "zebra-02"), (claimed.Kind, claimed.MemberId, claimed.DeviceId));
+        Assert.Equal(LeaseCheck.Lost, task.CheckLease(Member, token));
+        Assert.Equal(LeaseCheck.Valid, task.CheckLease(Member, task.LeaseToken!.Value));
+    }
+
+    [Fact]
+    public void RenewingFromAnInvalidDeviceIdIsRefused() =>
+        Assert.Throws<ArgumentException>(() => Claimed().Task.RenewClaim(Member, " ", Expired));
 
     [Fact]
     public void AHeartbeatExtendsTheLeaseWithoutVersionOrEvent()

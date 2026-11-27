@@ -572,6 +572,33 @@ public sealed class TaskOperatorApiTests
         Assert.Equal(current.Id, problem.RootElement.GetProperty("taskId").GetGuid());
     }
 
+    // Dos celulares, opción A (owner, 2026-11-27): «siguiente» desde otro celular mueve la tarea con un token nuevo; el primero recibe 409
+    // lease_lost no reanudable en confirmar y en latir.
+    [Fact]
+    public async Task NextFromAnotherDeviceMovesTheTaskAndTheFirstDeviceGets409NotResumable()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var first = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+
+        var second = await ReadAsync<TaskDto>(await NextRawAsync(floor.Client, floor.Setup.WarehouseId, "zebra-02"));
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.NotEqual(first.LeaseToken, second.LeaseToken);
+        var confirm = await ConfirmRawAsync(floor.Client, first.Id, first.Lines[0].Id, ConfirmBody(first, first.LeaseToken!.Value, 2));
+        Assert.Equal(HttpStatusCode.Conflict, confirm.StatusCode);
+        Assert.Equal("wms.task.lease_lost", await CodeOfAsync(confirm));
+        Assert.False(await ResumableOfAsync(confirm));
+        var beat = await ActionRawAsync(floor.Client, first.Id, "heartbeat", new { leaseToken = first.LeaseToken });
+        Assert.Equal(HttpStatusCode.Conflict, beat.StatusCode);
+        Assert.False(await ResumableOfAsync(beat));
+        var current = await ActionRawAsync(floor.Client, first.Id, "heartbeat", new { leaseToken = second.LeaseToken });
+        Assert.Equal(HttpStatusCode.OK, current.StatusCode);
+    }
+
     // M3: el reclamo por id de una tarea del pool no se ofrece; el trabajo nuevo llega por «siguiente».
     [Fact]
     public async Task ClaimingAPoolTaskByIdIs422NotOffered()
