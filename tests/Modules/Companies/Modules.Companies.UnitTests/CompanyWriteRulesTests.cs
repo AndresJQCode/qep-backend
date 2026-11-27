@@ -35,6 +35,19 @@ public sealed class CompanyWriteRulesTests
             .Validate(command)
             .Errors.Any(error => error.PropertyName == key);
 
+    [Fact]
+    public void ANitWithLettersIsRejectedOnTheTaxId() =>
+        Assert.True(Fails(Command() with { TaxId = "9011234A-2" }, "TaxId"));
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.False(Fails(Command(documentType: "PASAPORTE") with { TaxId = "AB123456" }, "TaxId"));
+
+    [Fact]
+    public void ANieWithLettersIsAccepted() =>
+        Assert.False(
+            Fails(Command(country: "ES", documentType: "NIE", cityId: null, cityName: "Madrid", withCity: false) with { TaxId = "X1234567L" }, "TaxId"));
+
     [Theory]
     [InlineData("EUR")]
     [InlineData("cop")]

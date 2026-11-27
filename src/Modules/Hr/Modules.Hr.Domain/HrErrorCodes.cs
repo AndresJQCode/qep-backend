@@ -126,6 +126,7 @@ public static class HrErrorCodes
         public const string LastNameRequired = "hr.import.row.last_name_required";
         public const string DocumentTypeInvalid = "hr.import.row.document_type_invalid";
         public const string DocumentNumberRequired = "hr.import.row.document_number_required";
+        public const string DocumentNumberNotNumeric = "hr.import.row.document_number_not_numeric";
         public const string DocumentDuplicatedInFile = "hr.import.row.document_duplicated_in_file";
         public const string DocumentTaken = "hr.import.row.document_taken";
         public const string CountryInvalid = "hr.import.row.country_invalid";

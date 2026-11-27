@@ -21,7 +21,7 @@ public sealed class SupplierRegionHandlerTests
         "Iberia Suministros S.L.",
         null,
         "NIT",
-        "B12345678",
+        "123456789",
         country,
         null,
         "Madrid",

@@ -672,6 +672,13 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
             .WithMessage("The person type must be one of Natural or Juridica.")
             .When(edits => !string.IsNullOrWhiteSpace(edits.Billing?.Party?.PersonType));
 
+        // (Nombre completo: Application ya tiene un DocumentNumberFormat de numeración.)
+        // NIT, CC y CE solo admiten dígitos y separadores; bloquea también un número viejo reenviado sin cambios.
+        RuleFor(edits => edits.Billing!.Party!.IdentificationNumber)
+            .Must((edits, number) => BuildingBlocks.Domain.Identification.DocumentNumberFormat.IsValidFor(edits.Billing!.Party!.IdentificationType, number))
+            .WithMessage(BuildingBlocks.Domain.Identification.DocumentNumberFormat.NumericTypesMessage)
+            .When(edits => !string.IsNullOrWhiteSpace(edits.Billing?.Party?.IdentificationNumber));
+
         RuleFor(edits => edits.Billing!.Party!.IdentificationNumber)
             .Must(number => number!.Trim().Length <= QuotationPartyDetails.IdentificationNumberMaxLength)
             .WithMessage(

@@ -105,6 +105,12 @@ public sealed class CustomerBillingProfileWriteRules : AbstractValidator<ICustom
             .Must(DocumentTypesByCountry.IsKnown)
             .WithMessage($"The identification type must be one of {string.Join(", ", DocumentTypesByCountry.All)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
+        // NIT, CC y CE solo llevan dígitos; el dominio repite la regla con su código y su mapa errors.
+        RuleFor(command => command.IdentificationNumber)
+            .Must((command, number) => DocumentNumberFormat.IsValidFor(command.IdentificationType, number))
+            .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+            .When(command => DocumentTypesByCountry.IsKnown(command.IdentificationType)
+                && !string.IsNullOrWhiteSpace(command.IdentificationNumber));
         RuleFor(command => command.PersonType)
             .Must(personType => PersonTypeParser.SupportedWireValues.Contains(
                 personType!.Trim(), StringComparer.OrdinalIgnoreCase))

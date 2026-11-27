@@ -113,6 +113,7 @@ public sealed class EmployeeImportRowParserTests
     [InlineData("last_name_required", "lastName", "APELLIDOS=")]
     [InlineData("document_type_invalid", "documentType", "TIPO DE DOCUMENTO=Libreta")]
     [InlineData("document_number_required", "documentNumber", "NÚMERO DE DOCUMENTO=")]
+    [InlineData("document_number_not_numeric", "documentNumber", "NÚMERO DE DOCUMENTO=ABC")]
     [InlineData("country_invalid", "country", "PAÍS=Alemania")]
     [InlineData("country_document_mismatch", "country", "PAÍS=Venezuela")]
     [InlineData("birth_date_invalid", "birthDate", "FECHA DE NACIMIENTO=mañana")]
@@ -196,6 +197,18 @@ public sealed class EmployeeImportRowParserTests
         Assert.Equal(ContributorSubtype.Standard, result.Row.Profile.ContributorSubtype);
         Assert.Equal("CO", result.Row.Profile.Country);
     }
+
+    [Fact]
+    public void ALetteredNumberForANonNumericTypeHasNoIssue()
+    {
+        var result = Parse(Row(("TIPO DE DOCUMENTO", "Pasaporte"), ("NÚMERO DE DOCUMENTO", "AB123"), ("PAÍS", "Venezuela")));
+
+        Assert.DoesNotContain(result.Errors, error => error.Field == "documentNumber");
+    }
+
+    [Fact]
+    public void TheNotNumericCodeIsTheHrOne() =>
+        Assert.Equal("hr.import.row.document_number_not_numeric", HrErrorCodes.ImportRow.DocumentNumberNotNumeric);
 
     [Fact]
     public void ARowCanCarrySeveralErrors()

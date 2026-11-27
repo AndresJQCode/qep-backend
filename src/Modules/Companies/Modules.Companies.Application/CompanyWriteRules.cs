@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Companies.Domain;
 using Modules.Tenancy.Application;
@@ -94,6 +95,14 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
             .WithMessage("The document type is not allowed for the country.")
             .When(command =>
                 CompanyDocumentTypes.TryParse(command.DocumentType, out _) && HasValidCountry(command));
+
+        // NIT, CC y CE solo llevan dígitos. Corre con un tipo reconocido y un número no vacío (que falte lo dice
+        // la regla de arriba); marca TaxId para que el 422 lleve el mapa errors con la clave del input.
+        RuleFor(command => command.TaxId)
+            .Must((command, taxId) => DocumentNumberFormat.IsValidFor(command.DocumentType, taxId))
+            .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+            .When(command => CompanyDocumentTypes.TryParse(command.DocumentType, out _)
+                && !string.IsNullOrWhiteSpace(command.TaxId));
 
         // El país decide cuál de los dos carriles de ciudad se exige, y el error tiene que caer en
         // el campo que el formulario tiene en pantalla (combobox o texto). Sin un país válido no

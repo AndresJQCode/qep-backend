@@ -24,6 +24,9 @@ public static class WholesaleErrorCodes
 
     public const string DistributorIdentificationTaken = "wholesale.distributor.identification_taken";
 
+    public const string DistributorIdentificationNumberNotNumeric =
+        "wholesale.distributor.identification_number_not_numeric";
+
     public const string DistributorInvalidTransition = "wholesale.distributor.invalid_transition";
 
     public const string DistributorAlreadyLinked = "wholesale.distributor.already_linked";

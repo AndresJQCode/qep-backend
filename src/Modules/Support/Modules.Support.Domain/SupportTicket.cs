@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BuildingBlocks.Domain.Identification;
 
 namespace Modules.Support.Domain;
 
@@ -327,6 +328,21 @@ public sealed class SupportTicket
         return ticket;
     }
 
+    // NIT, CC y CE solo llevan dígitos (con punto, guion y espacio). Se bloquea siempre y solo en el alta, nunca al
+    // leer del repositorio, así que un ticket ya radicado con letras se sigue leyendo. Sin tipo o sin número no hay nada
+    // que comprobar: que falte uno ya lo dicen las reglas de entrada.
+    private static void EnsureRequesterDocumentIsNumeric(TicketRequester? requester)
+    {
+        if (requester is { DocumentType: not null, DocumentNumber: not null }
+            && !string.IsNullOrWhiteSpace(requester.DocumentNumber)
+            && !DocumentNumberFormat.IsValidFor(requester.DocumentType, requester.DocumentNumber))
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.DocumentNumberNotNumeric,
+                DocumentNumberFormat.NumericTypesMessage);
+        }
+    }
+
     // El alta común de las tres entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
     // constructor vacío. Sin actor sólo entra el formulario público. Con anonymous no se exige solicitante con nombre.
     private static SupportTicket Start(
@@ -366,6 +382,8 @@ public sealed class SupportTicket
         {
             throw RequesterRequired();
         }
+
+        EnsureRequesterDocumentIsNumeric(requester);
 
         var ticket = new SupportTicket
         {

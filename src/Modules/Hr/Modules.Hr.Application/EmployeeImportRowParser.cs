@@ -70,7 +70,7 @@ public static partial class EmployeeImportRowParser
             var lastName = Name(HrImportColumns.LastName, "lastName", HrErrorCodes.ImportRow.LastNameRequired, "Escribe los apellidos.", 100, "Los apellidos");
             var documentType = Label<HrDocumentType>(
                 HrImportColumns.DocumentType, "documentType", HrErrorCodes.ImportRow.DocumentTypeInvalid, "Elige un tipo de documento de la lista.", required: true);
-            var documentNumber = DocumentNumber();
+            var documentNumber = DocumentNumber(documentType);
             var exempt = YesNo(HrImportColumns.ForeignPensionExempt, "foreignPensionExempt");
             var country = Country(documentType, exempt);
             var birthDate = BirthDate();
@@ -226,7 +226,7 @@ public static partial class EmployeeImportRowParser
             }
         }
 
-        private string? DocumentNumber()
+        private string? DocumentNumber(HrDocumentType? documentType)
         {
             var text = Cell(HrImportColumns.DocumentNumber);
             if (text is null)
@@ -238,6 +238,13 @@ public static partial class EmployeeImportRowParser
             if (text.Any(char.IsWhiteSpace))
             {
                 Error(HrErrorCodes.ImportRow.DocumentNumberRequired, "documentNumber", "El número de documento no puede tener espacios.");
+                return null;
+            }
+
+            // Sólo con el tipo ya válido: un tipo ilegible ya tiene su propio error.
+            if (documentType is { } type && !HrDocumentNumberRules.IsValidFor(type, text))
+            {
+                Error(HrErrorCodes.ImportRow.DocumentNumberNotNumeric, "documentNumber", HrDocumentNumberRules.NumericTypesMessage);
                 return null;
             }
 

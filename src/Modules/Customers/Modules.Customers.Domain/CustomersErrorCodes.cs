@@ -28,6 +28,9 @@ public static class CustomersErrorCodes
     /// <summary>El tipo de documento no está en la lista del país del cliente.</summary>
     public const string DocumentTypeNotAllowed = "customers.customer.document_type_not_allowed";
 
+    /// <summary>NIT, CC y CE solo admiten dígitos y separadores en el número de documento.</summary>
+    public const string IdentificationNumberNotNumeric = "customers.customer.identification_number_not_numeric";
+
     /// <summary>Spec 2026-10-26: el tenant exige el tipo de persona y el cliente no lo trae.</summary>
     public const string PersonTypeRequired = "customers.customer.person_type_required";
 

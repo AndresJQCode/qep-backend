@@ -49,9 +49,18 @@ public sealed record StoreRequestBilling
             throw new StoreDomainException(StoreErrorCodes.DocumentTypeNotAllowed, "El tipo de documento no es válido para el país.");
         }
 
+        var number = StoreText.Required(identificationNumber, IdentificationNumberMaxLength, "El documento");
+
+        // NIT, CC y CE solo llevan dígitos (con punto, guion y espacio). Vive solo en este constructor, no en el
+        // vacío que usa EF, así que un pedido ya guardado con letras se sigue leyendo.
+        if (!DocumentNumberFormat.IsValidFor(type, number))
+        {
+            throw new StoreDomainException(StoreErrorCodes.IdentificationNumberNotNumeric, DocumentNumberFormat.NumericTypesMessage);
+        }
+
         Name = StoreText.Required(name, NameMaxLength, "El nombre");
         IdentificationType = type;
-        IdentificationNumber = StoreText.Required(identificationNumber, IdentificationNumberMaxLength, "El documento");
+        IdentificationNumber = number;
         Phone = StoreText.Required(phone, 32, "El teléfono");
         PhoneE164 = StoreText.Required(phoneE164, 20, "El teléfono normalizado");
         Email = StoreText.Required(email, EmailMaxLength, "El correo");

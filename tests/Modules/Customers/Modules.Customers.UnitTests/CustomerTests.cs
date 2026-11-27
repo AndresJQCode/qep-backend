@@ -189,6 +189,29 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.identification_number_too_long", exception.Code);
     }
 
+    [Theory]
+    [InlineData(IdentificationType.Nit, "ACME SAS")]
+    [InlineData(IdentificationType.Cc, "JUAN PEREZ")]
+    [InlineData(IdentificationType.Ce, "123456A")]
+    public void CreateRejectsLettersInANumericDocumentType(IdentificationType type, string number)
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(identification: Identification(type, number)));
+
+        Assert.Equal("customers.customer.identification_number_not_numeric", exception.Code);
+        Assert.Contains("IdentificationNumber", exception.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void CreateAcceptsALetteredNumberForAPassport()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "AB123456"),
+            contact: CustomerDomainFixtures.Spanish());
+
+        Assert.Equal("AB123456", customer.IdentificationNumber);
+    }
+
     // El CUC lo emite el backend (ICucGenerator + CucFormatter) y llega ya formado al agregado;
     // el agregado solo comprueba que llegue. Un cliente sin CUC es un cliente que la grilla pinta
     // con una celda vacia y que nadie puede buscar — la caja de busqueda del listado busca por CUC.
@@ -607,6 +630,30 @@ public sealed class CustomerTests
 
         Assert.Null(customer.IdentificationType);
         Assert.Null(customer.IdentificationNumber);
+    }
+
+    // La regla bloquea siempre al escribir: un cliente que ya tenía un NIT con letras (guardado antes de la regla, y
+    // que se lee igual) no puede volver a guardarse con ese número sin cambios. Se siembra por reflexión porque Create
+    // ya lo rechaza, igual que una fila vieja que EF materializa sin pasar por el dominio.
+    [Fact]
+    public void UpdateRejectsAnUnchangedLegacyLetteredNumber()
+    {
+        var customer = Create();
+        typeof(Customer).GetProperty(nameof(Customer.IdentificationNumber))!.SetValue(customer, "ACME SAS");
+        Assert.Equal("ACME SAS", customer.IdentificationNumber);
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            customer.Name,
+            businessName: null,
+            identification: Identification(IdentificationType.Nit, "ACME SAS"),
+            null,
+            ValidContact(),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("customers.customer.identification_number_not_numeric", exception.Code);
+        Assert.Equal("ACME SAS", customer.IdentificationNumber);
     }
 
     [Fact]

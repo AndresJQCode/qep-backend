@@ -122,6 +122,25 @@ public sealed class SupportTicketTests
         Assert.Equal(SupportErrorCodes.RequesterRequired, nameless.Code);
     }
 
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void ANumericDocumentTypeWithLettersIsRejected(string type)
+    {
+        var exception = Assert.Throws<SupportDomainException>(
+            () => NewTicket(requester: Person with { DocumentType = type, DocumentNumber = "10203A4050" }));
+
+        Assert.Equal(SupportErrorCodes.DocumentNumberNotNumeric, exception.Code);
+        Assert.Equal("support.ticket.document_number_not_numeric", exception.Code);
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Equal(
+            "AB123456",
+            NewTicket(requester: Person with { DocumentType = "PASAPORTE", DocumentNumber = "AB123456" }).Requester!.DocumentNumber);
+
     // Fase 4a (plan G2): el alta manual anónima no tiene cliente ni foto y se responde por la página de consulta.
     [Fact]
     public void AManualAnonymousTicketHasNoCustomerNoRequesterAndRepliesByPortal()

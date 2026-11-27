@@ -190,6 +190,41 @@ public sealed class CustomerBillingProfileTests
         Assert.Contains("IdentificationType", error.FieldErrors.Keys);
     }
 
+    [Theory]
+    [InlineData("NIT", "ACME SAS")]
+    [InlineData("CC", "JUAN PEREZ")]
+    [InlineData("CE", "123456A")]
+    public void LettersInANumericDocumentTypeAreRejected(string type, string number)
+    {
+        var error = Assert.Throws<CustomersDomainException>(() => NewCustomer().EnsureBillingProfile(
+            Colombian() with { PersonType = null, IdentificationType = type, IdentificationNumber = number },
+            false,
+            Later));
+
+        Assert.Equal("customers.billing_profile.identification_number_not_numeric", error.Code);
+        Assert.Contains("IdentificationNumber", error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void ANitWithDotsAndHyphenIsAccepted()
+    {
+        var (profile, _) = NewCustomer().EnsureBillingProfile(
+            Colombian() with { IdentificationNumber = "900.123.456-7" }, false, Later);
+
+        Assert.Equal("900.123.456-7", profile.IdentificationNumber);
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAccepted()
+    {
+        var (profile, _) = NewCustomer().EnsureBillingProfile(
+            Colombian() with { PersonType = null, IdentificationType = "PASAPORTE", IdentificationNumber = "AB123456" },
+            false,
+            Later);
+
+        Assert.Equal("AB123456", profile.IdentificationNumber);
+    }
+
     [Fact]
     public void JuridicaWithCcInColombiaRequiresNit()
     {

@@ -35,6 +35,13 @@ public sealed class ExcelServiceContractsRowRules : AbstractValidator<ExcelServi
             .WithMessage(_ => $"The identification type must be one of {string.Join(", ", identificationTypes.SupportedWireValues.Order(StringComparer.Ordinal))}.")
             .When(row => !IsBlank(row.IdentificationType));
 
+        // NIT, CC y CE solo admiten dígitos y separadores. Con el tipo ya reconocido y el número escrito.
+        RuleFor(row => row.IdentificationNumber)
+            .Must((row, number) => BuildingBlocks.Domain.Identification.DocumentNumberFormat.IsValidFor(row.IdentificationType, number))
+            .WithErrorCode(ServiceContractsErrorCodes.ImportRowIdentificationNumberNotNumeric)
+            .WithMessage(BuildingBlocks.Domain.Identification.DocumentNumberFormat.NumericTypesMessage)
+            .When(row => !IsBlank(row.IdentificationType) && !IsBlank(row.IdentificationNumber));
+
         RuleFor(row => row.Phone)
             .Must((row, phone) => phones.ToE164(phone, ServiceContractsImportValues.CountryOf(row.Country)) is not null)
             .WithErrorCode(ServiceContractsErrorCodes.ImportRowPhoneInvalid)

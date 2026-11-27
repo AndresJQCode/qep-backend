@@ -29,6 +29,19 @@ public sealed class BuyerProfileValidatorTests
     [InlineData(" nif ", " es ")]
     public void AnAllowedForeignPairIsValid(string type, string country) => Assert.Empty(Errors(Abroad(type, country)));
 
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void ANumericTypeWithLettersFailsOnTheNumber(string type) =>
+        Assert.Equal(
+            ["Billing.IdentificationNumber"],
+            Errors(Billing() with { IdentificationType = type, IdentificationNumber = "12345A" }));
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Empty(Errors(Billing() with { IdentificationType = "PASAPORTE", IdentificationNumber = "AB123456" }));
+
     [Fact]
     public void AColombianCcIsValid() => Assert.Empty(Errors(Billing()));
 

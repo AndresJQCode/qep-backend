@@ -15,6 +15,33 @@ public sealed class BuyerProfileTests
             Assert.Throws<BuyerDomainException>(
                 () => BuyerProfile.Create(Guid.CreateVersion7(), Data("CC", "ES"), DateTimeOffset.UnixEpoch)).Code);
 
+    private static BuyerProfileData ColombianData(string type, string number) =>
+        new(new BuyerBillingData("Ana", type, number, "3001234567", "ana@correo.com", "Calle 1", "CO", null, null, "Bogotá"), null, true);
+
+    [Theory]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    public void CreateAndReplaceRejectLettersInANumericNumber(string type)
+    {
+        var create = Assert.Throws<BuyerDomainException>(
+            () => BuyerProfile.Create(Guid.CreateVersion7(), ColombianData(type, "12345A"), DateTimeOffset.UnixEpoch));
+        var profile = BuyerProfile.Create(Guid.CreateVersion7(), ColombianData(type, "123456"), DateTimeOffset.UnixEpoch);
+        var replace = Assert.Throws<BuyerDomainException>(
+            () => profile.Replace(ColombianData(type, "12345A"), DateTimeOffset.UnixEpoch.AddDays(1)));
+
+        Assert.Equal("store.buyer.identification_number_not_numeric", create.Code);
+        Assert.Equal("store.buyer.identification_number_not_numeric", replace.Code);
+        Assert.Equal("123456", profile.Data.Billing.IdentificationNumber);
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAccepted() =>
+        Assert.Equal(
+            "AB123456",
+            BuyerProfile.Create(Guid.CreateVersion7(), ColombianData("PASAPORTE", "AB123456"), DateTimeOffset.UnixEpoch)
+                .Data.Billing.IdentificationNumber);
+
     [Fact]
     public void CreateAcceptsATypeTheCountryAllows()
     {

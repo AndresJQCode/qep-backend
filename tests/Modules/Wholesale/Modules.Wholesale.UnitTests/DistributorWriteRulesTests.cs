@@ -24,6 +24,18 @@ public sealed class DistributorWriteRulesTests
         };
 
     [Fact]
+    public void ANitWithLettersIsRejectedOnTheNumber()
+    {
+        Assert.Equal(["IdentificationNumber"], Failed(Invite(identificationNumber: "9001234A5")));
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAccepted()
+    {
+        Assert.Empty(Failed(Invite(identificationType: "PASAPORTE", identificationNumber: "AB123456")));
+    }
+
+    [Fact]
     public void AColombianInvitationNeedsTheCityId()
     {
         Assert.Equal(["CityId"], Failed(Invite() with { CityId = null }));

@@ -101,6 +101,8 @@ public static class ServiceContractsErrorCodes
 
     public const string ImportRowIdentificationTypeInvalid = "billing.import.row.identification_type_invalid";
 
+    public const string ImportRowIdentificationNumberNotNumeric = "billing.import.row.identification_number_not_numeric";
+
     public const string ImportRowPhoneRequired = "billing.import.row.phone_required";
 
     public const string ImportRowPhoneInvalid = "billing.import.row.phone_invalid";

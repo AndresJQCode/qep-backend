@@ -21,6 +21,26 @@ public sealed class PosCustomerHandlersTests
         new(TenantId, "Laura Gómez", "CC", "1020304050", null);
 
     [Fact]
+    public void ANitWithLettersIsRejectedOnTheNumber()
+    {
+        var result = new CreatePosCustomerValidator().Validate(Valid() with
+        {
+            IdentificationType = "NIT",
+            IdentificationNumber = "ACME"
+        });
+
+        Assert.Contains(result.Errors, error => error.PropertyName == "IdentificationNumber");
+    }
+
+    [Fact]
+    public void APassportWithLettersIsAcceptedByTheValidator() =>
+        Assert.True(new CreatePosCustomerValidator().Validate(Valid() with
+        {
+            IdentificationType = "PASAPORTE",
+            IdentificationNumber = "AB123456"
+        }).IsValid);
+
+    [Fact]
     public async Task SearchNeedsThePermissionAndTheTenant()
     {
         var bed = new PosTestBed();

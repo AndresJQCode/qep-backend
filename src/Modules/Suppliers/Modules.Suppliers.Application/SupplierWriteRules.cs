@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Suppliers.Domain;
 using Modules.Tenancy.Application;
@@ -71,6 +72,14 @@ internal sealed class SupplierWriteRules : AbstractValidator<ISupplierWriteComma
             .WithMessage(_ =>
                 $"The identification type must be one of {string.Join(", ", IdentificationTypeParser.SupportedWireValues.Order(StringComparer.Ordinal))}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
+
+        // NIT, CC y CE solo llevan dígitos. Corre con un tipo reconocido y un número no vacío (que falte lo dice
+        // la regla de arriba); marca IdentificationNumber para que el 422 lleve el mapa errors con esa clave.
+        RuleFor(command => command.IdentificationNumber)
+            .Must((command, number) => DocumentNumberFormat.IsValidFor(command.IdentificationType, number))
+            .WithMessage(DocumentNumberFormat.NumericTypesMessage)
+            .When(command => IsSupportedIdentificationType(command.IdentificationType)
+                && !string.IsNullOrWhiteSpace(command.IdentificationNumber));
 
         // Dos RuleFor por la misma razón de siempre: el When() gobierna toda la cadena que lo
         // precede, y un NotEmpty() delante del Length quedaría apagado justo con el país vacío.

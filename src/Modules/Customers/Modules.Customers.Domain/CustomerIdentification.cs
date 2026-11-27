@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Customers.Domain;
 
 /// <summary>
@@ -38,10 +40,28 @@ public sealed record CustomerIdentification
         // Quitarlos aca haria que el numero guardado no coincida con el que el usuario tipea en
         // el buscador, y ese es el unico lugar donde vuelve a verlo.
         var trimmed = Number.Trim();
-        return trimmed.Length > NumberMaxLength
-            ? throw new CustomersDomainException(
+        if (trimmed.Length > NumberMaxLength)
+        {
+            throw new CustomersDomainException(
                 "customers.customer.identification_number_too_long",
-                $"The customer identification number cannot exceed {NumberMaxLength} characters.")
-            : this with { Number = trimmed };
+                $"The customer identification number cannot exceed {NumberMaxLength} characters.");
+        }
+
+        // NIT, CC y CE solo llevan dígitos (con punto, guion y espacio). Se bloquea siempre, también un
+        // número viejo que se reenvía sin cambios: esta comprobación vive solo en el alta y la edición,
+        // nunca al leer del repositorio, así que un cliente ya guardado con letras se sigue leyendo.
+        // Marca IdentificationNumber, el campo que la persona corrige en el formulario.
+        if (!DocumentNumberFormat.IsValidFor(Type.ToWireValue(), trimmed))
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.IdentificationNumberNotNumeric,
+                DocumentNumberFormat.NumericTypesMessage,
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    ["IdentificationNumber"] = [DocumentNumberFormat.NumericTypesMessage]
+                });
+        }
+
+        return this with { Number = trimmed };
     }
 }
