@@ -626,6 +626,13 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`5b88a12bd`, `--no-ff`, sin push) **mensaje de WhatsApp borrado por el contacto**
+  (`feature/whatsapp-revoke-deleted`, `12d8aaecd`). Meta manda el «eliminar para todos» como un mensaje aparte de tipo
+  `revoke`; la ingesta lo guarda como `Unsupported` con `details.type = "revoke"` y el hilo decía «Mensaje no compatible».
+  Ahora `unsupportedReason` = «Se eliminó este mensaje.», calculado al leer, así que vale también para las filas ya
+  guardadas (112 en la base local) sin migración; el frontend ya lo pinta. El original sigue visible sin tachar (no se
+  enlaza por `revoke.original_message_id`), y `type: "edit"` sigue sin texto. Pruebas: `.\scripts\test-feature.ps1` en
+  verde (ArchitectureTests 354/354, Messaging.UnitTests 2534/2534).
 - 2026-11-26 — Mergeado a `develop` (`ba090092e`) **el mapeo de EF de las cotizaciones de proyecto**
   (`fix/project-quotations-mapping`, `4d713df95`: Tarea 4 del plan de cotizaciones de proyecto; migración aditiva
   `AddProjectQuotations`, sin desplegar). Arregla el rojo de `develop` desde `ab3b73cba` (`No suitable constructor was
