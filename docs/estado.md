@@ -592,6 +592,13 @@ D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-27 — **Decisiones del owner** sobre las tarjetas de Siigo y del país de «Facturar a». (1) Tarjeta `OtqRAr9D`: aprueba
+  el 409 `siigo.connection.account_changed` con `mismatches: [{kind, id}]` en vez de `label`, y que una forma de pago
+  desactivada en la misma cuenta siga contando como diferencia. (2) Tarjeta `Mp4DWqN6`: el país de «Facturar a» deja de
+  asumirse como Colombia y pasa a ser obligatorio, en la pantalla y en el backend (422). La tienda, Shopify y la API externa no
+  fallan: el pedido entra sin país y queda por asignar. Lo ya guardado sin país no se migra: al editarlo hay que elegirlo, y la
+  conversión copia el vacío. Mientras falte el país, sólo se bloquea la factura en Siigo (faltante en la tanda). **Sin construir:**
+  tarjetas `PGAmC4DJ` (backend, «Por hacer») y `QolgF4Ma` (frontend). Hasta entonces rige lo mergeado (vacío = Colombia).
 El registro de merges, decisiones y despliegues vive aparte, un archivo por mes: [`estado/registro-<AAAA-MM>.md`](estado/).
 La entrada nueva va arriba del archivo del mes en curso; si el archivo no existe, se crea con el mismo encabezado que los demás.
 Este archivo sólo dice cómo están las cosas hoy.
