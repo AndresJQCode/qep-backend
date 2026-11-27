@@ -356,6 +356,29 @@ public sealed class TaskOperatorApiTests
         Assert.Equal(first.LeaseToken, resumed.LeaseToken);
     }
 
+    // Soltar tras el barrido no se reanuda: sólo una confirmación trae un hecho físico. Responde 409 y la app puede retomar con claim.
+    [Fact]
+    public async Task AnUnclaimAfterTheSweepIs409Resumable()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var first = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        await ExecuteAsync(database, ExpireLeaseSql, ("id", first.Id));
+        var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
+        await sweeper.RunOnceAsync(DateTimeOffset.UtcNow, Ct);
+
+        var response = await ActionRawAsync(
+            floor.Client, first.Id, "unclaim", new { leaseToken = first.LeaseToken, reason = "ShiftEnd" });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("wms.task.lease_lost", await CodeOfAsync(response));
+        Assert.True(await ResumableOfAsync(response));
+        Assert.Equal("Ready", (await GetAsync(floor.Setup.Manager, first.Id)).Status);
+    }
+
     [Fact]
     public async Task ALateConfirmationResumesTheTask()
     {

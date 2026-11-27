@@ -31,6 +31,7 @@ public sealed class TaskTenantIsolationApiTests
             (HttpMethod.Get, $"{url}/summary?warehouseId={w}", null),
             (HttpMethod.Get, $"{url}/assignees?warehouseId={w}&type=Move", null),
             (HttpMethod.Get, $"{url}/{task.Id}", null),
+            (HttpMethod.Post, url, Body(s, [Line(s.VariantId, s.BinA, task.Lines[0].ToLocationId!.Value)])),
             (HttpMethod.Get, $"{url}/mine?warehouseId={w}", null),
             (HttpMethod.Post, $"{url}/{task.Id}/publish", new { version = task.Version }),
             (HttpMethod.Post, $"{url}/{task.Id}/hold", new { version = task.Version }),

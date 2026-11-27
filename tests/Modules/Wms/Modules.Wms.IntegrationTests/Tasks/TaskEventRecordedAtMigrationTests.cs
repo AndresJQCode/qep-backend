@@ -36,10 +36,17 @@ public sealed class TaskEventRecordedAtMigrationTests
         Assert.True(await ScalarAsync<long>(database, "SELECT count(*) FROM wms.task_events WHERE task_id = @id", ("id", task.Id)) > 0);
         Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.task_events WHERE recorded_at <> occurred_at"));
         // Un pod viejo no conoce la columna: inserta sin ella y cae en el default.
+        var oldPodEventId = Guid.CreateVersion7();
         await ExecuteAsync(
             database,
             "INSERT INTO wms.task_events (id, tenant_id, task_id, kind, occurred_at) VALUES (@id, @tenant, @task, 'PriorityChanged', now())",
-            ("id", Guid.CreateVersion7()), ("tenant", s.TenantId), ("task", task.Id));
-        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.task_events WHERE recorded_at IS NULL"));
+            ("id", oldPodEventId), ("tenant", s.TenantId), ("task", task.Id));
+        // El default es la hora de la base: la columna es NOT NULL, así que no basta con que no sea nula.
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(
+                database,
+                "SELECT count(*) FROM wms.task_events WHERE id = @id AND abs(extract(epoch FROM (recorded_at - now()))) < 60",
+                ("id", oldPodEventId)));
     }
 }
