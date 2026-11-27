@@ -1,608 +1,1017 @@
-# WMS-T2 · Novedades, faltante y conteo de verificación — backend · Implementation Plan
+# WMS-T2 · Incidents, short lines and verification counts — backend · Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
-> superpowers:executing-plans. **Las reglas de `CLAUDE.md` de la carpeta `qep` mandan sobre el skill:** tres bloques, un implementador
-> por bloque, una revisión por bloque y la revisión fuerte una sola vez al final. Cada tarea conserva su commit. Steps use checkbox
-> (`- [ ]`) syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans (or subagent-driven-development). **The rules in the
+> `qep` workspace `CLAUDE.md` override the skill:** exactly **three blocks, one implementer per block, run one after the other**
+> (Block B starts only after Block A is committed, Block C after Block B). One review per block, and the strong review of the
+> whole branch once at the end. Every task keeps its own commit. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** La novedad unificada (`Incident`, spec §8) con su catálogo cerrado, su historia y su evidencia; el faltante declarado en una
-línea de tarea (`short`, línea `Short`); el tipo de tarea `Count` (conteo de verificación a ciegas) que se genera en la misma
-transacción que la novedad y que, si encuentra diferencia, propone un `Adjustment` con motivo `CountVariance`; y la novedad
-`SyncConflict` que queda registrada cuando una confirmación llega con el lease perdido, aunque la confirmación se rechace.
+**Goal:** The unified incident (`Incident`, spec §8) with its closed catalog, history and evidence; the short declared on a task
+line (`short`, line `Short`); the `Count` task type (blind verification count) generated in the same transaction as the incident
+that asks for it and that, when it finds a difference, proposes an `Adjustment` with reason `CountVariance`; and the `SyncConflict`
+incident recorded when a line action arrives with a lost lease, even though the action itself is rejected. Before any of that, the
+operator line actions get one runner with one «task closed» hook (asked by the T1 review).
 
-**Architecture:** `Incident` vive en el área `Control` (junto a `Adjustment`): depende sólo de `Inventory` y `Warehousing` y conoce las
-tareas por `Guid`. Las tareas no conocen las novedades: la coordinación (crear la novedad, generar el `Count`, proponer el ajuste) vive
-en `Application`, siempre en la transacción del hecho que la origina (spec §6.4, §8.4 regla 1). El conteo no escribe al ledger: el
-movimiento lo hace el ajuste aprobado y contabilizado por el camino que ya existe (`PostAdjustmentHandler`).
+**Architecture:** `Incident` lives in the domain area `Control` (next to `Adjustment`): it depends only on `Inventory` and
+`Warehousing` and knows tasks by `Guid`, so `WmsLayerTests` does not change. Tasks do not know incidents: the coordination (create
+the incident, generate the `Count`, react when a `Count` closes, propose the adjustment) lives in `Application`, always in the
+transaction of the fact that originates it (spec §6.4, §8.4 rule 1). The count never writes to the ledger: the movement is made by
+the approved adjustment through the existing `PostAdjustmentHandler`. Every operator line action (`confirm`, `short`, `count`) runs
+through `OperatorLineRunner`; every path that can close a task (that runner and `SupervisorTaskRunner`) calls the same
+`TaskClosedNotifier`.
 
-**Tech Stack:** el de T1 (.NET 10, EF Core 10 + Npgsql, FluentValidation, xUnit v3, Testcontainers `postgres:18-alpine`,
-`WebApplicationFactory<Program>`).
+**Tech Stack:** .NET 10, minimal APIs, EF Core 10 + Npgsql (PostgreSQL 18), FluentValidation, xUnit v3, Testcontainers.PostgreSql.
 
 **Spec:** [`docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md`](../specs/2026-11-26-wms-tareas-y-operaciones-design.md)
-§5 (principio 6), §6.2 (`Count`), §6.3 (`Short` en el cierre), §6.4 (fila «Novedad»), §6.7 (`SYNC_CONFLICT`), §6.10 (novedades en el
-tablero), §6.12 (`LineShort`), §7.9 (faltante de un `Move`), §8 completo. Las decisiones nuevas de este plan son DA-38 a DA-51 de §13,
-**por confirmar**: si el owner cambia alguna antes de empezar, gana el owner.
+§6.1–§6.12 (with the T1 review changes of §13.1), §7.9, §8, §12, §13 (DA-38 to DA-51, **pending the owner**: if the owner changes
+one before a block starts, the owner wins). **Previous plans:** [`2026-11-26-wms-t1-motor-de-tareas.md`](2026-11-26-wms-t1-motor-de-tareas.md)
+and [`2026-11-26-wms-t1-correcciones-revision.md`](2026-11-26-wms-t1-correcciones-revision.md) (what T1 looks like after its review).
 
-**Fuera de alcance:** tipos de novedad de recepción, putaway, picking, empaque y despacho (entran con su corte: el enum crece como
-`WarehouseTaskType`); las resoluciones que mueven a cuarentena, devuelven o dan de baja (`ReturnToSupplier`, `WriteOff`, `Relocate`,
-`Count`, `Adjust`); `TASK_ABANDONED` y `NeedsRecovery` (T6); conteo cíclico y `Count` manual del supervisor; comentarios sobre una
-novedad; frontend (W2) y app (A3); `docs/estado.md` (se toca en `develop` al mergear).
-
----
-
-## Antes de empezar
-
-- Worktree: `C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\wms-tasks`, rama
-  `feature/wms-tasks` (T1 ya está ahí, desde `e21f40b46`). Si el owner pide rama aparte, `feature/wms-t2` desde la punta de
-  `feature/wms-tasks`. `git branch --show-current` justo antes de cada commit; si dice `main` o `develop`, frena.
-- **PowerShell:** sin `&&` (`A; if ($?) { B }`), `$env:VAR = "valor"` en línea aparte. `Set-Location` al worktree al empezar cada script.
-- **`Api.exe` detenido** antes de `dotnet build`/`test`/`ef` (no detengas uno que no lanzaste: avisa).
-- **Una sola corrida de integración a la vez en la máquina:** `Get-Process testhost, dotnet -ErrorAction SilentlyContinue` antes de
-  lanzar una; si hay otra, espera. Las pruebas corren **en primer plano**.
-- Integración: Docker arriba y `$env:Seed__Enabled = "false"`. Mientras se itera, `--filter "FullyQualifiedName~<Prueba>"`; la clase
-  completa una vez al final del bloque. **El RED de un fallo de compilación no levanta contenedores:** la evidencia es la salida del
-  build.
-- **Deuda de T1 que se paga primero (una vez, antes de la tarea 1):** el bloque B y el C de T1 no corrieron integración (ver
-  «Desviaciones» del plan de T1). Corre `--filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Tasks"` e
-  `InventoryLedgerPostingTests`. Si algo falla, frena y repórtalo: T2 se apoya en esa confirmación.
-- Migración: `dotnet ef migrations add AddIncidents --project src/Modules/Wms/Modules.Wms.Infrastructure --context WmsDbContext -o Persistence/Migrations`.
-- **Nunca reescribas un `.cs` con `Set-Content`/`Out-File`** (rompe tildes, deja BOM): usa la herramienta de edición.
-- Commits: conventional commits en inglés, **sin `Co-Authored-By` ni atribución de IA**, aunque el harness la sugiera.
-- Comentarios y textos para personas en español con tuteo; identificadores en inglés.
-- Abre `.claude/rules/wms.md` y `.claude/rules/sql-entre-modulos.md` antes de la tarea 6 (tocas `CatalogVariantUsageChecker`).
-
-## Piezas existentes que este plan usa (verificadas en `feature/wms-tasks` `e21f40b46`)
-
-| Pieza | Dónde | Cómo se usa |
-| --- | --- | --- |
-| `WarehouseTask` (`CreateMove`, `ConfirmLine(…, occurredAt, memberIsBusy)`, `CheckLease`, `CloseIfFinished`, `Record`, `EnsureStatus`) | `Modules.Wms.Domain/Tasks/WarehouseTask.cs` | `ShortLine`, `CreateCount`, `RecordCount` siguen el molde de `ConfirmLine` |
-| `WarehouseTaskLine` (`Create`, `Confirm`, `Cancel`, `Remaining`) | `Modules.Wms.Domain/Tasks/WarehouseTaskLine.cs` | `CreateCount`, `MarkShort`, `RecordCount` |
-| `TaskTypePolicy` (`DefaultPriority`, `LeaseDuration`, `AllowsDestinationOverride`, `MovementReasonOf`, `SkipCooldown`) | `Modules.Wms.Domain/Tasks/TaskTypePolicy.cs` | Brazo `Count` en cada método |
-| `TaskTypePermissions.For`/`AllowedFor` | `Modules.Wms.Application/Tasks/TaskTypePermissions.cs` | `Count` → `WmsPermissions.CountPerform` |
-| `TaskEventKind`, `TaskLineStatus`, `TaskSourceType`, `WarehouseTaskType` (enums por nombre, en orden causal) | `Modules.Wms.Domain/Tasks/` | `LineShort`, `Short`, `Incident`, `Count` |
-| `ConfirmTaskLineHandler` (lock del operario → `tasks.LockAsync` → `GetAsync` → `guard.EnsureCanPerformAsync` → `OperatorTaskGuard.EnsureLease` → validar → `ConfirmLine` → una llamada al ledger → recibo → `SaveChangesAsync`) | `Modules.Wms.Application/Tasks/ConfirmTaskLine.cs` | Molde de `ShortTaskLineHandler` y `CountTaskLineHandler`; punto donde se registra `SyncConflict` |
-| `OperatorTaskGuard` (`EnsureCanPerformAsync`, `EnsureLease`, `LeaseLost()`), `TaskMemberLocks.For`, `TaskDeviceRules.MustBeADeviceId` | `Modules.Wms.Application/Tasks/OperatorTaskGuard.cs` | Mismo guard; `LeaseLost` pasa a `internal` para el handler que registra el conflicto |
-| `IdempotencyKeyFilter` (sin recibo, relanza el error del handler) y `IdempotencyScope.Key` | `Modules.Wms.Api/IdempotencyKeyFilter.cs`, `Modules.Wms.Application/Inventory/IdempotencyScope.cs` | La clave IK de la confirmación es la `operation_key` de la novedad; `resolve` es SK con `UseServerIdempotencyKey("incident", "resolve")` |
-| `IWmsUnitOfWork.SaveChangesAsync` (con transacción abierta, además la confirma) | `Modules.Wms.Application/WmsPorts.cs`, `Infrastructure/Persistence/WmsUnitOfWork.cs` | Confirmar la novedad `SyncConflict` antes de lanzar el 409 |
-| `Adjustment.Propose`/`Approve`/`Reject`/`MarkPosted`, `AdjustmentLine.Create`, `AdjustmentReason.CountVariance`, `IAdjustmentRepository.NextNumberAsync` | `Modules.Wms.Domain/Control/`, `Modules.Wms.Application/Control/IAdjustmentRepository.cs` | El conteo con diferencia propone el ajuste |
-| `ApproveAdjustmentHandler`, `PostAdjustmentHandler` (`MarkPosted`), `RejectAdjustmentHandler` | `Modules.Wms.Application/Control/` | Separación de funciones y cierre de `CountVariance` |
-| `InvalidTransitionException` (`wms.document.invalid_transition`, `{ from, action }`) | `Modules.Wms.Domain/Control/InvalidTransitionException.cs` | Transiciones de `Incident` (mismo área, se reutiliza) |
-| `IStockReadQueries` (SQL crudo sobre saldos) | `Modules.Wms.Application/Inventory/IStockReadQueries.cs`, `Infrastructure/Persistence/StockReadQueries.cs` | Saldo exacto de una clave al contar |
-| `IVariantProfileRepository.FindAsync` (`Tracking`: `None`/`Lot`/`Serial`) | `WmsPorts.cs`, `Domain/Warehousing/VariantLogisticsProfile.cs` | Lote obligatorio al contar; serie sin `Count` |
-| `IWarehouseTaskRepository` (`NextNumberAsync`, `LockNextCandidateAsync` con el filtro de DA-33, `CountOpenByTypeAsync`) | `Modules.Wms.Application/Tasks/IWarehouseTaskRepository.cs`, `Infrastructure/Persistence/WarehouseTaskRepository.cs` | Numerar el `Count`, excluir a quien reportó, `FindOpenCountAsync` |
-| `GetTaskBoardHandler`, `TaskBoardDto` | `Modules.Wms.Application/Tasks/GetTaskBoard.cs`, `TaskDtos.cs` | `openIncidents` |
-| `WarehouseTaskDtoComposer`, `TaskLineDto` | `Modules.Wms.Application/Tasks/` | `quantityCounted`; el `Count` nunca muestra lo esperado |
-| `CatalogVariantUsageChecker` (ya cuenta líneas `Open` de tareas `Planned/Ready/Assigned/InProgress`) | `src/Bootstrapper/CatalogVariantUsageChecker.cs`, `tests/Bootstrapper/Bootstrapper.UnitTests/CatalogVariantUsageCheckerTests.cs`, `StockProbeTests` | Suma novedades abiertas con variante |
-| `WmsUserReferenceProbe` (cuenta membresías en tareas) | `Modules.Wms.Infrastructure/Persistence/WmsUserReferenceProbe.cs` | Suma `incidents.reported_by`, `resolved_by`, `incident_events.member_id` |
-| `QuotationFileLookup.FindManyAsync` (archivos por id con filtro de tenant y tipo de dueño) | `src/Bootstrapper/QuotationFileLookup.cs` | Molde de `WmsEvidenceLookup` sobre `FileOwnerType.WmsEvidence` |
-| `WmsPersistenceTests.TheMigrationCreatesTheEightTablesWithTheirUniqueIndexes` (excluye las tablas de tareas) | `tests/Modules/Wms/Modules.Wms.IntegrationTests/WmsPersistenceTests.cs` | Excluir también las de novedades |
-| `TaskWorld*` (dobles en memoria), `TaskApiSupport` (`SeedOperatorAsync`, `CreateAsync`, `ActionRawAsync`), `TaskTestSupport` (`NewMove`, `SaveAsync`, `ReloadAsync`), `WmsLedgerSeeding.ArrangeAsync`, `StockAsync`, `OnHandAsync` | `tests/Modules/Wms/…/Tasks/`, `WmsApiHarness*.cs` | Arranque de las pruebas |
-
-## Global Constraints
-
-- **La novedad se crea en la misma transacción que el hecho que la origina**, con la misma clave de idempotencia (spec §8.4 regla 1). El
-  `Count` que genera, también. Si algo no se guarda, no se guarda nada — **salvo `SyncConflict`**, que existe justamente porque el hecho
-  se rechaza (DA-48).
-- **El faltante nunca se ajusta en el piso** (DA-18): `short` mueve sólo lo encontrado; la diferencia la propone el conteo como
-  `Adjustment` y la aplica quien tenga `wms.adjustment.approve`.
-- **Orden de bloqueos** (extiende el de T1): advisory del operario (`task-member:{id}`) → fila de la tarea (`FOR UPDATE`) → advisory de
-  la clave contada (`count-key:{tenant}:{location}:{variant}`) → numeraciones (`incident-seq:`, `task-seq:`, la de ajustes) → saldos
-  (dentro del ledger). Ningún camino toma una numeración y después una tarea.
-- **Un `Count` es a ciegas:** ningún DTO que reciba el operario lleva lo esperado. La línea de un `Count` tiene `quantityPlanned = 0` y
-  lo esperado se calcula en el servidor al contar (DA-39).
-- Acciones del supervisor sobre una novedad: `version` (412) y auditoría `wms.incident.*`. Las del operario: `incident_events`, sin
-  auditoría (DA-50, mismo criterio que DA-27).
-- 403 siempre para otro tenant; `wms.incident.not_found` (404) sólo dentro del tenant.
-- Enums por nombre en la API y como texto en la base; cantidades `numeric(18,6)` en unidad base.
-
-## Decisiones del plan (donde el spec dejaba margen)
-
-Las que cambian contrato o comportamiento están en spec §13 como DA-38 a DA-51. Las de implementación:
-
-1. **`Incident` en `Control`**, no un área nueva: así `WmsLayerTests` no cambia (ningún área nueva, ninguna referencia nueva entre áreas).
-   Las transiciones reutilizan `InvalidTransitionException` (`wms.document.invalid_transition`), como `Adjustment`.
-2. **El catálogo es código:** `IncidentCatalog` (dominio, estático) dice por tipo qué resoluciones admite, si genera `Count`, y en qué
-   paso se puede declarar (`short` de un `Move`, `POST /incidents`, sólo sistema).
-3. **Lo que un conteo verifica se enlaza en la novedad** (`verification_task_id`), no en la tarea: la tarea sólo guarda
-   `source_type = Incident` y `source_id` de la primera novedad que la originó.
-4. **El 409 de `SyncConflict`:** el handler agrega la novedad, guarda (confirma la transacción, que no tenía otro cambio) y después lanza
-  `wms.task.lease_lost`. El filtro IK no encuentra recibo y relanza el 409. El reintento con la misma clave encuentra la novedad por
-  `operation_key` bajo el lock del operario y no la duplica.
-5. **Numeración** `NOV-yyyyMMdd-NNNN` con `LockAsync("incident-seq:{tenantId}")` y `count(*) … LIKE`, copia de `ADJ-`/`TSK-`.
-
-## Mapa de archivos
-
-| Archivo | Bloque | Qué |
-| --- | --- | --- |
-| `src/Modules/Wms/Modules.Wms.Domain/Tasks/*.cs` | A | `Count`, `Short`, `LineShort`, `Incident` (fuente), `ShortLine`, `CreateCount`, `RecordCount` |
-| `src/Modules/Wms/Modules.Wms.Domain/Control/Incident*.cs` | A | `Incident`, `IncidentEvidence`, `IncidentEvent`, enums, `IncidentCatalog` |
-| `src/Modules/Wms/Modules.Wms.Domain/WmsErrorCodes.cs` | A | `wms.incident.*` |
-| `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskTypePermissions.cs` | A | `Count` → `CountPerform` |
-| `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/*.cs`, `Control/IncidentTests.cs` | A | Dominio |
-| `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/IncidentModel.cs`, `IncidentRepository.cs`, `WarehouseTaskModel.cs`, `WarehouseTaskRepository.cs`, `WmsDbContext.cs`, `WmsUnitOfWork.cs`, `StockReadQueries.cs`, `WmsUserReferenceProbe.cs` | B | Persistencia |
-| `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/Migrations/<ts>_AddIncidents*.cs` | B | Migración generada |
-| `src/Modules/Wms/Modules.Wms.Application/Control/IIncidentRepository.cs`, `Inventory/IStockReadQueries.cs`, `Tasks/IWarehouseTaskRepository.cs` | B | Puertos |
-| `src/Bootstrapper/CatalogVariantUsageChecker.cs`, `tests/Bootstrapper/Bootstrapper.UnitTests/CatalogVariantUsageCheckerTests.cs` | B | Uso de variante |
-| `tests/Modules/Wms/Modules.Wms.IntegrationTests/Control/IncidentPersistenceTests.cs`, `Tasks/TaskCandidateQueryTests.cs`, `WmsPersistenceTests.cs`, `StockProbeTests.cs` | B | Integración |
-| `src/Modules/Wms/Modules.Wms.Application/Control/Incident*.cs`, `Tasks/ShortTaskLine.cs`, `Tasks/CountTaskLine.cs`, `Tasks/TaskIncidents.cs`, `Tasks/ConfirmTaskLine.cs`, `Tasks/GetTaskBoard.cs`, `Control/ApproveAdjustment.cs`, `PostAdjustment.cs`, `RejectAdjustment.cs`, `WmsPorts.cs`, `WmsSupport.cs` | C | Casos de uso |
-| `src/Modules/Wms/Modules.Wms.Api/IncidentEndpoints.cs`, `TaskEndpoints.cs`, `WmsEndpoints.cs` | C | Rutas |
-| `src/Bootstrapper/WmsEvidenceLookup.cs`, `QepServiceCollectionExtensions.cs` | C | Adaptador y registros |
-| `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskShortApiTests.cs`, `Tasks/TaskCountApiTests.cs`, `Tasks/TaskSyncConflictApiTests.cs`, `Control/IncidentApiTests.cs`, `Control/CountVarianceAdjustmentTests.cs` | C | Integración |
-| `README.md` (§ Módulo Wms), `.claude/rules/wms.md` | C | Contrato y reglas |
+**Out of scope:** receiving, putaway, picking, packing and dispatch incident types (they come with their cut: the enum grows like
+`WarehouseTaskType`); resolutions that quarantine, return or write off (`ReturnToSupplier`, `WriteOff`, `Relocate`, `Count`,
+`Adjust`); `TASK_ABANDONED` and `NeedsRecovery` (T6); cycle counting and manual `Count` by the supervisor; comments on an incident;
+frontend (W2) and app (A3); `docs/estado.md` (updated on `develop` at merge time).
 
 ---
 
-# Bloque A — Dominio (tareas 1 a 4, un implementador)
+## Owner authorization required before merge
 
-### Task 1: Vocabulario de T2 en el motor y política del tipo `Count`
+`CLAUDE.md` (2026-11-25): a contract or architecture change needs the owner's explicit authorization **before the merge**, each one
+on its own (approving one does not approve the others; a green test is not an authorization). This branch carries:
 
-**Files:**
-- Modify: `src/Modules/Wms/Modules.Wms.Domain/Tasks/WarehouseTaskType.cs` (+ `Count`), `TaskLineStatus.cs` (+ `Short`, entre `Done` y
-  `Cancelled`), `TaskEventKind.cs` (+ `LineShort` después de `LineConfirmed`: el enum va en orden causal y la ficha ordena por él),
-  `TaskSourceType.cs` (+ `Incident`)
-- Modify: `src/Modules/Wms/Modules.Wms.Domain/Tasks/TaskTypePolicy.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskTypePermissions.cs`
-- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/TaskTypePolicyTests.cs` (nuevo), `TaskRoutesTests.cs` o un `TaskTypePermissionsTests.cs` nuevo
+| # | Change | Kind | Where |
+| --- | --- | --- | --- |
+| 1 | `POST /tasks/{id}/lines/{lineId}/short` (IK, `wms.document.read` + type permission) | New route | Task A4, B2 (adds `photoFileIds`) |
+| 2 | `POST /tasks/{id}/lines/{lineId}/count` (IK, `wms.document.read` + `wms.count.perform`) — DA-40 | New route | Task C4 |
+| 3 | `POST /incidents` (IK), `GET /incidents`, `GET /incidents/{id}`, `POST /incidents/{id}/review`, `POST /incidents/{id}/resolve` (SK), `POST /incidents/{id}/reject` | New routes | Tasks B3, B4 |
+| 4 | Error codes `wms.incident.not_found` (404), `wms.incident.self_resolution`, `wms.incident.resolution_not_allowed`, `wms.incident.type_not_allowed`, `wms.incident.evidence_invalid`, `wms.incident.invalid` (422) | New codes | A3, B1, B2 |
+| 5 | Existing codes in new places: `wms.task.invalid_transition` (`confirm`/`short` on a `Count`, `count` on a `Move`), `wms.serial.required` and `wms.lot.required` at `count`, `wms.lot.not_found` at `short`/`POST /incidents`, `wms.task.lease_lost` from `short`/`count` (with `resumable`) | Contract | A4, C4 |
+| 6 | DTO fields: `TaskLineDto.quantityCounted`, `TaskBoardDto.openIncidents`; new enum names on the wire: type `Count`, line status `Short`, source type `Incident`, event kind `LineShort` | Contract (additive) | A2, B3, C1 |
+| 7 | `CK_task_lines_status` gains `Short` (A); `CK_tasks_type` gains `Count`, `CK_task_lines_quantity` relaxed to `quantity_planned >= 0` plus `quantity_counted`, new column `task_lines.quantity_counted` (C); new tables `incidents`, `incident_evidence`, `incident_events` with their CHECKs (A). `CK_tasks_status` **does not change** (T2 adds no task status) | Schema (expand-only; see «Rollout») | A3, C1 |
+| 8 | Permissions: **none new** (`wms.count.perform` and `wms.discrepancy.resolve` already exist with shape, policy and `admin`). `wms.discrepancy.resolve` is reused for incidents (spec §8.5) | — | — |
+| 9 | Architecture tests: **none expected to change** (`WmsLayerTests`, `MultiReplicaInventory`, `CompositionRootTests`). If one asks for a change, stop and report it as a deviation for the owner | Architecture | every block |
+| 10 | DA-38 to DA-51 and every «agent decision» at the end of this plan | Behavior | — |
 
-- [ ] **RED.** `TaskTypePolicyTests`, una prueba por regla de §6.2:
+### Rollout (expand/contract) — decided in this plan, pending the owner
 
-  ```csharp
-  [Fact]
-  public void ACountLastsThirtyMinutesHasPriorityThreeAndNoDestinationOverride()
-  {
-      Assert.Equal(TimeSpan.FromMinutes(30), TaskTypePolicy.LeaseDuration(WarehouseTaskType.Count));
-      Assert.Equal(3, TaskTypePolicy.DefaultPriority(WarehouseTaskType.Count));
-      Assert.False(TaskTypePolicy.AllowsDestinationOverride(WarehouseTaskType.Count));
-      Assert.True(TaskTypePolicy.ConfirmsByCount(WarehouseTaskType.Count));
-      Assert.False(TaskTypePolicy.ConfirmsByCount(WarehouseTaskType.Move));
-  }
+- Both migrations are **expand-only** (new tables, a nullable column, CHECKs that only admit more values). A pod with today's code
+  (T1) keeps writing valid rows against the new schema.
+- **The reverse is not safe and cannot be fixed retroactively:** T1 code materializes `type`, `status`, `source_type`, `line_status`
+  and `kind` with `HasConversion<string>()`, so a T1 pod that loads a `Count` task, a `Short` line or a `LineShort` event throws
+  (the T1 sweeper would fail its whole batch every pass; the T1 board would answer 500 while an open `Count` exists).
+- **Deploy order:** deploy T2 as one release (migrations run under the startup lock before the new pod serves). With today's
+  `replicas: 1`, `RollingUpdate`, `maxSurge: 1`, `maxUnavailable: 0`, the old pod overlaps the new one only until the new one is
+  Ready; `Count`/`Short` rows exist only after an operator uses `short` on the new pod, and a `Count` lease lasts 30 minutes, so
+  the old sweeper cannot meet one. The residual risk is a few seconds of 500 on the old pod's board.
+- **No rollback to pre-T2 code once a `Count` task or a `Short` line exists:** forward-fix only. The README section says so.
+- **From T2 on, the sweeper and the board tolerate values they do not know** (Task C6): `LockExpiredAsync`, the board counts and
+  the board lists filter by the enum names this build knows, so the T3+ rollouts do not have this problem.
 
-  // Un conteo nunca mueve stock: el movimiento lo hace el ajuste que propone.
-  [Fact]
-  public void ACountHasNoMovementReason() =>
-      Assert.Throws<InvalidOperationException>(() => TaskTypePolicy.MovementReasonOf(WarehouseTaskType.Count));
+---
 
-  // Un tipo nuevo entra en cada método: esta prueba se pone en rojo si alguno no lo cubre.
-  [Theory]
-  [MemberData(nameof(AllTypes))]
-  public void EveryTypeIsCoveredByEveryPolicy(WarehouseTaskType type) { /* llama los cuatro métodos y ConfirmsByCount; MovementReasonOf sólo si !ConfirmsByCount */ }
+## Before starting
+
+- **Worktree (work only here):**
+  `C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\wms-t2`, branch
+  `feature/wms-t2-incidents` (from `develop` `71d7787d5`, which already has T1 and its review fixes, merge `809b028ed`). Every script
+  starts with `Set-Location "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\wms-t2"`.
+  Never write to the main checkout (`qep-backend`) or another repo.
+- **PowerShell only:** no `&&` (`A; if ($?) { B }`), `$env:VAR = "value"` on its own line, `Get-Content` instead of `cat`.
+- **Never rewrite a `.cs` with `Set-Content`/`Out-File`** (breaks accents, adds a BOM): use the edit tool.
+- **Build lock:** an `Api.exe` (or a debugger) that you did not launch is not yours: do not stop it, tell the owner. Build only the
+  test project, or add `--artifacts-path .\artifacts` (inside the worktree, git-ignored) to every `dotnet build`/`dotnet test`.
+- **Integration runs:** Docker up, and in the same session:
+
+  ```powershell
+  $env:Seed__Enabled = "false"
+  Get-Process testhost, dotnet -ErrorAction SilentlyContinue
   ```
 
-  y en permisos: `TaskTypePermissions.For(WarehouseTaskType.Count) == WmsPermissions.CountPerform`; `AllowedFor` con un contexto que
-  sólo tiene `CountPerform` devuelve `[Count]`.
-- [ ] `dotnet build tests/Modules/Wms/Modules.Wms.UnitTests`: falla (`Count`, `ConfirmsByCount` no existen). Guarda la salida.
-- [ ] **GREEN.** Agrega los valores de enum (comentario «se persiste por nombre; no se renombra» ya está en cada archivo). En
-  `TaskTypePolicy`: `Count => 3`, `Count => TimeSpan.FromMinutes(30)`, `Count => false`, `Count => throw new InvalidOperationException("A count never moves stock.")`,
-  y `public static bool ConfirmsByCount(WarehouseTaskType type) => type switch { Move => false, Count => true, _ => throw … }`. En
-  `TaskTypePermissions.For`: `WarehouseTaskType.Count => WmsPermissions.CountPerform`.
-- [ ] `dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~TaskTypePolicyTests|FullyQualifiedName~TaskTypePermissions"`: verde.
-- [ ] Commit: `feat(wms): add the count task type and the short line vocabulary`
+  If a `testhost` or a `dotnet test` from another session is running, **wait** and check again; never stop it. **Known exception:**
+  `testhost` PID `133940` belongs to another session and is hung: ignore it (do not wait for it, do not stop it). Never two
+  integration runs at once. Tests run **in the foreground**.
+- **RED of a compile failure does not start containers:** the evidence is the build output (`dotnet build <test project>`), copied
+  literally into the task notes. While iterating, integration runs are filtered by test name
+  (`--filter "FullyQualifiedName~<Test>"`); the touched classes run once at the end of each block.
+- **Migrations** (from the worktree root, design-time factory, never `--startup-project`):
 
-### Task 2: Faltante en una línea (`ShortLine`) y cierre que cuenta `Short`
+  ```powershell
+  dotnet ef migrations add <Name> --project src/Modules/Wms/Modules.Wms.Infrastructure --context WmsDbContext -o Persistence/Migrations
+  ```
+
+  The last migration on the branch today is `20261127040643_AddTaskEventRecordedAt`; T2 adds `AddIncidentsAndShortLines` (Block A)
+  and `AddCountTasks` (Block C), in that order.
+- **Before every commit:** `git branch --show-current` must print `feature/wms-t2-incidents`; if not, stop. Stage explicit paths
+  only (`git add <path> ...`), never `git add -A`. Conventional commits in English. **Every commit ends with this trailer** (blank
+  line before it; this repo's rule overrides the global "no attribution" rule):
+
+  ```
+  Session: Pendientes del WMS
+  Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+  ```
+
+  **Commit with a message file**, written with the edit tool (PowerShell 5.1 breaks `git commit -F -` with a here-string):
+
+  ```powershell
+  # $env:TEMP\wms-t2-commit.txt contains: subject line, blank line, the two trailer lines
+  git commit -F "$env:TEMP\wms-t2-commit.txt"
+  ```
+
+  Do not push.
+- Code comments and texts for people in Spanish (Colombian, tú); identifiers in English. Open `.claude/rules/wms.md` before the
+  first edit (it loads on its own when you read a WMS file) and `.claude/rules/sql-entre-modulos.md` before Task C6.
+
+## Existing pieces this plan uses (verified at `71d7787d5`)
+
+| Piece | Where | Use |
+| --- | --- | --- |
+| `WarehouseTask` (`CreateMove`, `ConfirmLine(memberId, leaseToken, deviceId, lineId, quantity, now, occurredAt, memberIsBusy)`, `CheckLease`, `CancelLine`, `Cancel`, private `CloseIfFinished(by, now, recordedAt, cancelReason)`, `MarkCancelled`, `Renew`, `ClearClaim`, `Record(kind, memberId, at, …, recordedAt)`) | `src/Modules/Wms/Modules.Wms.Domain/Tasks/WarehouseTask.cs` | `ShortLine`, `CreateCount`, `RecordCount` follow `ConfirmLine` |
+| `ConfirmLine` validation order: lease (`Lost` → `InvalidOperationException`), device, line `Open` (`TaskTransitionException(status, "confirm-line")`), quantity, `LedgerEntryRules.EnsureOccurredAtInWindow`, B2 floor `scannedAt < (ReleasedAt ?? CreatedAt) − LedgerEntryRules.ClockToleranceMinutes` → `WmsErrorCodes.MovementOccurredAtOutOfRange`, then resume (`LeaseResumed` at `scannedAt`, `recordedAt: now`) | `WarehouseTask.cs:365-434` | Extracted into a shared private `PrepareLineWrite` (Task A2) |
+| `WarehouseTaskLine` (`Create` with quantity `> 0`, internal `Confirm`, `Cancel`, `Remaining`) | `Modules.Wms.Domain/Tasks/WarehouseTaskLine.cs` | `MarkShort`, `CreateCount`, `RecordCount` |
+| Enums persisted by name: `WarehouseTaskType { Move }`, `WarehouseTaskStatus`, `TaskLineStatus { Open, Done, Cancelled }`, `TaskSourceType { Manual }`, `TaskEventKind` (causal order; the history sorts in memory by `RecordedAt`, then `Kind`, then `Id`) | `Modules.Wms.Domain/Tasks/` | `Count`, `Short`, `Incident`, `LineShort` |
+| `TaskTypePolicy` (`DefaultPriority`, `LeaseDuration`, `AllowsDestinationOverride`, `MovementReasonOf`; unknown type → `ArgumentOutOfRangeException`) | `Modules.Wms.Domain/Tasks/TaskTypePolicy.cs` | `Count` arm, `ConfirmsByCount` |
+| `TaskTypePermissions.For` / `AllowedFor` | `Modules.Wms.Application/Tasks/TaskTypePermissions.cs` | `Count` → `WmsPermissions.CountPerform` |
+| `ConfirmTaskLineHandler` (authorize `DocumentRead` → validate → `scope.Key` → `caller.RequireAsync` → tx → `LockAsync(TaskMemberLocks.For(member))` → `tasks.LockAsync` (404) → `GetAsync` → `guard.EnsureCanPerformAsync` → `OperatorTaskGuard.EnsureLease` → line (404) → destination/lot → `busy` (DA-32) → `ConfirmLine` → one `ledger.PostAsync` → `composer.ComposeAsync(task, member, withEvents: false)` → `receipts.Record` → `SaveChangesAsync` → `metrics.RecordConfirmDuration`) | `Modules.Wms.Application/Tasks/ConfirmTaskLine.cs` | Becomes the first client of `OperatorLineRunner` (Task A1) |
+| `SupervisorTaskRunner.RunAsync(tenantId, taskId, version, auditAction, mutate, fields, ct, precondition)` — used by `CancelTaskHandler` and `CancelTaskLineHandler`, the two supervisor actions that close a task | `Modules.Wms.Application/Tasks/SupervisorTaskActions.cs` | Calls `TaskClosedNotifier` (Task A1) |
+| `OperatorTaskGuard` (`EnsureCanPerformAsync`, static `EnsureLease` → `TaskLeaseLostException(resumable: false)` on `Lost`, `EnsureActiveLease`), `TaskMemberLocks.For`, `TaskDeviceRules.MustBeADeviceId` | `Modules.Wms.Application/Tasks/OperatorTaskGuard.cs` | Same guard |
+| `TaskLeaseLostException(bool resumable) : ResourceConflictException, IHasProblemExtensions` (`resumable` in the 409 extensions) | `Modules.Wms.Application/Tasks/TaskLeaseLostException.cs` | The `SyncConflict` 409 |
+| `IdempotencyKeyFilter`: tenant check → key → existing receipt replays 200 → otherwise runs the handler; on an exception, replays only if a receipt appeared, else rethrows | `Modules.Wms.Api/IdempotencyKeyFilter.cs` | The `SyncConflict` 409 reaches the client untouched; `resolve` uses `.UseServerIdempotencyKey("incident", "resolve")` |
+| `IWmsUnitOfWork` (`BeginTransactionAsync`, `FlushAsync`, `TryLockDocumentAsync`, blocking `LockAsync(string key)`, `SaveChangesAsync` = save **and commit** the open transaction) | `Modules.Wms.Application/WmsPorts.cs`, `Infrastructure/Persistence/WmsUnitOfWork.cs` (unique index → `RequestConcurrencyException` by index name) | Commit the `SyncConflict` before the 409 |
+| `IWmsAuditRecorder`, `WmsAuditActions` (`Resources.*`, `Adjustment*`, `Task*`) | `WmsPorts.cs:41-98` | `Resources.Incident`, `IncidentReviewed/Resolved/Rejected` |
+| `WmsNotFound` (`Task`, `TaskLine`, `Adjustment`, `Warehouse`, `Location`…), `WmsVersions.Ensure`, `WmsCaller` (`FindAsync`, `RequireAsync` → membership id) | `Modules.Wms.Application/WmsSupport.cs` | `WmsNotFound.Incident` |
+| `Adjustment.Propose(tenantId, number, owner, warehouse, reason, note, occurredAt, lines, proposedBy, now)`, `Approve(by, now)`, `Reject(by, note, now)`, `MarkPosted(batchId, now)`; `AdjustmentLine.Create`; `AdjustmentReason.CountVariance`; `IAdjustmentRepository.NextNumberAsync` (`adj-seq:` lock) | `Modules.Wms.Domain/Control/`, `Modules.Wms.Application/Control/IAdjustmentRepository.cs` | The count with a difference proposes the adjustment |
+| `ApproveAdjustmentHandler`, `PostAdjustmentHandler` (SK, `MarkPosted`), `RejectAdjustmentHandler`, `ProposeAdjustmentHandler` (`ProposedBy`/`ApprovedBy` are `executionContext.SubjectId`, **not** memberships) | `Modules.Wms.Application/Control/` | Separation of duties (compare **memberships** via `WmsCaller`) and `CountVariance` closing |
+| `InvalidTransitionException` (`wms.document.invalid_transition`, `{ from, action }`) | `Modules.Wms.Domain/Control/InvalidTransitionException.cs` | `Incident` transitions |
+| `IStockReadQueries` (raw SQL over balances) | `Modules.Wms.Application/Inventory/IStockReadQueries.cs`, `Infrastructure/Persistence/StockReadQueries.cs` | `FindOnHandAsync` |
+| `IVariantProfileRepository.FindAsync` → `VariantLogisticsProfile.Tracking` (`TrackingPolicy.None/Lot/Serial`) | `WmsPorts.cs:151`, `Domain/Warehousing/VariantLogisticsProfile.cs` | Lot required to count; no `Count` for serials |
+| `ILotRepository.GetManyAsync` + the rule in `CreateMoveTaskHandler.EnsureLotsAsync` (404 `wms.lot.not_found` unless tenant, owner and variant match) | `Modules.Wms.Application/Tasks/CreateMoveTask.cs:194-210` | Lot scanned on `short` without a ledger call, lot of `POST /incidents` |
+| `IWarehouseTaskRepository` (`LockAsync`, `GetAsync`, `NextNumberAsync` with `task-seq:`, `LockNextCandidateAsync` with the DA-33 filter, `LockExpiredAsync`, `CountByStatusAsync`, `CountOpenByTypeAsync`, `ListInProgressAsync`, `ListAssignedOpenAsync`, `FindInProgressOfMemberAsync`) | `Modules.Wms.Application/Tasks/IWarehouseTaskRepository.cs`, `Infrastructure/Persistence/WarehouseTaskRepository.cs` | `FindOpenCountAsync`, DA-45, forward compatibility |
+| `TaskLeaseSweeper.RunOnceAsync(now)` (one transaction per batch: `LockExpiredAsync` → `GetAsync` → `ExpireLease`; one throwing row rolls back the whole batch) | `Modules.Wms.Infrastructure/Workers/TaskLeaseSweeper.cs` | Forward compatibility (Task C6) |
+| `GetTaskBoardHandler`, `TaskBoardDto(WarehouseId, ByStatus, ByType, Operators, StaleAssignments)` | `Modules.Wms.Application/Tasks/GetTaskBoard.cs`, `TaskDtos.cs:134` | `OpenIncidents` |
+| `WarehouseTaskDtoComposer.ComposeAsync(task, viewerMemberId, withEvents, ct)`, `TaskLineDto(… QuantityPlanned, QuantityConfirmed, QuantityRemaining, LineStatus, BaseUom)` | `Modules.Wms.Application/Tasks/` | `QuantityCounted` |
+| `TaskEndpoints` (`OperatorAction<TRequest, TResponse>(group, route, handler)` = `DocumentRead` policy; `.RequireIdempotencyKey()` on confirm) | `Modules.Wms.Api/TaskEndpoints.cs:82-100` | `short`, `count` |
+| `CatalogVariantUsageChecker` (UNION over quotations, pos, ledger, open adjustment lines, lots, open task lines) | `src/Bootstrapper/CatalogVariantUsageChecker.cs`, `tests/Bootstrapper/Bootstrapper.UnitTests/CatalogVariantUsageCheckerTests.cs`, `StockProbeTests.TheRealCheckerSeesAnOpenTaskLineAgainstTheMigratedSchema` | Adds open incidents (DA-51) |
+| `WmsUserReferenceProbe` (movements, tasks, task_events, adjustments) | `Modules.Wms.Infrastructure/Persistence/WmsUserReferenceProbe.cs`, `WmsUserReferenceProbeTests` | Adds `incidents`, `incident_events` |
+| `FileOwnerType.WmsEvidence` (= 12, module `wms`), `FileResource.CreatePendingUpload(id, tenantId, ownerId, ownerType, …)`, `IFileResourceRepository.ListByIdsAsync`, `IStorageUnitOfWork`; template `QuotationFileLookup.FindManyAsync` (tenant filter in memory after `ListByIdsAsync`) | `Modules.Storage.*`, `src/Bootstrapper/QuotationFileLookup.cs`, `src/Bootstrapper/WmsExportStorage.cs` | `WmsEvidenceLookup` |
+| `WmsPersistenceTests.TheMigrationCreatesTheEightTablesWithTheirUniqueIndexes` (excludes the task tables by name) | `tests/Modules/Wms/Modules.Wms.IntegrationTests/WmsPersistenceTests.cs:46-62` | Also exclude the incident tables |
+| Unit doubles `TaskWorld` (`Context()`, `Authorization`, `Caller()`, `UnitOfWork()`, `Repository()`, `ReceiptStore()`, `Warehouses()`, `Ledger()`, `Metrics`, `Clock()`, `Composer()`, `Log`, `Posted`, `Receipts`, `AddTask`, `Line`, `Member`, `Device`, `Tenant`, `Start`, `Now`) | `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/TaskWorld*.cs` | Runner, notifier, short domain |
+| Integration support: `OpenAsync`, `ArrangeAsync` (`LedgerSetup`: `Manager`, `WarehouseId`, `OwnerId`, `BinA` = `A-01-02`, `VariantId`), `CreateClient(factory, subject, tenant, params permissions)`, `AllPermissions`, `OtherTenantId`/`OtherSubjectId`, `CodeOfAsync`, `BodyAsync`, `ScalarAsync`, `ExecuteAsync`, `CountAuditEntriesAsync`, `CreateBinAsync`, `SeedCallerMembershipAsync`; `WmsLedgerSeeding` (`StockAsync`, `OnHandAsync`, `SetTrackingAsync`, `CreateLotAsync`); `TaskApiSupport` (`TasksUrl`, `Line`, `Body`, `CreateAsync`, `ActionRawAsync`, `ActionAsync`, `GetAsync`, `ResumableOfAsync`, `ReadAsync`, `SeedOperatorAsync`, `OperatorSubject`, `SecondOperatorSubject`); `TaskTestSupport` (`NewMove`, `Line`, `CreateDestinationAsync`, `SaveAsync`, `ReloadAsync`, `History`) | `tests/Modules/Wms/Modules.Wms.IntegrationTests/` | Every integration test. Each WMS integration test opens **its own** database (`OpenAsync`): no shared host, so a test may alter the schema |
+| Patterns to copy: `TaskOperatorApiTests` (`ArrangeFloorAsync`, `NextAsync`, `ConfirmRawAsync` with `Idempotency-Key`), `TaskTenantIsolationApiTests.AnotherTenantGets403OnEveryTaskRoute` (route table, every response `403 authorization.denied`), `TaskLeaseSweeperTests.SweeperOf(factory)` | `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/` | New API tests |
+
+## Global constraints
+
+- **The incident is created in the same transaction as the fact that originates it**, with the same idempotency key (spec §8.4
+  rule 1). So is the `Count` it generates. If something does not save, nothing saves — **except `SyncConflict`**, which exists
+  precisely because the fact is rejected (DA-48): its transaction holds only the incident and is committed before the 409.
+- **A short is never adjusted on the floor** (DA-18): `short` moves only what was found; the difference is proposed by the count as an
+  `Adjustment` and applied by whoever has `wms.adjustment.approve`.
+- **Lock order** (extends T1's): operator advisory (`task-member:{id}`) → the operator's task row (`FOR UPDATE`) → count-key advisory
+  (`count-key:{tenant}:{owner}:{location}:{variant}:{lot|none}:{status}`) → the open `Count` row (`FOR UPDATE`, only when linking to
+  it) → numberings (`incident-seq:`, `task-seq:`, `adj-seq:`) → balances (inside the ledger). **The `count` action never takes the
+  count-key lock** (it already holds the `Count` row; taking the key after the row would invert the order of `short`). No path takes
+  a numbering and then a task.
+- **A `Count` is blind:** no DTO the operator receives carries the expected quantity. A `Count` line has `quantityPlanned = 0`; the
+  expected quantity is computed on the server at count time and never stored (DA-39).
+- Supervisor actions on an incident: `version` (412) and audit `wms.incident.*`. Operator and system facts: `incident_events` only,
+  no audit (DA-50, same criterion as DA-27).
+- 403 always for another tenant; `wms.incident.not_found` (404) only inside the tenant.
+- Enums by name in the API and as text in the database; quantities `numeric(18,6)` in base unit.
+- `occurredAt` of every line action (`confirm`, `short`, `count`) obeys the same window and the same floor (release − 5 min).
+
+## File map
+
+| File | Block | What |
+| --- | --- | --- |
+| `src/Modules/Wms/Modules.Wms.Application/Tasks/OperatorLineRunner.cs`, `TaskClosedHooks.cs` | A | Runner and the single «task closed» hook |
+| `src/Modules/Wms/Modules.Wms.Application/Tasks/ConfirmTaskLine.cs`, `SupervisorTaskActions.cs` | A | Use the runner / the notifier |
+| `src/Modules/Wms/Modules.Wms.Domain/Tasks/TaskLineStatus.cs`, `TaskEventKind.cs`, `WarehouseTask.cs`, `WarehouseTaskLine.cs` | A, C | `Short`, `LineShort`, `ShortLine`; then `Count` |
+| `src/Modules/Wms/Modules.Wms.Domain/Control/Incident*.cs`, `WmsErrorCodes.cs` | A, B, C | The incident and its catalog |
+| `src/Modules/Wms/Modules.Wms.Application/Control/IIncidentRepository.cs`, `Incidents/*.cs` | A, B, C | Port, recorder, handlers, DTOs |
+| `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/IncidentModel.cs`, `IncidentRepository.cs`, `WmsDbContext.cs`, `WmsUnitOfWork.cs`, `WarehouseTaskModel.cs`, `WarehouseTaskRepository.cs`, `StockReadQueries.cs`, `WmsUserReferenceProbe.cs`, `WmsInfrastructureExtensions.cs` | A, C | Persistence |
+| `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/Migrations/<ts>_AddIncidentsAndShortLines*.cs`, `<ts>_AddCountTasks*.cs` | A, C | Generated migrations |
+| `src/Modules/Wms/Modules.Wms.Application/Tasks/ShortTaskLine.cs`, `CountTaskLine.cs`, `CountVerificationHook.cs`, `TaskDtos.cs`, `WarehouseTaskDtoComposer.cs`, `GetTaskBoard.cs` | A, B, C | Use cases |
+| `src/Modules/Wms/Modules.Wms.Application/Control/ApproveAdjustment.cs`, `PostAdjustment.cs`, `RejectAdjustment.cs` | C | `CountVariance` closing and separation of duties |
+| `src/Modules/Wms/Modules.Wms.Api/TaskEndpoints.cs`, `IncidentEndpoints.cs`, `WmsEndpoints.cs` | A, B, C | Routes |
+| `src/Bootstrapper/QepServiceCollectionExtensions.cs`, `WmsEvidenceLookup.cs`, `CatalogVariantUsageChecker.cs` | A, B, C | Registrations, adapter, usage |
+| `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/*`, `Control/Incident*Tests.cs` | A, B, C | Unit |
+| `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskShortApiTests.cs`, `TaskSyncConflictApiTests.cs`, `TaskCountApiTests.cs`, `TaskForwardCompatibilityTests.cs`; `Incidents/IncidentPersistenceTests.cs`, `IncidentApiTests.cs`, `IncidentTenantIsolationApiTests.cs`, `CountVarianceAdjustmentTests.cs`, `IncidentTestSupport.cs` | A, B, C | Integration |
+| `README.md` (§ Módulo Wms), `.claude/rules/wms.md`, `.claude/rules/sql-entre-modulos.md` | C | Contract and rules |
+
+---
+
+# Block A — operator line runner, short and `SyncConflict` (tasks A1 to A5, one implementer)
+
+Order: A1 → A2 → A3 → A4 → A5. A1 is a **pure refactor**: every existing test stays green with only the construction of the
+handlers changing in the test helpers.
+
+### Task A1: `OperatorLineRunner` and the single «task closed» hook (pure refactor)
 
 **Files:**
+- Create: `src/Modules/Wms/Modules.Wms.Application/Tasks/OperatorLineRunner.cs`, `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskClosedHooks.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/ConfirmTaskLine.cs`, `src/Modules/Wms/Modules.Wms.Application/Tasks/SupervisorTaskActions.cs`
+- Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs` (scoped `OperatorLineRunner`, `TaskClosedNotifier`; no hook yet)
+- Modify (construction only): `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/OperatorTaskHandlersTests.cs` (`ConfirmAsync` helper), `SupervisorTaskActionsTests.cs` (runner construction), `TaskWorld*.cs` if a helper is needed
+- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/TaskClosedNotifierTests.cs`
+
+Shape:
+
+```csharp
+// TaskClosedHooks.cs
+/// <summary>Una tarea pasó a Done o Cancelled en esta transacción. ActorMemberId es la membresía que la cerró; OperationKey, la
+/// clave de la acción del operario (null en las del supervisor).</summary>
+public sealed record TaskClosed(WarehouseTask Task, Guid ActorMemberId, string? OperationKey, DateTimeOffset OccurredAt, DateTimeOffset Now);
+
+/// <summary>Lo que otro proceso hace cuando una tarea se cierra (T2: el Count de verificación). Corre dentro de la transacción del
+/// cierre, antes de guardar: si falla, no se guarda nada.</summary>
+public interface ITaskClosedHook
+{
+    Task OnClosedAsync(TaskClosed closed, CancellationToken cancellationToken);
+}
+
+/// <summary>El único punto por el que pasa el cierre de una tarea. Lo llaman los dos caminos que pueden cerrarla: OperatorLineRunner
+/// (confirmar, faltante, conteo) y SupervisorTaskRunner (cancelar la tarea o su última línea abierta).</summary>
+public sealed class TaskClosedNotifier(IEnumerable<ITaskClosedHook> hooks)
+{
+    public async Task NotifyIfClosedAsync(WarehouseTaskStatus before, TaskClosed closed, CancellationToken cancellationToken);
+    // no-op unless before is open and closed.Task.Status is Done or Cancelled; then each hook, in registration order
+}
+
+// OperatorLineRunner.cs
+public sealed record OperatorLineRequest(
+    Guid TenantId, Guid TaskId, Guid LineId, Guid LeaseToken, string DeviceId, DateTimeOffset OccurredAt, string Action, object RawCommand);
+
+public sealed record OperatorLineContext(
+    WarehouseTask Task, WarehouseTaskLine Line, Guid MemberId, LeaseCheck Lease, bool MemberIsBusy, string OperationKey, DateTimeOffset Now);
+
+/// <summary>El molde de toda acción del operario sobre una línea (confirmar, faltante, conteo): clave IK → membresía → transacción →
+/// lock del operario → lock de la tarea (404) → carga → permiso del tipo → lease → línea (404) → DA-32 → la acción → cierre →
+/// componer → recibo → guardar. Una sola llamada al ledger por transacción, dentro de la acción.</summary>
+public sealed class OperatorLineRunner(
+    IExecutionContext executionContext, WmsAuthorization authorization, WmsCaller caller, IWmsUnitOfWork unitOfWork,
+    IdempotencyScope scope, IOperationReceipts receipts, IWarehouseTaskRepository tasks, OperatorTaskGuard guard,
+    IWmsConfirmMetrics metrics, IClock clock, WarehouseTaskDtoComposer composer, TaskClosedNotifier closed)
+{
+    public Task AuthorizeAsync(Guid tenantId, CancellationToken cancellationToken);   // DocumentRead, before the validator
+    public Task<TaskDto> RunAsync(
+        OperatorLineRequest request, Func<OperatorLineContext, CancellationToken, Task> apply, CancellationToken cancellationToken);
+}
+```
+
+`RunAsync`, in this exact order (it is today's `ConfirmTaskLineHandler.HandleAsync` minus the confirm-specific part):
+`scope.Key ?? throw new InvalidOperationException(…)` → `caller.RequireAsync` → `Stopwatch` → `await using` transaction →
+`LockAsync(TaskMemberLocks.For(member))` → `tasks.LockAsync` (404 `WmsNotFound.Task`) → `GetAsync` (404) →
+`guard.EnsureCanPerformAsync` → `OperatorTaskGuard.EnsureLease` (Task A5 replaces this line) → `task.FindLine` (404
+`WmsNotFound.TaskLine`) → `busy = lease == Resumable && FindInProgressOfMemberAsync(...) is not null` → `var before = task.Status`
+→ `await apply(context, ct)` → `closed.NotifyIfClosedAsync(before, new TaskClosed(task, member, key, request.OccurredAt, now), ct)`
+→ `composer.ComposeAsync(task, member, withEvents: false, ct)` → `receipts.Record(dto)` → `SaveChangesAsync` →
+`metrics.RecordConfirmDuration(...)`. `ConfirmTaskLineHandler` keeps its validator, `ResolveDestinationAsync`, the lot check, the
+`ConfirmLine` call and the single `LedgerEntry`/`PostAsync` **inside** `apply`; its constructor becomes `(OperatorLineRunner runner,
+IWarehouseRepository warehouses, IInventoryLedger ledger, IClock clock, IValidator<ConfirmTaskLineCommand> validator)`.
+
+`SupervisorTaskRunner.RunAsync` takes `TaskClosedNotifier` in its constructor, captures `task.Status` before `mutate` and calls
+`NotifyIfClosedAsync(before, new TaskClosed(task, actor, null, now, now), ct)` after it and before auditing. `Cancel`, `CancelLine` and
+`ConfirmLine` keep closing the task in the domain; the application reacts in one place.
+
+- [ ] **RED.** `TaskClosedNotifierTests` (with a `SpyHook : ITaskClosedHook` that appends to `world.Log` and stores the `TaskClosed`):
+  - `ConfirmingTheLastQuantityNotifiesTheHookOnceBeforeTheReceipt`: confirm 5 of 5 through the handler → `world.Log` is
+    `["begin", "lock task-member:…", "lock-task", "load-task", "ledger", "hook", "receipt", "save"]`; the `TaskClosed` has the
+    member, the key `"key-1"` and `OccurredAt = command.OccurredAt`.
+  - `APartialConfirmationDoesNotNotify` (confirm 2 of 5 → no `"hook"`).
+  - `CancellingTheTaskNotifiesOnce` and `CancellingTheLastOpenLineNotifiesOnce` (through `CancelTaskHandler`/`CancelTaskLineHandler`;
+    `OperationKey` null, actor = the supervisor's membership).
+  - `CancellingALineThatLeavesOthersOpenDoesNotNotify`.
+  - `AFailingHookSavesNothing` (hook throws → exception propagates, no `"receipt"`, no `"save"`).
+- [ ] Build: `dotnet build tests/Modules/Wms/Modules.Wms.UnitTests` fails (`ITaskClosedHook`, `TaskClosedNotifier`,
+  `OperatorLineRunner` do not exist). Copy the output.
+- [ ] **GREEN.** Implement as above. Update the two test helpers so they build the handlers through the runner. No assertion of an
+  existing test changes; if one has to, stop: it is not a pure refactor.
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Modules.Wms.UnitTests.Tasks"
+  dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~CompositionRootTests|FullyQualifiedName~WmsLayerTests"
+  ```
+
+  Then, once (integration, the refactored paths):
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~TaskOperatorApiTests|FullyQualifiedName~TaskSupervisorActionsApiTests" -- xUnit.MaxParallelThreads=4
+  ```
+
+- [ ] Commit: `refactor(wms): run operator line actions through one runner with a task-closed hook`
+
+### Task A2: Short on a line (`ShortLine`) and a close that counts `Short`
+
+**Files:**
+- Modify: `src/Modules/Wms/Modules.Wms.Domain/Tasks/TaskLineStatus.cs` (+ `Short` between `Done` and `Cancelled`),
+  `TaskEventKind.cs` (+ `LineShort` right after `LineConfirmed`: the history sorts by the enum inside a timestamp)
 - Modify: `src/Modules/Wms/Modules.Wms.Domain/Tasks/WarehouseTask.cs`, `WarehouseTaskLine.cs`
 - Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/WarehouseTaskShortTests.cs`
 
-API que se agrega:
+API:
 
 ```csharp
 // WarehouseTaskLine
-internal void MarkShort();   // la línea queda Short con lo confirmado hasta ahora; ya no admite más confirmaciones
+internal void MarkShort();   // Status = Short, keeps QuantityConfirmed; no more confirmations
 
 // WarehouseTask
-/// <summary>Declara que de lo que falta de la línea sólo había <paramref name="quantityFound"/> (puede ser cero). Lo encontrado se
-/// confirma como en ConfirmLine; la línea queda Short y la tarea se cierra si era la última abierta. Mismo lease, misma reanudación y
-/// misma regla de DA-32 que ConfirmLine.</summary>
+/// <summary>De lo que falta de la línea sólo había <paramref name="quantityFound"/> (puede ser cero). Lo encontrado se confirma
+/// como en ConfirmLine; la línea queda Short y la tarea se cierra si era la última abierta. Mismo lease, misma reanudación, misma
+/// regla de DA-32 y misma ventana y piso de occurredAt que ConfirmLine.</summary>
 public WarehouseTaskLine ShortLine(
     Guid memberId, Guid leaseToken, string deviceId, Guid lineId, decimal quantityFound,
     DateTimeOffset now, DateTimeOffset? occurredAt = null, bool memberIsBusy = false);
 ```
 
-- [ ] **RED.** `WarehouseTaskShortTests` (fixtures de `WarehouseTaskLeaseTests`: tarea `Move` de una línea de 5, reclamada):
-  - `ShortingWithTwoFoundConfirmsTwoAndClosesTheLineAsShort`: `ShortLine(…, quantityFound: 2)` → línea `Short`, `QuantityConfirmed = 2`,
-    eventos `LineConfirmed` (cantidad 2) y `LineShort` (cantidad 3, lo que faltó), tarea `Done` con `CompletedAt` y evento `Completed`.
-  - `ShortingWithNothingFoundClosesTheTaskAsDone`: `quantityFound: 0` → sin `LineConfirmed`, `LineShort` con 5, tarea `Done` (spec §6.3:
-    «`Done` si alguna línea quedó `Done` o `Short`»).
-  - `AShortLineWithAnotherCancelledStillClosesDone`: dos líneas; cancelar una y declarar faltante en la otra → `Done`.
-  - `ShortingAfterAPartialConfirmationOnlyCountsTheRest`: confirmar 1, faltante con 1 encontrado → confirmado 2, `LineShort` con 3.
-  - `FindingEverythingIsNotAShort`: `quantityFound == Remaining` → `WmsDomainException` `TaskLineInvalid` (el operario confirma).
-  - `FindingMoreThanRemainingIs422` → `TaskQuantityExceedsRemaining`; negativo → `TaskLineInvalid`.
-  - `ShortingAClosedLineIsAnInvalidTransition` (`TaskTransitionException` con acción `short-line`).
-  - `ConfirmingAShortLineIsAnInvalidTransition` (`ConfirmLine` sobre una `Short` → acción `confirm-line`).
-  - `AResumableLeaseResumesBeforeShorting` (evento `LeaseResumed` antes de `LineShort`); `ALostLeaseThrowsInvalidOperation`.
-  - `ShortingACountLineIsAnInvalidTransition` (preparada con la tarea 3: déjala `[Fact(Skip = "tarea 3")]` hasta entonces o escríbela en la 3).
-  - `ShortEventsCarryTheScanTime` (`occurredAt` en `LineConfirmed`, `LineShort` y `Completed`, DA-36).
-- [ ] `dotnet build tests/Modules/Wms/Modules.Wms.UnitTests`: falla (`ShortLine` no existe). Guarda la salida.
-- [ ] **GREEN.** Extrae de `ConfirmLine` un privado `PrepareLineWrite(memberId, token, deviceId, lineId, action, now, occurredAt,
-  memberIsBusy)` que hace `CheckLease` (`Lost` → `InvalidOperationException`), `RequiredDevice`, `LineOf`, línea `Open` (si no,
-  `TaskTransitionException(line.Status, action)`), ventana de `occurredAt` y devuelve `(line, lease, device, scannedAt)`; la reanudación
-  y `Renew` van en otro privado `ApplyLease(lease, memberIsBusy, memberId, device, scannedAt, now)`. `ConfirmLine` queda con el mismo
-  comportamiento (las pruebas de T1 siguen verdes). `ShortLine`: valida `0 ≤ quantityFound < Remaining`; si `> 0` hace `line.Confirm`
-  y registra `LineConfirmed`; `line.MarkShort()`; `Version++`; `LineShort` con `quantity = Remaining` previo al `MarkShort`; cierre.
-  `CloseIfFinished`: la condición de `Done` pasa a `line.Status is TaskLineStatus.Done or TaskLineStatus.Short` y su comentario lo dice.
-- [ ] `dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Tasks"`: verde (incluidas las de T1).
+- [ ] **RED.** `WarehouseTaskShortTests` (fixtures like `WarehouseTaskLeaseTests`: a `Move` with one line of 5, claimed):
+  - `ShortingWithTwoFoundConfirmsTwoAndClosesTheLineAsShort`: line `Short`, `QuantityConfirmed = 2`, events `LineConfirmed` (2) and
+    `LineShort` (quantity 3, what was missing), task `Done` with `CompletedAt` and `Completed`.
+  - `ShortingWithNothingFoundClosesTheTaskAsDone`: `quantityFound: 0` → no `LineConfirmed`, `LineShort` with 5, task `Done` (§6.3:
+    `Done` if any line ended `Done` or `Short`).
+  - `AShortLineWithAnotherCancelledStillClosesDone` (two lines: cancel one, short the other → `Done`).
+  - `ShortingAfterAPartialConfirmationOnlyCountsTheRest` (confirm 1, short with 1 found → confirmed 2, `LineShort` 3).
+  - `FindingEverythingIsNotAShort` (`quantityFound == Remaining` → `WmsDomainException` `TaskLineInvalid`).
+  - `FindingMoreThanRemainingIs422` (`TaskQuantityExceedsRemaining`); `ANegativeFoundIs422LineInvalid`.
+  - `ShortingAClosedLineIsAnInvalidTransition` (`TaskTransitionException`, action `short-line`) and
+    `ConfirmingAShortLineIsAnInvalidTransition` (action `confirm-line`).
+  - `AResumableLeaseResumesBeforeShorting` (`LeaseResumed` before `LineShort`); `ABusyMemberShortsWithoutResuming` (DA-32);
+    `ALostLeaseThrowsInvalidOperation`.
+  - `ShortEventsCarryTheScanTime` (`occurredAt` in `LineConfirmed`, `LineShort`, `Completed`; `RecordedAt = now`).
+  - `AScanOutsideTheLedgerWindowIs422` and `AScanMoreThanFiveMinutesBeforeTheReleaseIs422` (both
+    `MovementOccurredAtOutOfRange`); `AScanFourMinutesBeforeTheReleaseIsAccepted`.
+- [ ] Build fails (`ShortLine`, `TaskLineStatus.Short` do not exist). Copy the output.
+- [ ] **GREEN.** Extract from `ConfirmLine` a private `PrepareLineWrite(memberId, leaseToken, deviceId, lineId, action, now,
+  occurredAt) → (WarehouseTaskLine line, LeaseCheck lease, string device, DateTimeOffset scannedAt)` (lease `Lost` →
+  `InvalidOperationException`, `RequiredDevice`, `LineOf`, line `Open` else `TaskTransitionException(line.Status, action)`, window,
+  floor) and a private `ApplyLease(lease, memberIsBusy, memberId, device, scannedAt, now)` (resume + `Renew` or `LastActivityAt`).
+  `ConfirmLine` keeps its behavior (T1 tests stay green). `ShortLine`: `PrepareLineWrite(…, "short-line", …)` → `0 ≤ quantityFound <
+  line.Remaining` → `ApplyLease` → if `> 0` `line.Confirm` and `LineConfirmed` → `var missing = line.Remaining` → `line.MarkShort()`
+  → `Version++` → `LineShort` with `missing` → `CloseIfFinished(memberId, scannedAt, now)`. `CloseIfFinished`: the `Done` condition
+  becomes `line.Status is TaskLineStatus.Done or TaskLineStatus.Short`, and its summary says so.
+- [ ] Run: `dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Modules.Wms.UnitTests.Tasks"` (T1 tests
+  included).
 - [ ] Commit: `feat(wms): let an operator declare a short line`
 
-### Task 3: El `Count` de verificación: creación y registro del conteo
+### Task A3: The incident core: vocabulary, `Report`, catalog and persistence
 
-**Files:**
-- Modify: `src/Modules/Wms/Modules.Wms.Domain/Tasks/WarehouseTask.cs`, `WarehouseTaskLine.cs`
-- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/WarehouseTaskCountTests.cs`
-
-API que se agrega:
-
-```csharp
-// WarehouseTaskLine
-public decimal? QuantityCounted { get; private set; }                 // null hasta contar
-/// <summary>La línea de un conteo: una clave (ubicación, variante, lote, estado) sin destino y con lo planeado en cero. Lo esperado
-/// no vive en la línea: el servidor lo calcula al contar, y así nada que llegue al operario lo revela (DA-39).</summary>
-public static WarehouseTaskLine CreateCount(Guid variantId, LotId? lotId, StockStatus stockStatus, LocationId location);
-internal void RecordCount(decimal counted, LotId? lot);              // fija QuantityCounted, LotId ??= lot, Status = Done
-
-// WarehouseTask
-public static WarehouseTask CreateCount(
-    Guid tenantId, string number, WarehouseId warehouse, OwnerId owner, IReadOnlyList<WarehouseTaskLine> lines,
-    TaskSourceType sourceType, Guid sourceId, DateTimeOffset now);  // publicada (Ready), CreatedBy = Guid.Empty (sistema, §6.1)
-public WarehouseTaskLine RecordCount(
-    Guid memberId, Guid leaseToken, string deviceId, Guid lineId, decimal quantityCounted, LotId? lotId,
-    DateTimeOffset now, DateTimeOffset? occurredAt = null, bool memberIsBusy = false);
-```
-
-- [ ] **RED.** `WarehouseTaskCountTests`:
-  - `ACountIsBornReadyFromTheSystemWithItsSource`: `Type = Count`, `Status = Ready`, `ReleasedAt = now`, `Priority = 3`, `SourceType =
-    Incident`, `SourceId`, `CreatedBy = Guid.Empty`, `Version = 1`, eventos `Created`, `Published` con `memberId` nulo.
-  - `ACountLineHasNoDestinationAndNothingPlanned`: `ToLocationId` nulo, `QuantityPlanned = 0`, `Remaining = 0`, `Open`.
-  - `ACountNeedsBetweenOneAndOneHundredLines` (`TaskLineInvalid`); `ACountLineIsNeverAMoveLine`: `CreateMove` con una línea de
-    `CreateCount` → `TaskLocationInvalid` (ya lo da la regla de destino nulo: la prueba lo fija).
-  - `ClaimingACountGivesAThirtyMinuteLease`.
-  - `RecordingACountClosesTheLineAndTheTask`: `RecordCount(…, 7, null)` → línea `Done`, `QuantityCounted = 7`, `QuantityConfirmed = 0`,
-    evento `LineConfirmed` con `quantity = 7` y `detail = "count"`, tarea `Done`.
-  - `CountingZeroIsValid` (`QuantityCounted = 0`, línea `Done`).
-  - `ANegativeCountIs422LineInvalid`.
-  - `TheScannedLotFillsALineWithoutLot` y `AScannedLotOnALineWithAnotherLotIs422LotMismatch` (`WmsErrorCodes.TaskLotMismatch`).
-  - `ConfirmingACountLineIsAnInvalidTransition` (`ConfirmLine` → `TaskTransitionException` acción `confirm-line`) y
-    `CountingAMoveLineIsAnInvalidTransition` (`RecordCount` sobre `Move` → acción `count-line`). Activa la de la tarea 2
-    (`ShortingACountLineIsAnInvalidTransition`, acción `short-line`).
-  - `RecordingWithALostLeaseThrowsInvalidOperation`; `AResumableLeaseResumes`.
-- [ ] `dotnet build`: falla (RED de compilación). Guarda la salida.
-- [ ] **GREEN.** `CreateCount` reutiliza las validaciones de `CreateMove` (líneas 1..`MaxLines`, prioridad) extrayendo un privado
-  `NewTask(type, …)`; exige `lines.All(line => line.ToLocationId is null && line.QuantityPlanned == 0)` (`TaskLineInvalid`) y llama
-  `Release`. `ConfirmLine` y `ShortLine` lanzan `TaskTransitionException(Status, "confirm-line"/"short-line")` si
-  `TaskTypePolicy.ConfirmsByCount(Type)`; `RecordCount` lo exige al revés (`"count-line"`). `RecordCount` usa `PrepareLineWrite` y
-  `ApplyLease` de la tarea 2. `WarehouseTaskLine.Create` (líneas de `Move`) no cambia: sigue exigiendo cantidad `> 0`.
-- [ ] `dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Tasks"`: verde.
-- [ ] Commit: `feat(wms): model the blind verification count task`
-
-### Task 4: `Incident` en el área `Control`
+`Short` and `SyncConflict` persist an incident, so the aggregate, its table and its numbering land here; Block B adds the
+lifecycle (review, resolve, reject), the evidence lookup and the routes. The vocabularies are complete from this task so the
+incident CHECKs are written once.
 
 **Files:**
 - Create: `src/Modules/Wms/Modules.Wms.Domain/Control/IncidentType.cs`, `IncidentStatus.cs`, `IncidentResolution.cs`,
-  `IncidentEventKind.cs`, `IncidentEvidenceKind.cs`, `IncidentCatalog.cs`, `IncidentEvidence.cs`, `IncidentEvent.cs`, `Incident.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Domain/WmsErrorCodes.cs`
-- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Control/IncidentTests.cs`, `IncidentCatalogTests.cs`
+  `IncidentEventKind.cs`, `IncidentEvidenceKind.cs`, `IncidentCatalog.cs`, `IncidentSubject.cs`, `IncidentEvidence.cs`,
+  `IncidentEvent.cs`, `Incident.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Domain/WmsErrorCodes.cs` (block «Novedades (spec 2026-11-26 §8)»: `IncidentTypeNotAllowed`,
+  `IncidentInvalid`, `IncidentEvidenceInvalid`)
+- Create: `src/Modules/Wms/Modules.Wms.Application/Control/IIncidentRepository.cs`
+- Create: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/IncidentModel.cs`, `IncidentRepository.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/WarehouseTaskModel.cs` (`CK_task_lines_status`), `WmsDbContext.cs`,
+  `WmsUnitOfWork.cs`, `WmsUserReferenceProbe.cs`, `src/Modules/Wms/Modules.Wms.Infrastructure/WmsInfrastructureExtensions.cs`
+- Create (generated): `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/Migrations/<ts>_AddIncidentsAndShortLines.cs` (+ Designer, snapshot)
+- Modify: `tests/Modules/Wms/Modules.Wms.IntegrationTests/WmsPersistenceTests.cs` (exclude `incidents`, `incident_evidence`, `incident_events`)
+- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Control/IncidentCatalogTests.cs`, `IncidentReportTests.cs`;
+  `tests/Modules/Wms/Modules.Wms.IntegrationTests/Incidents/IncidentPersistenceTests.cs`, `Tasks/WarehouseTaskPersistenceTests.cs`
+  (new case), `WmsUserReferenceProbeTests.cs` (new case)
 
-Vocabulario (DA-42; todos «se persiste por nombre; no se renombra»):
+Vocabulary (DA-42; every enum «se persiste por nombre; no se renombra»):
 
 ```csharp
 public enum IncidentType { ShortMove, LocationMismatch, UnreadableLabel, CountVariance, SyncConflict }
 public enum IncidentStatus { Open, InReview, Resolved, Rejected }
 public enum IncidentResolution { Accept, AcceptIntoStock }
-public enum IncidentEventKind { Reported, InReview, Resolved, Rejected }
+public enum IncidentEventKind { Reported, InReview, Resolved, Rejected, VerificationLinked, VerificationCancelled }
 public enum IncidentEvidenceKind { Photo, Scan }
 
 public static class IncidentCatalog
 {
-    public static IReadOnlySet<IncidentResolution> ResolutionsOf(IncidentType type);   // §8.2: ShortMove, LocationMismatch, UnreadableLabel → Accept; SyncConflict → AcceptIntoStock; CountVariance → ninguna (la cierra el ajuste)
-    public static bool CanBeRejected(IncidentType type);                               // SyncConflict (no metió nada al ledger)
-    public static bool RequestsVerification(IncidentType type);                         // ShortMove, LocationMismatch → Count
-    public static IReadOnlySet<IncidentType> DeclarableOnShort(string taskType);       // "Move" → { ShortMove, LocationMismatch }; otro → vacío
-    public static IReadOnlySet<IncidentType> DeclarableStandalone { get; }              // { UnreadableLabel, LocationMismatch }
+    public static IReadOnlySet<IncidentResolution> ResolutionsOf(IncidentType type); // ShortMove, LocationMismatch, UnreadableLabel → {Accept}; SyncConflict → {AcceptIntoStock}; CountVariance → {} (closed by its adjustment)
+    public static bool CanBeRejected(IncidentType type);                              // SyncConflict only (it put nothing in the ledger)
+    public static bool RequestsVerification(IncidentType type);                        // ShortMove, LocationMismatch
+    public static IReadOnlySet<IncidentType> DeclarableOnShort(string taskType);      // "Move" → {ShortMove, LocationMismatch}; anything else → {}
+    public static IReadOnlySet<IncidentType> DeclarableStandalone { get; }             // {UnreadableLabel, LocationMismatch} (DA-49)
 }
 ```
 
-`DeclarableOnShort` recibe el tipo de tarea por **nombre** (`string`) y no por `WarehouseTaskType`: `Control` no puede ver `Tasks`
-(`WmsLayerTests.DomainAreasOnlyDependDownwards`). El handler pasa `task.Type.ToString()`.
+`DeclarableOnShort` takes the task type **by name** (`string`): `Control` cannot see `Tasks` (`DomainAreasOnlyDependDownwards`). The
+handler passes `task.Type.ToString()`.
 
-Agregado (propiedades `{ get; private set; }`, ctor privado, `Version++` por transición, como `Adjustment`):
+Aggregate (`{ get; private set; }`, private ctor, `Version++` per transition, like `Adjustment`):
 
 ```csharp
+public sealed record IncidentSubject(Guid? SourceTaskId, Guid? SourceTaskLineId, LocationId? Location, Guid? VariantId,
+    LotId? LotId, StockStatus? StockStatus, decimal? ExpectedQty, decimal? ActualQty);
+
 public sealed class Incident
 {
     public const int NoteMaxLength = 500;
     public const int RawCodeMaxLength = 200;
     public const int MaxEvidence = 5;
-    // Id, TenantId, WarehouseId, OwnerId, Number, Type, Status, SourceTaskId?, SourceTaskLineId?, VerificationTaskId?,
-    // LocationId?, VariantId?, LotId?, StockStatus?, ExpectedQty?, ActualQty?, RawCode?, RawPayload? (JSON crudo de SyncConflict),
-    // Note?, ReportedBy (membresía; Guid.Empty = sistema), DeviceId?, ReportedAt, OperationKey?, Resolution?, ResolvedBy?,
-    // ResolvedAt?, ResolutionNote?, BatchId?, AdjustmentId?, ParentIncidentId?, Version; Evidence, Events (sólo se agregan)
+    // Id, TenantId, WarehouseId, OwnerId, Number, Type, Status, SourceTaskId?, SourceTaskLineId?, VerificationTaskId?, LocationId?,
+    // VariantId?, LotId?, StockStatus?, ExpectedQty?, ActualQty?, RawCode?, RawPayload? (jsonb text), Note?, ReportedBy (membership;
+    // Guid.Empty = system), DeviceId?, ReportedAt, OperationKey?, Resolution?, ResolvedBy?, ResolvedAt?, ResolutionNote?, BatchId?,
+    // AdjustmentId?, ParentIncidentId?, Version; Evidence, Events (append-only)
 
     public static Incident Report(Guid tenantId, string number, WarehouseId warehouse, OwnerId owner, IncidentType type,
         IncidentSubject subject, string? note, string? rawCode, string? rawPayload, IReadOnlyList<IncidentEvidence> evidence,
         Guid reportedBy, string? deviceId, string? operationKey, DateTimeOffset reportedAt, DateTimeOffset now);
-    public void LinkVerification(Guid countTaskId);
-    public void AttachAdjustment(Guid adjustmentId);
-    public void Review(Guid by, DateTimeOffset now);                                   // Open → InReview
-    public void Resolve(IncidentResolution resolution, Guid by, string? note, Guid? batchId, Guid? parentIncidentId, DateTimeOffset now);
-    public void Reject(Guid by, string note, DateTimeOffset now);
-    public void EnsureNotSelfResolution(IncidentResolution resolution, Guid by);       // DA-17/DA-47
 }
-
-public sealed record IncidentSubject(Guid? SourceTaskId, Guid? SourceTaskLineId, LocationId? Location, Guid? VariantId,
-    LotId? LotId, StockStatus? StockStatus, decimal? ExpectedQty, decimal? ActualQty);
 ```
 
-Códigos nuevos en `WmsErrorCodes` (bloque «Novedades (spec 2026-11-26 §8)»): `IncidentNotFound = "wms.incident.not_found"` (404),
-`IncidentSelfResolution = "wms.incident.self_resolution"` (422, spec §8.4), `IncidentResolutionNotAllowed =
-"wms.incident.resolution_not_allowed"` (422), `IncidentTypeNotAllowed = "wms.incident.type_not_allowed"` (422),
-`IncidentEvidenceInvalid = "wms.incident.evidence_invalid"` (422), `IncidentInvalid = "wms.incident.invalid"` (422: nota, código o
-cantidades fuera de rango; el validador da además el mapa `errors`).
-
-- [ ] **RED.** `IncidentCatalogTests`: una prueba por fila de la tabla de arriba, más `EveryTypeHasAnEntry` (recorre
-  `Enum.GetValues<IncidentType>()` y llama los cuatro métodos: un tipo nuevo sin fila se pone en rojo).
-  `IncidentTests`:
-  - `ReportingIsOpenWithVersionOneAndAReportedEvent` (número, sujeto, `ReportedAt` = el del escaneo, `Events = [Reported]`).
-  - `TheNoteHasAtMostFiveHundredCharacters` y `MoreThanFiveEvidenceFilesIs422EvidenceInvalid`.
-  - `ReviewMovesOpenToInReview`; `ReviewingTwiceIsAnInvalidTransition` (`InvalidTransitionException`, `from = "InReview"`).
-  - `ResolvingWithAResolutionTheTypeDoesNotAllowIs422` (`ShortMove` + `AcceptIntoStock`; `CountVariance` + `Accept` desde el endpoint).
-  - `ResolvingFromOpenOrInReviewIsTerminal` (un segundo `Resolve` o `Reject` → transición inválida).
-  - `OnlyAnIncidentThatMovedNothingCanBeRejected` (`SyncConflict` sí; `ShortMove` → `IncidentResolutionNotAllowed`).
-  - `TheReporterCannotAcceptIntoStockTheirOwnIncident` (`EnsureNotSelfResolution` → `IncidentSelfResolution`); `Accept` del mismo
-    reportante sí pasa.
-  - `TheSystemCanResolveACountVarianceWithItsBatch`: `Resolve(Accept, Guid.Empty, …, batchId, null, now)` es el camino interno que usa
-    el posteo del ajuste: la regla «`CountVariance` no tiene resolución» vale sólo para el endpoint (ver el handler en la tarea 10), así
-    que el dominio expone `ResolveByAdjustment(Guid batchId, Guid by, string adjustmentNumber, DateTimeOffset now)` y
-    `RejectByAdjustment(Guid by, string note, DateTimeOffset now)`, y `Resolve` lanza `IncidentResolutionNotAllowed` para `CountVariance`.
-  - `ResolvingAChildRecordsItsParent` (`ParentIncidentId`).
-- [ ] `dotnet build`: falla (RED de compilación). Guarda la salida.
-- [ ] **GREEN.** Implementa. `Report` recorta `note`/`rawCode`, valida longitudes con `IncidentInvalid`, `MaxEvidence` con
-  `IncidentEvidenceInvalid`, fija `Id = Guid.CreateVersion7()`, `Status = Open`, `Version = 1`, evento `Reported` con `reportedAt`. Cada
-  transición: `EnsureStatus` → muta → `Version++` → evento. `IncidentEvidence.Create(Guid fileId, IncidentEvidenceKind kind, string?
-  rawValue)`, `IncidentEvent.Record(tenantId, incidentId, kind, Guid? memberId, string? detail, DateTimeOffset at)`.
-- [ ] `dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Control.Incident"`: verde.
-- [ ] Commit: `feat(wms): model the unified incident with its closed catalog`
-
-**Cierre del bloque A:** `Modules.Wms.UnitTests` completo y `WmsLayerTests` (debe seguir verde **sin modificarse**: si pide cambios,
-frena; `Incident` no puede referenciar `Tasks`). Revisión del bloque (un revisor, lectura): §6.3 (cierre con `Short`), §8.2 y §8.4
-contra las pruebas, y que ningún DTO futuro tenga de dónde sacar lo esperado de un `Count`.
-
----
-
-# Bloque B — Persistencia, migración y consultas (tareas 5 y 6, un implementador)
-
-### Task 5: Migración `AddIncidents`, modelo EF y repositorio
-
-**Files:**
-- Create: `src/Modules/Wms/Modules.Wms.Application/Control/IIncidentRepository.cs`
-- Create: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/IncidentModel.cs`, `IncidentRepository.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/WarehouseTaskModel.cs`, `WmsDbContext.cs`, `WmsUnitOfWork.cs`, `WmsUserReferenceProbe.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Infrastructure/WmsInfrastructureExtensions.cs`
-- Create (generada): `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/Migrations/<ts>_AddIncidents.cs` (+ Designer, snapshot)
-- Modify: `tests/Modules/Wms/Modules.Wms.IntegrationTests/WmsPersistenceTests.cs` (excluye `incidents`, `incident_evidence`, `incident_events`)
-- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Control/IncidentPersistenceTests.cs`, `Tasks/WarehouseTaskPersistenceTests.cs` (casos nuevos), `WmsUserReferenceProbeTests` (caso nuevo)
-
-Puerto:
+Port (this task; B and C add methods):
 
 ```csharp
-public sealed record IncidentPage(IReadOnlyList<Incident> Items, int TotalCount);
-
 public interface IIncidentRepository
 {
     void Add(Incident incident);
-    /// <summary>Con evidencia, sin eventos, rastreada.</summary>
-    Task<Incident?> GetAsync(Guid tenantId, Guid id, CancellationToken ct);
     /// <summary>Con evidencia y eventos, sin rastreo: la ficha.</summary>
-    Task<Incident?> GetWithEventsAsync(Guid tenantId, Guid id, CancellationToken ct);
-    Task<IncidentPage> ListAsync(Guid tenantId, Guid? warehouseId, IncidentStatus? status, IncidentType? type, int page, int pageSize, CancellationToken ct);
-    /// <summary>Las abiertas (Open o InReview) de la bodega: el tablero.</summary>
-    Task<int> CountOpenAsync(Guid tenantId, Guid warehouseId, CancellationToken ct);
-    /// <summary>Rastreadas: las que esperan la verificación de ese conteo, abiertas.</summary>
-    Task<IReadOnlyList<Incident>> ListOpenVerifiedByAsync(Guid tenantId, Guid countTaskId, CancellationToken ct);
-    /// <summary>Rastreada: la CountVariance que propuso ese ajuste.</summary>
-    Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken ct);
-    /// <summary>Sin rastreo: las hijas de una CountVariance (separación de funciones).</summary>
-    Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(Guid tenantId, Guid parentIncidentId, CancellationToken ct);
-    /// <summary>La que ya registró esa Idempotency-Key (SyncConflict).</summary>
-    Task<bool> ExistsWithOperationKeyAsync(Guid tenantId, string operationKey, CancellationToken ct);
-    Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken ct);
+    Task<Incident?> GetWithEventsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+    /// <summary>Si esa Idempotency-Key ya dejó una novedad (deduplicar SyncConflict). Se llama bajo el lock del operario.</summary>
+    Task<bool> ExistsWithOperationKeyAsync(Guid tenantId, string operationKey, CancellationToken cancellationToken);
+    /// <summary>NOV-{yyyyMMdd}-{NNNN} por tenant y día, con lock bloqueante «incident-seq:{tenant}»; exige la transacción.</summary>
+    Task<string> NextNumberAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken);
 }
 ```
 
-- [ ] **RED.** `IncidentPersistenceTests` (`OpenAsync` + `ArrangeAsync`):
-  - `AnIncidentRoundTripsWithEvidenceAndEvents` (todas las columnas, incluido `raw_payload` JSON).
-  - `TheOperationKeyIsUniquePerTenant`: dos novedades con la misma clave en el mismo tenant → la segunda falla con
-    `IX_incidents_operation_key` (traducida a `RequestConcurrencyException`); en otro tenant, pasa.
-  - `NumbersAreSequentialPerTenantAndDay` (`NOV-yyyyMMdd-0001`, `…-0002`).
-  - `TheDatabaseRejectsAnUnknownType` (`UPDATE wms.incidents SET type = 'Nope'` → `23514`, `CK_incidents_type`).
-  - `DeletingALocationUsedByAnIncidentIs422HasStock` (`FK_incidents_location` en `LocationReferenceForeignKeys`).
-  En `WarehouseTaskPersistenceTests`: `ACountTaskWithAShortAndACountedLineRoundTrips` (tipo `Count`, línea con `quantity_planned = 0`,
-  `quantity_counted`, `to_location_id` nulo; otra tarea `Move` con línea `Short`) y `TheDatabaseRejectsANegativeCount` (`23514`,
-  `CK_task_lines_quantity`). En `WmsUserReferenceProbeTests`: una membresía que sólo figura como `reported_by` cuenta como referenciada.
-- [ ] `dotnet build tests/Modules/Wms/Modules.Wms.IntegrationTests`: falla (RED de compilación).
+- [ ] **RED (unit).** `IncidentCatalogTests`: one test per catalog row, plus `EveryTypeHasAnEntry` (walks
+  `Enum.GetValues<IncidentType>()` and calls the five members: a new type without a row turns red).
+  `IncidentReportTests`: `ReportingIsOpenWithVersionOneAndAReportedEvent` (number, subject, `ReportedAt` = the scan time, one
+  `Reported` event with `memberId = reportedBy` or null for `Guid.Empty`); `TheNoteAndTheRawCodeAreTrimmedAndBounded`
+  (`IncidentInvalid` above 500 / 200); `NegativeQuantitiesAreInvalid`; `MoreThanFiveEvidenceFilesIsEvidenceInvalid`
+  (`WmsErrorCodes.IncidentEvidenceInvalid` is defined in this task so the test is final; B2 adds the tenant lookup).
+- [ ] **RED (integration).** `IncidentPersistenceTests` (`OpenAsync` + `ArrangeAsync`, save through the port + `IWmsUnitOfWork`):
+  - `AnIncidentRoundTripsWithEvidenceAndEvents` (every column, `raw_payload` as JSON).
+  - `TheOperationKeyIsUniquePerTenant` (same key twice in one tenant → the second save throws `RequestConcurrencyException`
+    translated from `IX_incidents_operation_key`; in another tenant it saves).
+  - `NumbersAreSequentialPerTenantAndDay` (`NOV-yyyyMMdd-0001`, `-0002`).
+  - `TheDatabaseRejectsAnUnknownTypeStatusOrResolution` (`UPDATE … SET type = 'Nope'` → `23514` `CK_incidents_type`; same for
+    status and resolution).
+  - `DeletingALocationUsedByAnIncidentIs422HasStock` (`FK_incidents_location` in `LocationReferenceForeignKeys`).
+  `WarehouseTaskPersistenceTests.AShortLineRoundTrips` (a `Move` whose line ends `Short`, plus its `LineShort` event).
+  `WmsUserReferenceProbeTests.AMemberWhoOnlyReportedAnIncidentRetainsTheUser`.
+- [ ] Build fails (types missing). Copy the output.
 - [ ] **GREEN.**
-  - `WarehouseTaskModel`: `CK_tasks_type` → `type IN ('Move','Count')`; `CK_task_lines_status` → `line_status IN
-    ('Open','Done','Short','Cancelled')`; `CK_task_lines_quantity` → `quantity_planned >= 0 AND quantity_confirmed >= 0 AND
-    quantity_confirmed <= quantity_planned AND (quantity_counted IS NULL OR quantity_counted >= 0)` (DA-39: sólo se relaja; ningún pod
-    viejo escribe `0`); columna `quantity_counted numeric(18,6) null`. `CK_tasks_status` y `IX_tasks_pool` **no cambian**: T2 no agrega
-    estados de tarea, así que tampoco cambian `CountOpenByTypeAsync` (excluye `Done`/`Cancelled`) ni la lista de estados de
-    `CatalogVariantUsageChecker`; un comentario en cada uno lo dice.
-  - `IncidentModel.Configure(ModelBuilder)` (internal static, llamado desde `WmsDbContext.OnModelCreating` después de
-    `WarehouseTaskModel.Configure`): tablas `incidents`, `incident_evidence`, `incident_events` con las columnas de la tarea 4 en
-    `snake_case`; enums `HasConversion<string>()` `HasMaxLength(32)`; `raw_payload` `jsonb`; `version` `bigint` token; cantidades
-    `HasPrecision(18, 6)`; FKs con nombre `FK_incidents_warehouse`, `FK_incidents_owner`, `FK_incidents_location`, `FK_incidents_lot`,
-    `FK_incidents_parent` (RESTRICT), `FK_incident_evidence_incident` y `FK_incident_events_incident` (cascade). Sin FK a `tasks` ni a
-    `adjustments` (se enlazan por `Guid`, como el `source_id` de la tarea); índices `IX_incidents_tenant_number` único,
-    `IX_incidents_operation_key` único `(tenant_id, operation_key) WHERE operation_key IS NOT NULL`, `IX_incidents_open` `(tenant_id,
-    warehouse_id, status) WHERE status IN ('Open','InReview')`, `IX_incidents_verification` `(verification_task_id) WHERE
-    verification_task_id IS NOT NULL`, `IX_incidents_adjustment` `(adjustment_id) WHERE adjustment_id IS NOT NULL`,
-    `IX_incident_events_incident` `(incident_id, occurred_at)`. CHECKs `CK_incidents_type`, `CK_incidents_status`,
+  - `Report`: trims, validates lengths (`IncidentInvalid`), non-negative quantities, `evidence.Count <= MaxEvidence`
+    (`IncidentEvidenceInvalid`), `Id = Guid.CreateVersion7()`, `Status = Open`, `Version = 1`, `Reported` event at `reportedAt`
+    (`IncidentEvent.Record(tenantId, incidentId, kind, Guid? memberId, string? detail, DateTimeOffset at, DateTimeOffset recordedAt)`,
+    `recordedAt = now`, like task events). `IncidentEvidence.Create(Guid fileId, IncidentEvidenceKind kind, string? rawValue)`.
+  - `WarehouseTaskModel`: `CK_task_lines_status` → `line_status IN ('Open','Done','Short','Cancelled')`. Nothing else in tasks.
+  - `IncidentModel.Configure(ModelBuilder)` (internal static, called from `WmsDbContext.OnModelCreating` after
+    `WarehouseTaskModel.Configure`): tables `incidents`, `incident_evidence`, `incident_events`, snake_case columns; enums
+    `HasConversion<string>()` `HasMaxLength(32)`; `raw_payload` `jsonb`; `version` `bigint` concurrency token; quantities
+    `HasPrecision(18, 6)`; FKs `FK_incidents_warehouse`, `FK_incidents_owner`, `FK_incidents_location`, `FK_incidents_lot`,
+    `FK_incidents_parent` (RESTRICT), `FK_incident_evidence_incident`, `FK_incident_events_incident` (cascade). No FK to `tasks`,
+    `adjustments` or Storage files (linked by `Guid`, like `tasks.source_id`). Indexes: `IX_incidents_tenant_number` unique;
+    `IX_incidents_operation_key` unique `(tenant_id, operation_key) WHERE operation_key IS NOT NULL`; `IX_incidents_open`
+    `(tenant_id, warehouse_id, status) WHERE status IN ('Open','InReview')`; `IX_incidents_verification` `(verification_task_id) WHERE
+    verification_task_id IS NOT NULL`; `IX_incidents_adjustment` `(adjustment_id) WHERE adjustment_id IS NOT NULL`;
+    `IX_incidents_variant_open` `(tenant_id, variant_id) WHERE status IN ('Open','InReview') AND variant_id IS NOT NULL` (DA-51
+    query); `IX_incident_events_incident` `(incident_id, recorded_at)`. CHECKs: `CK_incidents_type`, `CK_incidents_status`,
     `CK_incidents_resolution` (`resolution IS NULL OR resolution IN ('Accept','AcceptIntoStock')`), `CK_incidents_resolved`
-    (`status <> 'Resolved' OR (resolution IS NOT NULL AND resolved_at IS NOT NULL)`), `CK_incidents_quantities` (no negativas).
-  - Constantes en `WmsDbContext`: `IncidentNumberIndex`, `IncidentOperationKeyIndex`; `FK_incidents_location` a
-    `LocationReferenceForeignKeys`, `FK_incidents_owner` a `OwnerReferenceForeignKeys`.
-  - `WmsUnitOfWork.PersistAsync`: `IncidentNumberIndex` e `IncidentOperationKeyIndex` → `RequestConcurrencyException("concurrency.conflict", …)`
-    (último recurso: el lock de numeración y el del operario serializan antes).
-  - `WmsUserReferenceProbe`: suma `incidents.reported_by`, `incidents.resolved_by` e `incident_events.member_id` (precedente: la
-    desviación del bloque B de T1 con las tareas).
-  - `IncidentRepository` (molde `AdjustmentRepository`/`WarehouseTaskRepository`): `NextNumberAsync` con `"incident-seq:" + tenantId` y
-    prefijo `NOV-`; `ListAsync` más recientes primero con `WmsPaging`.
-  - Registra `IIncidentRepository` en `AddWmsInfrastructure`.
-  - Genera la migración. Revisa el `Up`: los tres `DropCheckConstraint`/`AddCheckConstraint` de tareas, la columna nueva y las tres
-    tablas. El `Down` que genera EF vuelve a los CHECK de T1: **antes de bajar hay que haber borrado las tareas `Count` y las líneas
-    `Short`**; deja un comentario en el `Down` que lo diga (bajar con datos falla con `23514`, que es lo correcto).
-- [ ] `--filter "FullyQualifiedName~IncidentPersistenceTests|FullyQualifiedName~WarehouseTaskPersistenceTests|FullyQualifiedName~WmsUserReferenceProbeTests|FullyQualifiedName~WmsPersistenceTests"`: verde.
-- [ ] Commit: `feat(wms): persist incidents and the count and short task lines`
+    (`status <> 'Resolved' OR (resolution IS NOT NULL AND resolved_at IS NOT NULL)`), `CK_incidents_quantities` (non-negative),
+    `CK_incident_evidence_kind`. **No CHECK on `incident_events.kind`** (like `task_events.kind`): the event vocabulary grows without
+    a migration.
+  - `WmsDbContext`: `IncidentNumberIndex`, `IncidentOperationKeyIndex`; `FK_incidents_location` into `LocationReferenceForeignKeys`,
+    `FK_incidents_owner` into `OwnerReferenceForeignKeys`. `WmsUnitOfWork.PersistAsync`: both indexes →
+    `RequestConcurrencyException("concurrency.conflict", …)` (last resort: the numbering lock and the operator lock serialize first).
+  - `IncidentRepository` (template `AdjustmentRepository.NextNumberAsync`, prefix `NOV-`, lock `"incident-seq:" + tenantId`);
+    register `IIncidentRepository` in `AddWmsInfrastructure`.
+  - `WmsUserReferenceProbe`: add `incidents.reported_by`, `incidents.resolved_by`, `incident_events.member_id`.
+  - Generate `AddIncidentsAndShortLines`. Review the `Up`: the `CK_task_lines_status` drop/add and the three tables only. The `Down`
+    EF generates goes back to T1's CHECK: leave a comment that **going down with `Short` lines fails with `23514`, on purpose**.
+- [ ] Run:
 
-### Task 6: Consultas que T2 necesita: saldo exacto, conteo abierto, candidata sin el reportante y uso de variante
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Control.Incident"
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~IncidentPersistenceTests|FullyQualifiedName~AShortLineRoundTrips|FullyQualifiedName~AMemberWhoOnlyReportedAnIncidentRetainsTheUser|FullyQualifiedName~TheMigrationCreatesTheEightTablesWithTheirUniqueIndexes" -- xUnit.MaxParallelThreads=4
+  ```
+
+- [ ] Commit: `feat(wms): persist the incident core and short task lines`
+
+### Task A4: `short` on a line, with its `ShortMove`/`LocationMismatch` incident in the same transaction
+
+`short` creates the incident but **not yet** the verification `Count`: that type is born in Block C (Task C3 adds it to this same
+path with its own RED).
+
+**Files:**
+- Create: `src/Modules/Wms/Modules.Wms.Application/Incidents/TaskIncidentRecorder.cs`, `src/Modules/Wms/Modules.Wms.Application/Tasks/ShortTaskLine.cs`
+- Create: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskLotRules.cs` (extract `EnsureLotsAsync` from `CreateMoveTask.cs` into a
+  shared `EnsureLotAsync(ILotRepository, tenantId, ownerId, variantId, lotId, ct)`; `CreateMoveTaskHandler` uses it)
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskDtos.cs` (`ShortTaskLineRequest`), `src/Modules/Wms/Modules.Wms.Api/TaskEndpoints.cs`,
+  `src/Bootstrapper/QepServiceCollectionExtensions.cs`
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskShortApiTests.cs`; `Incidents/IncidentTestSupport.cs` (helpers below)
+
+```csharp
+/// <summary>Lo que el operario escaneó al no encontrar todo. QuantityFound va al destino planeado; para otro destino se confirma
+/// antes con motivo y se declara el faltante con 0 (DA-41). IncidentType es el nombre del tipo: ShortMove o LocationMismatch.</summary>
+public sealed record ShortTaskLineRequest(Guid LeaseToken, decimal QuantityFound, Guid? LotId, string? IncidentType, string? Note,
+    DateTimeOffset? OccurredAt, string? DeviceId) : IIdempotentRequest;
+
+/// <summary>Arma la novedad que nace de una línea de tarea. No guarda: comparte la transacción del handler.</summary>
+public sealed class TaskIncidentRecorder(IIncidentRepository incidents)
+{
+    public Task<Incident> ReportFromLineAsync(WarehouseTask task, WarehouseTaskLine line, IncidentType type, decimal expected,
+        decimal actual, LotId? lot, string? note, Guid member, string deviceId, string operationKey, DateTimeOffset reportedAt,
+        DateTimeOffset now, CancellationToken cancellationToken);
+}
+```
+
+`ShortTaskLineHandler(OperatorLineRunner runner, TaskIncidentRecorder recorder, IInventoryLedger ledger, ILotRepository lots,
+IValidator<ShortTaskLineCommand> validator)`: `runner.AuthorizeAsync` → validator (`deviceId`, `0 <= quantityFound`, `incidentType`
+parses to `IncidentType`, note ≤ 500, `occurredAt` not null; the domain still decides `< remaining`) → `runner.RunAsync(request with
+Action = "short", RawCommand = command, apply)`, where `apply`:
+
+1. `IncidentCatalog.DeclarableOnShort(task.Type.ToString())` lacks the type → 422 `wms.incident.type_not_allowed`.
+2. Lot: `line.LotId` fixed and `command.LotId` different → `wms.task.lot_mismatch`; effective `line.LotId ?? command.LotId`; a lot
+   that came from the command goes through `TaskLotRules.EnsureLotAsync` (404 `wms.lot.not_found`): with `quantityFound = 0` there is
+   no ledger call to catch a foreign lot, and the incident row has an FK to `lots` that does not look at the tenant.
+3. `var expected = line.Remaining` → `task.ShortLine(member, …, quantityFound, now, occurredAt, ctx.MemberIsBusy)`.
+4. `recorder.ReportFromLineAsync(task, line, type, expected, quantityFound, lot, note, member, deviceId, key, occurredAt, now)` —
+   subject `(task.Id, line.Id, line.FromLocationId, line.VariantId, lot, line.StockStatus, expected, quantityFound)`; numbering
+   **before** the ledger (lock order).
+5. If `quantityFound > 0`: **one** `LedgerEntry` `(owner, from, variant, lot, status) → (owner, line.ToLocationId, …)`,
+   `TaskTypePolicy.MovementReasonOf(task.Type)`, document `("Task", task.Id, line.Id)`, actor the membership with its device →
+   `ledger.PostAsync`. If the ledger fails (`wms.stock.insufficient`, `wms.lot.required`…), the whole transaction rolls back: no
+   `Short` line, no incident.
+
+Route: `OperatorAction<ShortTaskLineRequest, TaskDto>(group, "/tasks/{id:guid}/lines/{lineId:guid}/short", ShortAsync).RequireIdempotencyKey()`.
+
+`IncidentTestSupport` (integration): `IncidentsOfTaskAsync(database, taskId)` → rows `(id, type, status, expected_qty, actual_qty,
+reported_by, operation_key, verification_task_id, lot_id)` via `ScalarAsync`/Npgsql; `ShortRawAsync(client, taskId, lineId, body,
+key)`; `ShortBody(token, found, type = "ShortMove", lotId = null, occurredAt = null)`.
+
+- [ ] **RED.** `TaskShortApiTests` (floor of `TaskOperatorApiTests`: stock 10 in `A-01-02`, a `Move` of 5 to `B-01-01`, claimed
+  with `next` by an operator with `DocumentRead` + `PutawayPerform`):
+  - `ShortWithTwoFoundMovesTwoAndClosesTheTask`: 200; `OnHandAsync(B-01-01) = 2`, `A-01-02 = 8`; line `Short`, task `Done`; one
+    `ShortMove` incident `Open` with `expected_qty = 5`, `actual_qty = 2`, `source_task_id`, `reported_by` = the operator,
+    `operation_key` = the key, `reported_at` = the scan time.
+  - `ShortWithNothingFoundMovesNothing` (`quantityFound: 0`: no movement with the task as document; incident `actual_qty = 0`).
+  - `ShortWithALotMovesThatLot`: variant set to `Lot` (`SetTrackingAsync`) with lot L1 stocked; line without lot; `lotId = L1`,
+    found 2 → movement and incident carry L1. `AShortWithAnotherLotThanTheLineIs422LotMismatch`.
+  - `AShortWithNothingFoundOnALotVariantNeedsNoLot` (found 0, no lot → 200, incident `lot_id` null).
+  - `AForeignLotIs404` (a lot of another variant, found 0 → 404 `wms.lot.not_found`, nothing saved).
+  - `RepeatingTheShortReturnsTheSavedResponse` (same key → 200 identical body, one incident, one movement).
+  - `ATypeNotDeclarableOnAMoveIs422` (`UnreadableLabel` → `wms.incident.type_not_allowed`); `AnUnknownTypeIs422ValidationFailed`.
+  - `FindingEverythingIs422LineInvalid`.
+  - `AScanMoreThanFiveMinutesBeforeTheReleaseIs422` (`wms.movement.occurred_at_out_of_range`, nothing saved).
+  - `ShortMoreThanTheStockRollsBackEverything` (stock 1, found 2 → 422 `wms.stock.insufficient`; no incident; line still `Open`).
+  - `ShortWithoutThePutawayPermissionIs403`; `ShortWithoutTheIdempotencyKeyIs428`.
+  - `ALateShortOfTheSameOperatorResumesTheTask` (lease expired + swept, same token → 200, `LeaseResumed` then `LineShort`).
+- [ ] Build fails (`ShortTaskLineRequest`, handler, route missing). Copy the output.
+- [ ] **GREEN.** Implement and register `ShortTaskLineHandler`, its validator and `TaskIncidentRecorder` (scoped).
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~TaskShortApiTests" -- xUnit.MaxParallelThreads=4
+  dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~CompositionRootTests"
+  ```
+
+- [ ] Commit: `feat(wms): declare a short line with its incident`
+
+### Task A5: `SyncConflict` when a line action arrives with a lost lease
+
+**Files:**
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/OperatorLineRunner.cs` (the lease step), `src/Modules/Wms/Modules.Wms.Application/Incidents/TaskIncidentRecorder.cs`
+  (`RecordSyncConflictAsync`)
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskSyncConflictApiTests.cs`; `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/TaskClosedNotifierTests.cs` (one case)
+
+```csharp
+// TaskIncidentRecorder
+/// <summary>La acción que llegó con un lease perdido, tal cual llegó (DA-48), sin el leaseToken. Si esa Idempotency-Key ya dejó su
+/// novedad no agrega otra. No guarda: el runner confirma la transacción con sólo esto y después responde 409.</summary>
+public Task RecordSyncConflictAsync(WarehouseTask task, WarehouseTaskLine? line, Guid member, string deviceId, string operationKey,
+    string action, object rawCommand, decimal? quantity, LotId? lot, DateTimeOffset occurredAt, DateTimeOffset now,
+    CancellationToken cancellationToken);
+```
+
+In `OperatorLineRunner.RunAsync` the lease step becomes:
+
+```csharp
+// Spec §6.7 y DA-48: la acción rechazada queda como novedad aunque el hecho no se aplique. La transacción sólo tiene la novedad
+// (nada más se tocó), así que guardarla y lanzar después no deja nada a medias. El filtro IK no encuentra recibo y devuelve este
+// 409 tal cual; un reintento con la misma clave no duplica la novedad (operation_key, bajo el lock del operario).
+var lease = task.CheckLease(member, request.LeaseToken);
+if (lease == LeaseCheck.Lost)
+{
+    await recorder.RecordSyncConflictAsync(task, task.FindLine(request.LineId), member, request.DeviceId, key, request.Action,
+        request.RawCommand, request.Quantity, request.LotId, request.OccurredAt, now, cancellationToken);
+    await unitOfWork.SaveChangesAsync(cancellationToken);
+    throw new TaskLeaseLostException(resumable: false);
+}
+```
+
+(`OperatorLineRequest` gains `decimal? Quantity` and `Guid? LotId`; the runner takes `TaskIncidentRecorder`.) Rules:
+- The permission guard (`EnsureCanPerformAsync`) stays **before**: without the type permission it is 403 and nothing is recorded. An
+  unknown task is 404 and nothing is recorded.
+- `ExistsWithOperationKeyAsync(tenant, key)` true → add nothing (dedup by `Idempotency-Key`).
+- Subject from the line when it belongs to the task (`FromLocationId`, variant, `line.LotId ?? lot`, status, `actualQty =
+  quantity`); a line id that is not the task's → no line subject (the task exists; the physical fact is what matters).
+- `raw_payload` = the command serialized with `JsonSerializerOptions.Web` into a `JsonObject`, `"action"` added, `"leaseToken"`
+  removed (another claim's token must not be readable in the inbox).
+- `reported_at` = `occurredAt` when it is inside the ledger window `[now − 30 d, now + 5 min]`, else the server `now` (the raw value
+  stays in `raw_payload`).
+- `resumable` is always `false` here: a `Resumable` lease never reaches this branch (the action resumes the task).
+
+- [ ] **RED.** `TaskSyncConflictApiTests`:
+  - `AConfirmationAfterReassignmentLeavesASyncConflict`: operator A claims; the supervisor reassigns to B (`assign` with reason);
+    A confirms → 409 `wms.task.lease_lost` with `resumable = false` (`ResumableOfAsync`); one `SyncConflict` `Open`, `reported_by` =
+    A, `source_task_line_id`, `actual_qty`, `operation_key` = the key, `raw_payload` with `quantity` and `action = "confirm"` and
+    **without** `leaseToken`; the task version, its lines and the stock did not change; **no** `operation_receipts` row for the key.
+  - `RetryingTheSameKeyDoesNotDuplicateTheConflictAndStill409s` (twice → 409 with `resumable = false` both times, one incident).
+  - `ADifferentKeyLeavesASecondConflict`.
+  - `TheSameKeyWithAnotherBodyKeepsTheFirstPayload` (no receipt, so no `wms.idempotency_key_reused`: 409 lease lost, one incident with
+    the first body).
+  - `AShortWithALostLeaseAlsoLeavesAConflict` (`action = "short"`, `actual_qty = quantityFound`, no `ShortMove` incident).
+  - `AResumableLateConfirmationLeavesNoConflict` (lease expired + swept, same token → 200 and no `SyncConflict`).
+  - `AConfirmationOnAHeldTaskLeavesAConflict` (DA-35: held then published → 409 `resumable = false` + `SyncConflict`).
+  - `WithoutTheTypePermissionItIs403AndLeavesNothing`; `AnUnknownTaskIs404AndLeavesNothing`.
+  - `AnAncientScanIsReportedAtServerTime` (`occurredAt` 40 days ago → 409, `reported_at` ≈ now, raw value in `raw_payload`).
+  Unit (`TaskClosedNotifierTests`): `ALostLeaseCommitsOnlyTheConflictAndNeverNotifies` (`world.Log` ends `…"load-task", "save"`,
+  no `"ledger"`, no `"hook"`, no `"receipt"`; the exception is `TaskLeaseLostException` with `Resumable == false`).
+- [ ] Build: if the new signatures do not exist yet the build fails (copy it); once it compiles, the RED is the filtered run of
+  `AConfirmationAfterReassignmentLeavesASyncConflict` failing on the missing incident (a behavior failure: containers are fine).
+- [ ] **GREEN.** Implement.
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Modules.Wms.UnitTests.Tasks"
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~TaskSyncConflictApiTests" -- xUnit.MaxParallelThreads=4
+  ```
+
+- [ ] Commit: `feat(wms): keep a sync conflict when a line action lost its lease`
+
+**Block A close (once, foreground, after checking `Get-Process testhost`):**
+
+```powershell
+dotnet test tests/Modules/Wms/Modules.Wms.UnitTests
+dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~WmsLayerTests|FullyQualifiedName~CompositionRootTests|FullyQualifiedName~MultiReplicaInventoryTests"
+dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Tasks|FullyQualifiedName~Modules.Wms.IntegrationTests.Incidents|FullyQualifiedName~WmsPersistenceTests|FullyQualifiedName~WmsUserReferenceProbeTests|FullyQualifiedName~WmsUnitOfWorkTests" -- xUnit.MaxParallelThreads=4
+```
+
+`WmsLayerTests` must stay green **without changes** (if it asks for one, stop: `Incident` must not reference `Tasks`). Block review
+(one read-only reviewer): the runner preserves T1's lock and log order, the hook runs once per close, §6.3 close with `Short`, DA-48
+transaction and dedup, numbering before balances.
+
+---
+
+# Block B — incident lifecycle, evidence, routes and audit (tasks B1 to B4, one implementer)
+
+### Task B1: Review, resolve, reject and separation of duties in the domain
+
+**Files:**
+- Modify: `src/Modules/Wms/Modules.Wms.Domain/Control/Incident.cs`, `WmsErrorCodes.cs` (`IncidentNotFound`, `IncidentSelfResolution`,
+  `IncidentResolutionNotAllowed`)
+- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Control/IncidentLifecycleTests.cs`
+
+```csharp
+public void Review(Guid by, DateTimeOffset now);                                       // Open → InReview
+public void Resolve(IncidentResolution resolution, Guid by, string? note, Guid? batchId, DateTimeOffset now); // Open|InReview → Resolved
+public void Reject(Guid by, string note, DateTimeOffset now);                           // Open|InReview → Rejected; only if CanBeRejected
+public void EnsureNotSelfResolution(IncidentResolution resolution, Guid by);           // DA-17/DA-47: AcceptIntoStock by the reporter → 422
+```
+
+- [ ] **RED.** `IncidentLifecycleTests`: `ReviewMovesOpenToInReviewAndBumpsTheVersion` (event `InReview`);
+  `ReviewingTwiceIsAnInvalidTransition` (`InvalidTransitionException`, `from = "InReview"`, action `review`);
+  `ResolvingWithAResolutionTheTypeDoesNotAllowIs422` (`ShortMove` + `AcceptIntoStock`; `CountVariance` + `Accept` →
+  `IncidentResolutionNotAllowed`); `ResolvingIsTerminal` (a second `Resolve` or `Reject` → invalid transition);
+  `OnlyAnIncidentThatMovedNothingCanBeRejected` (`SyncConflict` yes; `ShortMove` → `IncidentResolutionNotAllowed`);
+  `RejectingNeedsANoteOfAtMostFiveHundred` (`IncidentInvalid`); `TheReporterCannotAcceptIntoStockTheirOwnConflict`
+  (`IncidentSelfResolution`) while `Accept` by the reporter passes; `ResolvingRecordsWhoWhenAndTheBatch`.
+- [ ] Build fails. Copy the output.
+- [ ] **GREEN.** Each transition: status check → mutate → `Version++` → event (`recordedAt = now`). `Resolve` refuses `CountVariance`
+  always (it is closed by its adjustment, Task C5).
+- [ ] Run: `dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Control.Incident"`.
+- [ ] Commit: `feat(wms): review, resolve and reject incidents in the domain`
+
+### Task B2: Evidence (`WmsEvidence` files of the tenant, at most 5)
+
+**Files:**
+- Create: `src/Modules/Wms/Modules.Wms.Application/Incidents/IWmsEvidenceLookup.cs`; `src/Bootstrapper/WmsEvidenceLookup.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Incidents/TaskIncidentRecorder.cs` (resolve evidence), `src/Modules/Wms/Modules.Wms.Application/Tasks/ShortTaskLine.cs`,
+  `TaskDtos.cs` (`ShortTaskLineRequest` gains `IReadOnlyList<Guid>? PhotoFileIds`), `src/Bootstrapper/QepServiceCollectionExtensions.cs`
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskShortApiTests.cs` (new cases); `Incidents/IncidentTestSupport.cs`
+  (`SeedEvidenceFileAsync(factory, tenantId, ownerType = FileOwnerType.WmsEvidence)` with `FileResource.CreatePendingUpload` +
+  `IFileResourceRepository` + `IStorageUnitOfWork`, left pending)
+
+```csharp
+public interface IWmsEvidenceLookup
+{
+    /// <summary>Los ids que son archivos WmsEvidence del tenant, en cualquier estado (pueden estar subiendo todavía, DA-49). Los de
+    /// otro tenant o de otro tipo de dueño no vienen, como uno que no existe.</summary>
+    Task<IReadOnlySet<Guid>> FindEvidenceAsync(Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken);
+}
+```
+
+`WmsEvidenceLookup(IFileResourceRepository repository)`: `ListByIdsAsync` and filter `resource.TenantId == tenantId &&
+resource.OwnerType == FileOwnerType.WmsEvidence` (copy of `QuotationFileLookup.FindManyAsync`, without looking at the status).
+Registered next to `WmsMemberDirectory`. The recorder: ids are de-duplicated first; more than `Incident.MaxEvidence` distinct ids →
+422 `wms.incident.evidence_invalid`; any id missing from the lookup → the same code; each becomes `IncidentEvidence.Create(id, Photo,
+null)`. The validator of `short` caps the list length at 5 only through the domain (no FluentValidation rule: it is not free text).
+
+- [ ] **RED.** `TaskShortApiTests`: `AShortKeepsItsPhotosEvenWhileUploading` (two pending `WmsEvidence` files → incident with two
+  evidence rows); `APhotoOfAnotherTenantIs422EvidenceInvalid` (file seeded for `OtherTenantId`; nothing saved);
+  `AFileThatIsNotEvidenceIs422EvidenceInvalid` (owner type `WmsExport`); `AnUnknownPhotoIs422EvidenceInvalid`;
+  `SixPhotosAre422EvidenceInvalid`; `TheSamePhotoTwiceCountsOnce`.
+- [ ] Build fails (`PhotoFileIds` missing). Copy the output.
+- [ ] **GREEN.** Implement and register.
+- [ ] Run: `dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~TaskShortApiTests" -- xUnit.MaxParallelThreads=4`
+- [ ] Commit: `feat(wms): attach tenant evidence files to incidents`
+
+### Task B3: Report and read incidents (`POST /incidents`, `GET /incidents`, `GET /incidents/{id}`) and the board count
+
+**Files:**
+- Create: `src/Modules/Wms/Modules.Wms.Application/Incidents/IncidentDtos.cs` (DTOs, `IncidentDtoComposer`), `ReportIncident.cs`,
+  `ListIncidents.cs`, `GetIncident.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Control/IIncidentRepository.cs` (`GetAsync` tracked with evidence, `ListAsync`,
+  `CountOpenAsync`), `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/IncidentRepository.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/WmsSupport.cs` (`WmsNotFound.Incident`), `WmsPorts.cs` (`Resources.Incident = "wms.incident"`)
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/GetTaskBoard.cs`, `TaskDtos.cs` (`TaskBoardDto` gains `int OpenIncidents`, last)
+- Create: `src/Modules/Wms/Modules.Wms.Api/IncidentEndpoints.cs`; Modify: `src/Modules/Wms/Modules.Wms.Api/WmsEndpoints.cs`
+- Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs`
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Incidents/IncidentApiTests.cs`, `Tasks/TaskSupervisorActionsApiTests.cs`
+  (`TheBoardCountsOpenIncidents`)
+
+Contract (spec §8.5, names by enum, DA-42):
+
+```
+POST /incidents                 IK  [wms.document.read + the permission of some task type, in the handler, DA-49]
+     { warehouseId, type, locationId?, variantId?, lotId?, quantity?, rawCode?, note, photoFileIds?, sourceTaskId?, occurredAt, deviceId } → 201 IncidentDto
+GET  /incidents?warehouseId&status&type&page&pageSize   [wms.document.read] → { items: IncidentSummaryDto[], page, pageSize, totalCount }
+GET  /incidents/{id}            [wms.document.read] → IncidentDto
+```
+
+```
+IncidentSummaryDto { id, number, type, status, warehouseId, ownerId, locationId, locationCode, variantId, variantCode, productName,
+                     expectedQty, actualQty, reportedBy, reportedByName, reportedAt, sourceTaskId, sourceTaskNumber,
+                     verificationTaskId, adjustmentId, version }
+IncidentDto        { ...IncidentSummaryDto, lotId, lotCode, stockStatus, rawCode, rawPayload, note, deviceId, resolution, resolvedBy,
+                     resolvedByName, resolvedAt, resolutionNote, batchId, parentIncidentId, allowedResolutions, canBeRejected,
+                     evidence: [{ fileId, kind, rawValue }], events: [{ kind, memberId, memberName, detail, occurredAt }] }
+TaskBoardDto       { ...T1, openIncidents }
+```
+
+BFF notes for the DTO comments: `allowedResolutions` and `canBeRejected` come from `IncidentCatalog` **and the incident** (the screen
+does not know the catalog; without this it would paint buttons that answer 422). `AcceptIntoStock` is offered only when
+`actualQty > 0` and the source line has a destination (a `SyncConflict` from `count` or from a `short` with 0 found has nothing to
+apply: only `reject`). Member names, location codes, variant code/product name and task number are resolved on the server
+(`IWmsMemberDirectory.FindNamesAsync`, `IWarehouseRepository.FindLocationCodesAsync`, `IWmsCatalogReader`, the task repository), like
+`WarehouseTaskDtoComposer`. `reportedByName`/`resolvedByName` of `Guid.Empty` is «Sistema». `rawCode`, `rawPayload`, evidence and
+events travel only in `IncidentDto`. Events in `recorded_at` order, then kind, then id.
+
+`ReportIncidentHandler`: `DocumentRead` (with warehouse) → `TaskTypePermissions.AllowedFor(ctx).Count == 0` → 403 → validator (type
+parses and is in `IncidentCatalog.DeclarableStandalone`, else 422 `wms.incident.type_not_allowed`; note required 1..500; rawCode ≤
+200; `quantity >= 0`; `occurredAt` not null; `deviceId`) → owner Self (`provisioner.EnsureAsync` **before** the transaction, like
+`ProposeAdjustmentHandler`) → transaction → warehouse (404) and location of that warehouse (404 `wms.location.not_found`) → variant
+via `IWmsCatalogReader.GetVariantsAsync` (unknown → 422 `wms.profile.variant_unknown`) → lot via `TaskLotRules.EnsureLotAsync` →
+`sourceTaskId` must be a task of the tenant and warehouse (404 `wms.task.not_found`) → evidence (B2 rule) →
+`incidents.NextNumberAsync` → `Incident.Report(reportedBy: member, operationKey: key, reportedAt: occurredAt)` → receipt → save.
+Its occurredAt follows the ledger window (`LedgerEntryRules.EnsureOccurredAtInWindow` → `wms.movement.occurred_at_out_of_range`). A
+`LocationMismatch` with a variant gets its `Count` in Task C3; until then it stays without verification.
+
+`GetTaskBoardHandler`: `OpenIncidents = incidents.CountOpenAsync(tenant, warehouse)` (`Open` + `InReview`).
+
+Routes in `IncidentEndpoints` (template `AdjustmentEndpoints`/`TaskEndpoints`): `POST /incidents` → 201 with `Location`,
+`.RequireIdempotencyKey()`.
+
+- [ ] **RED.** `IncidentApiTests`:
+  - `ReportingAnUnreadableLabelReturns201Open` (operator with `PutawayPerform`; evidence of the tenant; `Location` header);
+    `RepeatingTheReportReturnsTheSavedResponseWith200`.
+  - `ReportingWithoutAnyTaskPermissionIs403` (only `DocumentRead`); `ReportingAShortMoveStandaloneIs422TypeNotAllowed`;
+    `ReportingWithoutANoteIs422ValidationFailed`; `ALocationOfAnotherWarehouseIs404`; `AnUnknownVariantIs422`.
+  - `ReportingWithAPhotoOfAnotherTenantIs422EvidenceInvalid`; `ReportingWithSixPhotosIs422EvidenceInvalid`.
+  - `ListingFiltersByWarehouseStatusAndTypeNewestFirst`; `GettingIncludesEvidenceEventsAllowedResolutionsAndNames` (a
+    `SyncConflict` from Task A5 shows `allowedResolutions = ["AcceptIntoStock"]`, `canBeRejected = true`; one from a `short` with 0
+    found shows `[]`).
+  - `AnUnknownIncidentIs404`.
+  `TaskSupervisorActionsApiTests.TheBoardCountsOpenIncidents` (one `Open`, one `InReview`, one `Rejected` → 2).
+- [ ] Build fails. Copy the output.
+- [ ] **GREEN.** Implement and register the three handlers, the validator and the composer.
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~IncidentApiTests|FullyQualifiedName~TheBoardCountsOpenIncidents" -- xUnit.MaxParallelThreads=4
+  dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~CompositionRootTests"
+  ```
+
+- [ ] Commit: `feat(wms): report and read incidents`
+
+### Task B4: `review`, `resolve` (with `AcceptIntoStock` of a `SyncConflict`), `reject`, audit and tenant isolation
+
+**Files:**
+- Create: `src/Modules/Wms/Modules.Wms.Application/Incidents/ReviewIncident.cs`, `ResolveIncident.cs`, `RejectIncident.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/WmsPorts.cs` (`IncidentReviewed = "wms.incident.reviewed"`, `IncidentResolved`,
+  `IncidentRejected`), `src/Modules/Wms/Modules.Wms.Api/IncidentEndpoints.cs`, `src/Bootstrapper/QepServiceCollectionExtensions.cs`
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Incidents/IncidentApiTests.cs` (new cases), `Incidents/IncidentTenantIsolationApiTests.cs`
+
+```
+POST /incidents/{id}/review       [wms.discrepancy.resolve]  { version } → IncidentDto
+POST /incidents/{id}/resolve  SK  [wms.discrepancy.resolve]  { version, resolution, note? } → { batchId?, createdTaskIds }
+POST /incidents/{id}/reject       [wms.discrepancy.resolve]  { version, note } → IncidentDto
+```
+
+- `ReviewIncidentHandler`, `RejectIncidentHandler`: template `ApproveAdjustmentHandler` — authorize → load tracked (404) → authorize
+  with owner and warehouse → `WmsVersions.Ensure` (412) → domain with the membership (`WmsCaller.RequireAsync`) → audit
+  (`executionContext.SubjectId`, `Resources.Incident`, fields `ownerId`, `number`, `type`, and `note` for reject) → compose → save.
+- `ResolveIncidentHandler` (SK `incident:{id}:resolve:{version}`, `ResolveIncidentRequest(long Version, string? Resolution, string?
+  Note) : IVersionedRequest`): like the above, plus `incident.EnsureNotSelfResolution(resolution, member)`; for `SyncConflict` +
+  `AcceptIntoStock`: `await using` transaction, `tasks.GetAsync(sourceTaskId)` to read the line destination (no task lock: the task is
+  not touched, DA-48); missing line, no destination or `actualQty` not `> 0` → 422 `wms.incident.resolution_not_allowed`; one
+  `LedgerEntry` `(owner, location, variant, lot, status) → (owner, line.ToLocationId, …)` by `actualQty`, reason `InternalMove`,
+  document `("Incident", incident.Id, sourceTaskLineId)`, actor the supervisor's membership, key = the SK → `ledger.PostAsync` →
+  `incident.Resolve(…, posting.BatchId, now)` → receipt → save. `Accept` resolves without movement. Response
+  `IncidentResolutionDto(Guid? BatchId, IReadOnlyList<Guid> CreatedTaskIds)` (always empty list in T2).
+
+- [ ] **RED.** `IncidentApiTests`: `ReviewThenAcceptRoundTrips` (version climbs; audit rows `wms.incident.reviewed` and
+  `wms.incident.resolved` via `CountAuditEntriesAsync`; `resolved_by` the supervisor's membership); `AStaleVersionIs412`;
+  `ResolvingWithANotAllowedResolutionIs422`; `RejectingAShortMoveIs422ResolutionNotAllowed`; `RejectingASyncConflictWithANote`
+  (audit `wms.incident.rejected`); `AcceptingASyncConflictIntoStockMovesTheStock` (supervisor ≠ reporter; one movement with
+  `document_type = 'Incident'`, `batch_id` set, task untouched); `TheReporterCannotAcceptIntoStockTheirOwnConflict` (422
+  `wms.incident.self_resolution`; the reporter is given `DiscrepancyResolve` for the test); `AConflictFromACountCannotBeAcceptedIntoStock`
+  is written in C4 — here `AConflictWithNothingFoundCannotBeAcceptedIntoStock` (from a `short` with 0 → 422);
+  `RepeatingTheResolveReturnsTheSavedResponse` (SK: one movement); `ResolvingWithoutDiscrepancyResolveIs403`;
+  `OperatorActionsLeaveNoAudit` (the `short` and the `SyncConflict` of Block A: zero `wms.incident.*` rows).
+  `IncidentTenantIsolationApiTests.AnotherTenantGets403OnEveryIncidentRoute` (copy of the task test: `POST /incidents`, `GET` list,
+  `GET {id}`, `review`, `resolve`, `reject`, plus `POST /tasks/{id}/lines/{lineId}/short`; each with an `Idempotency-Key`; every
+  response `403 authorization.denied`, never 404).
+- [ ] Build fails. Copy the output.
+- [ ] **GREEN.** Implement and register.
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~IncidentApiTests|FullyQualifiedName~IncidentTenantIsolationApiTests" -- xUnit.MaxParallelThreads=4
+  ```
+
+- [ ] Commit: `feat(wms): review, resolve and reject incidents behind wms.discrepancy.resolve`
+
+**Block B close (once, foreground, after checking `Get-Process testhost`):**
+
+```powershell
+dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Control"
+dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~WmsLayerTests|FullyQualifiedName~CompositionRootTests"
+dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Incidents|FullyQualifiedName~TaskShortApiTests|FullyQualifiedName~TaskSyncConflictApiTests|FullyQualifiedName~TaskSupervisorActionsApiTests|FullyQualifiedName~AdjustmentApiTests" -- xUnit.MaxParallelThreads=4
+```
+
+Block review: §8.3 transitions, §8.4 rules 3–6 against the tests, BFF fields, the SK of `resolve`, the 403/404 split, DA-49 evidence.
+
+---
+
+# Block C — verification count, `CountVariance` → adjustment, catalog usage and final verification (tasks C1 to C7, one implementer)
+
+### Task C1: The `Count` type: vocabulary, policy, domain and migration `AddCountTasks`
+
+**Files:**
+- Modify: `src/Modules/Wms/Modules.Wms.Domain/Tasks/WarehouseTaskType.cs` (+ `Count`), `TaskSourceType.cs` (+ `Incident`),
+  `TaskTypePolicy.cs`, `WarehouseTask.cs`, `WarehouseTaskLine.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskTypePermissions.cs`, `TaskDtos.cs` (`TaskLineDto` gains `decimal?
+  QuantityCounted`, last), `WarehouseTaskDtoComposer.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/WarehouseTaskModel.cs`
+- Create (generated): `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/Migrations/<ts>_AddCountTasks.cs` (+ Designer, snapshot)
+- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Tasks/TaskTypePolicyTests.cs`, `WarehouseTaskCountTests.cs`, `TaskRoutesTests.cs` or a new
+  `TaskTypePermissionsTests.cs`; `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/WarehouseTaskPersistenceTests.cs` (new cases)
+
+API:
+
+```csharp
+// TaskTypePolicy: Count → DefaultPriority 3, LeaseDuration 30 min, AllowsDestinationOverride false,
+// MovementReasonOf → ArgumentOutOfRangeException("A count never moves stock."), and:
+public static bool ConfirmsByCount(WarehouseTaskType type);   // Move false, Count true, unknown → ArgumentOutOfRangeException
+
+// WarehouseTaskLine
+public decimal? QuantityCounted { get; private set; }
+/// <summary>La línea de un conteo: una clave sin destino y con lo planeado en cero. Lo esperado no vive en la línea: el servidor lo
+/// calcula al contar, y así nada que llegue al operario lo revela (DA-39).</summary>
+public static WarehouseTaskLine CreateCount(Guid variantId, LotId? lotId, StockStatus stockStatus, LocationId location);
+internal void RecordCount(decimal counted, LotId? lot);        // QuantityCounted = counted, LotId ??= lot, Status = Done
+
+// WarehouseTask
+public static WarehouseTask CreateCount(Guid tenantId, string number, WarehouseId warehouse, OwnerId owner,
+    IReadOnlyList<WarehouseTaskLine> lines, TaskSourceType sourceType, Guid sourceId, DateTimeOffset now); // Ready, CreatedBy = Guid.Empty
+public WarehouseTaskLine RecordCount(Guid memberId, Guid leaseToken, string deviceId, Guid lineId, decimal quantityCounted,
+    LotId? lotId, DateTimeOffset now, DateTimeOffset? occurredAt = null, bool memberIsBusy = false);
+```
+
+- [ ] **RED.** `TaskTypePolicyTests`: `ACountLastsThirtyMinutesHasPriorityThreeAndNoDestinationOverride`;
+  `ACountHasNoMovementReason`; `EveryTypeIsCoveredByEveryPolicy` (theory over `Enum.GetValues<WarehouseTaskType>()`: calls every
+  member, `MovementReasonOf` only when `!ConfirmsByCount`). Permissions: `For(Count) == CountPerform`; `AllowedFor` with only
+  `CountPerform` → `[Count]`. `WarehouseTaskCountTests`: `ACountIsBornReadyFromTheSystemWithItsSource` (`Type = Count`, `Ready`,
+  `ReleasedAt = now`, priority 3, `SourceType = Incident`, `CreatedBy = Guid.Empty`, version 1, `Created` and `Published` with null
+  member); `ACountLineHasNoDestinationAndNothingPlanned`; `ACountNeedsBetweenOneAndOneHundredLines`; `ACountLineIsNeverAMoveLine`
+  (`CreateMove` with a count line → `TaskLocationInvalid`); `ClaimingACountGivesAThirtyMinuteLease`;
+  `RecordingACountClosesTheLineAndTheTask` (`QuantityCounted = 7`, `QuantityConfirmed = 0`, `LineConfirmed` with quantity 7 and
+  detail `count`, task `Done`); `CountingZeroIsValid`; `ANegativeCountIs422LineInvalid`; `TheScannedLotFillsALineWithoutLot`;
+  `AScannedLotOnALineWithAnotherLotIs422LotMismatch`; `ConfirmingOrShortingACountLineIsAnInvalidTransition` (actions
+  `confirm-line`, `short-line`); `CountingAMoveLineIsAnInvalidTransition` (action `count-line`);
+  `ACountScanBeforeTheReleaseFloorIs422` (`MovementOccurredAtOutOfRange`); `ALostLeaseThrows`; `AResumableLeaseResumes`.
+  `WarehouseTaskPersistenceTests`: `ACountTaskWithACountedLineRoundTrips` (`quantity_planned = 0`, `quantity_counted`, null
+  `to_location_id`, source `Incident`); `TheDatabaseRejectsANegativeCount` (`23514`, `CK_task_lines_quantity`);
+  `TheDatabaseAcceptsACountOfZero`.
+- [ ] Build fails. Copy the output.
+- [ ] **GREEN.** `CreateCount` shares `CreateMove`'s line-count and priority checks through a private `NewTask(type, …)`; requires
+  `lines.All(line => line.ToLocationId is null && line.QuantityPlanned == 0)` (`TaskLineInvalid`) and calls `Release`.
+  `ConfirmLine`/`ShortLine` throw `TaskTransitionException(Status, "confirm-line"/"short-line")` when `ConfirmsByCount(Type)`;
+  `RecordCount` requires it (`"count-line"`) and uses `PrepareLineWrite`/`ApplyLease` from A2. `WarehouseTaskLine.Create` (move lines)
+  keeps requiring `> 0`. The composer fills `QuantityCounted`; a `Count` line shows `QuantityPlanned = 0`, `QuantityRemaining = 0`.
+  `WarehouseTaskModel`: `CK_tasks_type` → `type IN ('Move','Count')`; `CK_task_lines_quantity` → `quantity_planned >= 0 AND
+  quantity_confirmed >= 0 AND quantity_confirmed <= quantity_planned AND (quantity_counted IS NULL OR quantity_counted >= 0)`; column
+  `quantity_counted numeric(18,6) NULL`. `CK_tasks_status` and `IX_tasks_pool` do not change; a comment on `CountOpenByTypeAsync` and
+  on the status list of `CatalogVariantUsageChecker` says T2 adds no task status. Generate `AddCountTasks`; review the `Up` (two
+  CHECKs and one column); comment in the `Down` that going down with `Count` rows fails with `23514`, on purpose.
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Modules.Wms.UnitTests.Tasks"
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~WarehouseTaskPersistenceTests" -- xUnit.MaxParallelThreads=4
+  ```
+
+- [ ] Commit: `feat(wms): model the blind verification count task`
+
+### Task C2: Queries the count needs: exact balance, open count of a key, reporter kept off their count
 
 **Files:**
 - Modify: `src/Modules/Wms/Modules.Wms.Application/Inventory/IStockReadQueries.cs`, `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/StockReadQueries.cs`
 - Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/IWarehouseTaskRepository.cs`, `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/WarehouseTaskRepository.cs`
-- Modify: `src/Bootstrapper/CatalogVariantUsageChecker.cs`
-- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/StockReadQueriesTests.cs` (o la clase que ya cubre `StockReadQueries`), `Tasks/TaskCandidateQueryTests.cs`, `StockProbeTests.cs`; `tests/Bootstrapper/Bootstrapper.UnitTests/CatalogVariantUsageCheckerTests.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Control/IIncidentRepository.cs`, `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/IncidentRepository.cs`
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/StockQueryTests.cs` (or the class that already covers `StockReadQueries`),
+  `Tasks/TaskCandidateQueryTests.cs`, `Incidents/IncidentPersistenceTests.cs`
 
 ```csharp
 // IStockReadQueries
-/// <summary>El saldo físico de exactamente esa clave, sin unidad logística: el lote nulo es «sin lote», no «cualquiera»
+/// <summary>El saldo físico de exactamente esa clave, sin unidad logística: lote nulo es «sin lote», no «cualquiera»
 /// (lot_id IS NOT DISTINCT FROM). Cero si no hay fila.</summary>
 Task<decimal> FindOnHandAsync(Guid tenantId, StockKey key, CancellationToken cancellationToken);
 
 // IWarehouseTaskRepository
-/// <summary>El Count abierto (ni Done ni Cancelled) que verifica esa clave, rastreado; null si no hay (DA-44).</summary>
-Task<WarehouseTask?> FindOpenCountAsync(Guid tenantId, Guid warehouseId, Guid ownerId, Guid locationId, Guid variantId,
-    Guid? lotId, StockStatus stockStatus, CancellationToken cancellationToken);
+/// <summary>El id del Count abierto (ni Done ni Cancelled) que verifica esa clave; null si no hay (DA-44). Sin bloqueo: quien lo
+/// va a enlazar lo bloquea después con LockAsync y vuelve a mirar su estado.</summary>
+Task<Guid?> FindOpenCountAsync(Guid tenantId, Guid warehouseId, Guid ownerId, Guid locationId, Guid variantId, Guid? lotId,
+    StockStatus stockStatus, CancellationToken cancellationToken);
+
+// IIncidentRepository
+Task<IReadOnlyList<Incident>> ListOpenVerifiedByAsync(Guid tenantId, Guid countTaskId, CancellationToken cancellationToken); // tracked
+Task<Incident?> FindByAdjustmentAsync(Guid tenantId, Guid adjustmentId, CancellationToken cancellationToken);              // tracked
+Task<IReadOnlyList<Guid>> ListReportersOfChildrenAsync(Guid tenantId, Guid parentIncidentId, CancellationToken cancellationToken);
 ```
 
-- [ ] **RED.**
-  - `FindOnHandAsyncReadsTheExactKey`: saldo 10 sin lote y 4 con lote L1 en el mismo bin → sin lote 10, con L1 4, con otro estado 0.
-  - `TaskCandidateQueryTests.TheReporterIsNotOfferedTheCountThatVerifiesTheirIncident` (DA-45): `Count` en el pool, novedad con
-    `verification_task_id` = ese `Count` y `reported_by` = el operario → `LockNextCandidateAsync` devuelve `null` para él y la tarea
-    para otro; asignada a él, se la devuelve.
-  - `FindOpenCountAsyncIgnoresClosedCountsAndOtherKeys`.
-  - `CatalogVariantUsageCheckerTests.AnOpenIncidentWithTheVariantCountsAsUse` (réplica a mano de `wms.incidents` con sólo las columnas
-    que la consulta lee: `tenant_id`, `variant_id`, `status`) y `AResolvedIncidentDoesNot`.
-  - `StockProbeTests.TheRealCheckerSeesAnOpenIncidentAgainstTheMigratedSchema` (DA-51) y
-    `TheRealCheckerSeesAnOpenCountLineAgainstTheMigratedSchema` (la línea `Open` de un `Count` ya la cubre la consulta de T1: la prueba
-    lo fija).
-- [ ] `dotnet build`: falla (RED de compilación).
-- [ ] **GREEN.**
-  - `FindOnHandAsync`: `SELECT COALESCE(SUM(on_hand), 0) FROM wms.stock_balances WHERE tenant_id = … AND owner_id = … AND location_id
-    = … AND variant_id = … AND lot_id IS NOT DISTINCT FROM … AND status = … AND handling_unit_id IS NULL`.
-  - `LockNextCandidateAsync`: en el mismo `WHERE`, junto al filtro de DA-33, `AND (t.assigned_member_id = {memberId} OR NOT EXISTS
-    (SELECT 1 FROM wms.incidents i WHERE i.verification_task_id = t.id AND i.reported_by = {memberId}))`. El comentario encima dice que
-    es DA-45 y que la subconsulta no bloquea nada (el `FOR UPDATE` es de `t`).
-  - `CatalogVariantUsageChecker`: un `UNION` más, `SELECT i.variant_id FROM wms.incidents i WHERE i.tenant_id = {tenantId} AND i.status
-    IN ('Open', 'InReview') AND i.variant_id = ANY({ids})`, y un párrafo en el resumen de la clase (por qué: un `SyncConflict` abierto
-    puede escribir al ledger al resolverse; qué prueba lo amarra). Regla `sql-entre-modulos`: el nombre de las columnas queda amarrado
-    por las dos pruebas.
-- [ ] `--filter` por cada prueba nueva, y `CatalogVariantUsageCheckerTests` completa (`Bootstrapper.UnitTests`): verdes.
+- [ ] **RED.** `FindOnHandAsyncReadsTheExactKey` (10 without lot and 4 with lot L1 in one bin → 10, 4, and 0 for another status);
+  `TaskCandidateQueryTests.TheReporterIsNotOfferedTheCountThatVerifiesTheirIncident` (DA-45: a `Count` in the pool, an incident with
+  `verification_task_id` = it and `reported_by` = the member → `LockNextCandidateAsync` gives `null` to them and the task to
+  another member); `TheReporterGetsTheCountWhenItIsAssignedToThem`; `FindOpenCountAsyncIgnoresClosedCountsAndOtherKeys` (lot null ≠
+  lot L1); `ListOpenVerifiedByAsyncSkipsClosedIncidents`; `FindByAdjustmentAsync…`; `ListReportersOfChildrenAsync…`.
+- [ ] Build fails. Copy the output.
+- [ ] **GREEN.** `FindOnHandAsync`: `SELECT COALESCE(SUM(on_hand), 0) FROM wms.stock_balances WHERE tenant_id = … AND owner_id = … AND
+  location_id = … AND variant_id = … AND lot_id IS NOT DISTINCT FROM … AND status = … AND handling_unit_id IS NULL`.
+  `FindOpenCountAsync`: `tasks t JOIN task_lines l` on the key, `t.type = 'Count' AND t.status NOT IN ('Done','Cancelled')`.
+  `LockNextCandidateAsync`: next to the DA-33 filter, `AND (t.assigned_member_id = {memberId} OR NOT EXISTS (SELECT 1 FROM
+  wms.incidents i WHERE i.verification_task_id = t.id AND i.reported_by = {memberId}))`, with a comment: DA-45, and the subquery
+  locks nothing (the `FOR UPDATE` is on `t`). `wms.md` already warns that this SQL reads other tables by name.
+- [ ] Run: `dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~FindOnHandAsyncReadsTheExactKey|FullyQualifiedName~TaskCandidateQueryTests|FullyQualifiedName~IncidentPersistenceTests" -- xUnit.MaxParallelThreads=4`
 - [ ] Commit: `feat(wms): read exact balances and keep reporters off their own verification count`
 
-**Cierre del bloque B:** una vez `--filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Tasks|FullyQualifiedName~Modules.Wms.IntegrationTests.Control"`,
-`WmsPersistenceTests`, `WmsUnitOfWorkTests`, `StockProbeTests` y `CatalogVariantUsageCheckerTests`. Revisión del bloque: CHECKs contra
-el dominio, `Down` de la migración, índices filtrados contra las consultas, orden de bloqueos.
-
----
-
-# Bloque C — Casos de uso, API y cierre (tareas 7 a 11, un implementador)
-
-### Task 7: `short` en una línea, con su novedad y el `Count` en la misma transacción
+### Task C3: Generate (or link) the verification `Count` from `short` and `POST /incidents`
 
 **Files:**
-- Create: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskIncidents.cs` (servicio scoped `TaskIncidentRecorder`), `ShortTaskLine.cs`
-- Create: `src/Modules/Wms/Modules.Wms.Application/Control/IWmsEvidenceLookup.cs`; `src/Bootstrapper/WmsEvidenceLookup.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskDtos.cs` (`ShortTaskLineRequest`, `TaskLineDto.QuantityCounted`), `WarehouseTaskDtoComposer.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Api/TaskEndpoints.cs`, `src/Bootstrapper/QepServiceCollectionExtensions.cs`
-- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskShortApiTests.cs`; unitarias en `Modules.Wms.UnitTests/Tasks/` con `TaskWorld`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Incidents/TaskIncidentRecorder.cs` (public `EnsureVerificationAsync`),
+  `ShortTaskLine.cs`, `ReportIncident.cs`; `src/Modules/Wms/Modules.Wms.Domain/Control/Incident.cs` (`LinkVerification(Guid
+  countTaskId, DateTimeOffset now)`, event `VerificationLinked`; unit case in `IncidentLifecycleTests`)
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskShortApiTests.cs`, `Incidents/IncidentApiTests.cs`, `Tasks/TaskCountApiTests.cs` (first cases)
 
-Piezas:
+`EnsureVerificationAsync(Incident incident, Guid warehouseId, Guid ownerId, DateTimeOffset now, ct)` — called right after
+`Incident.Report`, before `incidents.Add` and before any ledger call:
+1. `!IncidentCatalog.RequestsVerification(type)` or no location/variant → return.
+2. Profile `Tracking == Serial` (`IVariantProfileRepository.FindAsync`) → return (DA-44: no `Count`, the supervisor accepts).
+3. `unitOfWork.LockAsync("count-key:{tenant}:{owner}:{location}:{variant}:{lot|none}:{status}")`.
+4. `tasks.FindOpenCountAsync(…)` → if found: `tasks.LockAsync(countId)` and `GetAsync`; if it is still open, `incident.LinkVerification(countId, now)`
+   (event `VerificationLinked`) and return; if it closed meanwhile, fall through.
+5. `tasks.NextNumberAsync` → `WarehouseTask.CreateCount(…, [WarehouseTaskLine.CreateCount(variant, lot, status, location)],
+   TaskSourceType.Incident, incident.Id, now)` → `tasks.Add` → `incident.LinkVerification(count.Id, now)`.
 
-```csharp
-/// <summary>Lo que el operario escaneó al no encontrar todo. <c>QuantityFound</c> va al destino planeado; para otro destino se
-/// confirma antes con motivo (DA-41). <c>IncidentType</c> es el nombre del tipo: ShortMove o LocationMismatch en un movimiento.</summary>
-public sealed record ShortTaskLineRequest(Guid LeaseToken, decimal QuantityFound, Guid? LotId, string? IncidentType, string? Note,
-    IReadOnlyList<Guid>? PhotoFileIds, DateTimeOffset? OccurredAt, string? DeviceId) : IIdempotentRequest;
+- [ ] **RED.** `TaskShortApiTests`: `AShortCreatesAReadyCountOfTheSourceKey` (one `Count` `Ready`, `sourceType = "Incident"`,
+  `sourceId` = the incident, one line `A-01-02`/`V1`/`Available`, `quantityPlanned = 0`, no destination; the incident has it in
+  `verification_task_id`); `ASecondShortOnTheSameKeyLinksTheOpenCount` (another `Move` on the same key → two incidents, one `Count`);
+  `AShortOnAnotherLotCreatesAnotherCount`; `AShortOnASerialVariantCreatesNoCount` (profile `Serial`; incident without verification);
+  `TheCountAndItsIncidentRollBackWithTheShort` (stock insufficient → no `Count`); `RepeatingTheShortCreatesNoSecondCount`.
+  `IncidentApiTests`: `ReportingALocationMismatchWithAVariantCreatesACount`; `ALocationMismatchWithoutAVariantHasNoCount`.
+  `TaskCountApiTests` (new class; counter with `DocumentRead` + `CountPerform`): `TheReporterIsNotOfferedTheirCountButAnotherCounterIs`
+  (DA-45: the reporter also gets `CountPerform`; their `next` → 204; the counter's `next` → the `Count`);
+  `TheSupervisorCanAssignTheCountToTheReporter` (`assign` → 200; then the reporter's `next` → the `Count`);
+  `TheCountDtoRevealsNothingExpected` (`quantityPlanned = 0`, `quantityRemaining = 0`, `quantityCounted = null`; the JSON has no
+  other quantity field).
+- [ ] Build: the recorder method is new → compile RED; copy it. Then the filtered runs fail on the missing `Count`.
+- [ ] **GREEN.** Implement; `ShortTaskLineHandler` and `ReportIncidentHandler` call `EnsureVerificationAsync`.
+- [ ] Run: `dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~TaskShortApiTests|FullyQualifiedName~IncidentApiTests|FullyQualifiedName~TaskCountApiTests" -- xUnit.MaxParallelThreads=4`
+- [ ] Commit: `feat(wms): generate or link the verification count of an incident`
 
-public interface IWmsEvidenceLookup
-{
-    /// <summary>Los ids que son archivos <c>WmsEvidence</c> del tenant, en cualquier estado (pueden estar subiendo todavía, DA-49).
-    /// Los de otro tenant o de otro tipo de dueño no vienen.</summary>
-    Task<IReadOnlySet<Guid>> FindEvidenceAsync(Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken ct);
-}
-
-/// <summary>Arma la novedad que nace de una tarea y, si su tipo pide verificación, le busca o le crea el Count. No guarda: comparte
-/// la transacción del handler.</summary>
-public sealed class TaskIncidentRecorder(IIncidentRepository incidents, IWarehouseTaskRepository tasks,
-    IVariantProfileRepository profiles, IWmsUnitOfWork unitOfWork, IWmsEvidenceLookup evidence)
-{
-    public Task<Incident> ReportAsync(WarehouseTask task, WarehouseTaskLine line, IncidentType type, decimal expected, decimal actual,
-        LotId? lot, string? note, IReadOnlyList<Guid> photoFileIds, Guid member, string deviceId, string operationKey,
-        DateTimeOffset reportedAt, DateTimeOffset now, CancellationToken ct);
-}
-```
-
-`ReportAsync`: valida la evidencia (`IncidentEvidenceInvalid` si algún id no vuelve) → `incidents.NextNumberAsync` → `Incident.Report`
-con sujeto `(task.Id, line.Id, line.FromLocationId, line.VariantId, lot, line.StockStatus, expected, actual)` → si
-`IncidentCatalog.RequestsVerification(type)` y el perfil de la variante no es `Serial` (DA-44): `unitOfWork.LockAsync("count-key:{tenant}:{location}:{variant}")`
-→ `tasks.FindOpenCountAsync(…)` → si no hay, `tasks.NextNumberAsync` + `WarehouseTask.CreateCount(…, [WarehouseTaskLine.CreateCount(variant,
-lot, status, location)], TaskSourceType.Incident, incident.Id, now)` + `tasks.Add` → `incident.LinkVerification(count.Id)` →
-`incidents.Add`.
-
-`ShortTaskLineHandler(ShortTaskLineCommand)` — molde `ConfirmTaskLineHandler`, mismo orden:
-
-1. `DocumentRead` → validador (`deviceId`, `quantityFound >= 0`, `incidentType` dentro de `IncidentType`, nota ≤ 500, fotos ≤ 5,
-   `occurredAt` no nulo) → clave IK → `member`.
-2. Transacción → lock del operario → `tasks.LockAsync` (404) → `GetAsync` → `guard.EnsureCanPerformAsync` → **lease** (la tarea 9 cambia
-   este punto para registrar `SyncConflict`) → línea (404).
-3. `IncidentCatalog.DeclarableOnShort(task.Type.ToString())` no contiene el tipo → 422 `wms.incident.type_not_allowed`.
-4. Lote: `line.LotId` fijo y `LotId` distinto → `wms.task.lot_mismatch`; efectivo = `line.LotId ?? command.LotId`.
-5. `busy` como en confirmar (DA-32) → `remaining = line.Remaining` → `task.ShortLine(…, quantityFound, now, occurredAt, busy)`.
-6. Si `quantityFound > 0`: **un** `LedgerEntry` `(owner, from, variant, lot, status) → (owner, line.ToLocationId, …)`,
-   `TaskTypePolicy.MovementReasonOf(task.Type)`, documento `("Task", task.Id, line.Id)` → `ledger.PostAsync`.
-7. `recorder.ReportAsync(task, line, type, expected: remaining, actual: quantityFound, …, operationKey: key, reportedAt: occurredAt)`.
-8. `composer.ComposeAsync` → `receipts.Record(dto)` → `SaveChangesAsync`.
-
-Orden real dentro del handler: pasos 5 y 7 (dominio, novedad, `Count`, numeraciones) **antes** del 6 (ledger): así se respeta «numeraciones
-antes que saldos». El ledger valida igual el saldo y, si falla (`wms.stock.insufficient`), la transacción entera se deshace: ni línea
-`Short`, ni novedad, ni `Count`.
-
-Ruta: `POST /tasks/{id:guid}/lines/{lineId:guid}/short` con `.RequireIdempotencyKey().RequireAuthorization(WmsPermissions.DocumentRead)`.
-
-`WmsEvidenceLookup(IFileResourceRepository repository)`: `ListByIdsAsync` y filtro `resource.TenantId == tenantId && resource.OwnerType ==
-FileOwnerType.WmsEvidence` (copia de `QuotationFileLookup.FindManyAsync`, sin mirar el estado). Registro
-`services.AddScoped<Modules.Wms.Application.IWmsEvidenceLookup, WmsEvidenceLookup>();` junto a `WmsMemberDirectory`.
-
-`TaskLineDto` suma `decimal? QuantityCounted` (al final; comentario: sólo un `Count` lo llena, después de contar). El composer pone
-`QuantityRemaining = 0` y `QuantityPlanned = 0` en las líneas de `Count` tal como vienen: no hay nada que ocultar porque no hay nada
-guardado.
-
-- [ ] **RED.** `TaskShortApiTests` (arranque de `TaskOperatorApiTests`: operario con `DocumentRead` + `PutawayPerform`, stock 10 en
-  `A-01-02`, `Move` de 5 a `B-01-01`, reclamada con `next`):
-  - `ShortWithTwoFoundMovesTwoAndClosesTheTask`: 200, `OnHandAsync(B-01-01) = 2`, `A-01-02 = 8`, línea `Short`, tarea `Done`; una
-    novedad `ShortMove` `Open` con `expectedQty = 5`, `actualQty = 2`, `sourceTaskId`, `reportedBy` = el operario; un `Count` `Ready`
-    con `sourceType = "Incident"`, una línea de `A-01-02`/`V1`/`Available`, `quantityPlanned = 0`; la novedad lo tiene en
-    `verificationTaskId`.
-  - `ShortWithNothingFoundMovesNothing` (sin movimiento con `document_id` de la tarea).
-  - `RepeatingTheShortReturnsTheSavedResponse` (misma clave → 200 idéntico, una novedad, un `Count`).
-  - `ASecondShortOnTheSameKeyReusesTheOpenCount` (DA-44: otra tarea sobre la misma clave → dos novedades, un `Count`).
-  - `AShortOnASerialVariantCreatesNoCount` (perfil `Serial`; novedad sin `verificationTaskId`).
-  - `ATypeNotDeclarableOnAMoveIs422` (`UnreadableLabel` → `wms.incident.type_not_allowed`).
-  - `FindingEverythingIs422LineInvalid`; `AnUnknownPhotoIs422EvidenceInvalid` (un `Guid` cualquiera).
-  - `ShortWithoutThePutawayPermissionIs403`; `ShortForAnotherTenantIs403`.
-  - `ShortMoreThanTheStockRollsBackEverything` (encontrado 2 con saldo 1 → 422 `wms.stock.insufficient`; ni novedad ni `Count`; la
-    línea sigue `Open`).
-- [ ] `dotnet build`: rojo (RED de compilación). Guarda la salida.
-- [ ] **GREEN.** Implementa y registra `ShortTaskLineHandler`, su validador, `TaskIncidentRecorder` (scoped) y el adaptador.
-- [ ] `--filter "FullyQualifiedName~TaskShortApiTests"` y `~CompositionRootTests`: verdes.
-- [ ] Commit: `feat(wms): declare a short line with its incident and verification count`
-
-### Task 8: Registrar el conteo y proponer el ajuste
+### Task C4: `count` on a line and the `Count` closed hook
 
 **Files:**
-- Create: `src/Modules/Wms/Modules.Wms.Application/Tasks/CountTaskLine.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskDtos.cs` (`CountTaskLineRequest`), `ConfirmTaskLine.cs` (rechazo sobre `Count`)
-- Modify: `src/Modules/Wms/Modules.Wms.Api/TaskEndpoints.cs`, `src/Bootstrapper/QepServiceCollectionExtensions.cs`
-- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskCountApiTests.cs`, `Control/CountVarianceAdjustmentTests.cs` (primera parte)
+- Create: `src/Modules/Wms/Modules.Wms.Application/Tasks/CountTaskLine.cs`, `src/Modules/Wms/Modules.Wms.Application/Incidents/CountVerificationHook.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskDtos.cs` (`CountTaskLineRequest`), `ConfirmTaskLine.cs` (early
+  `ConfirmsByCount` check), `src/Modules/Wms/Modules.Wms.Domain/Control/Incident.cs` (`UnlinkVerification`, `ResolveBySystem`,
+  `AttachAdjustment`; the `CountVariance` itself is a plain `Report` with that type)
+- Modify: `src/Modules/Wms/Modules.Wms.Api/TaskEndpoints.cs`, `src/Bootstrapper/QepServiceCollectionExtensions.cs` (register
+  `CountVerificationHook` as `ITaskClosedHook`)
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskCountApiTests.cs`, `Incidents/CountVarianceAdjustmentTests.cs` (first part),
+  `Incidents/IncidentTenantIsolationApiTests.cs` (add `count`), `Tasks/TaskSyncConflictApiTests.cs` (add `count`),
+  `tests/Modules/Wms/Modules.Wms.UnitTests/Control/IncidentLifecycleTests.cs` (system resolution cases)
 
 ```csharp
 /// <summary>Lo que el operario contó en la ubicación, a ciegas (DA-40). Contar cero es válido.</summary>
@@ -610,244 +1019,262 @@ public sealed record CountTaskLineRequest(Guid LeaseToken, Guid LocationId, Guid
     DateTimeOffset? OccurredAt, string? DeviceId) : IIdempotentRequest;
 ```
 
-`CountTaskLineHandler` — molde `ConfirmTaskLineHandler`, devuelve `TaskDto`:
+`CountTaskLineHandler(OperatorLineRunner runner, IVariantProfileRepository profiles, IValidator<CountTaskLineCommand> validator)`:
+validator (`quantityCounted >= 0` and `< 10^12`, `deviceId`, `occurredAt`) → `runner.RunAsync(Action = "count", Quantity =
+QuantityCounted, LotId, apply)`; the guard already demands `CountPerform` for a `Count`. `apply`:
+1. `!TaskTypePolicy.ConfirmsByCount(task.Type)` → `TaskTransitionException(task.Status, "count-line")` (before any other check).
+2. `LocationId != line.FromLocationId` → `wms.task.location_mismatch`.
+3. Profile `Serial` → 422 `wms.serial.required` (a serial `Count` is never generated, DA-44; this guards a tracking change after
+   generation: nothing is recorded and the supervisor cancels the task).
+4. Effective lot `line.LotId ?? command.LotId`; a fixed lot and a different scanned one → `wms.task.lot_mismatch`; null and
+   `Tracking == Lot` → 422 `wms.lot.required` (so no adjustment is ever proposed that the ledger would refuse at posting); a scanned
+   lot goes through `TaskLotRules.EnsureLotAsync`.
+5. `task.RecordCount(member, …, quantityCounted, lot, now, occurredAt, ctx.MemberIsBusy)`. The runner then calls the notifier.
 
-1. `DocumentRead` → validador (`quantityCounted >= 0` y `< 10^12`, `deviceId`, `occurredAt`) → clave IK → `member`.
-2. Transacción → lock del operario → `tasks.LockAsync` → `GetAsync` → guard (el tipo `Count` exige `CountPerform`) → lease → línea.
-3. `LocationId != line.FromLocationId` → `wms.task.location_mismatch`. Lote efectivo `line.LotId ?? command.LotId`; si es nulo y el
-   perfil tiene `Tracking == Lot` → 422 `wms.lot.required` (así nunca se propone un ajuste que el ledger rechazaría al contabilizar).
-4. `busy` (DA-32) → `task.RecordCount(…)`.
-5. `unitOfWork.LockAsync("count-key:…")` → `expected = stock.FindOnHandAsync(tenant, key)` con la clave contada →
-   `delta = counted − expected`.
-6. `verified = incidents.ListOpenVerifiedByAsync(tenant, task.Id)`.
-   - `delta == 0`: cada una `Resolve(Accept, Guid.Empty, "Verificada por {task.Number}: sin diferencia.", null, null, now)`.
-   - `delta != 0`: `adjustments.NextNumberAsync` → `Adjustment.Propose(tenant, number, owner, warehouse, AdjustmentReason.CountVariance,
-     note: "{task.Number}", occurredAt, [AdjustmentLine.Create(location, variant, lot, status, delta, null, null)], proposedBy:
-     executionContext.SubjectId, now)` (el mismo actor que `ProposeAdjustmentHandler`) → `adjustments.Add` → auditoría
-     `AdjustmentProposed` como en `ProposeAdjustmentHandler` (un ajuste siempre se audita, lo proponga quien lo proponga) →
-     `incidents.NextNumberAsync` → `Incident.Report(… CountVariance, sujeto (task.Id, line.Id, location, variant, lot, status, expected,
-     counted), reportedBy: member, operationKey: key, reportedAt: occurredAt)` → `AttachAdjustment(adjustment.Id)` → `incidents.Add`
-     → cada verificada `Resolve(Accept, Guid.Empty, "Verificada por {task.Number}: ver {cv.Number}.", null, parentIncidentId: cv.Id, now)`.
-   Nunca llama al ledger.
-7. `composer` → `receipts.Record` → `SaveChangesAsync`.
+`ConfirmTaskLineHandler` and `ShortTaskLineHandler`: the `ConfirmsByCount` check moves right after the line lookup, so the operator
+gets `wms.task.invalid_transition` instead of a confusing `location_mismatch`.
 
-`ConfirmTaskLineHandler`: el dominio ya rechaza confirmar un `Count` (tarea 3); el handler no cambia salvo que el 422 sale antes de
-validar destino: mueve el chequeo `TaskTypePolicy.ConfirmsByCount(task.Type)` justo después de cargar la línea y lanza la
-`TaskTransitionException` del dominio, para que el operario no reciba un `location_mismatch` confuso.
+`CountVerificationHook : ITaskClosedHook` (constructor: `IIncidentRepository`, `IStockReadQueries`, `IAdjustmentRepository`,
+`IWmsAuditRecorder`, `IExecutionContext`, `IClock`). Ignores any task that is not `Count`. **Never takes the count-key lock** (lock
+order). On `Done`, for the counted line:
+- `expected = stock.FindOnHandAsync(tenant, key with the counted lot)`; `delta = counted − expected`;
+  `verified = incidents.ListOpenVerifiedByAsync(tenant, task.Id)`.
+- `delta == 0`: each verified `ResolveBySystem(Accept, $"Verificada por {task.Number}: sin diferencia.", parentIncidentId: null, now)`
+  (`ResolvedBy = Guid.Empty`, event `Resolved` with null member).
+- `delta != 0`: `adjustments.NextNumberAsync` → `Adjustment.Propose(tenant, number, owner, warehouse, AdjustmentReason.CountVariance,
+  note: task.Number, occurredAt: closed.OccurredAt, [AdjustmentLine.Create(location, variant, lot, status, delta, null, null)],
+  proposedBy: executionContext.SubjectId, now)` → `adjustments.Add` → audit `AdjustmentProposed` as in `ProposeAdjustmentHandler`
+  plus fields `source = "count"`, `taskNumber` (an adjustment is always audited) → `incidents.NextNumberAsync` →
+  `Incident.Report(… CountVariance, subject (task.Id, line.Id, location, variant, lot, status, expected, counted), reportedBy:
+  closed.ActorMemberId, operationKey: closed.OperationKey, reportedAt: closed.OccurredAt)` → `AttachAdjustment(adjustment.Id)` →
+  `incidents.Add` → each verified `ResolveBySystem(Accept, $"Verificada por {task.Number}: ver {cv.Number}.", parentIncidentId:
+  cv.Id, now)`. Never calls the ledger.
+- On `Cancelled` (supervisor cancels the `Count` or its only line): each verified `UnlinkVerification(task.Number, now)` (clears
+  `VerificationTaskId`, event `VerificationCancelled`); they stay `Open` for the supervisor to accept, and a later incident on the
+  key creates a new `Count`.
 
-Ruta: `POST /tasks/{id:guid}/lines/{lineId:guid}/count`, IK, `DocumentRead`.
+Route: `OperatorAction<CountTaskLineRequest, TaskDto>(group, "/tasks/{id:guid}/lines/{lineId:guid}/count", CountAsync).RequireIdempotencyKey()`.
 
-- [ ] **RED.** `TaskCountApiTests` (un contador con `DocumentRead` + `CountPerform`; el `Count` sale de un `short` hecho por otro
-  operario, como en la tarea 7: saldo 10, encontrado 2 de 5 → quedan 8 en el sistema en `A-01-02`):
-  - `TheReporterDoesNotGetTheCountButAnotherCounterDoes` (DA-45: `next` del reportante con `CountPerform` → 204; el contador → el `Count`).
-  - `TheCountDtoRevealsNothingExpected` (`quantityPlanned = 0`, `quantityRemaining = 0`, `quantityCounted = null`).
-  - `CountingWhatTheSystemHasClosesTheIncidentsWithoutAdjustment` (cuenta 8 → novedad `ShortMove` `Resolved`/`Accept`, ningún ajuste).
-  - `CountingLessProposesACountVarianceAdjustment` (cuenta 5 → un `Adjustment` `Proposed`, motivo `CountVariance`, una línea con delta
-    −3 en `A-01-02`; novedad `CountVariance` `Open` con `adjustmentId`, `expectedQty = 8`, `actualQty = 5`; la `ShortMove` `Resolved`
-    con `parentIncidentId`; **ningún movimiento nuevo** en el ledger).
-  - `CountingZeroIsValid` (delta −8).
-  - `RepeatingTheCountReturnsTheSavedResponse` (un solo ajuste).
-  - `AWrongLocationIs422LocationMismatch`; `ALotTrackedVariantWithoutLotIs422LotRequired`.
-  - `ConfirmingACountIs422InvalidTransition` y `CountingAMoveIs422InvalidTransition`.
+- [ ] **RED.** `TaskCountApiTests` (the `Count` comes from a `short` by another operator: stock 10, found 2 of 5 → the system has 8
+  in `A-01-02`):
+  - `CountingWhatTheSystemHasClosesTheIncidentsWithoutAdjustment` (count 8 → `ShortMove` `Resolved`/`Accept`, `resolved_by` empty
+    GUID; no adjustment; the `Count` `Done`).
+  - `CountingLessProposesACountVarianceAdjustment` (count 5 → one `Adjustment` `Proposed`, reason `CountVariance`, one line delta −3
+    on `A-01-02`; a `CountVariance` `Open` with `adjustment_id`, `expected_qty = 8`, `actual_qty = 5`, `reported_by` = the counter,
+    `operation_key` = the count key; the `ShortMove` `Resolved` with `parent_incident_id`; **no new movement**; audit
+    `wms.adjustment.proposed` once).
+  - `CountingMoreProposesAPositiveDelta` (count 9 → +1).
+  - `CountingZeroIsValid` (delta −8; `quantity_counted = 0` stored).
+  - `CountingALotLineUsesTheScannedLot` (lot-tracked variant, `Count` without lot from a `short` with 0 found → `count` with L1 →
+    expected read for L1); `ALotTrackedVariantWithoutLotIs422LotRequired`.
+  - `CountingASerialVariantIs422SerialRequired` (a `Count` seeded with `WarehouseTask.CreateCount` + `SaveAsync` on a variant set to
+    `Serial` before any stock; nothing recorded, the task stays `InProgress`).
+  - `RepeatingTheCountReturnsTheSavedResponse` (one adjustment, one `CountVariance`).
+  - `AWrongLocationIs422LocationMismatch`; `ConfirmingACountIs422InvalidTransition`; `ShortingACountIs422InvalidTransition`;
+    `CountingAMoveIs422InvalidTransition`.
+  - `ACountScanBeforeTheReleaseFloorIs422`.
   - `CountingWithoutCountPerformIs403`.
-- [ ] `dotnet build`: rojo (RED de compilación).
-- [ ] **GREEN.** Implementa y registra `CountTaskLineHandler` y su validador.
-- [ ] `--filter "FullyQualifiedName~TaskCountApiTests"`: verde.
+  - `CancellingTheCountUnlinksItsIncidents` (supervisor `cancel` → incidents `Open`, no `verification_task_id`, event
+    `VerificationCancelled`); `CancellingTheOnlyLineOfTheCountDoesTheSame`.
+  - `AnotherShortAfterTheCountIsCancelledCreatesANewCount`.
+  `TaskSyncConflictApiTests.ACountWithALostLeaseLeavesAConflict` (`action = "count"`, `actual_qty = quantityCounted`; no adjustment);
+  `IncidentApiTests.AConflictFromACountCannotBeAcceptedIntoStock` (422 `resolution_not_allowed`; `allowedResolutions = []`).
+  `IncidentTenantIsolationApiTests`: add `count` to the route table. Unit: `ASystemResolutionHasNoMemberAndCanPointToAParent`,
+  `UnlinkingKeepsTheIncidentOpen`.
+- [ ] Build fails. Copy the output.
+- [ ] **GREEN.** Implement and register `CountTaskLineHandler`, its validator and the hook.
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~Control.Incident|FullyQualifiedName~TaskClosedNotifierTests"
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~TaskCountApiTests|FullyQualifiedName~ACountWithALostLeaseLeavesAConflict|FullyQualifiedName~AConflictFromACountCannotBeAcceptedIntoStock|FullyQualifiedName~IncidentTenantIsolationApiTests" -- xUnit.MaxParallelThreads=4
+  ```
+
 - [ ] Commit: `feat(wms): record a blind count and propose the variance adjustment`
 
-### Task 9: `SyncConflict` cuando una confirmación llega con el lease perdido
+### Task C5: The `CountVariance` adjustment: separation of duties, posting and rejecting
 
 **Files:**
-- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/TaskIncidents.cs` (`RecordSyncConflictAsync`), `OperatorTaskGuard.cs`
-  (`LeaseLost()` pasa a `internal static`), `ConfirmTaskLine.cs`, `ShortTaskLine.cs`, `CountTaskLine.cs`
-- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskSyncConflictApiTests.cs`; unitarias con `TaskWorld`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Control/ApproveAdjustment.cs`, `PostAdjustment.cs`, `RejectAdjustment.cs` (inject
+  `IIncidentRepository` and `WmsCaller`)
+- Modify: `src/Modules/Wms/Modules.Wms.Domain/Control/Incident.cs` (`ResolveByAdjustment(Guid batchId, Guid by, string adjustmentNumber,
+  DateTimeOffset now)`, `RejectByAdjustment(Guid by, string note, DateTimeOffset now)` — both only for `CountVariance`)
+- Modify: `tests/Modules/Wms/Modules.Wms.UnitTests/Control/*` if the handlers' constructors are built there (construction only)
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Incidents/CountVarianceAdjustmentTests.cs`
 
-```csharp
-// TaskIncidentRecorder
-/// <summary>La confirmación que llegó con un lease perdido, tal cual llegó (DA-48). Si esa Idempotency-Key ya dejó su novedad, no
-/// agrega otra. No guarda: el handler confirma la transacción con sólo esto y después responde 409.</summary>
-public Task RecordSyncConflictAsync(WarehouseTask task, WarehouseTaskLine? line, Guid member, string deviceId, string operationKey,
-    decimal? quantity, string rawPayload, DateTimeOffset reportedAt, DateTimeOffset now, CancellationToken ct);
-```
+- `ApproveAdjustmentHandler`: after loading the adjustment, `incidents.FindByAdjustmentAsync`; if there is a `CountVariance`, `member
+  = caller.RequireAsync`; `member == cv.ReportedBy` (the counter) or `member ∈ ListReportersOfChildrenAsync(cv.Id)` → 422
+  `wms.incident.self_resolution` (DA-17, DA-47). Memberships are compared, never `SubjectId`. Without an incident, unchanged (no
+  membership required).
+- `PostAdjustmentHandler`: after `MarkPosted`, the `CountVariance` of the adjustment → `ResolveByAdjustment(posting.BatchId, member,
+  adjustment.Number, now)` in the same transaction.
+- `RejectAdjustmentHandler`: the `CountVariance` → `RejectByAdjustment(member, command.Note, now)`.
 
-En los tres handlers, el paso de lease pasa a ser:
-
-```csharp
-// Spec §6.7 y DA-48: la confirmación rechazada queda como novedad aunque el hecho no se aplique. La transacción sólo tiene la
-// novedad (nada se tocó todavía), así que guardarla y lanzar después no deja nada a medias. El filtro IK no encuentra recibo y
-// devuelve el 409; un reintento con la misma clave no duplica la novedad (operation_key, bajo el lock del operario).
-if (task.CheckLease(member, command.LeaseToken) == LeaseCheck.Lost)
-{
-    await recorder.RecordSyncConflictAsync(task, task.FindLine(command.LineId), member, command.DeviceId, key, command.Quantity,
-        JsonSerializer.Serialize(command), command.OccurredAt ?? now, now, cancellationToken);
-    await unitOfWork.SaveChangesAsync(cancellationToken);
-    throw OperatorTaskGuard.LeaseLost();
-}
-```
-
-El sujeto de la novedad sale de la línea si existe (ubicación origen, variante, lote, estado, `actualQty = quantity`); si la línea no es
-de la tarea se registra sin sujeto (el 404 no aplica: la tarea existe y el hecho físico es lo que importa). `raw_payload` es el comando
-serializado con `JsonSerializerOptions.Web`, **sin** el `leaseToken` (se reemplaza por `null` antes de serializar: el token de otro
-reclamo no debe quedar legible en la bandeja).
-
-El guard de permiso (`EnsureCanPerformAsync`) va **antes**: sin permiso es 403 y no queda novedad.
-
-- [ ] **RED.** `TaskSyncConflictApiTests`:
-  - `AConfirmationAfterReassignmentLeavesASyncConflict`: el operario A reclama; el supervisor reasigna a B; A confirma → 409
-    `wms.task.lease_lost`; existe una novedad `SyncConflict` `Open`, `reportedBy` = A, `sourceTaskLineId`, `actualQty`, `operationKey` =
-    la clave, `rawPayload` con `quantity` y sin `leaseToken`; la tarea y el stock no cambiaron.
-  - `RetryingTheSameKeyDoesNotDuplicateTheConflict` (dos veces 409, una novedad).
-  - `AShortAndACountWithALostLeaseAlsoLeaveAConflict`.
-  - `AResumableLateConfirmationLeavesNoConflict` (el caso `ALateConfirmationResumesTheTask` de T1 sigue igual y no crea novedad).
-  - `WithoutTheTypePermissionItIs403AndLeavesNothing`.
-- [ ] `dotnet build`: rojo si la firma nueva todavía no existe; si compila, el RED es la corrida filtrada de la primera prueba
-  (con contenedores: es un fallo de comportamiento, no de compilación). Guarda la salida.
-- [ ] **GREEN.** Implementa.
-- [ ] `--filter "FullyQualifiedName~TaskSyncConflictApiTests|FullyQualifiedName~TaskOperatorApiTests"`: verde (lo de T1 no cambia).
-- [ ] Commit: `feat(wms): keep a sync conflict when a confirmation lost its lease`
-
-### Task 10: API de novedades, resolución, separación de funciones y tablero
-
-**Files:**
-- Create: `src/Modules/Wms/Modules.Wms.Application/Control/IncidentDtos.cs` (DTOs y `IncidentDtoComposer`), `ReportIncident.cs`,
-  `ListIncidents.cs`, `GetIncident.cs`, `ReviewIncident.cs`, `ResolveIncident.cs`, `RejectIncident.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Application/Control/ApproveAdjustment.cs`, `PostAdjustment.cs`, `RejectAdjustment.cs`
-- Modify: `src/Modules/Wms/Modules.Wms.Application/Tasks/GetTaskBoard.cs`, `TaskDtos.cs` (`TaskBoardDto.OpenIncidents`)
-- Modify: `src/Modules/Wms/Modules.Wms.Application/WmsPorts.cs` (`Resources.Incident = "wms.incident"`; `IncidentReviewed`,
-  `IncidentResolved`, `IncidentRejected` = `"wms.incident.*"`), `WmsSupport.cs` (`WmsNotFound.Incident(Guid)`)
-- Create: `src/Modules/Wms/Modules.Wms.Api/IncidentEndpoints.cs`; Modify: `WmsEndpoints.cs` (`IncidentEndpoints.Map(group);`)
-- Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs` (handlers, composer)
-- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Control/IncidentApiTests.cs`, `Control/CountVarianceAdjustmentTests.cs` (segunda parte), `Tasks/TaskSupervisorActionsApiTests.cs` (tablero)
-
-Contrato (spec §8.5; los nombres de tipo y resolución van por nombre de enum, DA-42):
-
-```
-POST /incidents                   IK  [wms.document.read + permiso de algún tipo de tarea en el handler, DA-49]
-     { warehouseId, type, locationId?, variantId?, lotId?, quantity?, rawCode?, note, photoFileIds, sourceTaskId?, occurredAt, deviceId } → 201 IncidentDto
-GET  /incidents?warehouseId&status&type&page&pageSize   [wms.document.read] → { items: IncidentSummaryDto[], page, pageSize, totalCount }
-GET  /incidents/{id}              [wms.document.read] → IncidentDto (con evidencia y eventos)
-POST /incidents/{id}/review       [wms.discrepancy.resolve]  { version } → IncidentDto
-POST /incidents/{id}/resolve  SK  [wms.discrepancy.resolve]  { version, resolution, note? } → { batchId?, createdTaskIds }
-POST /incidents/{id}/reject       [wms.discrepancy.resolve]  { version, note } → IncidentDto
-```
-
-```
-IncidentSummaryDto { id, number, type, status, warehouseId, ownerId, locationId, locationCode, variantId, variantCode, productName,
-                     expectedQty, actualQty, reportedBy, reportedByName, reportedAt, sourceTaskId, sourceTaskNumber,
-                     verificationTaskId, adjustmentId, version }
-IncidentDto        { ...IncidentSummaryDto, lotId, lotCode, stockStatus, rawCode, rawPayload, note, deviceId, resolution,
-                     resolvedBy, resolvedByName, resolvedAt, resolutionNote, batchId, parentIncidentId, allowedResolutions,
-                     canBeRejected, evidence: [{ fileId, kind, rawValue }], events: [{ kind, memberId, memberName, detail, occurredAt }] }
-TaskBoardDto       { ...lo de T1, openIncidents }
-```
-
-Notas BFF para los comentarios de los DTO: `allowedResolutions` y `canBeRejected` salen de `IncidentCatalog` (la pantalla no conoce el
-catálogo y sin esto pintaría botones que dan 422); los nombres de miembro, códigos de ubicación y número de tarea se resuelven en el
-servidor (`IWmsMemberDirectory`, la bodega, `IWarehouseTaskRepository`, `IWmsCatalogReader`), como `WarehouseTaskDtoComposer`.
-`rawCode`/`rawPayload` viajan sólo en `IncidentDto` (la ficha). `reportedByName` de `Guid.Empty` es «Sistema».
-
-Handlers:
-- `ReportIncidentHandler`: `DocumentRead` con bodega → `TaskTypePermissions.AllowedFor(ctx).Count == 0` → 403 → validador (tipo en
-  `IncidentCatalog.DeclarableStandalone`, si no 422 `wms.incident.type_not_allowed`; nota obligatoria 1..500; fotos ≤ 5) → dueño Self
-  (provisioner antes de la transacción, como `ProposeAdjustmentHandler`) → transacción → bodega (404) y ubicación de la bodega (404) →
-  evidencia → número → `Incident.Report(reportedAt: occurredAt)` → si `LocationMismatch` y hay variante, el mismo camino de `Count` que
-  `TaskIncidentRecorder` (extrae `EnsureVerificationAsync` a un método público del recorder) → recibo → guardar. Sin variante, la
-  `LocationMismatch` queda sin `Count` (no hay clave que contar) y el supervisor la acepta.
-- `ReviewIncidentHandler`, `RejectIncidentHandler`: molde `ApproveAdjustmentHandler` (autorizar, cargar 404, autorizar con dueño y
-  bodega, `WmsVersions.Ensure`, dominio, auditoría con `executionContext.SubjectId`, componer, guardar). El actor del dominio es la
-  membresía (`WmsCaller.RequireAsync`).
-- `ResolveIncidentHandler` (SK `incident:{id}:resolve:{version}`): como el anterior, más `incident.EnsureNotSelfResolution(resolution,
-  member)` y, para `SyncConflict` + `AcceptIntoStock`, un movimiento con la clave SK: `(owner, location, variant, lot, status) →
-  (owner, destino de la línea original, …)` por `actualQty`, motivo `InternalMove`, documento `("Incident", incident.Id,
-  sourceTaskLineId)`, actor la membresía del supervisor (DA-48). El destino sale de la línea original (`tasks.GetAsync(sourceTaskId)`);
-  si la línea ya no existe o la novedad no tiene sujeto completo → 422 `wms.incident.resolution_not_allowed`. Una llamada al ledger,
-  `incident.Resolve(…, batchId)`, recibo, guardar. `CountVariance` → 422 `wms.incident.resolution_not_allowed` («se resuelve con su
-  ajuste»). Respuesta `IncidentResolutionDto(Guid? BatchId, IReadOnlyList<Guid> CreatedTaskIds)` (en T2 siempre vacía la lista).
-- `ApproveAdjustmentHandler`: después de cargar el ajuste, `incidents.FindByAdjustmentAsync`; si hay `CountVariance`, `member =
-  caller.RequireAsync` y si `member == cv.ReportedBy` o está en `ListReportersOfChildrenAsync(cv.Id)` → 422 `wms.incident.self_resolution`
-  (DA-17, DA-47). Sin novedad, igual que hoy.
-- `PostAdjustmentHandler`: tras `MarkPosted`, si hay `CountVariance` del ajuste, `ResolveByAdjustment(posting.BatchId, member,
-  adjustment.Number, now)` en la misma transacción. `RejectAdjustmentHandler`: `RejectByAdjustment(member, command.Note, now)`.
-- `GetTaskBoardHandler`: `openIncidents = incidents.CountOpenAsync(tenant, warehouse)`.
-
-Rutas en `IncidentEndpoints` (molde `AdjustmentEndpoints`/`TaskEndpoints`): `POST /incidents` → 201 con `Location`; `resolve` con
-`.UseServerIdempotencyKey("incident", "resolve")` y cuerpo `ResolveIncidentRequest(long Version, string? Resolution, string? Note) :
-IVersionedRequest`.
-
-- [ ] **RED.** `IncidentApiTests`:
-  - `ReportingAnUnreadableLabelReturns201Open` (operario con `PutawayPerform`); `ReportingALocationMismatchWithAVariantCreatesACount`.
-  - `ReportingWithoutAnyTaskPermissionIs403`; `ReportingATypeNotDeclarableStandaloneIs422` (`ShortMove`).
-  - `ListingFiltersByStatusAndType`; `GettingIncludesEvidenceEventsAndAllowedResolutions`.
-  - `ReviewThenAcceptRoundTrips` (versión sube, auditoría `wms.incident.reviewed` y `wms.incident.resolved`); `AStaleVersionIs412`.
-  - `ResolvingWithANotAllowedResolutionIs422`; `RejectingAShortMoveIs422`.
-  - `AcceptingASyncConflictIntoStockMovesTheStock` (con un supervisor distinto del reportante; movimiento con `document_type =
-    'Incident'`); `TheReporterCannotAcceptIntoStockTheirOwnConflict` (422 `wms.incident.self_resolution`);
-    `RepeatingTheResolveReturnsTheSavedResponse` (SK: un solo movimiento).
-  - `ResolvingWithoutDiscrepancyResolveIs403`; `AnIncidentOfAnotherTenantIs403`; `AnUnknownIncidentIs404`.
-  `CountVarianceAdjustmentTests` (segunda parte, sobre el escenario de la tarea 8):
-  - `TheReporterOfTheShortCannotApproveTheAdjustment` y `TheCounterCannotApproveIt` (422 `wms.incident.self_resolution`).
-  - `ApprovingAndPostingResolvesTheCountVariance` (otro aprobador; tras el `post`, saldo de `A-01-02` = 5 y la `CountVariance`
-    `Resolved` con `batchId`).
+- [ ] **RED.** `CountVarianceAdjustmentTests` (scenario of C4: count 5 against 8):
+  - `TheReporterOfTheShortCannotApproveTheAdjustment` and `TheCounterCannotApproveIt` (both given `AdjustmentApprove`; 422
+    `wms.incident.self_resolution`; the adjustment stays `Proposed`).
+  - `AnotherApproverApprovesAndPostingResolvesTheCountVariance` (after `post`: `A-01-02` on hand = 5; `CountVariance` `Resolved`
+    `Accept` with `batch_id`; audit of approve and post as today).
   - `RejectingTheAdjustmentRejectsTheCountVariance`.
-  - `ACountVarianceCannotBeResolvedByHand` (422 `wms.incident.resolution_not_allowed`).
-  `TaskSupervisorActionsApiTests.TheBoardCountsOpenIncidents`.
-- [ ] `dotnet build`: rojo (RED de compilación). Guarda la salida.
-- [ ] **GREEN.** Implementa y registra los seis handlers nuevos, sus validadores y el composer.
-- [ ] `--filter "FullyQualifiedName~IncidentApiTests|FullyQualifiedName~CountVarianceAdjustmentTests|FullyQualifiedName~TaskSupervisorActionsApiTests|FullyQualifiedName~Adjustment"` y `~CompositionRootTests`: verdes (las de ajustes existentes no cambian).
-- [ ] Commit: `feat(wms): review, resolve and reject incidents behind wms.discrepancy.resolve`
+  - `ACountVarianceCannotBeResolvedOrRejectedByHand` (422 `wms.incident.resolution_not_allowed` on `resolve` and `reject`).
+  - `AnAdjustmentWithoutIncidentIsApprovedAsBefore` (a manual proposal by the same subject without membership checks).
+- [ ] Build fails (new domain methods). Copy the output.
+- [ ] **GREEN.** Implement.
+- [ ] Run: `dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~CountVarianceAdjustmentTests|FullyQualifiedName~AdjustmentApiTests" -- xUnit.MaxParallelThreads=4`
+- [ ] Commit: `feat(wms): close count variance incidents through their adjustment`
 
-### Task 11: Documentación, reglas y cierre
+### Task C6: Catalog usage of open incidents (DA-51) and forward compatibility of the sweeper and the board
 
 **Files:**
-- Modify: `README.md` (§ Módulo Wms: subsección «Novedades» y lo nuevo de «Tareas de bodega»)
-- Modify: `.claude/rules/wms.md`, `.claude/rules/sql-entre-modulos.md` (la consulta de uso suma `wms.incidents`)
+- Modify: `src/Bootstrapper/CatalogVariantUsageChecker.cs`; `tests/Bootstrapper/Bootstrapper.UnitTests/CatalogVariantUsageCheckerTests.cs`;
+  `tests/Modules/Wms/Modules.Wms.IntegrationTests/StockProbeTests.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/WarehouseTaskRepository.cs` (`LockExpiredAsync`,
+  `CountByStatusAsync`, `CountOpenByTypeAsync`, `ListInProgressAsync`, `ListAssignedOpenAsync`), a new
+  `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/KnownTaskValues.cs`
+- Test: `tests/Modules/Wms/Modules.Wms.IntegrationTests/Tasks/TaskForwardCompatibilityTests.cs`
 
-- [ ] README: rutas de §8.5 y las dos nuevas de tareas (`short`, `count`) con permiso e idempotencia; catálogo de T2 con sus
-  resoluciones; que el `Count` es a ciegas y propone un ajuste `CountVariance`; que `SyncConflict` se registra aunque la respuesta sea
-  409; códigos `wms.incident.*`.
-- [ ] `.claude/rules/wms.md`, viñetas nuevas (prescriptivas):
+Catalog usage: one more `UNION`, `SELECT i.variant_id FROM wms.incidents i WHERE i.tenant_id = {tenantId} AND i.status IN ('Open',
+'InReview') AND i.variant_id = ANY({ids})`, and a paragraph in the class summary (why: an open `SyncConflict` can write to the ledger
+when resolved; which tests pin it). Rule `sql-entre-modulos`: the column names are pinned by the two tests below.
+
+Forward compatibility: `KnownTaskValues` holds `Enum.GetNames` of `WarehouseTaskType`, `WarehouseTaskStatus`, `TaskLineStatus` and
+`TaskSourceType`. `LockExpiredAsync` adds `AND t.type = ANY({types}) AND t.source_type = ANY({sources}) AND NOT EXISTS (SELECT 1 FROM
+wms.task_lines l WHERE l.task_id = t.id AND l.line_status <> ALL({lineStatuses}))`; the four board queries filter the same way
+(LINQ `Contains` over the known values, or raw SQL if EF does not translate the converted enum array — the test decides). A comment
+on each says why: a newer pod may write values this build cannot materialize, and one such row must not stop the sweeper (it would
+roll back every batch) or break the board.
+
+- [ ] **RED.** `CatalogVariantUsageCheckerTests.AnOpenIncidentWithTheVariantCountsAsUse` (hand replica of `wms.incidents` with only
+  the columns the query reads: `tenant_id`, `variant_id`, `status`) and `AResolvedOrRejectedIncidentDoesNot`;
+  `StockProbeTests.TheRealCheckerSeesAnOpenIncidentAgainstTheMigratedSchema` and `TheRealCheckerSeesAnOpenCountLineAgainstTheMigratedSchema`.
+  `TaskForwardCompatibilityTests` (own database, so altering the schema is allowed):
+  - `TheSweeperSkipsATaskOfATypeThisBuildDoesNotKnow`: two claimed `Move`s with expired leases; `ALTER TABLE wms.tasks DROP CONSTRAINT
+    "CK_tasks_type"`; `UPDATE wms.tasks SET type = 'FutureType'` on one → `RunOnceAsync` returns 1 without throwing and the known one
+    is `Ready`.
+  - `TheSweeperSkipsATaskWithALineStatusThisBuildDoesNotKnow` (drop `CK_task_lines_status`, set `line_status = 'FutureStatus'`).
+  - `TheBoardIgnoresTypesAndStatusesThisBuildDoesNotKnow` (drop both task CHECKs; one task `FutureType` `InProgress`, one `Move`
+    `FutureStatus`, one `Move` `Ready` → `GET /tasks/summary` 200; `byType`/`byStatus` list only known names and count only the known
+    rows; `operators` does not list the unknown task).
+- [ ] Build: no new signature → the RED is the filtered run failing (unknown rows throw). Copy the output.
+- [ ] **GREEN.** Implement.
+- [ ] Run:
+
+  ```powershell
+  dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --filter "FullyQualifiedName~CatalogVariantUsageCheckerTests"
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~StockProbeTests|FullyQualifiedName~TaskForwardCompatibilityTests|FullyQualifiedName~TaskLeaseSweeperTests" -- xUnit.MaxParallelThreads=4
+  ```
+
+- [ ] Commit: `feat(wms): count open incidents as variant usage and skip unknown task values in background reads`
+
+### Task C7: Documentation, rules and final verification
+
+**Files:**
+- Modify: `README.md` (§ Módulo Wms: «Novedades» subsection and the new task routes; «Despliegue de T2» paragraph with the rollout
+  above)
+- Modify: `.claude/rules/wms.md`, `.claude/rules/sql-entre-modulos.md` (the usage query adds `wms.incidents`; `LockNextCandidateAsync`
+  reads `wms.incidents.verification_task_id`/`reported_by` by name)
+
+- [ ] README: routes of §8.5 plus `short` and `count` with permission and idempotency; the T2 catalog and its resolutions; that the
+  `Count` is blind and proposes a `CountVariance` adjustment; that `SyncConflict` is recorded even though the answer is 409; the
+  `wms.incident.*` codes; forward-only rollout of T2.
+- [ ] `.claude/rules/wms.md`, new prescriptive bullets:
+  - «Toda acción del operario sobre una línea pasa por `OperatorLineRunner`, y todo cierre de tarea por `TaskClosedNotifier`. Un
+    camino nuevo que cierre una tarea sin pasar por ahí deja un `Count` cancelado con novedades enlazadas o un conteo sin evaluar.»
   - «Un `Count` es a ciegas: lo esperado se calcula al contar (`FindOnHandAsync`) y no se guarda en la línea. Ningún campo de un DTO
     del operario puede llevarlo, ni siquiera "para depurar".»
   - «La novedad nace en la transacción del hecho, con su clave. La única excepción es `SyncConflict`, que se confirma sola antes del
     409: no "arregles" el `SaveChangesAsync` antes del `throw`.»
-  - «Numeraciones antes que saldos: en `short` la novedad, el `Count` y sus números van antes de `ledger.PostAsync`.»
-  - «Un tipo de novedad nuevo necesita: valor del enum, fila en `IncidentCatalog` (la prueba `EveryTypeHasAnEntry` lo exige),
-    `CK_incidents_type` (migración) y, si mueve stock, su resolución en `ResolveIncidentHandler`.»
-  - «Un tipo de tarea nuevo necesita además `TaskTypePolicy.ConfirmsByCount`.» (amplía la viñeta de T1)
-- [ ] Corre, uno a la vez y en primer plano: `tests/ArchitectureTests/ArchitectureTests` filtrado por `~WmsLayerTests`,
-  `~MultiReplicaInventoryTests`, `~CompositionRootTests`; `Modules.Wms.UnitTests` completo; `Bootstrapper.UnitTests` filtrado por
-  `~CatalogVariantUsageCheckerTests`; `Modules.Wms.IntegrationTests` filtrado por `~Tasks|~Control|~StockProbe|~WmsPersistence`.
-  Después `.\scripts\test-feature.ps1` y **lee sus avisos**. Esta rama cambia contrato HTTP (rutas `short`, `count`, `/incidents`,
-  `TaskBoardDto.openIncidents`, `TaskLineDto.quantityCounted`) y `CompositionRootTests` si sus conteos de handlers lo exigen: todo eso
-  pide autorización del owner antes del merge (`CLAUDE.md`, 2026-11-25), junto con las DA-38 a DA-51.
+  - «Orden de bloqueos con novedades: operario → su tarea → `count-key:` → el `Count` abierto → numeraciones → saldos. La acción
+    `count` no toma `count-key:`: ya tiene la fila del `Count`, y tomarla después invierte el orden de `short`.»
+  - «Un tipo de novedad nuevo necesita: valor del enum, fila en `IncidentCatalog` (`EveryTypeHasAnEntry` lo exige), `CK_incidents_type`
+    (migración) y, si mueve stock, su resolución en `ResolveIncidentHandler`.»
+  - «Un tipo de tarea nuevo necesita además `TaskTypePolicy.ConfirmsByCount`» (extends the T1 bullet), and «el barrido y el tablero
+    filtran por los valores que el build conoce (`KnownTaskValues`): no quites ese filtro, es lo que deja desplegar el corte siguiente».
+- [ ] **Final verification**, one at a time, foreground, after `Get-Process testhost, dotnet -ErrorAction SilentlyContinue` (ignore PID
+  `133940`):
+
+  ```powershell
+  $env:Seed__Enabled = "false"
+  dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~WmsLayerTests|FullyQualifiedName~MultiReplicaInventoryTests|FullyQualifiedName~CompositionRootTests"
+  dotnet test tests/Modules/Wms/Modules.Wms.UnitTests
+  dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --filter "FullyQualifiedName~CatalogVariantUsageCheckerTests"
+  dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Tasks|FullyQualifiedName~Modules.Wms.IntegrationTests.Incidents|FullyQualifiedName~StockProbeTests|FullyQualifiedName~WmsPersistenceTests|FullyQualifiedName~WmsUserReferenceProbeTests|FullyQualifiedName~AdjustmentApiTests|FullyQualifiedName~StockQueryTests" -- xUnit.MaxParallelThreads=4
+  .\scripts\test-feature.ps1
+  ```
+
+  **`test-feature.ps1` in PowerShell 5.1:** the script runs with `$ErrorActionPreference = "Stop"`, so the stderr of a failing
+  `dotnet test` aborts it before it prints its summary. Whatever it printed, read `TestResults\feature\report.md` and the `.trx` of
+  each step (open them with `-LiteralPath`: some names carry brackets), and **read its warnings**: each «Requiere autorización del
+  owner» goes into the deviations with file and reason (see «Owner authorization required before merge»).
 - [ ] Commit: `docs(wms): document incidents, short lines and verification counts`
 
-**Cierre del bloque C y de la rama:** revisión fuerte de toda la rama por un subagente de solo lectura sin el contexto del
-implementador. El merge a `develop` espera la autorización del owner y deja `docs/estado.md` para el commit `docs:` en `develop`.
+**Block C and branch close:** strong review of the whole branch by a read-only subagent without the implementer's context. The
+merge to `develop` waits for the owner's authorization of every item in «Owner authorization required before merge», and
+`docs/estado.md` is updated on `develop` at merge time, never on this branch.
 
 ---
 
 ## Self-review
 
-- **Cobertura del spec:** §6.2 `Count` (permiso, lease 30 min, sin override, prioridad 3) → T1/T3; §6.3 `Done` con `Short` → T2; §6.4
-  fila «Novedad» (misma transacción, misma clave) → T7/T8; §6.7 `SYNC_CONFLICT` → T9; §6.10 novedades en el tablero → T10; §6.12
-  `LineShort` → T1/T2; §7.9 faltante de un `Move` → T7; §8.1 entidades → T4/T5 (con las columnas de DA-43); §8.2 catálogo (tipos de
-  T2) → T4; §8.3 estados → T4; §8.4 reglas 1 (T7/T8/T9), 2 (T6/T8/T10), 3 (T4/T10), 4 (T7/T10: tipos cerrados por paso), 5 (filtro por
-  bodega y el dueño en cada fila), 6 (aprobación por permiso); §8.5 API → T7/T10, más `count` (DA-40).
-- **Contra el código:** `Incident` en `Control` no cambia `WmsLayerTests`; `ProposedBy` y `ApprovedBy` del ajuste son `SubjectId`
-  (como hoy) mientras que la novedad guarda membresías, así que la separación de funciones compara **membresías** (`WmsCaller` en
-  `ApproveAdjustmentHandler`), nunca el `SubjectId` contra `reported_by`. `CountOpenByTypeAsync` y los estados de
-  `CatalogVariantUsageChecker` no cambian porque T2 no agrega estados de tarea; las líneas `Short` ya no son `Open` y dejan de contar
-  como uso, que es correcto (no pueden escribir más). Ningún hosted service nuevo (`MultiReplicaInventory` intacto). Ningún permiso
-  nuevo (`CountPerform` y `DiscrepancyResolve` ya existen con definición, política y rol `admin`).
-- **Contradicciones resueltas:** §8.2 dice que `COUNT_VARIANCE` «se resuelve con el ajuste» y §8.5 da un `resolve` genérico: el
-  endpoint lo rechaza y lo cierran `post`/`reject` del ajuste. §8.5 no tiene ruta para registrar el conteo: se agrega `count` (DA-40)
-  en vez de forzar `confirm`, cuyo cuerpo exige destino y cantidad `> 0`. El cuerpo de `short` no tiene destino: lo encontrado va al
-  planeado (DA-41).
-- **Riesgos conocidos:** la confirmación de T1 nunca corrió integración (se paga en «Antes de empezar»); `Down` de la migración falla
-  con datos de T2 (a propósito, comentado); el `Count` no bloquea la ubicación, así que un movimiento entre el faltante y el conteo
-  cambia lo esperado: el conteo compara contra el saldo **al contar**, que es lo correcto para un ajuste por delta.
+- **Spec coverage:** §6.2 `Count` (permission, 30-min lease, no override, priority 3) → C1; §6.3 `Done` with `Short` → A2; §6.4 row
+  «Novedad» (same transaction, same key) → A4, C3; §6.7 `SYNC_CONFLICT` → A5 (+ `count` in C4); §6.9 window/floor of `occurredAt` →
+  A2, C1, C4; §6.10 incidents on the board → B3; §6.12 `LineShort` → A2; §7.9 short of a `Move` → A4; §8.1 entities → A3 (with the
+  DA-43 columns); §8.2 catalog (T2 types) → A3; §8.3 states → B1; §8.4 rules 1 (A4, A5, C3, C4), 2 (C2, C3, C4), 3 (B1, B4, C5), 4
+  (A4, B3: closed types per step), 5 (owner and warehouse on every row, list filter), 6 (approval by permission); §8.5 API → A4, B3,
+  B4, plus `count` (DA-40).
+- **T1 review item:** one runner for line actions and one close hook (A1), used by `confirm` (A1), `short` (A4), `count` (C4) and by
+  the supervisor's `cancel`/`cancel-line` (A1, exercised in C4 by cancelling a `Count`).
+- **Against the code:** `Incident` in `Control` does not change `WmsLayerTests`; `ProposedBy`/`ApprovedBy` of adjustments are
+  `SubjectId` while incidents store memberships, so separation of duties compares **memberships** (`WmsCaller`). `CountOpenByTypeAsync`
+  and the status list of `CatalogVariantUsageChecker` do not change because T2 adds no task status; `Short` lines are no longer
+  `Open` and stop counting as usage, which is right (they cannot write any more). No new hosted service (`MultiReplicaInventory`
+  intact). No new permission.
+- **Contradictions resolved:** §8.2 says `COUNT_VARIANCE` «se resuelve con el ajuste» and §8.5 gives a generic `resolve`: the
+  endpoint refuses it and `post`/`reject` of the adjustment close it. §8.5 has no route to record the count: `count` is added (DA-40)
+  instead of bending `confirm`, whose body requires a destination and a quantity `> 0`. `short` has no destination: what is found goes
+  to the planned one (DA-41). §8.5 `resolve` lists `toLocationId?` and `lotCode?`: T2's resolutions do not use them (they belong to
+  `Relocate`/`LOT_MISSING`, later cuts), so the T2 body is `{ version, resolution, note? }`.
+- **Known risks:** the `Count` does not lock the location, so a movement between the short and the count changes the expected
+  quantity: the count compares against the balance **at count time**, which is right for a delta adjustment. The migrations' `Down`
+  fail with T2 data (on purpose, commented). No rollback to pre-T2 code once T2 rows exist.
 
-## Desviaciones
+## Agent decisions (decisión del agente, por confirmar)
 
-*(La llena el implementador, por bloque, como en T1.)*
+1. The incident core (complete vocabularies, `Report`, tables, numbering) lands in **Block A**, not B: `short` and `SyncConflict`
+   persist an incident. Block B adds the lifecycle, the evidence lookup and the routes.
+2. Two migrations: `AddIncidentsAndShortLines` (A) and `AddCountTasks` (C), so each block ships its own expand step.
+3. The hook is application-level (`ITaskClosedHook` + `TaskClosedNotifier`), invoked by `OperatorLineRunner` and
+   `SupervisorTaskRunner` inside the transaction; the domain keeps closing tasks as today.
+4. Cancelling a `Count` (task or its only line) unlinks its verified incidents (new event `VerificationCancelled`) and leaves them
+   `Open` for a manual `Accept`; the next incident on the key creates a new `Count`.
+5. Lock order extension with `count-key:` (owner, location, variant, lot or `none`, status) and the `Count` row locked after it when
+   linking; the `count` action never takes `count-key:` (avoids a deadlock with `short`).
+6. The runner records `IWmsConfirmMetrics.RecordConfirmDuration` for every line action (`confirm`, `short`, `count`).
+7. `SyncConflict.reported_at` = `occurredAt` if inside the ledger window, else server time (raw value kept in `raw_payload`);
+   `raw_payload` adds `"action"` and drops `"leaseToken"`.
+8. `AcceptIntoStock` of a `SyncConflict` only when `actualQty > 0` and the source line has a destination; a conflict from `count` or
+   from a `short` with 0 found can only be rejected; `allowedResolutions` is computed per incident.
+9. Reusing an `Idempotency-Key` with another body after a `SyncConflict` answers 409 `lease_lost` again (no receipt, so no
+   `idempotency_key_reused`) and keeps the first payload.
+10. `count` on a serial-tracked variant → 422 `wms.serial.required`, nothing recorded (only reachable if tracking changed after the
+    `Count` was generated).
+11. Evidence: ids de-duplicated; more than 5 distinct, foreign-tenant, wrong owner type or unknown → 422 `wms.incident.evidence_invalid`
+    (domain/recorder rule, no FluentValidation rule).
+12. `short` checks a scanned lot with the `CreateMoveTaskHandler` rule (404 `wms.lot.not_found`) because with 0 found there is no
+    ledger call; `short` with 0 found on a lot-tracked variant needs no lot (the `Count` line keeps lot null and `count` requires it).
+13. `POST /incidents` validates the variant through `IWmsCatalogReader` (`wms.profile.variant_unknown`), the lot like (12), the
+    `sourceTaskId` as a task of the tenant and warehouse (404), and `occurredAt` with the ledger window.
+14. No CHECK on `incident_events.kind` (like `task_events.kind`).
+15. The adjustment proposed by a count has `ProposedBy = executionContext.SubjectId` of the counter and is audited as
+    `wms.adjustment.proposed` with `source = "count"`; system resolutions of incidents are not audited (they stay in
+    `incident_events`, `ResolvedBy = Guid.Empty`, shown as «Sistema»).
+16. `ApproveAdjustmentHandler` requires a membership only when the adjustment has a `CountVariance`.
+17. `expectedQty` of a `ShortMove` is the line's remaining quantity (not the bin balance); `GET /incidents` is readable with
+    `wms.document.read`, which operators have.
+18. Forward compatibility: the sweeper and the board filter by the enum names the build knows; the T2 rollout is forward-only and
+    normal `RollingUpdate` is accepted (seconds of possible 500 on the old pod's board).
+19. `resolve` body in T2 is `{ version, resolution, note? }` (no `toLocationId`/`lotCode`, unused by T2's resolutions).
+
+## Deviations
+
+*(Filled by each implementer, per block, as in T1.)*
