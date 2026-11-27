@@ -45,6 +45,10 @@ internal sealed partial class HrDocumentPurge(
     [LoggerMessage(Level = LogLevel.Information, Message = "HR document {FileId} is {Status}, neither Available nor marked for purge; it is skipped.")]
     private static partial void LogNotAvailable(ILogger logger, Guid fileId, FileResourceStatus status);
 
+    // Tras confirmar la marca, otra réplica pudo devolverlo a Available (un adjunto nuevo) o terminar la purga (Purged).
+    [LoggerMessage(Level = LogLevel.Information, Message = "HR document {FileId} is {Status} after it was marked for purge; another attempt restored or finished it, so it is skipped.")]
+    private static partial void LogNoLongerMarked(ILogger logger, Guid fileId, FileResourceStatus status);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "HR document {FileId} marked for purge.")]
     private static partial void LogMarked(ILogger logger, Guid fileId);
 
@@ -139,7 +143,7 @@ internal sealed partial class HrDocumentPurge(
 
             if (resource.Status is not FileResourceStatus.Deleted)
             {
-                LogNotAvailable(logger, fileId, resource.Status);
+                LogNoLongerMarked(logger, fileId, resource.Status);
                 return;
             }
         }

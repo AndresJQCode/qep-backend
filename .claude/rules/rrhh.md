@@ -3,6 +3,8 @@ paths:
   - "src/Modules/Hr/**"
   - "src/Bootstrapper/HrDocumentReferences.cs"
   - "tests/Modules/Hr/**"
+  - "src/Modules/Storage/Modules.Storage.Domain/FileResource.cs"
+  - "src/Modules/Storage/Modules.Storage.Infrastructure/HrDocuments/**"
 ---
 
 # RRHH (empleados, contratos y sus PDF)

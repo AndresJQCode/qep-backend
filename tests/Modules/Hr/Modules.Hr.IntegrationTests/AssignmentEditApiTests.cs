@@ -355,7 +355,9 @@ public sealed class AssignmentEditApiTests : IClassFixture<HrApiFixture>
         Assert.Equal(1, await CountAuditEntriesAsync(_fixture.Factory, "hr.contract.assignment_deleted", ContractIdOf(scene.Detail)));
         var activity = await JsonOfAsync(await tenant.Hr.GetAsync($"{EmployeeUrl(tenant, scene.Detail)}/activity", Ct));
         Assert.Equal("AssignmentDeleted", activity.GetProperty("items")[0].GetProperty("action").GetString());
-        Assert.Equal(VersionOf(deleted), VersionOf(await GetEmployeeAsync(tenant, scene.Detail)));
+        var reloaded = await GetEmployeeAsync(tenant, scene.Detail);
+        Assert.Equal(VersionOf(deleted), VersionOf(reloaded));
+        Assert.Equal(1, Assignments(reloaded).GetArrayLength());
     }
 
     [Fact]
