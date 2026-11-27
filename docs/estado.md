@@ -31,6 +31,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
+| WMS: bodegas, ledger y motor de tareas (cortes B…E y T1) | **Backend en `develop` y en `origin/main`** (T1 merge `c7e03f03f`, 2026-11-26): bodegas, ubicaciones, dueños, perfiles, ledger inmutable, saldos, ajustes, carga inicial, export y motor de tareas con el tipo `Move`. **Correcciones de la revisión de T1 mergeadas en `develop`** (2026-11-27, merge `809b028ed`, sin push; rama `feature/wms-t1-fixes`): lease renovado en `next`/`claim`, 409 `wms.task.lease_lost` con `resumable`, `staleAssignments` en el tablero, historia por `recorded_at`, piso de `occurredAt` con 5 min de tolerancia, `hold` revoca el reclamo vencido, índices de tablero y lista. Migraciones aditivas `AddTaskBoardIndexes` y `AddTaskEventRecordedAt` (relleno de `recorded_at`). **Falta:** frontend del tablero (tarjeta Trello `jhyqfSSe`), app (`resumable`), decisiones del owner M3/B4/B5 y dos celulares (tarjeta `snLjp0i1`), cortes T2–T8 | `docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md` (§13.1), [plan de correcciones](superpowers/plans/2026-11-26-wms-t1-correcciones-revision.md) |
 | Cotizaciones de proyecto (módulo `projects`) | **Backend construido y mergeado en `develop`** (2026-11-26, merge `8603d6e9a`, `--no-ff`, sin push; rama `feature/cotizaciones-de-proyecto` hasta `424cafd75`). Cotización `kind: Project` con alcance editable (fases e ítems), precio global o por fase y una línea de facturación con el servicio elegido; conversión a pedido con líneas bloqueadas (`order.project.items_locked`), filtro `kind` en listados y exports, sección «Alcance» en los PDF. Cambios de contrato A-H (§12) y comportamientos I-L (§13) aprobados por el owner. Migraciones aditivas `AddProjectQuotations` y `AddProjectsModuleKey`. **Falta:** frontend (spec y plan aprobados en `qep-frontend`, `090acaef`), suite completa, despliegue | `docs/superpowers/specs/2026-11-26-cotizaciones-de-proyecto-design.md` |
 | Shopify: parte de envío de pedidos de otros países | **Backend construido y mergeado en `develop`** (2026-11-26, merge `bef48e2b2`, ya en `origin/develop`; rama `feature/shopify-foreign-shipping` hasta `c4df3c93e`, rama y worktree borrados). Un pedido de fuera de Colombia nace con su parte de envío (país, ciudad escrita, código postal y, en España, región) y toma las ediciones de esa dirección; aviso nuevo `shipping_region_unresolved`. Sin migraciones ni backfill; el alta del cliente extranjero queda fuera. Una edición extranjera con un campo más largo que la parte de Quotations es conflicto `party_incomplete` (`98b1d85ad`). **Falta el frontend** | `ShopifyForeignAddress`, `ShopifyOrderImporter`, `ShopifyEditPlanner`; [plan](superpowers/plans/2026-11-26-shopify-parte-de-envio-otros-paises-backend.md), [handoff](superpowers/specs/2026-11-24-shopify-parte-de-envio-otros-paises-backend-handoff.md) |
 | Siigo: liberar el pedido cuando la factura se anuló en Siigo | **Backend construido y mergeado en `develop`** (2026-11-26, `--no-ff`, sin push; merge `70363e0d5`, rama `feature/siigo-anular-factura` borrada). **Sin `test-feature.ps1`** (orden del owner). Falta el frontend | `ConfirmSiigoAnnulmentHandler`, `POST …/orders/{orderId}/siigo-invoice/annulment`; spec y plan `2026-11-25-siigo-anular-factura` |
@@ -633,6 +634,16 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-27 — Mergeado a `develop` (`809b028ed`, `--no-ff`, sin push) **WMS: correcciones de la revisión del motor
+  de tareas (T1)** (`feature/wms-t1-fixes`, hasta `9a594feff`). El owner delegó en Fable 5.2 las cuatro decisiones de
+  arquitectura y contrato de T1 (área `Tasks`, barrido `Claimed`, permiso `wms.task.manage`, contrato §6.11): aprobadas,
+  tres con cambios, y aplicados en esta rama (spec §13.1). Revisión final de solo lectura (Fable): mergeable con cambios,
+  corregidos. Por confirmar del owner: tolerancia de 5 min en el piso de `occurredAt` y el caso de dos celulares del
+  mismo operario. Pruebas: `.\scripts\test-feature.ps1` en verde sobre `9a594feff` (ArchitectureTests 354/354,
+  Wms.UnitTests 436/436, Wms integración filtrada 47/47) con los avisos de arquitectura cubiertos por la delegación;
+  las clases de tareas completas, `WmsPersistenceTests` e `InventoryLedgerMigrationTests` 97/97 sobre `7c3bf3874`. Una
+  corrida anterior del gate cayó por un contenedor de Postgres que no arrancó con otra sesión corriendo en paralelo.
+  T1 (`c7e03f03f`) había llegado a `develop` y `main` sin fila en este documento: esta fila lo corrige.
 - 2026-11-26 — Mergeado a `develop` (`8603d6e9a`, `--no-ff`, sin push) **cotizaciones de proyecto, backend**
   (`feature/cotizaciones-de-proyecto`, hasta `424cafd75`; las Tareas 1-4 ya estaban por `ab3b73cba` y `ba090092e`).
   Tres bloques con revisión cada uno y revisión final de solo lectura: sin críticos ni importantes. El owner aprobó los
