@@ -33,6 +33,16 @@ internal static class WarehouseEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Inventario básico §5.3: elegir la bodega donde las compras suman y las ventas descuentan.
+        group.MapPut("/warehouses/{warehouseId:guid}/principal", SetPrincipalAsync)
+            .RequireAuthorization(WmsPermissions.WarehouseManage)
+            .Accepts<SetPrincipalWarehouseRequest>("application/json")
+            .Produces<WarehouseDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static async Task<IResult> ListAsync(
@@ -53,4 +63,8 @@ internal static class WarehouseEndpoints
     private static async Task<IResult> UpdateAsync(
         Guid tenantId, Guid warehouseId, UpdateWarehouseRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(UpdateWarehouseCommand.From(tenantId, warehouseId, request), cancellationToken));
+
+    private static async Task<IResult> SetPrincipalAsync(
+        Guid tenantId, Guid warehouseId, SetPrincipalWarehouseRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(SetPrincipalWarehouseCommand.From(tenantId, warehouseId, request), cancellationToken));
 }

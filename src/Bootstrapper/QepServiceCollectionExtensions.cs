@@ -1257,6 +1257,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Wms.Application.UpdateWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
             Modules.Wms.Application.UpdateWarehouseHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.SetPrincipalWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
+            Modules.Wms.Application.SetPrincipalWarehouseHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Wms.Application.ListLocationsQuery, Modules.Wms.Application.LocationsDto>,
             Modules.Wms.Application.ListLocationsHandler>();
         services.AddScoped<
