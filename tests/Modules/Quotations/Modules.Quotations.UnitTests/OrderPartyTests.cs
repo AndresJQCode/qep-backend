@@ -219,4 +219,60 @@ public sealed class OrderPartyTests
     [Fact]
     public void ABillingPartyNeverKeepsAPostalCode() =>
         Assert.Null(Party(Contact() with { PostalCode = "050021" }, QuotationPartyRole.Billing).PostalCode);
+
+    // Spec 2026-11-27: la facturación guarda CO literal (null ya es «sin país»); el envío sigue guardándolo como null.
+    [Fact]
+    public void ABillingPartyStoresColombiaLiteral()
+    {
+        var billing = Party(
+            Contact() with { Country = " co ", DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7() },
+            QuotationPartyRole.Billing);
+
+        Assert.Equal("CO", billing.Country);
+        Assert.Equal("CO", billing.ToDetails().Country);
+    }
+
+    [Fact]
+    public void AShippingPartyStillStoresColombiaAsNull() =>
+        Assert.Null(Party(Contact() with { Country = "CO", DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7() }).Country);
+
+    [Fact]
+    public void ABillingPartyOutsideColombiaKeepsItsCountry() =>
+        Assert.Equal("ES", Party(Contact() with { Country = "es", CityName = "Madrid" }, QuotationPartyRole.Billing).EffectiveCountry);
+
+    [Fact]
+    public void AnOldBillingRowWithACityReadsAsColombiaAndIsNotPending()
+    {
+        var billing = Party(
+            Contact() with { DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7() }, QuotationPartyRole.Billing);
+
+        Assert.Null(billing.Country);
+        Assert.Equal("CO", billing.EffectiveCountry);
+        Assert.Equal("CO", billing.ToDetails().Country);
+        Assert.False(billing.IsCountryPending);
+    }
+
+    [Fact]
+    public void ABillingRowWithANameButNoCountryNorCityIsPending()
+    {
+        var billing = Party(Contact(), QuotationPartyRole.Billing);
+
+        Assert.Null(billing.EffectiveCountry);
+        Assert.Null(billing.ToDetails().Country);
+        Assert.True(billing.IsCountryPending);
+    }
+
+    [Fact]
+    public void ABillingRowWithoutANameIsNeverPending() =>
+        Assert.False(Party(Contact() with { Name = " " }, QuotationPartyRole.Billing).IsCountryPending);
+
+    [Fact]
+    public void AShippingPartyIsNeverPendingAndItsEffectiveCountryIsItsStoredOne()
+    {
+        var shipping = Party(Contact() with { DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7() });
+
+        Assert.False(shipping.IsCountryPending);
+        Assert.Null(shipping.EffectiveCountry);
+        Assert.Null(shipping.ToDetails().Country);
+    }
 }

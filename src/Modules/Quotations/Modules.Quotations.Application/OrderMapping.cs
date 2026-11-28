@@ -162,7 +162,10 @@ internal static class OrderMapping
         party.CityId,
         party.PersonType?.ToWireValue(),
         party.IdentificationType?.ToWireValue(),
-        party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
+        // Facturación: el país efectivo, y null es «pendiente» (spec 2026-11-27). Envío: sin país es Colombia.
+        party.Role == QuotationPartyRole.Billing
+            ? party.EffectiveCountry
+            : party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
         party.CityName,
         party.RegionId,
         party.PostalCode);

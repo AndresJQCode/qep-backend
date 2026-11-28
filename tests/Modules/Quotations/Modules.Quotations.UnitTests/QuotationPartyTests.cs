@@ -167,4 +167,55 @@ public sealed class QuotationPartyTests
         Assert.Null(quotation.Billing!.PostalCode);
         Assert.Null(quotation.Billing.ToDetails().PostalCode);
     }
+
+    // Spec 2026-11-27: la facturación guarda CO literal; el envío sigue guardándolo como null.
+    [Fact]
+    public void ABillingPartyStoresColombiaLiteralAndAShippingPartyStoresNull()
+    {
+        var colombian = Foreign() with
+        {
+            Country = "co",
+            CityName = null,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+            IdentificationNumber = "900123456",
+            IdentificationType = PartyIdentificationType.Nit,
+        };
+
+        var quotation = NewQuotation(colombian, colombian);
+
+        Assert.Equal("CO", quotation.Billing!.Country);
+        Assert.Null(quotation.Shipping!.Country);
+    }
+
+    [Fact]
+    public void AnOldBillingRowWithACityReadsAsColombiaAndANamedOneWithoutEitherIsPending()
+    {
+        var nit = Foreign() with
+        {
+            CityName = null,
+            IdentificationNumber = "900123456",
+            IdentificationType = PartyIdentificationType.Nit,
+        };
+        var old = NewQuotation(nit with
+        {
+            Country = null,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+        }).Billing!;
+        var pending = NewQuotation(nit with { Country = null }).Billing!;
+        var explicitCo = NewQuotation(nit with { Country = "CO" }).Billing!;
+        var foreign = NewQuotation(Foreign() with
+        {
+            IdentificationNumber = "X1234567L",
+            IdentificationType = PartyIdentificationType.Nie,
+        }).Billing!;
+
+        Assert.Equal(("CO", false), (old.EffectiveCountry, old.IsCountryPending));
+        Assert.Equal((null, true), (pending.EffectiveCountry, pending.IsCountryPending));
+        Assert.Equal(("CO", false), (explicitCo.EffectiveCountry, explicitCo.IsCountryPending));
+        Assert.False(foreign.IsCountryPending);
+        Assert.Equal("CO", old.ToDetails().Country);
+        Assert.Null(pending.ToDetails().Country);
+    }
 }

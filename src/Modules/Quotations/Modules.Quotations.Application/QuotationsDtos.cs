@@ -321,7 +321,9 @@ public sealed record QuotationPartyDto(
     string? PersonType = null,
     /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID); sólo en facturación, siempre null en la entrega.</summary>
     string? IdentificationType = null,
-    /// <summary>ISO alfa-2. Siempre viaja: una parte sin país es <c>CO</c>.</summary>
+    /// <summary>ISO alfa-2. En el envío siempre viaja: una parte sin país es <c>CO</c>. En la facturación <c>null</c> es
+    /// <b>país pendiente</b> (spec 2026-11-27): una fila con nombre que nunca tuvo país ni ciudad; la pantalla muestra el aviso
+    /// y no deja guardar sin elegirlo. Una fila vieja con ciudad viaja <c>CO</c>.</summary>
     string? Country = null,
     /// <summary>La ciudad escrita, sólo fuera de Colombia; null en Colombia.</summary>
     string? CityName = null,
@@ -383,8 +385,10 @@ public sealed record QuotationPartyRequest(
     /// <summary>Uno de los siete códigos (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID; qué país acepta cuáles lo dice <c>DocumentTypesByCountry</c>): el tipo de <c>IdentificationNumber</c>. En facturación con
     /// nombre propio es obligatorio, como el número; en la entrega se ignora.</summary>
     string? IdentificationType = null,
-    /// <summary>ISO alfa-2. Ausente (o <c>CO</c>) es Colombia y la ciudad va por <c>DepartmentId</c>/<c>CityId</c>;
-    /// otro país lleva <c>CityName</c> y ningún id (<c>quotations.party.city_lane_invalid</c> si se mezclan).</summary>
+    /// <summary>ISO alfa-2. <c>CO</c> es Colombia y la ciudad va por <c>DepartmentId</c>/<c>CityId</c>; otro país lleva
+    /// <c>CityName</c> y ningún id (<c>quotations.party.city_lane_invalid</c> si se mezclan). En la entrega, ausente es
+    /// Colombia. Al guardar, en la facturación con nombre propio es obligatorio (spec 2026-11-27): 422 en
+    /// <c>Parties.Billing.Country</c>; el cálculo previo no lo exige.</summary>
     string? Country = null,
     /// <summary>La ciudad como texto (≤ 120), sólo fuera de Colombia.</summary>
     string? CityName = null,

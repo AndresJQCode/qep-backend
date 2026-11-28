@@ -516,7 +516,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.DepartmentId).HasColumnName("department_id");
         party.Property(value => value.CityId).HasColumnName("city_id");
 
-        // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
+        // En el envío, null es Colombia; en la facturación se guarda CO literal y null es lo viejo o «sin país» (spec 2026-11-27,
+        // sin migración). Ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
         party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
         party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
         party.Property(value => value.RegionId).HasColumnName("region_id");
@@ -1044,7 +1045,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.DepartmentId).HasColumnName("department_id");
         party.Property(value => value.CityId).HasColumnName("city_id");
 
-        // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
+        // En el envío, null es Colombia; en la facturación se guarda CO literal y null es lo viejo o «sin país» (spec 2026-11-27,
+        // sin migración). Ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
         party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
         party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
         party.Property(value => value.RegionId).HasColumnName("region_id");

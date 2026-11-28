@@ -35,8 +35,9 @@ public sealed record QuotationPartyDetails
 
     public Guid? CityId { get; init; }
 
-    /// <summary>País ISO 3166-1 alfa-2. <c>null</c> es Colombia (<c>CO</c>), que es lo que tienen todas las
-    /// filas guardadas antes de la columna y lo que sigue mandando Shopify. Un país distinto trae la
+    /// <summary>País ISO 3166-1 alfa-2. En el envío, <c>null</c> es Colombia (<c>CO</c>), que es lo que tienen todas las
+    /// filas guardadas antes de la columna y lo que sigue mandando Shopify. En la facturación <c>CO</c> se guarda literal
+    /// y <c>null</c> es «sin país» (spec 2026-11-27; lo viejo se lee con <see cref="QuotationParty.EffectiveCountry"/>). Un país distinto trae la
     /// ciudad escrita (<see cref="CityName"/>) y ningún id de DIVIPOLA.</summary>
     public string? Country { get; init; }
 
@@ -87,9 +88,11 @@ public sealed record QuotationPartyDetails
         ? DepartmentId is not null && CityId is not null
         : !string.IsNullOrWhiteSpace(CityName);
 
-    internal QuotationPartyDetails Normalized(string fieldPrefix)
+    /// <param name="keepColombia">Sólo la facturación (spec 2026-11-27): guarda <c>CO</c> literal, para distinguir una
+    /// parte colombiana de una sin país. El envío sigue guardando Colombia como <c>null</c>.</param>
+    internal QuotationPartyDetails Normalized(string fieldPrefix, bool keepColombia = false)
     {
-        var country = NormalizeCountry(Country);
+        var country = NormalizeCountry(Country, keepColombia);
         var normalized = this with { Country = country };
         normalized.EnsureLane(fieldPrefix);
         normalized.EnsureDocumentTypeAllowed(fieldPrefix);
@@ -179,9 +182,10 @@ public sealed record QuotationPartyDetails
         new("quotations.party.city_lane_invalid", message,
             new Dictionary<string, string[]>(StringComparer.Ordinal) { [field] = [message] });
 
-    // CO se guarda como null: una sola forma para Colombia, así las filas nuevas son iguales a las viejas y
-    // la igualdad de registros (Shopify compara partes) no depende de cómo se escribió el país.
-    private static string? NormalizeCountry(string? value)
+    // En el envío, CO se guarda como null: una sola forma para Colombia, así las filas nuevas son iguales a las viejas y
+    // la igualdad de registros (Shopify compara partes) no depende de cómo se escribió el país. En la facturación se
+    // guarda CO literal (keepColombia), porque ahí null significa «sin país».
+    private static string? NormalizeCountry(string? value, bool keepColombia)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -196,7 +200,7 @@ public sealed record QuotationPartyDetails
                 "The party country must be an ISO 3166-1 alpha-2 code.");
         }
 
-        return code == ColombiaCountryCode ? null : code;
+        return code == ColombiaCountryCode && !keepColombia ? null : code;
     }
 
     private QuotationPartyDetails NormalizedFields(string? country) => new()
