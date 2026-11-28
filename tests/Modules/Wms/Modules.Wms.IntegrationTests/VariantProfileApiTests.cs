@@ -84,6 +84,45 @@ public sealed class VariantProfileApiTests
     }
 
     [Fact]
+    public async Task TheDefaultProfileOfAKilogramVariantCanBeSavedAsItIsRead()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "KG-1", null, [], "Harina", salesUnit: "Kilogram");
+        using var client = CreateManager(factory);
+        var profile = await GetOneAsync(client, variantId);
+        Assert.Equal("UND", profile.GetProperty("baseUom").GetString());
+        var precision = profile.GetProperty("baseUomPrecision").GetInt32();
+        Assert.Equal(2, precision);
+
+        using var request = Put(variantId, Body(profile.GetProperty("version").GetInt64(), "UND", precision));
+        var response = await client.SendAsync(request, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // Y otra vez, ya guardado: la misma precisión con la misma unidad base se conserva.
+        using var again = Put(variantId, Body(1, "UND", precision));
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(again, Ct)).StatusCode);
+    }
+
+    [Fact]
+    public async Task APrecisionAboveTheUnitAndTheCurrentProfileIsStillRejected()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "KG-2", null, [], "Azúcar", salesUnit: "Kilogram");
+        using var client = CreateManager(factory);
+
+        using var request = Put(variantId, Body(0, "UND", 3));
+        var response = await client.SendAsync(request, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.uom.precision_exceeded", await CodeOfAsync(response));
+    }
+
+    [Fact]
     public async Task GettingAnUnsavedProfileReturnsTheDefaultWithConversionsFromPackagingUnits()
     {
         var (database, factory) = await OpenAsync();

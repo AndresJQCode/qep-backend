@@ -130,6 +130,21 @@ public sealed class WarehouseTests
     }
 
     [Fact]
+    public void AnInactiveWarehouseCannotBecomePrincipal()
+    {
+        var warehouse = NewWarehouse();
+        warehouse.Update("Bogotá", null, false, Now);
+        var version = warehouse.Version;
+
+        var error = Assert.Throws<WmsDomainException>(() => warehouse.MarkPrincipal(Now));
+
+        Assert.Equal("wms.warehouse.inactive_cannot_be_principal", error.Code);
+        Assert.Equal(WmsErrorCodes.WarehouseInactiveCannotBePrincipal, error.Code);
+        Assert.False(warehouse.IsPrincipal);
+        Assert.Equal(version, warehouse.Version);
+    }
+
+    [Fact]
     public void DeactivatingThePrincipalIsRejected()
     {
         var warehouse = NewWarehouse();

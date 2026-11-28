@@ -16,7 +16,9 @@ internal static class WarehouseDtoMapper
             cityName,
             warehouse.IsActive,
             warehouse.Version,
-            warehouse.Locations.Count(location => !location.IsVirtual));
+            warehouse.Locations.Count(location => !location.IsVirtual),
+            warehouse.IsPrincipal,
+            warehouse.GeneralLocationId?.Value);
     }
 
     /// <summary>Resuelve el nombre de la ciudad y arma el DTO: lo que devuelven el alta y la edición.</summary>

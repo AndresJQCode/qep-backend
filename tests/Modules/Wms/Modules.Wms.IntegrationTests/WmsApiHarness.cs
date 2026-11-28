@@ -47,6 +47,9 @@ internal static partial class WmsApiHarness
         WmsPermissions.TaskManage,
     ];
 
+    /// <summary>La marca de arranque del consumidor de inventario básico en las pruebas: lo anterior no se mira.</summary>
+    public static readonly DateTimeOffset InventoryStartAt = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     public static string WmsUrl(string tenantId = TenantId) => $"/api/v1/tenants/{tenantId}/wms";
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
@@ -160,7 +163,7 @@ internal static partial class WmsApiHarness
     /// logístico copia y siembra. Usa un cliente propio con <c>catalog.product.manage</c>. Devuelve el id de la variante, que es el
     /// del producto: la variante por defecto comparte el Guid (<c>VariantId.cs</c>).</summary>
     public static async Task<Guid> CreateVariantAsync(
-        QepApiFactory factory, string code, string? barcode, int[] packagingUnits, string name = "Producto", string tenantId = TenantId)
+        QepApiFactory factory, string code, string? barcode, int[] packagingUnits, string name = "Producto", string tenantId = TenantId, string? salesUnit = null)
     {
         using var client = CreateClient(factory, SubjectId, tenantId, "catalog.product.manage");
         // `barcode` va en la variante junto a `code` (ProductVariantRequest.Barcode) y `packagingUnits` va DENTRO de `pricing`
@@ -170,6 +173,7 @@ internal static partial class WmsApiHarness
             new
             {
                 name,
+                salesUnit,
                 variants = new[]
                 {
                     new
@@ -253,6 +257,7 @@ internal static partial class WmsApiHarness
             builder.UseSetting("Wms:Workers:PartitionSweepHours", "24");
             builder.UseSetting("Wms:Workers:HousekeepingHours", "24");
             builder.UseSetting("Wms:Workers:HousekeepingStartupSeconds", "3600");
+            builder.UseSetting("Wms:InventoryEvents:StartAt", InventoryStartAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
 
             if (configureServices is not null)
             {

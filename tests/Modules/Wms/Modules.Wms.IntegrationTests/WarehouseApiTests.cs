@@ -190,6 +190,199 @@ public sealed class WarehouseApiTests
         Assert.Equal(1, all.RootElement.GetProperty("items").GetArrayLength());
     }
 
+    private static string PrincipalUrl(Guid warehouseId, string tenantId = TenantId) =>
+        $"{WmsUrl(tenantId)}/warehouses/{warehouseId}/principal";
+
+    private static async Task<JsonElement> WarehouseAsync(HttpClient client, Guid warehouseId)
+    {
+        using var all = JsonDocument.Parse(await BodyAsync(await client.GetAsync($"{WarehousesUrl}?includeInactive=true", Ct)));
+        return all.RootElement.GetProperty("items").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetGuid() == warehouseId).Clone();
+    }
+
+    [Fact]
+    public async Task SettingThePrincipalMovesTheFlag()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var first = await CreateAsync(client, "BOG", "Bogotá");
+        var second = await CreateAsync(client, "MED", "Medellín");
+        var firstId = first.GetProperty("id").GetGuid();
+        var secondId = second.GetProperty("id").GetGuid();
+        Assert.False(first.GetProperty("isPrincipal").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, first.GetProperty("generalLocationId").ValueKind);
+
+        var response = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(firstId), new { version = 1 }), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var principal = JsonDocument.Parse(await BodyAsync(response));
+        Assert.Equal(firstId, principal.RootElement.GetProperty("id").GetGuid());
+        Assert.True(principal.RootElement.GetProperty("isPrincipal").GetBoolean());
+        var generalId = principal.RootElement.GetProperty("generalLocationId").GetGuid();
+        Assert.Equal(
+            "GENERAL",
+            await ScalarAsync<string>(database, "SELECT code FROM wms.locations WHERE id = @id AND warehouse_id = @w", ("id", generalId), ("w", firstId)));
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.warehouse.updated", firstId.ToString()));
+
+        // Elegir otra mueve la marca: la anterior queda sin ella, la nueva gana su ubicación general.
+        var moved = await client.SendAsync(
+            Write(HttpMethod.Put, PrincipalUrl(secondId), new { version = second.GetProperty("version").GetInt64() }), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, moved.StatusCode);
+        var firstNow = await WarehouseAsync(client, firstId);
+        var secondNow = await WarehouseAsync(client, secondId);
+        Assert.False(firstNow.GetProperty("isPrincipal").GetBoolean());
+        Assert.True(secondNow.GetProperty("isPrincipal").GetBoolean());
+        Assert.NotEqual(JsonValueKind.Null, secondNow.GetProperty("generalLocationId").ValueKind);
+        // La anterior conserva su ubicación general: no se borra nada.
+        Assert.Equal(generalId, firstNow.GetProperty("generalLocationId").GetGuid());
+        Assert.Equal(1L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.warehouses WHERE is_principal"));
+    }
+
+    [Fact]
+    public async Task SettingThePrincipalTwiceChangesNothing()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var created = await CreateAsync(client, "BOG", "Bogotá");
+        var id = created.GetProperty("id").GetGuid();
+        var first = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(id), new { version = 1 }), Ct);
+        using var firstBody = JsonDocument.Parse(await BodyAsync(first));
+        var version = firstBody.RootElement.GetProperty("version").GetInt64();
+
+        var again = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(id), new { version }), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        using var againBody = JsonDocument.Parse(await BodyAsync(again));
+        Assert.Equal(version, againBody.RootElement.GetProperty("version").GetInt64());
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.warehouse.updated", id.ToString()));
+    }
+
+    [Fact]
+    public async Task SettingThePrincipalWithAStaleVersionIs412()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var created = await CreateAsync(client, "BOG", "Bogotá");
+        var id = created.GetProperty("id").GetGuid();
+
+        var response = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(id), new { version = 99 }), Ct);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+        Assert.False((await WarehouseAsync(client, id)).GetProperty("isPrincipal").GetBoolean());
+    }
+
+    [Fact]
+    public async Task SettingThePrincipalOfAnotherTenantIs403()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var created = await CreateAsync(client, "BOG", "Bogotá");
+        var id = created.GetProperty("id").GetGuid();
+        using var intruder = CreateClient(factory, OtherSubjectId, OtherTenantId, AllPermissions);
+
+        // Quien está activo en otro tenant llama a la ruta de éste: 403 y no 404, que confirmaría que el id existe acá.
+        var response = await intruder.SendAsync(Write(HttpMethod.Put, PrincipalUrl(id), new { version = 1 }), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("authorization.denied", await CodeOfAsync(response));
+        Assert.False((await WarehouseAsync(client, id)).GetProperty("isPrincipal").GetBoolean());
+    }
+
+    [Fact]
+    public async Task SettingThePrincipalWithoutPermissionIs403()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var created = await CreateAsync(client, "BOG", "Bogotá");
+        var id = created.GetProperty("id").GetGuid();
+        using var reader = CreateReader(factory);
+
+        var response = await reader.SendAsync(Write(HttpMethod.Put, PrincipalUrl(id), new { version = 1 }), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SettingAnInactiveWarehouseAsPrincipalIs422AndChangesNothing()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var first = await CreateAsync(client, "BOG", "Bogotá");
+        var firstId = first.GetProperty("id").GetGuid();
+        var principal = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(firstId), new { version = 1 }), Ct);
+        Assert.Equal(HttpStatusCode.OK, principal.StatusCode);
+        var second = await CreateAsync(client, "MED", "Medellín");
+        var secondId = second.GetProperty("id").GetGuid();
+        var deactivated = await client.SendAsync(
+            Write(HttpMethod.Put, $"{WarehousesUrl}/{secondId}", new { name = "Medellín", cityId = (Guid?)null, isActive = false, version = 1 }), Ct);
+        using var body = JsonDocument.Parse(await BodyAsync(deactivated));
+        var version = body.RootElement.GetProperty("version").GetInt64();
+
+        var response = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(secondId), new { version }), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.warehouse.inactive_cannot_be_principal", await CodeOfAsync(response));
+        // La anterior sigue siendo la principal: la transacción se deshizo entera.
+        Assert.True((await WarehouseAsync(client, firstId)).GetProperty("isPrincipal").GetBoolean());
+        Assert.False((await WarehouseAsync(client, secondId)).GetProperty("isPrincipal").GetBoolean());
+    }
+
+    [Fact]
+    public async Task DeactivatingThePrincipalIs422()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var created = await CreateAsync(client, "BOG", "Bogotá");
+        var id = created.GetProperty("id").GetGuid();
+        var principal = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(id), new { version = 1 }), Ct);
+        using var body = JsonDocument.Parse(await BodyAsync(principal));
+        var version = body.RootElement.GetProperty("version").GetInt64();
+
+        var response = await client.SendAsync(
+            Write(HttpMethod.Put, $"{WarehousesUrl}/{id}", new { name = "Bogotá", cityId = (Guid?)null, isActive = false, version }), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.warehouse.principal_cannot_be_deactivated", await CodeOfAsync(response));
+        Assert.True(await ScalarAsync<bool>(database, "SELECT is_active FROM wms.warehouses WHERE id = @id", ("id", id)));
+    }
+
+    [Fact]
+    public async Task ListingWarehousesShowsIsPrincipal()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var first = await CreateAsync(client, "BOG", "Bogotá");
+        await CreateAsync(client, "MED", "Medellín");
+        var firstId = first.GetProperty("id").GetGuid();
+        await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(firstId), new { version = 1 }), Ct);
+
+        using var all = JsonDocument.Parse(await BodyAsync(await client.GetAsync(WarehousesUrl, Ct)));
+
+        var items = all.RootElement.GetProperty("items").EnumerateArray().ToList();
+        Assert.Equal(2, items.Count);
+        Assert.Equal(["BOG"], items.Where(item => item.GetProperty("isPrincipal").GetBoolean()).Select(item => item.GetProperty("code").GetString()));
+        var principal = items.Single(item => item.GetProperty("isPrincipal").GetBoolean());
+        Assert.NotEqual(JsonValueKind.Null, principal.GetProperty("generalLocationId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, items.Single(item => !item.GetProperty("isPrincipal").GetBoolean()).GetProperty("generalLocationId").ValueKind);
+    }
+
     [Fact]
     public async Task AnUnknownWarehouseIs404()
     {

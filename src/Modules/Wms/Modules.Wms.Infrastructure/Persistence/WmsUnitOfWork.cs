@@ -92,6 +92,12 @@ internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsU
         {
             throw new WmsDomainException(WmsErrorCodes.WarehouseCodeTaken, "A warehouse with this code already exists.", exception);
         }
+        // Último recurso: el lock por tenant de quien elige o provisiona la principal serializa los cambios; sólo llega si algo marcó
+        // una principal por fuera de ese camino. Se relee y se vuelve a elegir.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.WarehousePrincipalIndex))
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The principal warehouse was changed by another request.", exception);
+        }
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.LocationCodeIndex))
         {
             throw new WmsDomainException(WmsErrorCodes.LocationCodeTaken, "A location with this code already exists in the warehouse.", exception);

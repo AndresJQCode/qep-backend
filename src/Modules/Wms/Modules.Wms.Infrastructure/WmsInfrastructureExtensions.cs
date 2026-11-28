@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Wms.Application;
 using Modules.Wms.Infrastructure.Excel;
+using Modules.Wms.Infrastructure.Messaging;
 using Modules.Wms.Infrastructure.Pdf;
 using Modules.Wms.Infrastructure.Persistence;
 using Modules.Wms.Infrastructure.Workers;
@@ -34,6 +35,11 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IIdentifierRepository, IdentifierRepository>();
         services.AddScoped<ILotRepository, LotRepository>();
         services.AddScoped<IBalanceChangeQueue, BalanceChangeQueue>();
+        services.AddScoped<IDemandReservations, DemandReservations>();
+        services.AddScoped<IDocumentStockStates, DocumentStockStates>();
+        services.AddScoped<PrincipalWarehouseProvisioner>();
+        services.AddScoped<IInventoryEventApplier, InventoryEventApplier>();
+        services.AddSingleton<IInventoryEventTelemetry, InventoryEventTelemetry>();
         services.AddScoped<IBalanceReconciliation, BalanceReconciliation>();
         services.AddScoped<IPartitionMaintenance, PartitionMaintenance>();
         services.AddScoped<IInventoryLedger, InventoryLedger>();
@@ -70,6 +76,12 @@ public static class WmsInfrastructureExtensions
         // Workers de WMS: opciones validadas al arrancar. Las pruebas de integración fijan intervalos enormes para que ninguno corra solo.
         services.AddOptions<WmsWorkerOptions>().Bind(configuration.GetSection(WmsWorkerOptions.SectionName)).ValidateOnStart();
         services.AddSingleton<IValidateOptions<WmsWorkerOptions>, WmsWorkerOptionsValidator>();
+        // La marca de arranque del consumidor de inventario básico es obligatoria: sin ella leería todo el outbox.
+        services.AddOptions<WmsInventoryEventsOptions>().Bind(configuration.GetSection(WmsInventoryEventsOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<WmsInventoryEventsOptions>, WmsInventoryEventsOptionsValidator>();
+        services.AddSingleton<WmsInventoryEventsProcessor>();
+        services.AddSingleton<WmsInventoryEventsWorker>();
+        services.AddHostedService(provider => provider.GetRequiredService<WmsInventoryEventsWorker>());
         services.AddSingleton<WmsHousekeepingWorker>();
         services.AddHostedService(provider => provider.GetRequiredService<WmsHousekeepingWorker>());
         services.AddSingleton<BalanceChangePublisher>();

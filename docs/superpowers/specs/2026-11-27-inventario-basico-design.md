@@ -288,6 +288,7 @@ de origen; cualquier otro movimiento conserva el freno, también sobre un saldo 
 
 - Tipos de documento del ledger: `PurchaseOrder`, `Order`, `PosSale`, y que esos movimientos no se revierten a mano (código nuevo).
 - `WarehouseDto.isPrincipal`, `generalLocationId` y la ruta para cambiar la principal (§5.3); el código nuevo al desactivarla.
+- Códigos de error nuevos de este corte: `wms.warehouse.principal_cannot_be_deactivated` (desactivar la principal), `wms.movement.reverse_from_document` (reversa manual de un movimiento de documento) y `wms.warehouse.inactive_cannot_be_principal` (elegir como principal una bodega inactiva; 422, decisión del owner 2026-11-27).
 - El resumen y los totales de stock suman las reservas de demanda en `reserved` y `available`; `pickable` puede superar a `available`.
 - Abrir un conteo sobre la ubicación general deja en espera los asientos de ventas y compras.
 

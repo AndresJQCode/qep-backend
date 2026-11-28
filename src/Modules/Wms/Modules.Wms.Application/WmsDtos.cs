@@ -13,7 +13,9 @@ public sealed record WarehouseDto(
     string? CityName,
     bool IsActive,
     long Version,
-    int LocationCount);
+    int LocationCount,
+    bool IsPrincipal,
+    Guid? GeneralLocationId);
 
 public sealed record WarehousesDto(IReadOnlyList<WarehouseDto> Items);
 
@@ -22,6 +24,9 @@ public sealed record CreateWarehouseRequest(string Code, string Name, Guid? City
 
 /// <summary>Cuerpo de <c>PUT /warehouses/{id}</c>. No lleva código: el código es la clave de las etiquetas y no se cambia.</summary>
 public sealed record UpdateWarehouseRequest(string Name, Guid? CityId, bool IsActive, long Version);
+
+/// <summary>Cuerpo de <c>PUT /warehouses/{id}/principal</c>: sólo la versión que la pantalla leyó, como el resto de la API de Wms.</summary>
+public sealed record SetPrincipalWarehouseRequest(long Version);
 
 /// <summary>Cuerpo de <c>POST /warehouses/{id}/locations</c>. <c>Kind</c> y <c>Role</c> viajan por nombre; el código lo normaliza el
 /// dominio (P-4).</summary>

@@ -68,6 +68,27 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
             """.Replace("@FROM@", from, StringComparison.Ordinal).Replace("@WHERE@", where.Text, StringComparison.Ordinal),
             where.Arguments.ToArray()).ToListAsync(cancellationToken)).Single();
 
+        // Inventario básico §5.4: la reserva de demanda no tiene ubicación, lote ni estado, así que cuenta cuando el filtro no los pide, y
+        // sólo para el bodega, dueño y variante del filtro. Con esto el total de la lista y el resumen dicen lo mismo. Las filas por
+        // ubicación no la muestran.
+        var demandReserved = 0m;
+        if (filter.LocationId is null && filter.LotId is null && filter.Search is null && (filter.Status is null or StockStatus.Available))
+        {
+            var demand = new SqlWhere();
+            demand.Add("d.tenant_id = {0}", filter.TenantId);
+            demand.Add("d.status = 'Open' AND d.location_id IS NULL");
+            demand.AddIf(filter.WarehouseId, "d.warehouse_id = {0}");
+            demand.AddIf(filter.OwnerId, "d.owner_id = {0}");
+            demand.AddIf(filter.VariantId, "d.variant_id = {0}");
+            demandReserved = (await dbContext.Database.SqlQueryRaw<decimal>(
+                """
+                SELECT coalesce(sum(d.quantity), 0) AS "Value"
+                FROM wms.reservations d
+                WHERE @WHERE@
+                """.Replace("@WHERE@", demand.Text, StringComparison.Ordinal),
+                demand.Arguments.ToArray()).ToListAsync(cancellationToken)).Single();
+        }
+
         var page = new SqlWhere(where);
         var limit = page.Parameter(filter.Limit);
         var offset = page.Parameter(filter.Offset);
@@ -88,7 +109,8 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
                 .Replace("@OFFSET@", offset, StringComparison.Ordinal),
             page.Arguments.ToArray()).ToListAsync(cancellationToken);
 
-        return new StockSearchResult(rows, totalsRow.Total, new StockTotalsDto(totalsRow.OnHand, totalsRow.Reserved, totalsRow.Available, totalsRow.Pickable));
+        return new StockSearchResult(rows, totalsRow.Total, new StockTotalsDto(
+            totalsRow.OnHand, totalsRow.Reserved + demandReserved, totalsRow.Available - demandReserved, totalsRow.Pickable));
     }
 
     // El cast a uuid tipa el parámetro cuando el lote es nulo (PostgreSQL no tipa un NULL suelto).
@@ -251,6 +273,25 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
         dbContext.Set<StockMovement>()
             .AsNoTracking()
             .FirstOrDefaultAsync(movement => movement.TenantId == tenantId && movement.Id == movementId, cancellationToken);
+
+    // Acotado por occurred_at (±1 s por la precisión de timestamptz) para podar particiones; una compensación comparte el lote del original y
+    // por eso se excluye.
+    public async Task<IReadOnlyList<StockMovement>> ListBatchAsync(
+        Guid tenantId, Guid batchId, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    {
+        var from = occurredAt.AddSeconds(-1);
+        var to = occurredAt.AddSeconds(1);
+        return await dbContext.Set<StockMovement>()
+            .AsNoTracking()
+            .Where(movement => movement.TenantId == tenantId
+                && movement.BatchId == batchId
+                && movement.OccurredAt >= from
+                && movement.OccurredAt <= to
+                && movement.Reason != MovementReason.Reversal)
+            .OrderBy(movement => movement.VariantId)
+            .ThenBy(movement => movement.Id)
+            .ToListAsync(cancellationToken);
+    }
 
     // EXISTS sobre IX_stock_movements_reverses: no baja una fila ni recorre particiones enteras.
     public Task<bool> IsReversedAsync(Guid tenantId, Guid movementId, CancellationToken cancellationToken) =>

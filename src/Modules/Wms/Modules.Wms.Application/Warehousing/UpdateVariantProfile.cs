@@ -137,11 +137,22 @@ public sealed class UpdateVariantProfileHandler(
 
         var baseUom = await unitsOfMeasure.FindAsync(command.TenantId, UomCode.Parse(command.BaseUom), cancellationToken)
             ?? throw new WmsDomainException(WmsErrorCodes.UomUnknown, "The base unit of measure does not exist.");
-        if (command.BaseUomPrecision > baseUom.Precision)
+        var profile = await profiles.FindAsync(command.TenantId, command.VariantId, cancellationToken);
+
+        // El perfil por defecto de un producto que se vende por peso, longitud, área o volumen nace con la precisión de su unidad de
+        // venta (2) sobre la unidad base UND (0): sin esta excepción no podría guardarse tal como se lee. Quien ya tiene esa precisión
+        // con la misma unidad base la conserva; subirla por encima de la de la unidad sigue siendo un error.
+        // Sin fila, «lo actual» es el perfil por defecto que el GET devuelve: UND con la precisión de la unidad de venta.
+        var currentBaseUom = profile?.BaseUom ?? UomCode.Parse("UND");
+        var currentPrecision = profile?.BaseUomPrecision ?? VariantLogisticsProfile.DefaultPrecisionFor(variant.SalesUnit);
+        var allowedPrecision = currentBaseUom == baseUom.Code
+            ? Math.Max(baseUom.Precision, currentPrecision)
+            : baseUom.Precision;
+        if (command.BaseUomPrecision > allowedPrecision)
         {
             throw new WmsDomainException(
                 WmsErrorCodes.UomPrecisionExceeded,
-                $"The precision cannot exceed the {baseUom.Precision} decimals of the unit '{baseUom.Code}'.");
+                $"The precision cannot exceed the {allowedPrecision} decimals of the unit '{baseUom.Code}'.");
         }
 
         UomCode? displayUom = null;
@@ -165,7 +176,6 @@ public sealed class UpdateVariantProfileHandler(
             displayUom,
             command.Conversions.Select(conversion => (conversion.Code, conversion.Factor, conversion.Barcode)).ToList());
 
-        var profile = await profiles.FindAsync(command.TenantId, command.VariantId, cancellationToken);
         // Sin fila la «versión actual» es 0: es lo que el GET devolvió para el default, y cualquier otra es una lectura vieja.
         WmsVersions.Ensure(profile?.Version ?? 0, command.Version);
 
