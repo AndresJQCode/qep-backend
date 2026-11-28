@@ -589,6 +589,8 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ProcessedAt", "OccurredAt");
 
+                    b.HasIndex(new[] { "CorrelationId", "OccurredAt" }, "IX_outbox_messages_correlation_occurred");
+
                     b.ToTable("outbox_messages", "platform");
                 });
 

@@ -197,6 +197,46 @@ public sealed class InventoryEventsConsumerTests
         Assert.InRange(retryIn, 0, 20);
     }
 
+    // El candado por documento de la consulta del lote busca, por correlation_id, mensajes más viejos del mismo documento. Esa búsqueda
+    // (el predicado del NOT EXISTS interno) puede usar el índice; el plan de la consulta completa lo elige el planificador según el tamaño.
+    [Fact]
+    public async Task TheDocumentGateLookupCanUseTheOutboxCorrelationIndex()
+    {
+        var (database, factory, _, _) = await OpenWithRecorderAsync();
+        await using var _db = database;
+        using var _f = factory;
+        var document = Guid.CreateVersion7();
+        for (var version = 1; version <= 5; version++)
+        {
+            await PublishAsync(database, document, version, Recent(version));
+        }
+
+        await ExecuteAsync(database, "ANALYZE platform.outbox_messages");
+        var plan = new System.Text.StringBuilder();
+        await using (var connection = new Npgsql.NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(Ct);
+            // Con tablas de juguete el planificador prefiere recorrer todo: se le quita esa opción para ver si el índice sirve a la búsqueda.
+            await using (var off = new Npgsql.NpgsqlCommand("SET enable_seqscan = off; SET enable_bitmapscan = off", connection))
+            {
+                await off.ExecuteNonQueryAsync(Ct);
+            }
+
+            await using var explain = new Npgsql.NpgsqlCommand(
+                "EXPLAIN SELECT 1 FROM platform.outbox_messages p WHERE p.correlation_id = @correlation AND p.occurred_at >= @startAt",
+                connection);
+            explain.Parameters.AddWithValue("correlation", document.ToString("D"));
+            explain.Parameters.AddWithValue("startAt", InventoryStartAt);
+            await using var reader = await explain.ExecuteReaderAsync(Ct);
+            while (await reader.ReadAsync(Ct))
+            {
+                plan.AppendLine(reader.GetString(0));
+            }
+        }
+
+        Assert.Contains("IX_outbox_messages_correlation_occurred", plan.ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AProcessedMessageIsNotAppliedTwice()
     {

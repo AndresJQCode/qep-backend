@@ -43,6 +43,10 @@ internal sealed class ClaimedOutboxConsumer(
         $"CASE WHEN {alias}.payload->>'version' ~ '^[0-9]+$' AND length({alias}.payload->>'version') <= 18 "
         + $"THEN ({alias}.payload->>'version')::bigint ELSE 0 END";
 
+    /// <summary>La consulta del lote (parámetros <c>@names</c>, <c>@startAt</c>, <c>@now</c> y <c>@consumer</c>). Pública para que una prueba
+    /// lea su plan: el candado por documento («hay uno más viejo sin procesar») usa <c>IX_outbox_messages_correlation_occurred</c>.</summary>
+    internal static readonly string BatchSql = BuildBatchSql();
+
     public IReadOnlyList<TimeSpan> Leases => leases;
 
     public async Task<bool> ProcessBatchAsync(
@@ -131,12 +135,11 @@ internal sealed class ClaimedOutboxConsumer(
         }
     }
 
-    private async Task<List<OutboxRow>> ReadBatchAsync(
-        WmsDbContext dbContext, DateTimeOffset startAt, DateTimeOffset now, CancellationToken cancellationToken)
+    private static string BuildBatchSql()
     {
         var rowVersion = VersionOf("o");
         var olderVersion = VersionOf("p");
-        var sql = $"""
+        return $"""
             SELECT o.id AS "Id", o.event_name AS "EventName", o.payload::text AS "PayloadJson",
                    o.correlation_id AS "CorrelationId", o.occurred_at AS "OccurredAt"
             FROM platform.outbox_messages AS o
@@ -158,10 +161,14 @@ internal sealed class ClaimedOutboxConsumer(
             ORDER BY o.occurred_at, {rowVersion}, o.id
             LIMIT {BatchSize}
             """;
+    }
 
+    private async Task<List<OutboxRow>> ReadBatchAsync(
+        WmsDbContext dbContext, DateTimeOffset startAt, DateTimeOffset now, CancellationToken cancellationToken)
+    {
         return await dbContext.Database
             .SqlQueryRaw<OutboxRow>(
-                sql,
+                BatchSql,
                 new NpgsqlParameter<string[]>("names", [.. eventNames]),
                 new NpgsqlParameter<DateTimeOffset>("startAt", startAt.ToUniversalTime()),
                 new NpgsqlParameter<DateTimeOffset>("now", now.ToUniversalTime()),
