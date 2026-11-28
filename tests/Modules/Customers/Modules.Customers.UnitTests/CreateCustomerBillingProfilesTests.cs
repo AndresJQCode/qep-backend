@@ -78,7 +78,10 @@ public sealed class CreateCustomerBillingProfilesTests
 
         var failure = await Assert.ThrowsAsync<CustomersDomainException>(() =>
             NewCreate(customers, calls).HandleAsync(
-                Command(Profile(), Profile(number: "900123457", regionId: Guid.NewGuid())),
+                // Una región sólo se admite fuera de Colombia (en Colombia la regla de carril la rechaza antes, en el validador).
+                Command(Profile(), new NewCustomerBillingProfile(
+                    "Andina Inc", "Juridica", "TAX_ID", "123456789", "3001234567", "billing@andina.com", "1 Main St", "US",
+                    null, "Miami", Guid.NewGuid(), null, false, false)),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("customers.billing_profile.region_invalid", failure.Code);
