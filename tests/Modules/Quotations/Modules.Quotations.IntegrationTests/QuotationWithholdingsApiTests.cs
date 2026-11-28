@@ -544,7 +544,7 @@ public sealed class QuotationWithholdingsApiTests
         new(
             new QuotationPartyRequest(
                 "Sede administrativa", "1020304050", "3001234567", "sede@verde.co", "Calle 80 # 10-20",
-                setup.City.DepartmentId, setup.City.CityId, PersonType: "Natural", IdentificationType: "CC"),
+                setup.City.DepartmentId, setup.City.CityId, PersonType: "Natural", IdentificationType: "CC", Country: "CO"),
             null,
             BillingVatSurplus: false,
             BillingWithholdingTaxRateIds: withholdingTaxRateIds);
@@ -589,7 +589,7 @@ public sealed class QuotationWithholdingsApiTests
                       "name": "Sede administrativa", "identificationNumber": "1020304050",
                       "phone": "3001234567", "email": "sede@verde.co", "address": "Calle 80 # 10-20",
                       "departmentId": "{{setup.City.DepartmentId}}", "cityId": "{{setup.City.CityId}}",
-                      "personType": "Natural", "identificationType": "CC"
+                      "personType": "Natural", "identificationType": "CC", "country": "CO"
                     },
                     "shipping": null,
                     "billingWithRetention": true,

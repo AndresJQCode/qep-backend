@@ -110,4 +110,44 @@ public sealed class SaveQuotationValidatorTests
         AssertFailsOn(_save.Validate(Command(paymentMethod: tooLong)), "PaymentMethod");
         AssertFailsOn(_preview.Validate(Query(paymentMethod: tooLong)), "PaymentMethod");
     }
+
+    // Spec 2026-11-27: el país de quien se factura no se asume. Se exige al guardar, con el campo en errors, y no en el
+    // cálculo previo (la persona todavía está escribiendo).
+    private static QuotationPartiesRequest NamedBilling(string? country = null, bool finalConsumer = false) =>
+        new(
+            new QuotationPartyRequest("Otra S.A.S.", "900123456", null, null, null, null, null, IdentificationType: "NIT", Country: country),
+            null,
+            BillsToFinalConsumer: finalConsumer);
+
+    [Fact]
+    public void ANamedBillingPartyWithoutCountryFailsOnSaveButNotOnPreview()
+    {
+        var parties = NamedBilling();
+
+        var saved = _save.Validate(Command() with { Parties = parties });
+        var previewed = _preview.Validate(Query() with { Parties = parties });
+
+        var error = Assert.Single(saved.Errors, e => e.PropertyName == "Parties.Billing.Country");
+        Assert.Equal("The country is required when billing to someone else.", error.ErrorMessage);
+        Assert.DoesNotContain(previewed.Errors, e => e.PropertyName == "Parties.Billing.Country");
+    }
+
+    [Fact]
+    public void ANamedBillingPartyWithACountryHasNoCountryError() =>
+        Assert.DoesNotContain(
+            _save.Validate(Command() with { Parties = NamedBilling("CO") }).Errors,
+            e => e.PropertyName == "Parties.Billing.Country");
+
+    [Fact]
+    public void ABillingPartyWithoutNameOrForAFinalConsumerDoesNotNeedACountry()
+    {
+        var unnamed = new QuotationPartiesRequest(
+            new QuotationPartyRequest(null, null, null, null, null, null, null), null);
+
+        Assert.DoesNotContain(
+            _save.Validate(Command() with { Parties = unnamed }).Errors, e => e.PropertyName == "Parties.Billing.Country");
+        Assert.DoesNotContain(
+            _save.Validate(Command() with { Parties = NamedBilling(finalConsumer: true) }).Errors,
+            e => e.PropertyName == "Parties.Billing.Country");
+    }
 }

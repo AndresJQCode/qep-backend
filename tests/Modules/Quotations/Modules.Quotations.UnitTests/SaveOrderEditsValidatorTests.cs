@@ -281,4 +281,35 @@ public sealed class SaveOrderEditsValidatorTests
     [Fact]
     public void AcceptsAValidShipping() =>
         Assert.True(_save.Validate(Command() with { Shipping = new ShippingRequest(null, "Charged", 15000m, true) }).IsValid);
+
+    // Spec 2026-11-27: el país de quien se factura no se asume. Se exige al guardar y no en el cálculo previo.
+    [Fact]
+    public void ANamedBillingPartyWithoutCountryFailsOnSaveButNotOnPreview()
+    {
+        var billing = new OrderBillingEditRequest(
+            new QuotationPartyRequest("Otra S.A.S.", "900123456", null, null, null, null, null, IdentificationType: "NIT"));
+
+        var saved = _save.Validate(Command(billing: billing));
+        var previewed = _preview.Validate(Query(OrderEditProofs.None) with { Billing = billing });
+
+        var error = Assert.Single(saved.Errors, e => e.PropertyName == "Billing.Party.Country");
+        Assert.Equal("The country is required when billing to someone else.", error.ErrorMessage);
+        Assert.DoesNotContain(previewed.Errors, e => e.PropertyName == "Billing.Party.Country");
+    }
+
+    [Fact]
+    public void ABillingPartyWithACountryOrForAFinalConsumerHasNoCountryError()
+    {
+        var withCountry = new OrderBillingEditRequest(
+            new QuotationPartyRequest("Otra S.A.S.", "900123456", null, null, null, null, null, IdentificationType: "NIT", Country: "CO"));
+        var finalConsumer = new OrderBillingEditRequest(
+            new QuotationPartyRequest("Otra S.A.S.", "900123456", null, null, null, null, null, IdentificationType: "NIT"),
+            BillsToFinalConsumer: true);
+
+        foreach (var billing in new[] { withCountry, finalConsumer })
+        {
+            Assert.DoesNotContain(
+                _save.Validate(Command(billing: billing)).Errors, e => e.PropertyName == "Billing.Party.Country");
+        }
+    }
 }

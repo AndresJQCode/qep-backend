@@ -115,7 +115,7 @@ public sealed class QuotationApiTests(SharedQuotationsHost sharedHost) : IClassF
             parties: new QuotationPartiesRequest(
                 new QuotationPartyRequest(
                     "Sede administrativa", "900123456-1", null, null, null, null, null,
-                    PersonType: "Juridica", IdentificationType: "NIT"),
+                    PersonType: "Juridica", IdentificationType: "NIT", Country: "CO"),
                 new QuotationPartyRequest(
                     "Bodega Fontibon", null, null, null, "Zona Franca", null, null,
                     PersonType: "Natural", IdentificationType: "CC")));
@@ -146,7 +146,7 @@ public sealed class QuotationApiTests(SharedQuotationsHost sharedHost) : IClassF
                 new QuotationPartiesRequest(
                     new QuotationPartyRequest(
                         "Sede administrativa", "1020304050", null, null, null, null, null,
-                        PersonType: "Juridica", IdentificationType: "CC"),
+                        PersonType: "Juridica", IdentificationType: "CC", Country: "CO"),
                     null),
                 null),
             TestContext.Current.CancellationToken);
@@ -202,7 +202,7 @@ public sealed class QuotationApiTests(SharedQuotationsHost sharedHost) : IClassF
             parties: new QuotationPartiesRequest(
                 new QuotationPartyRequest(
                     "Sede administrativa", "1020304050", null, null, null, null, null,
-                    IdentificationType: "CC"),
+                    IdentificationType: "CC", Country: "CO"),
                 null));
 
         await using (var scope = factory.Services.CreateAsyncScope())
