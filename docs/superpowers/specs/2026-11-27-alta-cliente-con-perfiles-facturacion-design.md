@@ -1,6 +1,6 @@
 # Alta de cliente con sus perfiles de facturación
 
-Fecha: 2026-11-27. Estado: **borrador, pendiente de aprobación del owner.** Tarjeta: <https://trello.com/c/gPRWKkXq>.
+Fecha: 2026-11-27. Estado: **aprobado por el owner en conversación (2026-11-28).** Tarjeta: <https://trello.com/c/gPRWKkXq>.
 La pide el frontend (<https://trello.com/c/boyBajOt>, spec
 `qep-frontend/docs/superpowers/specs/2026-11-27-ficha-cliente-card-facturacion-design.md`).
 
