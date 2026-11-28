@@ -33,6 +33,7 @@ public sealed class TransitionPurchaseOrderEmailTests
         _orders,
         _unitOfWork,
         _audit,
+        new RecordingPurchaseOrderEvents(),
         new PurchaseOrderComposer(_context, _suppliers, _members),
         _intake,
         new PurchaseOrderEmailDelivery(_email, _documents, _unitOfWork, _audit));

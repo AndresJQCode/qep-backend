@@ -31,6 +31,7 @@ public static class PurchasesInfrastructureExtensions
         services.AddScoped<IPurchaseOrderNumberGenerator, PurchaseOrderNumberGenerator>();
         services.AddScoped<IPurchasesUnitOfWork, PurchasesUnitOfWork>();
         services.AddScoped<IPurchasesAuditPublisher, PurchasesAuditPublisher>();
+        services.AddScoped<IPurchaseOrderEventPublisher, PurchaseOrderEventPublisher>();
 
         // Mayorista fase 3: el consumidor de los eventos del pedido mayorista (aprobado, anulado), con reclamo e inbox propio.
         // El aplicador y los adaptadores entre módulos los registra Bootstrapper.

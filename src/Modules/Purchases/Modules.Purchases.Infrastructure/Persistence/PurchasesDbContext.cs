@@ -207,6 +207,11 @@ public sealed class PurchasesDbContext(DbContextOptions<PurchasesDbContext> opti
         outbox.Property(value => value.EventName).HasColumnName("event_name");
         outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
         outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        // Columnas que sólo escribe PurchaseOrderEventPublisher; el consumidor mayorista no las lee.
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
     }
 
     private static void ConfigureCounter(ModelBuilder modelBuilder)
