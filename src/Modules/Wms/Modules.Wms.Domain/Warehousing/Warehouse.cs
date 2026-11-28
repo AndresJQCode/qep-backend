@@ -27,6 +27,14 @@ public sealed class Warehouse
 
     public bool IsActive { get; private set; }
 
+    /// <summary>Inventario básico (§5.3): la bodega donde las compras suman y las ventas descuentan. Una por tenant; la base lo
+    /// exige con un índice único parcial.</summary>
+    public bool IsPrincipal { get; private set; }
+
+    /// <summary>La ubicación donde cae el stock del inventario básico. Se guarda por id y no por código: el código se puede cambiar.
+    /// Referencia blanda (sin FK): <see cref="EnsureGeneralLocation"/> la recrea si ya no está.</summary>
+    public LocationId? GeneralLocationId { get; private set; }
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -67,11 +75,61 @@ public sealed class Warehouse
 
     public void Update(string name, Guid? cityId, bool isActive, DateTimeOffset now)
     {
+        // Sin principal activa el inventario básico no tendría dónde asentar: primero se elige otra.
+        if (IsPrincipal && !isActive)
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.WarehousePrincipalCannotBeDeactivated, "The principal warehouse cannot be deactivated; choose another one first.");
+        }
+
         Name = NormalizeName(name);
         CityId = cityId;
         IsActive = isActive;
         Version++;
         UpdatedAt = now;
+    }
+
+    /// <summary>Marca esta bodega como la principal. El llamador quita antes la marca de la anterior y guarda: el índice único no es
+    /// diferible.</summary>
+    public void MarkPrincipal(DateTimeOffset now)
+    {
+        IsPrincipal = true;
+        Version++;
+        UpdatedAt = now;
+    }
+
+    public void ClearPrincipal(DateTimeOffset now)
+    {
+        IsPrincipal = false;
+        Version++;
+        UpdatedAt = now;
+    }
+
+    /// <summary>La ubicación general del inventario básico: un <c>Bin</c> en la raíz, rol <c>Storage</c>, con almacenamiento y picking
+    /// permitidos (sin picking, <c>pickable</c> sería 0 y la salida no podría asignar de ahí). Idempotente: si ya existe, la devuelve.
+    /// Toma el primer código libre entre <c>GENERAL</c>, <c>GENERAL-1</c>, <c>GENERAL-2</c>…; <c>REC-01</c> no sirve porque la
+    /// recepción la usa como muelle de llegada.</summary>
+    public Location EnsureGeneralLocation(DateTimeOffset now)
+    {
+        if (GeneralLocationId is { } existingId && FindLocation(existingId) is { } existing)
+        {
+            return existing;
+        }
+
+        var code = LocationCodes.General;
+        for (var suffix = 1; _locations.Exists(location => string.Equals(location.Code, code, StringComparison.Ordinal)); suffix++)
+        {
+            code = $"{LocationCodes.General}-{suffix}";
+        }
+
+        // Insert y no AddLocation: un Bin en la raíz no pasa la validación del árbol (sólo una Zone o un Dock cuelgan de la raíz).
+        var general = Insert(
+            LocationId.New(), null, code, LocationKind.Bin, LocationRole.Storage,
+            isVirtual: false, allowsStorage: true, allowsPicking: true, LocationCapacity.None, 0, [], now);
+        GeneralLocationId = general.Id;
+        Version++;
+        UpdatedAt = now;
+        return general;
     }
 
     public Location AddLocation(

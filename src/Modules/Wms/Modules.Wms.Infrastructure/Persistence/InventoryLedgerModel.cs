@@ -178,6 +178,13 @@ internal static class InventoryLedgerModel
                 WmsDbContext.ReservationOpenIndex)
             .HasFilter("status = 'Open'");
         reservation.HasIndex(value => new { value.DemandType, value.DemandId }, "IX_reservations_demand");
+        // Inventario básico §5.4: una sola reserva de demanda abierta por línea. Parcial en las SIN ubicación para que T5 pueda asignar
+        // la misma línea desde dos ubicaciones o lotes.
+        reservation.HasIndex(
+                value => new { value.TenantId, value.DemandType, value.DemandId, value.DemandLineId },
+                WmsDbContext.ReservationOpenDemandIndex)
+            .IsUnique()
+            .HasFilter("status = 'Open' AND location_id IS NULL");
     }
 
     private static void ConfigureOperationReceipt(ModelBuilder modelBuilder)

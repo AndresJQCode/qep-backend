@@ -109,4 +109,86 @@ public sealed class WarehouseTests
         Assert.False(warehouse.IsActive);
         Assert.Equal(Now.AddHours(1), warehouse.UpdatedAt);
     }
+
+    [Fact]
+    public void MarkingPrincipalSetsTheFlag()
+    {
+        var warehouse = NewWarehouse();
+        Assert.False(warehouse.IsPrincipal);
+        var before = warehouse.Version;
+
+        warehouse.MarkPrincipal(Now.AddHours(1));
+
+        Assert.True(warehouse.IsPrincipal);
+        Assert.Equal(before + 1, warehouse.Version);
+        Assert.Equal(Now.AddHours(1), warehouse.UpdatedAt);
+
+        warehouse.ClearPrincipal(Now.AddHours(2));
+
+        Assert.False(warehouse.IsPrincipal);
+        Assert.Equal(before + 2, warehouse.Version);
+    }
+
+    [Fact]
+    public void DeactivatingThePrincipalIsRejected()
+    {
+        var warehouse = NewWarehouse();
+        warehouse.MarkPrincipal(Now);
+
+        var error = Assert.Throws<WmsDomainException>(() => warehouse.Update("Bogotá", null, false, Now));
+
+        Assert.Equal("wms.warehouse.principal_cannot_be_deactivated", error.Code);
+        Assert.Equal(WmsErrorCodes.WarehousePrincipalCannotBeDeactivated, error.Code);
+        Assert.True(warehouse.IsActive);
+        // Seguir activa sí se puede: sólo desactivarla se rechaza.
+        warehouse.Update("Bogotá norte", null, true, Now);
+        Assert.Equal("Bogotá norte", warehouse.Name);
+    }
+
+    [Fact]
+    public void EnsureGeneralLocationCreatesARootStorageBinThatAllowsPicking()
+    {
+        var warehouse = NewWarehouse();
+        Assert.Null(warehouse.GeneralLocationId);
+
+        var general = warehouse.EnsureGeneralLocation(Now);
+
+        Assert.Equal("GENERAL", general.Code);
+        Assert.Equal(LocationKind.Bin, general.Kind);
+        Assert.Equal(LocationRole.Storage, general.Role);
+        Assert.Null(general.ParentId);
+        Assert.False(general.IsVirtual);
+        Assert.True(general.AllowsStorage);
+        Assert.True(general.AllowsPicking);
+        Assert.Equal("BOG/GENERAL", general.Path);
+        Assert.Equal(general.Id, warehouse.GeneralLocationId);
+        Assert.Same(general, warehouse.FindLocation(general.Id));
+    }
+
+    [Fact]
+    public void EnsureGeneralLocationTakesTheNextFreeCode()
+    {
+        var warehouse = NewWarehouse();
+        warehouse.AddLocation(LocationId.New(), null, "GENERAL", LocationKind.Zone, LocationRole.Storage, false, false, LocationCapacity.None, 0, [], Now);
+
+        Assert.Equal("GENERAL-1", warehouse.EnsureGeneralLocation(Now).Code);
+
+        var other = NewWarehouse("MED");
+        other.AddLocation(LocationId.New(), null, "GENERAL", LocationKind.Zone, LocationRole.Storage, false, false, LocationCapacity.None, 0, [], Now);
+        other.AddLocation(LocationId.New(), null, "GENERAL-1", LocationKind.Zone, LocationRole.Storage, false, false, LocationCapacity.None, 0, [], Now);
+        Assert.Equal("GENERAL-2", other.EnsureGeneralLocation(Now).Code);
+    }
+
+    [Fact]
+    public void EnsureGeneralLocationIsIdempotent()
+    {
+        var warehouse = NewWarehouse();
+
+        var first = warehouse.EnsureGeneralLocation(Now);
+        var count = warehouse.Locations.Count;
+        var second = warehouse.EnsureGeneralLocation(Now.AddMinutes(1));
+
+        Assert.Same(first, second);
+        Assert.Equal(count, warehouse.Locations.Count);
+    }
 }

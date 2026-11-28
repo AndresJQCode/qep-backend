@@ -13,6 +13,9 @@ public static class LocationCodes
     public const string ReceivingZone = "RECEIVING";
     public const string ReceivingDock = "REC-01";
 
+    /// <summary>La ubicación donde cae el stock del inventario básico (bodega principal).</summary>
+    public const string General = "GENERAL";
+
     public const int MaxLength = 32;
 
     /// <summary><c>Trim</c> + mayúsculas, y solo <c>[A-Z0-9._-]{1,32}</c>. <paramref name="invalidCode"/> es el código de error del

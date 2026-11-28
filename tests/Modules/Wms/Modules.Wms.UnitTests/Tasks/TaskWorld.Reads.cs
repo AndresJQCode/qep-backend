@@ -89,13 +89,13 @@ internal sealed partial class TaskWorld
         public Task<IReadOnlyList<VariantLogisticsProfile>> ListAsync(
             Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<VariantLogisticsProfile>>(
-                variantIds.Contains(Variant) ? [VariantLogisticsProfile.CreateDefault(Tenant, Variant, Variant, [12], Start)] : []);
+                variantIds.Contains(Variant) ? [VariantLogisticsProfile.CreateDefault(Tenant, Variant, Variant, [12], 0, Start)] : []);
 
         public void Add(VariantLogisticsProfile profile) => throw new NotSupportedException();
 
         public Task<VariantLogisticsProfile?> FindAsync(Guid tenantId, Guid variantId, CancellationToken ct) =>
             Task.FromResult<VariantLogisticsProfile?>(
-                variantId == Variant ? VariantLogisticsProfile.CreateDefault(Tenant, Variant, Variant, [12], Start) : null);
+                variantId == Variant ? VariantLogisticsProfile.CreateDefault(Tenant, Variant, Variant, [12], 0, Start) : null);
 
         public Task<VariantLogisticsProfile> GetOrCreateDefaultAsync(Guid tenantId, Guid variantId, CancellationToken ct) =>
             throw new NotSupportedException();

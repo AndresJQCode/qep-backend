@@ -637,6 +637,71 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Wms.Domain.Inventory.DocumentStockState", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("DocumentType")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("document_type");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("document_id");
+
+                    b.Property<long>("LastVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_version");
+
+                    b.Property<Guid?>("LocationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("location_id");
+
+                    b.Property<Guid?>("PostingBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("posting_batch_id");
+
+                    b.Property<DateTimeOffset?>("PostingOccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("posting_occurred_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("WarehouseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("warehouse_id");
+
+                    b.PrimitiveCollection<string>("_skippedLineIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("skipped_line_ids")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.HasKey("TenantId", "DocumentType", "DocumentId")
+                        .HasName("PK_document_stock_states");
+
+                    b.HasIndex(new[] { "TenantId", "Status" }, "IX_document_stock_states_tenant_status");
+
+                    b.ToTable("document_stock_states", "wms", t =>
+                        {
+                            t.HasCheckConstraint("CK_document_stock_states_status", "status IN ('None','Reserved','TakenOutByPrepare','TakenOutByArchive','Released','Parked','HandedToOutbound','Received','ReceivedByWms','Shipped','Voided')");
+
+                            t.HasCheckConstraint("CK_document_stock_states_type", "document_type IN ('PurchaseOrder','Order','PosSale')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Wms.Domain.Inventory.Lot", b =>
                 {
                     b.Property<Guid>("Id")
@@ -743,7 +808,7 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
 
-                    b.Property<Guid>("LocationId")
+                    b.Property<Guid?>("LocationId")
                         .HasColumnType("uuid")
                         .HasColumnName("location_id");
 
@@ -781,6 +846,10 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex(new[] { "DemandType", "DemandId" }, "IX_reservations_demand");
+
+                    b.HasIndex(new[] { "TenantId", "DemandType", "DemandId", "DemandLineId" }, "IX_reservations_open_demand")
+                        .IsUnique()
+                        .HasFilter("status = 'Open' AND location_id IS NULL");
 
                     b.HasIndex(new[] { "TenantId", "OwnerId", "LocationId", "VariantId", "LotId", "Status" }, "IX_reservations_open_key")
                         .HasFilter("status = 'Open'");
@@ -1864,9 +1933,19 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<Guid?>("GeneralLocationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("general_location_id");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
+
+                    b.Property<bool>("IsPrincipal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_principal");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1893,7 +1972,41 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_warehouses_tenant_code");
 
+                    b.HasIndex(new[] { "TenantId" }, "IX_warehouses_tenant_principal")
+                        .IsUnique()
+                        .HasFilter("is_principal");
+
                     b.ToTable("warehouses", "wms");
+                });
+
+            modelBuilder.Entity("Modules.Wms.Infrastructure.Persistence.WmsInboxMessage", b =>
+                {
+                    b.Property<string>("Consumer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("consumer");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Consumer", "MessageId");
+
+                    b.ToTable("inbox_messages", "wms");
                 });
 
             modelBuilder.Entity("Modules.Wms.Infrastructure.Persistence.WmsOutboxMessage", b =>
