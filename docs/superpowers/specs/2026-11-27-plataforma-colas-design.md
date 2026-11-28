@@ -1,6 +1,7 @@
 # Plataforma: ver cuánto hay encolado
 
-Fecha: 2026-11-27. Estado: **borrador, pendiente de aprobación del owner.** Tarjeta: <https://trello.com/c/CN1QTtcc>.
+Fecha: 2026-11-27. Estado: **aprobado por el owner en conversación (2026-11-27), con el tope de 10 s y la prueba
+nueva de arquitectura.** Tarjeta: <https://trello.com/c/CN1QTtcc>.
 Frontend: <https://trello.com/c/tCGWdb4x>.
 
 ## Por qué
@@ -95,7 +96,7 @@ Recibe `IQueueMetricsSource` y recorre `QueueNames.All` **una cola tras otra**: 
 - Cambiar `QueueMetricsSource`, `QueueReading` o `QueueGauges`.
 - El panel de métricas: sigue en Grafana con los gauges actuales.
 
-## Cambio de arquitectura (necesita tu autorización)
+## Cambio de arquitectura (autorizado por el owner el 2026-11-27)
 
 - **Prueba nueva en `tests/ArchitectureTests/`:** `CompositionRootTests.OnlyTheAdminRoleCarriesTheQueuesPermission`,
   gemela de la del reporte de uso. `test-feature.ps1` la va a avisar como «Requiere autorización del owner».
