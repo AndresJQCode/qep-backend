@@ -162,4 +162,86 @@ public sealed class OrderEventContractTests
             .ToArray();
         Assert.Equal(["Physical", "Service"], kinds);
     }
+
+    private static void AssertCommon(JsonElement payload, Order order)
+    {
+        Assert.Equal(order.TenantId, payload.GetProperty("tenantId").GetGuid());
+        Assert.Equal(order.Id.Value, payload.GetProperty("orderId").GetGuid());
+        Assert.Equal(order.Version, payload.GetProperty("version").GetInt64());
+        Assert.Equal(Now, payload.GetProperty("occurredAt").GetDateTimeOffset());
+    }
+
+    private static void AssertLines(JsonElement payload, Order order) =>
+        Assert.Equal(
+            order.Items.OrderBy(item => item.Position).Select(item => (item.Id.Value, item.VariantId, item.Quantity, "Physical")).ToArray(),
+            payload.GetProperty("lines").EnumerateArray()
+                .Select(line => (line.GetProperty("lineId").GetGuid(), line.GetProperty("variantId").GetGuid(), line.GetProperty("quantity").GetDecimal(), line.GetProperty("productKind").GetString()!))
+                .ToArray());
+
+    [Fact]
+    public void EditedCarriesTheCommonFieldsAndAllTheLines()
+    {
+        var order = ManualOrder(PhysicalLine(2m), PhysicalLine(5m));
+
+        Publisher().PublishOrderEdited(order, Now);
+
+        var payload = Single("quotations.order.edited.v1");
+        AssertCommon(payload, order);
+        AssertLines(payload, order);
+    }
+
+    [Fact]
+    public void PreparedCarriesTheOriginAndTheLines()
+    {
+        var order = ManualOrder(PhysicalLine(2m));
+        order.Prepare(Advisor, Now);
+
+        Publisher().PublishOrderPrepared(order, OrderEventOrigins.WmsPacking, Now);
+
+        var payload = Single("quotations.order.prepared.v1");
+        AssertCommon(payload, order);
+        Assert.Equal("WmsPacking", payload.GetProperty("origin").GetString());
+        AssertLines(payload, order);
+    }
+
+    [Fact]
+    public void UnpreparedCarriesOnlyTheCommonFields()
+    {
+        var order = ManualOrder(PhysicalLine());
+        order.Prepare(Advisor, Now);
+        order.UndoPreparation(Now);
+
+        Publisher().PublishOrderUnprepared(order, Now);
+
+        var payload = Single("quotations.order.unprepared.v1");
+        AssertCommon(payload, order);
+        Assert.False(payload.TryGetProperty("lines", out _));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ArchivedAndUnarchivedCarryIsPrepared(bool prepared)
+    {
+        var order = ManualOrder(PhysicalLine(3m));
+        if (prepared)
+        {
+            order.Prepare(Advisor, Now);
+        }
+
+        order.Archive(Advisor, Now);
+        Publisher().PublishOrderArchived(order, Now);
+        var archived = Single("quotations.order.archived.v1");
+        order.Unarchive(Now);
+        Publisher().PublishOrderUnarchived(order, Now);
+        var unarchived = Single("quotations.order.unarchived.v1");
+
+        Assert.Equal(prepared, archived.GetProperty("isPrepared").GetBoolean());
+        Assert.Equal(prepared, unarchived.GetProperty("isPrepared").GetBoolean());
+        Assert.Equal(order.TenantId, archived.GetProperty("tenantId").GetGuid());
+        Assert.Equal(order.Id.Value, unarchived.GetProperty("orderId").GetGuid());
+        Assert.True(unarchived.GetProperty("version").GetInt64() > archived.GetProperty("version").GetInt64());
+        Assert.Equal(1, archived.GetProperty("lines").GetArrayLength());
+        Assert.False(unarchived.TryGetProperty("lines", out _));
+    }
 }

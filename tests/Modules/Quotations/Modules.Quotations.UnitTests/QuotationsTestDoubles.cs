@@ -1664,6 +1664,12 @@ internal static class OrderBuilders
             orderDate: DateOnly.FromDateTime(now.UtcDateTime));
 }
 
+internal sealed record StockEventRecord(string Name, long Version, string? Origin, bool IsPrepared, int Lines)
+{
+    public static StockEventRecord Of(string name, Order order, string? origin) =>
+        new(name, order.Version, origin, order.IsPrepared, order.Items.Count);
+}
+
 /// <summary>Spec 2026-10-13 §4.5: anota qué eventos del ciclo pidió el handler, sin outbox.</summary>
 internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLifecycleEventPublisher
 {
@@ -1680,6 +1686,26 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
 
     // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
     public List<(Guid OrderId, bool FromPlatform)> Cancelled { get; } = [];
+
+    /// <summary>Los eventos de inventario (edited, prepared, unprepared, archived, unarchived), con lo que el pedido decía al
+    /// publicarlos: la versión que dejó la mutación y las marcas. Aparte de <see cref="Published"/> para no mover las pruebas
+    /// que ya cuentan esa lista.</summary>
+    public List<StockEventRecord> StockEvents { get; } = [];
+
+    public void PublishOrderEdited(Order order, DateTimeOffset occurredAt) =>
+        StockEvents.Add(StockEventRecord.Of("edited", order, null));
+
+    public void PublishOrderPrepared(Order order, string origin, DateTimeOffset occurredAt) =>
+        StockEvents.Add(StockEventRecord.Of("prepared", order, origin));
+
+    public void PublishOrderUnprepared(Order order, DateTimeOffset occurredAt) =>
+        StockEvents.Add(StockEventRecord.Of("unprepared", order, null));
+
+    public void PublishOrderArchived(Order order, DateTimeOffset occurredAt) =>
+        StockEvents.Add(StockEventRecord.Of("archived", order, null));
+
+    public void PublishOrderUnarchived(Order order, DateTimeOffset occurredAt) =>
+        StockEvents.Add(StockEventRecord.Of("unarchived", order, null));
 
     public void PublishOrderCancelled(Order order, bool fromPlatform, DateTimeOffset occurredAt)
     {

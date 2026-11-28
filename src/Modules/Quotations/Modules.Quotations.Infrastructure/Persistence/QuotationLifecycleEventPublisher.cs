@@ -21,6 +21,11 @@ internal sealed class QuotationLifecycleEventPublisher(QuotationsDbContext dbCon
     internal const string WholesaleApprovedEventName = "quotations.order.wholesale-approved.v1";
     internal const string WholesaleCancelledEventName = "quotations.order.wholesale-cancelled.v1";
     internal const string ShippingPartyChangedEventName = "quotations.order.shipping-party-changed.v1";
+    internal const string OrderEditedEventName = "quotations.order.edited.v1";
+    internal const string OrderPreparedEventName = "quotations.order.prepared.v1";
+    internal const string OrderUnpreparedEventName = "quotations.order.unprepared.v1";
+    internal const string OrderArchivedEventName = "quotations.order.archived.v1";
+    internal const string OrderUnarchivedEventName = "quotations.order.unarchived.v1";
 
     public void PublishSent(Quotation quotation, DateTimeOffset occurredAt)
     {
@@ -84,6 +89,41 @@ internal sealed class QuotationLifecycleEventPublisher(QuotationsDbContext dbCon
             order.TenantId, order.Id.Value, buyerTenantId, purchaseOrderId, order.CancelledAt ?? occurredAt, byBuyer), occurredAt);
     }
 
+    public void PublishOrderEdited(Order order, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        Add(OrderEditedEventName, order.Id.Value, new OrderEditedPayload(
+            order.TenantId, order.Id.Value, order.Version, occurredAt, LinesOf(order)), occurredAt);
+    }
+
+    public void PublishOrderPrepared(Order order, string origin, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        Add(OrderPreparedEventName, order.Id.Value, new OrderPreparedPayload(
+            order.TenantId, order.Id.Value, order.Version, occurredAt, origin, LinesOf(order)), occurredAt);
+    }
+
+    public void PublishOrderUnprepared(Order order, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        Add(OrderUnpreparedEventName, order.Id.Value, new OrderStockMarkPayload(
+            order.TenantId, order.Id.Value, order.Version, occurredAt), occurredAt);
+    }
+
+    public void PublishOrderArchived(Order order, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        Add(OrderArchivedEventName, order.Id.Value, new OrderArchivedPayload(
+            order.TenantId, order.Id.Value, order.Version, occurredAt, order.IsPrepared, LinesOf(order)), occurredAt);
+    }
+
+    public void PublishOrderUnarchived(Order order, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        Add(OrderUnarchivedEventName, order.Id.Value, new OrderUnarchivedPayload(
+            order.TenantId, order.Id.Value, order.Version, occurredAt, order.IsPrepared), occurredAt);
+    }
+
     // Las líneas del pedido en su orden, con lo que el inventario necesita: el id de la línea, la variante, la cantidad y el tipo
     // de producto congelado (sólo las físicas mueven stock; las de servicio viajan igual y el consumidor las aparta).
     private static OrderLinePayload[] LinesOf(Order order) =>
@@ -123,6 +163,22 @@ internal sealed class QuotationLifecycleEventPublisher(QuotationsDbContext dbCon
         int version, bool awaitingWholesaleApproval, IReadOnlyList<OrderLinePayload> lines);
 
     private sealed record OrderLinePayload(Guid lineId, Guid variantId, decimal quantity, string productKind);
+
+    private sealed record OrderEditedPayload(
+        Guid tenantId, Guid orderId, long version, DateTimeOffset occurredAt, IReadOnlyList<OrderLinePayload> lines);
+
+    private sealed record OrderPreparedPayload(
+        Guid tenantId, Guid orderId, long version, DateTimeOffset occurredAt, string origin,
+        IReadOnlyList<OrderLinePayload> lines);
+
+    private sealed record OrderStockMarkPayload(Guid tenantId, Guid orderId, long version, DateTimeOffset occurredAt);
+
+    private sealed record OrderArchivedPayload(
+        Guid tenantId, Guid orderId, long version, DateTimeOffset occurredAt, bool isPrepared,
+        IReadOnlyList<OrderLinePayload> lines);
+
+    private sealed record OrderUnarchivedPayload(
+        Guid tenantId, Guid orderId, long version, DateTimeOffset occurredAt, bool isPrepared);
 
     private sealed record OrderCancelledPayload(
         Guid tenantId, Guid orderId, Guid? quotationId, string source, DateTimeOffset occurredAt,

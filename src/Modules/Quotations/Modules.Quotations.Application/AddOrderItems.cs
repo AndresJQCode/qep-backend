@@ -47,7 +47,8 @@ public sealed class AddOrderItemsHandler(
     IClock clock,
     IValidator<AddOrderItemsCommand> validator,
     IOrderVariantCostLookup costLookup,
-    IWholesaleLinePricing wholesalePricing)
+    IWholesaleLinePricing wholesalePricing,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<AddOrderItemsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -109,6 +110,8 @@ public sealed class AddOrderItemsHandler(
                 order.Id.ToString(), "success", now);
         }
 
+        // Justo después de la última línea sumada: el WMS reemplaza su reserva con las líneas como quedaron.
+        lifecycleEvents.PublishOrderEdited(order, now);
         order.CaptureProductSnapshots(
             await OrderItemProductLabel.ResolveMissingAsync(productLookup, command.TenantId, order, cancellationToken));
         // Sumar una línea mueve el tramo de las que agrupan con ella y puede cambiar el mínimo de

@@ -27,7 +27,8 @@ public sealed class MarkOrderPaidHandler(
     ITenantDirectory tenantDirectory,
     IQuotationCustomerLookup customerLookup,
     IQuotationSettingsStore settingsStore,
-    IOrderVariantCostLookup costLookup)
+    IOrderVariantCostLookup costLookup,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<MarkOrderPaidCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(MarkOrderPaidCommand command, CancellationToken cancellationToken)
@@ -51,7 +52,8 @@ public sealed class MarkOrderPaidHandler(
         OrderStateAction.Record(
             repository, auditPublisher, executionContext, command.TenantId, order, actor,
             OrderHistoryEventType.PaidMarked, OrderChangeSummary.PaidMarked(), "quotation.order.paid_marked", now);
-        OrderAutoArchive.Apply(settings, repository, auditPublisher, executionContext, command.TenantId, order, actor, now);
+        OrderAutoArchive.Apply(
+            settings, repository, auditPublisher, lifecycleEvents, executionContext, command.TenantId, order, actor, now);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return order.ToDto();

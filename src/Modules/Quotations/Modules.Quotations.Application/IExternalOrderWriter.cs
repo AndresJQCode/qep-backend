@@ -489,6 +489,12 @@ public sealed class ExternalOrderService(
             return EditState(order);
         }
 
+        // Sólo si cambiaron las líneas: una edición de envío o de nota no le dice nada al inventario.
+        if (result.LinesChanged)
+        {
+            lifecycleEvents.PublishOrderEdited(order, draft.OccurredAt);
+        }
+
         // Una entrada por grupo, con el evento de la edición equivalente y sin autor: lo editó la plataforma.
         foreach (var (changed, group, eventType) in new[]
                  {
@@ -656,6 +662,9 @@ public sealed class ExternalOrderService(
             tenantId, "quotation.order.payment_status_synced", order.Id.ToString(), "success", now);
         if (archived)
         {
+            // El archivo automático salió de SyncExternalPaymentStatus (sube la versión dos veces: pago y archivo); la del
+            // evento es la final.
+            lifecycleEvents.PublishOrderArchived(order, now);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                 OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Archived, memberId: null,
                 OrderChangeSummary.ArchivedAutomatically(), now));

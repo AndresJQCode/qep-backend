@@ -14,7 +14,8 @@ public sealed class UndoOrderPreparationHandler(
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<UndoOrderPreparationCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(UndoOrderPreparationCommand command, CancellationToken cancellationToken)
@@ -25,6 +26,7 @@ public sealed class UndoOrderPreparationHandler(
 
         var now = clock.UtcNow;
         order.UndoPreparation(now);
+        lifecycleEvents.PublishOrderUnprepared(order, now);
         OrderStateAction.Record(
             repository, auditPublisher, executionContext, command.TenantId, order, actor,
             OrderHistoryEventType.PreparationUndone, OrderChangeSummary.PreparationUndone(),
