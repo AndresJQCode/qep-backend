@@ -274,6 +274,25 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
             .AsNoTracking()
             .FirstOrDefaultAsync(movement => movement.TenantId == tenantId && movement.Id == movementId, cancellationToken);
 
+    // Acotado por occurred_at (±1 s por la precisión de timestamptz) para podar particiones; una compensación comparte el lote del original y
+    // por eso se excluye.
+    public async Task<IReadOnlyList<StockMovement>> ListBatchAsync(
+        Guid tenantId, Guid batchId, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    {
+        var from = occurredAt.AddSeconds(-1);
+        var to = occurredAt.AddSeconds(1);
+        return await dbContext.Set<StockMovement>()
+            .AsNoTracking()
+            .Where(movement => movement.TenantId == tenantId
+                && movement.BatchId == batchId
+                && movement.OccurredAt >= from
+                && movement.OccurredAt <= to
+                && movement.Reason != MovementReason.Reversal)
+            .OrderBy(movement => movement.VariantId)
+            .ThenBy(movement => movement.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     // EXISTS sobre IX_stock_movements_reverses: no baja una fila ni recorre particiones enteras.
     public Task<bool> IsReversedAsync(Guid tenantId, Guid movementId, CancellationToken cancellationToken) =>
         dbContext.Set<StockMovement>()

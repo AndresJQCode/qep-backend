@@ -32,7 +32,10 @@ internal sealed class WmsProvisioner(WmsDbContext dbContext, IClock clock) : IWm
 
         var now = clock.UtcNow;
         var self = Owner.CreateSelf(OwnerId.New(), tenantId, SelfName, now);
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+        // El consumidor de inventario básico provisiona dentro de su transacción (spec §5.3): con una abierta, escribe en ella y es
+        // quien la abrió quien confirma. Sin ninguna, ésta es la propia.
+        var ambient = dbContext.Database.CurrentTransaction;
+        await using var transaction = ambient is null ? await dbContext.Database.BeginTransactionAsync(ct) : null;
 
         await dbContext.Database.ExecuteSqlAsync($"""
             INSERT INTO wms.owners (id, tenant_id, kind, name, identification, contact_email, is_active, version, created_at, updated_at)
@@ -49,6 +52,9 @@ internal sealed class WmsProvisioner(WmsDbContext dbContext, IClock clock) : IWm
                 """, ct);
         }
 
-        await transaction.CommitAsync(ct);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+        }
     }
 }

@@ -305,6 +305,7 @@ public sealed class StockQueryTests
                 new DemandLine(s.TenantId, s.OwnerId, s.VariantId, quantity, InventoryDocumentTypes.Order, demandId, lineId ?? Guid.CreateVersion7()),
                 s.WarehouseId,
                 Ct);
+            await demands.EnqueueChangesAsync(Ct);
             return true;
         });
 
@@ -371,6 +372,28 @@ public sealed class StockQueryTests
         // Una búsqueda por ubicación o lote no puede incluir lo que no tiene ubicación.
         using var byLocation = await GetJsonAsync(s.Manager, $"/stock?locationId={s.BinA}");
         Assert.Equal(0m, byLocation.RootElement.GetProperty("totals").GetProperty("reserved").GetDecimal());
+    }
+
+    [Fact]
+    public async Task ADemandReservationDoesNotTouchTheQueueUntilTheCallerEnqueues()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await ExecuteAsync(database, "DELETE FROM wms.balance_change_queue");
+
+        // Lock order: la cola es el último bloqueo de la transacción y la toma el llamador después del ledger, nunca la reserva.
+        await InDemandScopeAsync(factory, async (demands, _) =>
+        {
+            await demands.OpenAsync(
+                new DemandLine(s.TenantId, s.OwnerId, s.VariantId, 2, InventoryDocumentTypes.Order, Guid.CreateVersion7(), Guid.CreateVersion7()),
+                s.WarehouseId,
+                Ct);
+            return true;
+        });
+
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.balance_change_queue"));
     }
 
     [Fact]

@@ -9,6 +9,10 @@ namespace Modules.Wms.Infrastructure.Persistence;
 /// Las reservas de demanda sobre <c>wms.reservations</c> (location_id nulo). No escribe saldos: el ledger sigue siendo el único que
 /// los toca. Cerrar y consumir guardan antes de volver (<see cref="IWmsUnitOfWork.FlushAsync"/>): el índice único parcial de las
 /// abiertas no es diferible, y EF no garantiza que el UPDATE de la vieja vaya antes del INSERT de la nueva.
+/// <para><b>Orden de bloqueos.</b> Ninguna operación toca <c>balance_change_queue</c> por su cuenta: sólo anota las claves. Quien
+/// llama las encola con <see cref="EnqueueChangesAsync"/> <b>después</b> del ledger, porque la cola es el último bloqueo de una
+/// transacción (<c>InventoryLedger</c>, S26). Encolar antes tomaría la fila de la cola y luego la del saldo, al revés que un
+/// asiento concurrente: un deadlock 40P01.</para>
 /// </summary>
 internal sealed class DemandReservations(
     WmsDbContext dbContext,
@@ -16,7 +20,9 @@ internal sealed class DemandReservations(
     IBalanceChangeQueue balanceChanges,
     IClock clock) : IDemandReservations
 {
-    public async Task OpenAsync(DemandLine line, Guid warehouseId, CancellationToken ct)
+    private readonly HashSet<BalanceChangeKey> _pending = [];
+
+    public Task OpenAsync(DemandLine line, Guid warehouseId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(line);
 
@@ -30,7 +36,20 @@ internal sealed class DemandReservations(
             line.DemandId,
             line.DemandLineId,
             clock.UtcNow));
-        await balanceChanges.EnqueueAsync([new BalanceChangeKey(line.TenantId, line.OwnerId, warehouseId, line.VariantId)], ct);
+        _pending.Add(new BalanceChangeKey(line.TenantId, line.OwnerId, warehouseId, line.VariantId));
+        return Task.CompletedTask;
+    }
+
+    public async Task EnqueueChangesAsync(CancellationToken ct)
+    {
+        if (_pending.Count == 0)
+        {
+            return;
+        }
+
+        var keys = _pending.ToArray();
+        _pending.Clear();
+        await balanceChanges.EnqueueAsync(keys, ct);
     }
 
     public async Task CloseAllAsync(Guid tenantId, string demandType, Guid demandId, CancellationToken ct)
@@ -42,7 +61,7 @@ internal sealed class DemandReservations(
         }
 
         await unitOfWork.FlushAsync(ct);
-        await EnqueueAsync(open, ct);
+        Track(open);
     }
 
     public async Task<IReadOnlyList<Reservation>> ConsumeAllAsync(Guid tenantId, string demandType, Guid demandId, CancellationToken ct)
@@ -54,11 +73,11 @@ internal sealed class DemandReservations(
         }
 
         await unitOfWork.FlushAsync(ct);
-        await EnqueueAsync(open, ct);
+        Track(open);
         return open;
     }
 
-    public async Task ReopenAsync(IReadOnlyList<Reservation> consumed, CancellationToken ct)
+    public Task ReopenAsync(IReadOnlyList<Reservation> consumed, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(consumed);
 
@@ -77,7 +96,8 @@ internal sealed class DemandReservations(
                 now));
         }
 
-        await EnqueueAsync(consumed, ct);
+        Track(consumed);
+        return Task.CompletedTask;
     }
 
     // Sólo las de demanda (sin ubicación): una asignación de T5 sobre el mismo pedido no se cierra ni se consume acá.
@@ -90,10 +110,11 @@ internal sealed class DemandReservations(
                 && reservation.LocationId == null)
             .ToListAsync(ct);
 
-    private Task EnqueueAsync(IEnumerable<Reservation> reservations, CancellationToken ct) =>
-        balanceChanges.EnqueueAsync(
-            reservations
-                .Select(reservation => new BalanceChangeKey(reservation.TenantId, reservation.OwnerId, reservation.WarehouseId, reservation.VariantId))
-                .ToHashSet(),
-            ct);
+    private void Track(IEnumerable<Reservation> reservations)
+    {
+        foreach (var reservation in reservations)
+        {
+            _pending.Add(new BalanceChangeKey(reservation.TenantId, reservation.OwnerId, reservation.WarehouseId, reservation.VariantId));
+        }
+    }
 }

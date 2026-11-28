@@ -13,6 +13,7 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
     private readonly Counter<long> _movements;
     private readonly Histogram<double> _confirmDuration;
     private readonly Counter<long> _documentsParked;
+    private readonly Counter<long> _linesSkipped;
     private long _balanceDrift;
     private long _partitionMissing;
     private long _reconciliationFailed;
@@ -24,6 +25,9 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
         _documentsParked = Meter.CreateCounter<long>(
             "qep.wms.inventory.documents_parked",
             description: "Documents of the basic inventory whose event kept failing past the threshold and wait for it to pass.");
+        _linesSkipped = Meter.CreateCounter<long>(
+            "qep.wms.inventory.lines_skipped",
+            description: "Document lines the basic inventory did not move, by reason.");
         _confirmDuration = Meter.CreateHistogram(
             "qep.wms.confirm.duration",
             unit: "ms",
@@ -47,6 +51,9 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
 
     public void RecordMovements(MovementReason reason, int count) =>
         _movements.Add(count, new KeyValuePair<string, object?>("reason", reason.ToString()));
+
+    public void RecordLineSkipped(string reason) =>
+        _linesSkipped.Add(1, new KeyValuePair<string, object?>("reason", reason));
 
     public void RecordDocumentParked() => _documentsParked.Add(1);
 

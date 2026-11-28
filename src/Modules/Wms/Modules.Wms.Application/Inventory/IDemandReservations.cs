@@ -15,7 +15,8 @@ public sealed record DemandLine(
 /// <summary>
 /// Las reservas de demanda del inventario básico (spec §5.4): por bodega, variante y dueño, <b>sin ubicación</b>, así que no tocan
 /// <c>StockBalance.Reserved</c> ni frenan un movimiento. Corren en la transacción del llamador (<c>BeginTransactionAsync</c>) y cada
-/// operación encola el cambio de saldo de (tenant, dueño, bodega, variante), para que la pantalla se entere aunque no haya asiento.
+/// operación anota el cambio de saldo de (tenant, dueño, bodega, variante); <see cref="EnqueueChangesAsync"/> los encola, para que la
+/// pantalla se entere aunque no haya asiento.
 /// Sólo atienden las reservas SIN ubicación: las asignaciones por ubicación (T5) son de otro nivel.
 /// </summary>
 public interface IDemandReservations
@@ -34,4 +35,9 @@ public interface IDemandReservations
 
     /// <summary>Vuelve a abrir una reserva por cada una de las consumidas, con su misma bodega, variante, línea y cantidad.</summary>
     Task ReopenAsync(IReadOnlyList<Reservation> consumed, CancellationToken ct);
+
+    /// <summary>Encola, ordenados y en una sola sentencia, los cambios de saldo anotados por las operaciones anteriores. Se llama después
+    /// del ledger y antes de guardar: la cola es el último bloqueo de la transacción (ver el resumen de la interfaz). Sin cambios no
+    /// ejecuta nada.</summary>
+    Task EnqueueChangesAsync(CancellationToken ct);
 }
