@@ -84,6 +84,7 @@ public sealed class CreatePosSaleHandler(
     IPosUnitOfWork unitOfWork,
     IPosSaleIdLock saleIdLock,
     IPosAuditPublisher auditPublisher,
+    IPosSaleEventPublisher saleEvents,
     IPosProductLookup products,
     IPosVariantCostLookup costs,
     IPosCashierLookup cashiers,
@@ -200,6 +201,7 @@ public sealed class CreatePosSaleHandler(
             sale.AssignNumber(await numbers.NextAsync(command.TenantId, cancellationToken));
             sales.Add(sale);
             session.RegisterSale(sale, now);
+            saleEvents.PublishCreated(sale, now);
             auditPublisher.Publish(
                 command.TenantId, executionContext.SubjectId, "pos.sale.created", "pos_sale",
                 sale.Id.ToString(), "success", AuditFields(sale), now);

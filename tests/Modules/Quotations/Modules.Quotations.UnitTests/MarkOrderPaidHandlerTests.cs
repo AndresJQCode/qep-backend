@@ -297,7 +297,8 @@ public sealed class MarkOrderPaidHandlerTests
             directory ?? Directory(PersonTypeRequirement.Never),
             customer ?? Customer(personType: "Natural"),
             settings ?? new FixedQuotationSettingsStore(),
-            costs ?? new RecordingOrderVariantCostLookup());
+            costs ?? new RecordingOrderVariantCostLookup(),
+            new RecordingQuotationLifecycleEventPublisher());
 
     private static StubTenantDirectory Directory(
         PersonTypeRequirement requirement, string tenantCountry = "CO") =>

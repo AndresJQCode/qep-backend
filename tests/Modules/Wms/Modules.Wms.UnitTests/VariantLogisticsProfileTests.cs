@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Wms.Domain;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Warehousing;
@@ -21,7 +22,7 @@ public sealed class VariantLogisticsProfileTests
     [Fact]
     public void TheDefaultProfileIsUndNoneWithConversionsFromPackagingUnits()
     {
-        var profile = VariantLogisticsProfile.CreateDefault(Tenant, Guid.CreateVersion7(), Guid.CreateVersion7(), [12, 144], Now);
+        var profile = VariantLogisticsProfile.CreateDefault(Tenant, Guid.CreateVersion7(), Guid.CreateVersion7(), [12, 144], 0, Now);
 
         Assert.Equal("UND", profile.BaseUom.Value);
         Assert.Equal(0, profile.BaseUomPrecision);
@@ -29,6 +30,26 @@ public sealed class VariantLogisticsProfileTests
         Assert.Equal(
             new[] { ("EMPAQUE x12", 12m), ("EMPAQUE x144", 144m) },
             profile.Conversions.Select(c => (c.Code, c.Factor)).ToArray());
+    }
+
+    // Inventario básico (§5.6): el perfil que crea el consumidor toma la precisión de la unidad de venta de Catalog.
+    [Fact]
+    public void DefaultProfilePrecisionFollowsTheSalesUnit()
+    {
+        Assert.Equal(0, VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.Unit));
+        Assert.Equal(2, VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.Kilogram));
+        Assert.Equal(2, VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.Meter));
+        Assert.Equal(2, VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.SquareMeter));
+        Assert.Equal(2, VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.Liter));
+        Assert.Equal(0, VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.Hour));
+
+        var kilos = VariantLogisticsProfile.CreateDefault(
+            Tenant, Guid.CreateVersion7(), Guid.CreateVersion7(), [], VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.Kilogram), Now);
+        var units = VariantLogisticsProfile.CreateDefault(
+            Tenant, Guid.CreateVersion7(), Guid.CreateVersion7(), [], VariantLogisticsProfile.DefaultPrecisionFor(SalesUnit.Unit), Now);
+
+        Assert.Equal(2, kilos.BaseUomPrecision);
+        Assert.Equal(0, units.BaseUomPrecision);
     }
 
     [Fact]

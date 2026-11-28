@@ -37,6 +37,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public const string LotCodeIndex = "IX_lots_owner_variant_code";
     public const string SerialUnitIndex = "IX_serial_units_variant_serial";
     public const string ReservationOpenIndex = "IX_reservations_open_key";
+    public const string ReservationOpenDemandIndex = "IX_reservations_open_demand";
+    public const string WarehousePrincipalIndex = "IX_warehouses_tenant_principal";
+    public const string DocumentStockStatePrimaryKey = "PK_document_stock_states";
     public const string AdjustmentNumberIndex = "IX_adjustments_tenant_number";
 
     // Motor de tareas (spec 2026-11-26 §6.1).
@@ -77,6 +80,11 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
 
     public DbSet<MemberScope> MemberScopes => Set<MemberScope>();
 
+    public DbSet<DocumentStockState> DocumentStockStates => Set<DocumentStockState>();
+
+    // Inventario básico: el inbox del consumidor de eventos de inventario (copia del de Purchases).
+    internal DbSet<WmsInboxMessage> Inbox => Set<WmsInboxMessage>();
+
     internal DbSet<WmsOutboxMessage> Outbox => Set<WmsOutboxMessage>();
 
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -95,6 +103,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         ConfigureConversion(modelBuilder);
         ConfigureIdentifier(modelBuilder);
         ConfigureMemberScope(modelBuilder);
+        ConfigureDocumentStockState(modelBuilder);
+        ConfigureInbox(modelBuilder);
         InventoryLedgerModel.Configure(modelBuilder);
         WarehouseTaskModel.Configure(modelBuilder);
         IncidentModel.Configure(modelBuilder);
@@ -117,10 +127,17 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         // Referencia blanda a geography.cities: otro esquema, otro contexto.
         warehouse.Property(value => value.CityId).HasColumnName("city_id");
         warehouse.Property(value => value.IsActive).HasColumnName("is_active");
+        warehouse.Property(value => value.IsPrincipal).HasColumnName("is_principal").HasDefaultValue(false);
+        // Referencia blanda a locations (la FK circular con FK_locations_warehouse no aporta): EnsureGeneralLocation recrea la que falte.
+        warehouse.Property(value => value.GeneralLocationId)
+            .HasColumnName("general_location_id")
+            .HasConversion(id => id!.Value.Value, value => new LocationId(value));
         warehouse.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
         warehouse.Property(value => value.CreatedAt).HasColumnName("created_at");
         warehouse.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         warehouse.HasIndex(value => new { value.TenantId, value.Code }).IsUnique().HasDatabaseName(WarehouseCodeIndex);
+        // Una sola principal por tenant (inventario básico §5.3): la frena la base, no una consulta previa.
+        warehouse.HasIndex(value => value.TenantId, WarehousePrincipalIndex).IsUnique().HasFilter("is_principal");
         warehouse.HasMany(value => value.Locations)
             .WithOne()
             .HasForeignKey(location => location.WarehouseId)
@@ -327,6 +344,53 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         identifier.Property(value => value.CreatedAt).HasColumnName("created_at");
         identifier.HasIndex(value => new { value.TenantId, value.Value }).IsUnique().HasDatabaseName(IdentifierValueIndex);
         identifier.HasIndex(value => new { value.TenantId, value.TargetId }).HasDatabaseName("IX_identifiers_tenant_target");
+    }
+
+    // Inventario básico (§5.2): una fila por documento. Los nombres de columna van a mano: el consumidor los escribe también en SQL.
+    private static void ConfigureDocumentStockState(ModelBuilder modelBuilder)
+    {
+        var state = modelBuilder.Entity<DocumentStockState>();
+        state.ToTable("document_stock_states", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_document_stock_states_type", "document_type IN ('PurchaseOrder','Order','PosSale')");
+            table.HasCheckConstraint(
+                "CK_document_stock_states_status",
+                "status IN ('None','Reserved','TakenOutByPrepare','TakenOutByArchive','Released','Parked','HandedToOutbound','Received','ReceivedByWms','Shipped','Voided')");
+        });
+        state.HasKey(value => new { value.TenantId, value.DocumentType, value.DocumentId }).HasName(DocumentStockStatePrimaryKey);
+        state.Property(value => value.TenantId).HasColumnName("tenant_id");
+        state.Property(value => value.DocumentType).HasColumnName("document_type").HasMaxLength(32);
+        state.Property(value => value.DocumentId).HasColumnName("document_id");
+        state.Property(value => value.LastVersion).HasColumnName("last_version").HasColumnType("bigint");
+        state.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(24);
+        state.Property(value => value.WarehouseId).HasColumnName("warehouse_id");
+        state.Property(value => value.LocationId).HasColumnName("location_id");
+        state.Property(value => value.PostingBatchId).HasColumnName("posting_batch_id");
+        state.Property(value => value.PostingOccurredAt).HasColumnName("posting_occurred_at");
+        // Las líneas apartadas: un puñado de ids sin identidad que se reemplaza entero con la fila.
+        state.PrimitiveCollection<List<Guid>>("_skippedLineIds")
+            .HasColumnName("skipped_line_ids")
+            .HasColumnType("jsonb")
+            .IsRequired()
+            .HasDefaultValueSql("'[]'::jsonb");
+        state.Ignore(value => value.SkippedLineIds);
+        state.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // El panel del WMS y T3 buscan el documento de una orden por su estado.
+        state.HasIndex(value => new { value.TenantId, value.Status }, "IX_document_stock_states_tenant_status");
+    }
+
+    // Copia del inbox de Purchases: una fila con processed_at nulo es un mensaje reclamado y sin terminar. Los nombres van a mano
+    // porque el reclamo los escribe en SQL crudo.
+    private static void ConfigureInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<WmsInboxMessage>();
+        inbox.ToTable("inbox_messages", Schema);
+        inbox.HasKey(value => new { value.Consumer, value.MessageId });
+        inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(200);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id");
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
     }
 
     // Nace vacía y nadie la lee en este corte (S18, D-07); sin FK a owners ni warehouses: la fase 3 decide si las lleva.

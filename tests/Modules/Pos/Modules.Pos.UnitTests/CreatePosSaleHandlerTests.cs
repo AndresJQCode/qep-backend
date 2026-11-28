@@ -37,7 +37,7 @@ public sealed class CreatePosSaleHandlerTests
         Command(session, lines: [new(Shampoo, 1m, 0m, 11_900m, 19)], payments: [new("Cash", null, 20_000m, null)], customerId: customerId);
 
     private static CreatePosSaleHandler Handler(PosTestBed bed, params string[] permissions) =>
-        new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Products, bed.Costs, bed.Cashiers,
+        new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Events, bed.Products, bed.Costs, bed.Cashiers,
             bed.Memberships, bed.Customers, bed.TenantDirectory, bed.PriceRounding, bed.Context(permissions), bed.Clock, bed.TenantClock,
             new CreatePosSaleValidator());
 

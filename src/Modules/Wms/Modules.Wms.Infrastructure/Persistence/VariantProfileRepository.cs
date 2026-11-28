@@ -53,7 +53,13 @@ internal sealed class VariantProfileRepository(
             ?? throw new WmsDomainException(WmsErrorCodes.ProfileVariantUnknown, "The variant does not exist in the catalog.");
 
         var now = clock.UtcNow;
-        var profile = VariantLogisticsProfile.CreateDefault(tenantId, variantId, snapshot.ProductId, snapshot.PackagingUnits, now);
+        var profile = VariantLogisticsProfile.CreateDefault(
+            tenantId,
+            variantId,
+            snapshot.ProductId,
+            snapshot.PackagingUnits,
+            VariantLogisticsProfile.DefaultPrecisionFor(snapshot.SalesUnit),
+            now);
         dbContext.VariantProfiles.Add(profile);
         identifiers.AddRange(Identifier.ForVariant(tenantId, variantId, snapshot.Code, snapshot.Barcode, now));
         auditRecorder.Record(

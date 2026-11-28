@@ -17,6 +17,7 @@ internal static class OrderAutoArchive
         OrderSettings settings,
         IOrderRepository repository,
         IQuotationAuditPublisher auditPublisher,
+        IQuotationLifecycleEventPublisher lifecycleEvents,
         IExecutionContext executionContext,
         Guid tenantId,
         Order order,
@@ -28,6 +29,9 @@ internal static class OrderAutoArchive
             return false;
         }
 
+        // Justo después de ArchiveIfSettled: la versión del evento es la que dejó el archivo, mayor que la del preparado o el
+        // pago que lo precedió en el mismo caso de uso.
+        lifecycleEvents.PublishOrderArchived(order, now);
         OrderStateAction.Record(
             repository, auditPublisher, executionContext, tenantId, order, actor,
             OrderHistoryEventType.Archived, OrderChangeSummary.ArchivedAutomatically(), AuditAction, now);

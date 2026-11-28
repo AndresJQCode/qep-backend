@@ -27,6 +27,7 @@ public sealed class VoidPosSaleHandler(
     ICashSessionRepository sessions,
     IPosUnitOfWork unitOfWork,
     IPosAuditPublisher auditPublisher,
+    IPosSaleEventPublisher saleEvents,
     IPosCashierLookup cashiers,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -55,6 +56,7 @@ public sealed class VoidPosSaleHandler(
         var now = clock.UtcNow;
         sale.Void(command.Reason!, member, now);   // already_voided primero (paso 3)
         session.RegisterVoid(sale, now);           // void_session_closed después (paso 4)
+        saleEvents.PublishVoided(sale, now);
         auditPublisher.Publish(
             command.TenantId, executionContext.SubjectId, "pos.sale.voided", "pos_sale",
             sale.Id.ToString(), "success", [], now);

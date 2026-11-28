@@ -37,7 +37,9 @@ internal sealed class WmsCatalogReader(IProductRepository products, IOptionDefin
                 pair.Variant.Code,
                 pair.Variant.Barcode,
                 pair.Variant.PackagingUnits,
-                CatalogVariantReads.IsSellable(pair.Product, pair.Variant)))
+                CatalogVariantReads.IsSellable(pair.Product, pair.Variant),
+                pair.Product.Kind,
+                pair.Product.SalesUnit))
             .ToArray();
     }
 

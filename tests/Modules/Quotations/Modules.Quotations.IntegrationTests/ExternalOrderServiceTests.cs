@@ -225,6 +225,31 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.cancelled.v1"));
     }
 
+    // Inventario básico: la anulación de la plataforma marca fromPlatform (el stock ya descontado no vuelve solo) y lleva la
+    // versión que dejó la mutación.
+    [Fact]
+    public async Task PlatformCancelSetsFromPlatform()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#4003"));
+        await PostOrderActionAsync(setup, order.OrderId, "prepare");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CancelAsync(
+                setup.TenantId, order.OrderId, setup.AdvisorId, "Cancelado en Shopify", TestContext.Current.CancellationToken);
+        }
+
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{order.OrderId}", TestContext.Current.CancellationToken);
+        var messages = await OutboxMessagesAsync(factory, "quotations.order.cancelled.v1");
+        using var json = JsonDocument.Parse(Assert.Single(messages).PayloadJson);
+        Assert.True(json.RootElement.GetProperty("fromPlatform").GetBoolean());
+        Assert.Equal(detail!.Order.Version, json.RootElement.GetProperty("version").GetInt64());
+    }
+
     // Facturado sigue frenando la anulación de la plataforma: ShopifyOrderWriter lo traduce a AlreadyInvoiced.
     [Fact]
     public async Task ShopifyCancelStillStopsAtTheInvoice()

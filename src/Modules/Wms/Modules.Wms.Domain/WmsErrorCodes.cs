@@ -11,6 +11,7 @@ public static class WmsErrorCodes
     public const string WarehouseCodeTaken = "wms.warehouse.code_taken";
     public const string WarehouseCodeInvalid = "wms.warehouse.code_invalid";
     public const string WarehouseCityUnknown = "wms.warehouse.city_unknown";
+    public const string WarehousePrincipalCannotBeDeactivated = "wms.warehouse.principal_cannot_be_deactivated";
 
     public const string LocationNotFound = "wms.location.not_found";
     public const string LocationCodeTaken = "wms.location.code_taken";
@@ -73,6 +74,10 @@ public static class WmsErrorCodes
     public const string MovementNotFound = "wms.movement.not_found";
     public const string MovementQuantityInvalid = "wms.movement.quantity_invalid";
     public const string MovementSameKey = "wms.movement.same_key";
+
+    /// <summary>Un movimiento de una orden de compra, un pedido o una venta del POS se deshace desde el documento, no a mano
+    /// (inventario básico §5.6): una reversa manual seguida de un «deshacer preparado» devolvería dos veces.</summary>
+    public const string MovementReverseFromDocument = "wms.movement.reverse_from_document";
 
     /// <summary>S12, nuevo en §24.2: la fecha física del movimiento fuera de la ventana permitida.</summary>
     public const string MovementOccurredAtOutOfRange = "wms.movement.occurred_at_out_of_range";

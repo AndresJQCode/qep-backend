@@ -67,7 +67,13 @@ public sealed class GetVariantProfilesHandler(
             }
             else
             {
-                var fallback = VariantLogisticsProfile.CreateDefault(query.TenantId, id, variant.ProductId, variant.PackagingUnits, now);
+                var fallback = VariantLogisticsProfile.CreateDefault(
+                    query.TenantId,
+                    id,
+                    variant.ProductId,
+                    variant.PackagingUnits,
+                    VariantLogisticsProfile.DefaultPrecisionFor(variant.SalesUnit),
+                    now);
                 items.Add(VariantProfileDtoMapper.ToDto(fallback, variant, hasStock, stored: false));
             }
         }

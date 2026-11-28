@@ -265,6 +265,18 @@ internal sealed class RecordingAuditPublisher : IPosAuditPublisher
         Entries.Add(new AuditEntry(tenantId, actorId, action, resourceType, resourceId, changedFields));
 }
 
+/// <summary>Publicador grabador de los eventos de la venta: arma el mismo contrato que el real y lo guarda en memoria.</summary>
+internal sealed class RecordingSaleEvents : IPosSaleEventPublisher
+{
+    public List<PosSaleCreatedEvent> Created { get; } = [];
+
+    public List<PosSaleVoidedEvent> Voided { get; } = [];
+
+    public void PublishCreated(PosSale sale, DateTimeOffset occurredAt) => Created.Add(PosSaleEvents.Created(sale, occurredAt));
+
+    public void PublishVoided(PosSale sale, DateTimeOffset occurredAt) => Voided.Add(PosSaleEvents.Voided(sale, occurredAt));
+}
+
 internal sealed class FakeCompanyLookup : IPosCompanyLookup
 {
     public List<(Guid TenantId, PosCompanyRef Company)> Companies { get; } = [];
@@ -551,6 +563,8 @@ internal sealed class PosTestBed
     public FakeNumberGenerator Numbers { get; } = new();
 
     public RecordingAuditPublisher Audit { get; } = new();
+
+    public RecordingSaleEvents Events { get; } = new();
 
     public FakeCompanyLookup Companies { get; } = new();
 
