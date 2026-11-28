@@ -82,6 +82,56 @@ public sealed class WarehouseTests
     }
 
     [Fact]
+    public void CreatingAWarehouseRecordsTheReceivingZoneAndDockIds()
+    {
+        var warehouse = NewWarehouse();
+
+        var zone = warehouse.Locations.Single(l => l.Code == "RECEIVING");
+        var dock = warehouse.Locations.Single(l => l.Code == "REC-01");
+
+        Assert.Equal(zone.Id, warehouse.ReceivingZoneId);
+        Assert.Equal(dock.Id, warehouse.ReceivingDockId);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheReceivingZoneAndDockStayProtectedAfterBeingRenamed(bool renameTheDock)
+    {
+        var warehouse = NewWarehouse();
+        var zone = warehouse.Locations.Single(l => l.Code == "RECEIVING");
+        var dock = warehouse.Locations.Single(l => l.Code == "REC-01");
+        var target = renameTheDock ? dock : zone;
+
+        warehouse.UpdateLocation(
+            target.Id, target.ParentId, "RENAMED", target.Kind, target.Role, target.AllowsStorage, target.AllowsPicking,
+            target.Capacity, target.PutawayPriority, [], target.Status, Now);
+
+        // G-11: la protección va por identidad; cambiarle el código no la quita.
+        var error = Assert.Throws<WmsDomainException>(() => warehouse.RemoveLocation(target.Id));
+        Assert.Equal(WmsErrorCodes.LocationVirtualImmutable, error.Code);
+        Assert.NotNull(warehouse.FindLocation(target.Id));
+    }
+
+    [Fact]
+    public void ANewLocationCalledLikeTheOriginalDockIsNotProtected()
+    {
+        var warehouse = NewWarehouse();
+        var zone = warehouse.Locations.Single(l => l.Code == "RECEIVING");
+        var dock = warehouse.Locations.Single(l => l.Code == "REC-01");
+        warehouse.UpdateLocation(
+            dock.Id, dock.ParentId, "MUELLE-1", dock.Kind, dock.Role, dock.AllowsStorage, dock.AllowsPicking,
+            dock.Capacity, dock.PutawayPriority, [], dock.Status, Now);
+
+        var impostor = warehouse.AddLocation(
+            LocationId.New(), zone.Id, "REC-01", LocationKind.Dock, LocationRole.Storage, true, false, LocationCapacity.None, 0, [], Now);
+        warehouse.RemoveLocation(impostor.Id);
+
+        Assert.Null(warehouse.FindLocation(impostor.Id));
+        Assert.NotNull(warehouse.FindLocation(dock.Id));
+    }
+
+    [Fact]
     public void RemovingAnEmptyBinWorks()
     {
         var warehouse = NewWarehouse();

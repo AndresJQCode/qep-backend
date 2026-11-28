@@ -132,6 +132,13 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         warehouse.Property(value => value.GeneralLocationId)
             .HasColumnName("general_location_id")
             .HasConversion(id => id!.Value.Value, value => new LocationId(value));
+        // Igual que la general: referencias blandas por id (G-11); nulas porque no se rellenan las bodegas anteriores.
+        warehouse.Property(value => value.ReceivingZoneId)
+            .HasColumnName("receiving_zone_id")
+            .HasConversion(id => id!.Value.Value, value => new LocationId(value));
+        warehouse.Property(value => value.ReceivingDockId)
+            .HasColumnName("receiving_dock_id")
+            .HasConversion(id => id!.Value.Value, value => new LocationId(value));
         warehouse.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
         warehouse.Property(value => value.CreatedAt).HasColumnName("created_at");
         warehouse.Property(value => value.UpdatedAt).HasColumnName("updated_at");
