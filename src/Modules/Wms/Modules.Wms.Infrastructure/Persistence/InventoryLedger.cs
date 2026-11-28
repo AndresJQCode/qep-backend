@@ -58,9 +58,10 @@ internal sealed class InventoryLedger(
             await unitOfWork.FlushAsync(cancellationToken);
         }
 
+        var saleDebitKeys = SaleDebitKeys(batch);
         foreach (var (key, delta) in LedgerDeltas.Net(batch.Entries))
         {
-            await ApplyDeltaAsync(tenantId, key, delta, locations[key.LocationId], lotsById, cancellationToken);
+            await ApplyDeltaAsync(tenantId, key, delta, locations[key.LocationId], lotsById, saleDebitKeys.Contains(key), cancellationToken);
         }
 
         var movements = batch.Entries.Select(entry => ToMovement(batch, entry, now)).ToArray();
@@ -84,6 +85,23 @@ internal sealed class InventoryLedger(
 
         return new LedgerPosting(batch.BatchId, movements.Select(movement => movement.Id).ToArray());
     }
+
+    // Inventario básico §5.5: el saldo negativo se da por motivo y no por ubicación. Sólo una salida por venta (Ship con documento Order o
+    // PosSale) puede dejar bajo cero el saldo de su origen; un Move o un Putaway desde ahí sigue frenado por DebitAsync. Una clave que
+    // además recibe en el mismo lote queda fuera: su delta neto ya no es una salida por venta.
+    private static HashSet<StockKey> SaleDebitKeys(LedgerBatch batch)
+    {
+        var receiving = batch.Entries.Select(entry => entry.To).ToHashSet();
+        return batch.Entries
+            .GroupBy(entry => entry.From)
+            .Where(group => !receiving.Contains(group.Key) && group.All(IsSaleDebit))
+            .Select(group => group.Key)
+            .ToHashSet();
+    }
+
+    private static bool IsSaleDebit(LedgerEntry entry) =>
+        entry.Reason == MovementReason.Ship
+        && entry.Document?.Type is InventoryDocumentTypes.Order or InventoryDocumentTypes.PosSale;
 
     // D-12, temporal: la unidad logística ya es dimensión de la clave, pero sin el agregado HandlingUnit nadie verifica «una unidad, una
     // ubicación» ni bloquea la fila de la unidad (spec §6.3). Ningún endpoint de WMS-D puede mandar una, así que no es un código de
@@ -111,7 +129,8 @@ internal sealed class InventoryLedger(
                 location.Code,
                 location.AllowsNegative,
                 location.Status == LocationStatus.Blocked,
-                location.Status == LocationStatus.Counting);
+                location.Status == LocationStatus.Counting,
+                location.IsVirtual);
         }
 
         return infos;
@@ -208,11 +227,16 @@ internal sealed class InventoryLedger(
         decimal delta,
         LedgerLocationInfo location,
         IReadOnlyDictionary<Guid, Lot> lotsById,
+        bool isSaleDebit,
         CancellationToken ct)
     {
         try
         {
-            if (delta < 0 && !location.AllowsNegative)
+            if (delta < 0 && !location.AllowsNegative && isSaleDebit && !location.IsVirtual)
+            {
+                await SaleDebitAsync(tenantId, key, delta, location, ct);
+            }
+            else if (delta < 0 && !location.AllowsNegative)
             {
                 await DebitAsync(tenantId, key, delta, location, lotsById, ct);
             }
@@ -273,6 +297,37 @@ internal sealed class InventoryLedger(
         }
 
         throw new WmsDomainException(WmsErrorCodes.StockReserved, ReservedStockMessage);
+    }
+
+    // La salida por venta (§5.5): puede bajar on_hand de cero, pero nunca por debajo de lo asignado (reserved) cuando hay algo asignado.
+    // La fila que queda negativa pasa a allows_negative = true y lo conserva, para que CK_stock_balances_on_hand_non_negative no la
+    // rechace; como esa marca también relaja CK_stock_balances_reserved, la garantía de lo asignado vive en el WHERE de abajo. Un solo
+    // upsert: toma el mismo bloqueo de fila que DebitAsync y, sin fila, la crea ya marcada. Sin filas devueltas, el WHERE lo frenó la
+    // asignación.
+    private async Task SaleDebitAsync(Guid tenantId, StockKey key, decimal delta, LedgerLocationInfo location, CancellationToken ct)
+    {
+        var applied = await dbContext.Database.SqlQuery<BalanceRow>(
+            $"""
+            INSERT INTO wms.stock_balances
+                (tenant_id, owner_id, warehouse_id, location_id, variant_id, lot_id, handling_unit_id, status, on_hand, reserved, allows_negative,
+                 version, updated_at)
+            VALUES
+                ({tenantId}, {key.OwnerId}, {location.WarehouseId}, {key.LocationId}, {key.VariantId}, {key.LotId}::uuid,
+                 {key.HandlingUnitId}::uuid, {key.Status.ToString()}, {delta}, 0, true, 1, now())
+            ON CONFLICT (tenant_id, owner_id, location_id, variant_id, lot_id, handling_unit_id, status)
+            DO UPDATE SET on_hand = wms.stock_balances.on_hand + EXCLUDED.on_hand,
+                          allows_negative = wms.stock_balances.allows_negative OR wms.stock_balances.on_hand + EXCLUDED.on_hand < 0,
+                          version = wms.stock_balances.version + 1,
+                          updated_at = now()
+            WHERE wms.stock_balances.reserved = 0 OR wms.stock_balances.on_hand + EXCLUDED.on_hand >= wms.stock_balances.reserved
+            RETURNING on_hand AS "OnHand", reserved AS "Reserved"
+            """)
+            // Sin FirstOrDefaultAsync: componer sobre el SQL lo envolvería en un SELECT, y Postgres lo rechaza para un INSERT ... RETURNING.
+            .ToListAsync(ct);
+        if (applied.Count == 0)
+        {
+            throw new WmsDomainException(WmsErrorCodes.StockReserved, ReservedStockMessage);
+        }
     }
 
     private async Task UpsertAsync(Guid tenantId, StockKey key, decimal delta, LedgerLocationInfo location, CancellationToken ct) =>
