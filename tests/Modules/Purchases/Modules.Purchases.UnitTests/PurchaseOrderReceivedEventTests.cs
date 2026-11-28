@@ -1,5 +1,8 @@
 using Modules.Purchases.Application;
 using Modules.Purchases.Domain;
+using Modules.Purchases.Infrastructure.Persistence;
+using Modules.Wms.Application;
+using Modules.Wms.Domain.Inventory;
 
 namespace Modules.Purchases.UnitTests;
 
@@ -74,6 +77,29 @@ public sealed class PurchaseOrderReceivedEventTests
         Assert.Equal(PurchaseOrderTestData.Now, published.occurredAt);
         var line = Assert.Single(published.lines);
         Assert.Equal((order.Lines[0].Id, (Guid?)variant, 3m), (line.lineId, line.variantId, line.quantity));
+    }
+
+    // El inventario del WMS lee este evento por nombre de campo: se parsea el payload REAL del publicador con el lector de Wms.
+    [Fact]
+    public void TheRealPayloadParsesWithTheWmsReader()
+    {
+        var variant = Guid.CreateVersion7();
+        var order = ConfirmedOrder(
+            [PurchaseOrderTestData.Line(quantity: 5m, variantId: variant)],
+            created => [new PurchaseOrderLineConfirmation(created.Lines[0].Id, 3m, 10m)]);
+        order.Receive(PurchaseOrderTestData.MemberId, PurchaseOrderTestData.Now);
+        using var context = new PurchasesDbContextFactory().CreateDbContext([]);
+
+        new PurchaseOrderEventPublisher(context).PublishReceived(order, PurchaseOrderEventOrigins.Manual, PurchaseOrderTestData.Now);
+
+        var message = Assert.Single(context.Outbox.Local);
+        Assert.True(InventoryEventPayloads.TryParse(message.EventName, message.PayloadJson, out var parsed), message.PayloadJson);
+        Assert.Equal(InventoryEventKind.PurchaseReceived, parsed.Kind);
+        Assert.Equal(InventoryDocumentTypes.PurchaseOrder, parsed.DocumentType);
+        Assert.Equal((TenantId, order.Id.Value, order.Version), (parsed.TenantId, parsed.DocumentId, parsed.Version));
+        Assert.Equal(PurchaseOrderEventOrigins.Manual, parsed.Origin);
+        var line = Assert.Single(parsed.Lines);
+        Assert.Equal((order.Lines[0].Id, (Guid?)variant, 3m), (line.LineId, line.VariantId, line.Quantity));
     }
 
     [Fact]

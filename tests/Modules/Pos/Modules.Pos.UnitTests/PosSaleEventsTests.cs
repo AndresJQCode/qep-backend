@@ -1,5 +1,8 @@
 using Modules.Pos.Application;
 using Modules.Pos.Domain;
+using Modules.Pos.Infrastructure.Persistence;
+using Modules.Wms.Application;
+using Modules.Wms.Domain.Inventory;
 using static Modules.Pos.UnitTests.PosFixtures;
 
 namespace Modules.Pos.UnitTests;
@@ -52,6 +55,34 @@ public sealed class PosSaleEventsTests
         Assert.Equal([Shampoo, Avena, Jabon], published.lines.Select(line => line.variantId).ToArray());
         Assert.True(creation.Created);
         Assert.Empty(bed.Events.Voided);
+    }
+
+    // El inventario del WMS lee estos eventos por nombre de campo: se parsea el payload REAL del publicador con el lector de Wms.
+    [Fact]
+    public void BothPosEventsParseWithTheWmsReader()
+    {
+        var bed = new PosTestBed();
+        var session = bed.OpenSessionInStore();
+        var sale = StoreSale(bed, session);
+        using var context = new PosDbContextFactory().CreateDbContext([]);
+        var publisher = new PosSaleEventPublisher(context);
+
+        publisher.PublishCreated(sale, Now);
+        publisher.PublishVoided(sale, Now);
+
+        var created = Assert.Single(context.Outbox.Local, message => message.EventName == PosSaleEvents.CreatedEventName);
+        Assert.True(InventoryEventPayloads.TryParse(created.EventName, created.PayloadJson, out var parsedCreated), created.PayloadJson);
+        Assert.Equal(InventoryEventKind.PosCreated, parsedCreated.Kind);
+        Assert.Equal(InventoryDocumentTypes.PosSale, parsedCreated.DocumentType);
+        Assert.Equal((TenantId, sale.Id.Value, 1L), (parsedCreated.TenantId, parsedCreated.DocumentId, parsedCreated.Version));
+        Assert.Equal(
+            sale.Lines.Select(line => (line.Id.Value, (Guid?)line.VariantId, line.Quantity)).ToArray(),
+            parsedCreated.Lines.Select(line => (line.LineId, line.VariantId, line.Quantity)).ToArray());
+
+        var voided = Assert.Single(context.Outbox.Local, message => message.EventName == PosSaleEvents.VoidedEventName);
+        Assert.True(InventoryEventPayloads.TryParse(voided.EventName, voided.PayloadJson, out var parsedVoided), voided.PayloadJson);
+        Assert.Equal(InventoryEventKind.PosVoided, parsedVoided.Kind);
+        Assert.Equal((TenantId, sale.Id.Value, 2L), (parsedVoided.TenantId, parsedVoided.DocumentId, parsedVoided.Version));
     }
 
     [Fact]

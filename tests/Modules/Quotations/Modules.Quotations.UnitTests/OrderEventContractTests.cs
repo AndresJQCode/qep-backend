@@ -3,6 +3,8 @@ using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
+using Modules.Wms.Application;
+using Modules.Wms.Domain.Inventory;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -54,6 +56,65 @@ public sealed class OrderEventContractTests
             WholesaleOrderFixtures.Line(Guid.CreateVersion7(), 4m, 10_000m, sourceLineId));
         order.ApproveWholesale(WholesaleOrderFixtures.Advisor, WholesaleOrderFixtures.Now);
         return order;
+    }
+
+    // El inventario del WMS lee estos eventos por nombre de campo: si un publicador renombra uno, esta prueba falla y no el consumidor
+    // en producción. Se parsea el payload REAL del publicador con el lector de Wms.
+    [Fact]
+    public void EveryOrderEventParsesWithTheWmsReader()
+    {
+        var order = ManualOrder(PhysicalLine(2m), PhysicalLine(5m));
+        var publisher = Publisher();
+        publisher.PublishOrderCreated(order, Now);
+        publisher.PublishOrderEdited(order, Now);
+        publisher.PublishOrderPrepared(order, OrderEventOrigins.Manual, Now);
+        publisher.PublishOrderUnprepared(order, Now);
+        publisher.PublishOrderArchived(order, Now);
+        publisher.PublishOrderUnarchived(order, Now);
+        publisher.PublishOrderCancelled(order, fromPlatform: true, Now);
+        var approved = ApprovedWholesaleOrder(out _);
+        publisher.PublishWholesaleApproved(approved, Now);
+
+        var expectedLines = order.Items.OrderBy(item => item.Position).Select(item => (item.Id.Value, (Guid?)item.VariantId, item.Quantity)).ToArray();
+        var seen = new HashSet<InventoryEventKind>();
+        foreach (var message in _context.Outbox.Local.Where(candidate => InventoryEventPayloads.EventNames.Contains(candidate.EventName)))
+        {
+            Assert.True(
+                InventoryEventPayloads.TryParse(message.EventName, message.PayloadJson, out var parsed),
+                $"{message.EventName} no lo lee el consumidor de inventario: {message.PayloadJson}");
+            seen.Add(parsed.Kind);
+            Assert.Equal(InventoryDocumentTypes.Order, parsed.DocumentType);
+            var source = parsed.Kind == InventoryEventKind.OrderWholesaleApproved ? approved : order;
+            Assert.Equal((source.TenantId, source.Id.Value, source.Version), (parsed.TenantId, parsed.DocumentId, parsed.Version));
+            Assert.Equal(Now, parsed.OccurredAt);
+            switch (parsed.Kind)
+            {
+                case InventoryEventKind.OrderCreated or InventoryEventKind.OrderEdited or InventoryEventKind.OrderPrepared or InventoryEventKind.OrderArchived:
+                    Assert.Equal(expectedLines, parsed.Lines.Select(line => (line.LineId, line.VariantId, line.Quantity)).ToArray());
+                    Assert.All(parsed.Lines, line => Assert.Equal(BuildingBlocks.Domain.Catalog.ProductKind.Physical, line.Kind));
+                    break;
+                case InventoryEventKind.OrderWholesaleApproved:
+                    Assert.NotEmpty(parsed.Lines);
+                    break;
+            }
+
+            if (parsed.Kind == InventoryEventKind.OrderPrepared)
+            {
+                Assert.Equal(OrderEventOrigins.Manual, parsed.Origin);
+            }
+
+            if (parsed.Kind == InventoryEventKind.OrderCancelled)
+            {
+                Assert.True(parsed.FromPlatform);
+            }
+        }
+
+        Assert.Equal(
+            [
+                InventoryEventKind.OrderCreated, InventoryEventKind.OrderWholesaleApproved, InventoryEventKind.OrderEdited, InventoryEventKind.OrderPrepared,
+                InventoryEventKind.OrderUnprepared, InventoryEventKind.OrderCancelled, InventoryEventKind.OrderArchived, InventoryEventKind.OrderUnarchived,
+            ],
+            seen.Order().ToArray());
     }
 
     [Fact]
