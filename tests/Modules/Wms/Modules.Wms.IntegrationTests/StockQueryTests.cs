@@ -284,6 +284,167 @@ public sealed class StockQueryTests
         }
     }
 
+    // Inventario básico §5.4: la reserva de demanda (de un pedido) es por bodega y variante, sin ubicación, y no toca el saldo físico.
+    private static async Task<T> InDemandScopeAsync<T>(
+        WmsApiHarness.QepApiFactory factory, Func<IDemandReservations, IWmsUnitOfWork, Task<T>> work)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IWmsUnitOfWork>();
+        var demands = scope.ServiceProvider.GetRequiredService<IDemandReservations>();
+        await using var transaction = await unitOfWork.BeginTransactionAsync(Ct);
+        var result = await work(demands, unitOfWork);
+        await unitOfWork.SaveChangesAsync(Ct);
+        return result;
+    }
+
+    private static Task<bool> OpenDemandAsync(
+        WmsApiHarness.QepApiFactory factory, LedgerSetup s, decimal quantity, Guid demandId, Guid? lineId = null) =>
+        InDemandScopeAsync(factory, async (demands, _) =>
+        {
+            await demands.OpenAsync(
+                new DemandLine(s.TenantId, s.OwnerId, s.VariantId, quantity, InventoryDocumentTypes.Order, demandId, lineId ?? Guid.CreateVersion7()),
+                s.WarehouseId,
+                Ct);
+            return true;
+        });
+
+    [Fact]
+    public async Task ADemandReservationWithoutBalanceAppearsInTheSummary()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+
+        await OpenDemandAsync(factory, s, 2, Guid.CreateVersion7());
+
+        using var summary = await GetJsonAsync(s.Manager, "/stock/summary");
+        var root = summary.RootElement;
+        Assert.Equal(0m, root.GetProperty("onHand").GetDecimal());
+        Assert.Equal(2m, root.GetProperty("reserved").GetDecimal());
+        // Sin recortar: disponible negativo es lo que dice que se vendió más de lo que hay.
+        Assert.Equal(-2m, root.GetProperty("available").GetDecimal());
+        Assert.Equal(0m, root.GetProperty("pickable").GetDecimal());
+    }
+
+    [Fact]
+    public async Task TheListTotalsMatchTheSummary()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await StockAsync(factory, s, s.BinA, 10);
+        await OpenDemandAsync(factory, s, 3, Guid.CreateVersion7());
+        await OpenDemandAsync(factory, s, 1.5m, Guid.CreateVersion7());
+        var filter = $"warehouseId={s.WarehouseId}&variantId={s.VariantId}";
+
+        using var summary = await GetJsonAsync(s.Manager, $"/stock/summary?{filter}");
+        using var list = await GetJsonAsync(s.Manager, $"/stock?{filter}");
+
+        var totals = list.RootElement.GetProperty("totals");
+        Assert.Equal(4.5m, totals.GetProperty("reserved").GetDecimal());
+        Assert.Equal(5.5m, totals.GetProperty("available").GetDecimal());
+        Assert.Equal(10m, totals.GetProperty("onHand").GetDecimal());
+        Assert.Equal(summary.RootElement.GetProperty("reserved").GetDecimal(), totals.GetProperty("reserved").GetDecimal());
+        Assert.Equal(summary.RootElement.GetProperty("available").GetDecimal(), totals.GetProperty("available").GetDecimal());
+        // Lo físico que se puede tomar no baja por una reserva de demanda: pickable puede superar a available.
+        Assert.Equal(10m, totals.GetProperty("pickable").GetDecimal());
+        Assert.Equal(10m, summary.RootElement.GetProperty("pickable").GetDecimal());
+    }
+
+    [Fact]
+    public async Task RowsByLocationDoNotShowDemandReservations()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await StockAsync(factory, s, s.BinA, 10);
+        await OpenDemandAsync(factory, s, 3, Guid.CreateVersion7());
+
+        using var list = await GetJsonAsync(s.Manager, "/stock");
+
+        var row = Assert.Single(list.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(0m, row.GetProperty("reserved").GetDecimal());
+        Assert.Equal(10m, row.GetProperty("available").GetDecimal());
+        // Una búsqueda por ubicación o lote no puede incluir lo que no tiene ubicación.
+        using var byLocation = await GetJsonAsync(s.Manager, $"/stock?locationId={s.BinA}");
+        Assert.Equal(0m, byLocation.RootElement.GetProperty("totals").GetProperty("reserved").GetDecimal());
+    }
+
+    [Fact]
+    public async Task OpeningADemandReservationEnqueuesABalanceChange()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await ExecuteAsync(database, "DELETE FROM wms.balance_change_queue");
+
+        await OpenDemandAsync(factory, s, 2, Guid.CreateVersion7());
+
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(
+                database,
+                "SELECT count(*) FROM wms.balance_change_queue WHERE tenant_id = @t AND owner_id = @o AND warehouse_id = @w AND variant_id = @v",
+                ("t", s.TenantId),
+                ("o", s.OwnerId),
+                ("w", s.WarehouseId),
+                ("v", s.VariantId)));
+        // Sin asiento: sólo la reserva produjo el aviso.
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements"));
+    }
+
+    [Fact]
+    public async Task DemandReservationsCloseConsumeAndReopen()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var order = Guid.CreateVersion7();
+        var lineA = Guid.CreateVersion7();
+        var lineB = Guid.CreateVersion7();
+        await OpenDemandAsync(factory, s, 2, order, lineA);
+        await OpenDemandAsync(factory, s, 3, order, lineB);
+        var reserved = () => ScalarAsync<decimal>(
+            database,
+            "SELECT coalesce(sum(quantity), 0) FROM wms.reservations WHERE demand_id = @d AND status = 'Open' AND location_id IS NULL",
+            ("d", order));
+        Assert.Equal(5m, await reserved());
+
+        // Consumir devuelve lo que consumió: de ahí sale la reserva nueva si el asiento se deshace.
+        var consumed = await InDemandScopeAsync(
+            factory, (demands, _) => demands.ConsumeAllAsync(s.TenantId, InventoryDocumentTypes.Order, order, Ct));
+
+        Assert.Equal([2m, 3m], consumed.Select(reservation => reservation.Quantity).Order().ToArray());
+        Assert.All(consumed, reservation => Assert.Equal(ReservationStatus.Consumed, reservation.Status));
+        Assert.Equal(0m, await reserved());
+        Assert.Equal(2L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM wms.reservations WHERE demand_id = @d AND status = 'Consumed'", ("d", order)));
+
+        await InDemandScopeAsync(factory, async (demands, _) =>
+        {
+            await demands.ReopenAsync(consumed, Ct);
+            return true;
+        });
+        Assert.Equal(5m, await reserved());
+
+        // Cerrar libera las abiertas; y una línea que se abre de nuevo (edición) no choca con la cerrada.
+        await InDemandScopeAsync(factory, async (demands, _) =>
+        {
+            await demands.CloseAllAsync(s.TenantId, InventoryDocumentTypes.Order, order, Ct);
+            await demands.OpenAsync(
+                new DemandLine(s.TenantId, s.OwnerId, s.VariantId, 7, InventoryDocumentTypes.Order, order, lineA), s.WarehouseId, Ct);
+            return true;
+        });
+        Assert.Equal(7m, await reserved());
+        Assert.Equal(2L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM wms.reservations WHERE demand_id = @d AND status = 'Released'", ("d", order)));
+    }
+
     [Fact]
     public async Task AReaderWithoutStockReadGetsForbidden()
     {

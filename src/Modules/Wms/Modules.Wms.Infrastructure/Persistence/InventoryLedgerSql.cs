@@ -93,6 +93,46 @@ internal static class InventoryLedgerSql
          GROUP BY r.tenant_id, r.owner_id, r.warehouse_id, r.variant_id;
         """;
 
+    // Inventario básico §5.4: el resumen suma las reservas de demanda abiertas (sin ubicación), para que una variante reservada antes de
+    // recibir nada aparezca con on_hand = 0 y reserved > 0. `available` = lo físico disponible menos lo reservado por demanda, negativo si
+    // toca, sin recortar; `pickable` sigue siendo lo físico que se puede tomar y puede quedar por encima. Mismas siete columnas, mismo
+    // orden y mismos tipos que CreateStockSummaryView (CREATE OR REPLACE no admite otra cosa). La definición anterior se conserva
+    // porque AddInventoryLedger la usa y una migración ya aplicada no se reescribe.
+    public const string CreateStockSummaryViewWithDemandReservations = """
+        CREATE OR REPLACE VIEW wms.v_stock_summary AS
+        WITH physical AS (
+            SELECT r.tenant_id, r.owner_id, r.warehouse_id, r.variant_id,
+                   sum(CASE WHEN NOT r.is_virtual THEN r.on_hand ELSE 0 END)                                                        AS on_hand,
+                   sum(CASE WHEN NOT r.is_virtual AND r.status = 'Received' THEN r.on_hand ELSE 0 END)                              AS received,
+                   sum(r.available)                                                                                                 AS available,
+                   sum(r.pickable)                                                                                                  AS pickable,
+                   sum(CASE WHEN NOT r.is_virtual THEN r.reserved ELSE 0 END)                                                       AS reserved,
+                   sum(CASE WHEN NOT r.is_virtual AND r.status IN ('Blocked', 'Quarantine', 'Damaged') THEN r.on_hand ELSE 0 END)   AS blocked,
+                   sum(CASE WHEN r.location_role = 'Transit' THEN r.on_hand ELSE 0 END)                                             AS in_transit
+              FROM wms.v_stock_rows r
+             GROUP BY r.tenant_id, r.owner_id, r.warehouse_id, r.variant_id),
+        demand AS (
+            SELECT d.tenant_id, d.owner_id, d.warehouse_id, d.variant_id, sum(d.quantity) AS reserved
+              FROM wms.reservations d
+             WHERE d.status = 'Open' AND d.location_id IS NULL
+             GROUP BY d.tenant_id, d.owner_id, d.warehouse_id, d.variant_id),
+        keys AS (
+            SELECT tenant_id, owner_id, warehouse_id, variant_id FROM physical
+            UNION
+            SELECT tenant_id, owner_id, warehouse_id, variant_id FROM demand)
+        SELECT k.tenant_id, k.owner_id, k.warehouse_id, k.variant_id,
+               coalesce(p.on_hand, 0)                                AS on_hand,
+               coalesce(p.received, 0)                               AS received,
+               coalesce(p.available, 0) - coalesce(d.reserved, 0)    AS available,
+               coalesce(p.pickable, 0)                               AS pickable,
+               coalesce(p.reserved, 0) + coalesce(d.reserved, 0)     AS reserved,
+               coalesce(p.blocked, 0)                                AS blocked,
+               coalesce(p.in_transit, 0)                             AS in_transit
+          FROM keys k
+          LEFT JOIN physical p ON (p.tenant_id, p.owner_id, p.warehouse_id, p.variant_id) = (k.tenant_id, k.owner_id, k.warehouse_id, k.variant_id)
+          LEFT JOIN demand d ON (d.tenant_id, d.owner_id, d.warehouse_id, d.variant_id) = (k.tenant_id, k.owner_id, k.warehouse_id, k.variant_id);
+        """;
+
     // Spec §11.2: las FKs internas son ON DELETE RESTRICT (una ubicación con movimientos no se borra, se desactiva). Salen de una
     // tabla particionada hacia tablas normales, que PostgreSQL permite; ninguna apunta a stock_movements. Sin FKs a otros esquemas.
     public const string CreateInternalForeignKeys = """

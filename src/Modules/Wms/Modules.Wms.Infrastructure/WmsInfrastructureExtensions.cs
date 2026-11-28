@@ -34,6 +34,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IIdentifierRepository, IdentifierRepository>();
         services.AddScoped<ILotRepository, LotRepository>();
         services.AddScoped<IBalanceChangeQueue, BalanceChangeQueue>();
+        services.AddScoped<IDemandReservations, DemandReservations>();
         services.AddScoped<IBalanceReconciliation, BalanceReconciliation>();
         services.AddScoped<IPartitionMaintenance, PartitionMaintenance>();
         services.AddScoped<IInventoryLedger, InventoryLedger>();
