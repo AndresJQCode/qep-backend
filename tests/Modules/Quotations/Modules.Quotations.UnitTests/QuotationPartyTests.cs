@@ -229,6 +229,8 @@ public sealed class QuotationPartyTests
         QuotationPartyDetails Billing(string? country) => new()
         {
             Name = "Sede administrativa",
+            IdentificationNumber = "900123456",
+            IdentificationType = PartyIdentificationType.Nit,
             Phone = "+573001112233",
             Email = "sede@x.co",
             Address = "Carrera 7",

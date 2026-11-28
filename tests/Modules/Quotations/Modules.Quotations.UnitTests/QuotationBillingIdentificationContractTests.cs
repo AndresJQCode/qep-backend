@@ -173,11 +173,11 @@ public sealed class QuotationBillingIdentificationContractTests
         Assert.True(result.IsValid);
     }
 
-    // Por defecto con tipo de documento: los casos de esta clase miran el número, y sin tipo cada uno
-    // sumaría un segundo error (el del tipo) que no es lo que ejercen.
+    // Por defecto con tipo de documento y país: los casos de esta clase miran el número, y sin tipo o sin país
+    // (spec 2026-11-27) cada uno sumaría un segundo error que no es lo que ejercen.
     private static QuotationPartyRequest Party(
         string? name, string? identificationNumber, string? identificationType = "NIT", string? personType = null) =>
-        new(name, identificationNumber, null, null, null, null, null, personType, identificationType);
+        new(name, identificationNumber, null, null, null, null, null, personType, identificationType, Country: "CO");
 
     private static CreateQuotationCommand CreateCommand(QuotationPartiesRequest parties) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), null, null, null, parties, null);
