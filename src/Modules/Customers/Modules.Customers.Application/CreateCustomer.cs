@@ -27,12 +27,46 @@ public sealed record CreateCustomerCommand(
     // Spec 2026-11-15: null crea el cliente sin empresa, como siempre.
     Guid? CompanyId = null,
     // Spec 2026-11-23: la region (provincia) del domicilio de un pais con catalogo distinto de Colombia; null es «sin region».
-    Guid? RegionId = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    Guid? RegionId = null,
+    // Spec 2026-11-27: los perfiles de facturación que nacen con el cliente, en el orden en que llegaron; null no crea ninguno.
+    IReadOnlyList<NewCustomerBillingProfile>? BillingProfiles = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+
+/// <summary>
+/// Un perfil de facturación que viaja con el alta del cliente (spec 2026-11-27). Existe porque, en <c>/customers/new</c>,
+/// la pantalla arma los perfiles como borradores y los manda junto con el cliente: crearlos uno por uno después deja un
+/// cliente a medias cuando falla un request, y aquí nacen en la misma transacción. Tiene los campos de
+/// <see cref="AddCustomerBillingProfileCommand"/> sin los ids de tenant y cliente, y pasa por las mismas reglas.
+/// </summary>
+public sealed record NewCustomerBillingProfile(
+    string? Name,
+    string? PersonType,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string? Address,
+    string? Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? RegionId,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds,
+    bool VatSurplus,
+    bool IsPrincipal) : ICustomerBillingProfileWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
 {
-    public CreateCustomerValidator() => Include(new CustomerWriteRules());
+    public CreateCustomerValidator()
+    {
+        Include(new CustomerWriteRules());
+
+        // Las mismas reglas que el alta de un perfil suelto; la clave sale con índice (BillingProfiles[1].Name), que es
+        // como el formulario marca el campo del borrador.
+        RuleForEach(command => command.BillingProfiles).SetValidator(new CustomerBillingProfileWriteRules());
+        RuleFor(command => command.BillingProfiles)
+            .Must(profiles => profiles is null || profiles.Count(profile => profile.IsPrincipal) <= 1)
+            .WithMessage("Sólo un perfil de facturación puede ser el principal.");
+    }
 }
 
 public sealed class CreateCustomerHandler(
@@ -64,6 +98,15 @@ public sealed class CreateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        // El tope va como error de dominio y no como regla del validador: un error de FluentValidation sale siempre como
+        // `validation.failed`, y el contrato pide el mismo código del alta de un perfil suelto. Antes del CUC, para no quemar un número.
+        if (command.BillingProfiles is { } requested && requested.Count > CustomerBillingProfile.MaxPerCustomer)
+        {
+            throw new CustomersDomainException(
+                CustomerBillingProfileErrors.LimitReached,
+                $"A customer cannot have more than {CustomerBillingProfile.MaxPerCustomer} billing profiles.");
+        }
+
         await CustomerWithholdingRules.ValidateAsync(
             taxRateLookup, command.TenantId, command.WithholdingTaxRateIds ?? [], cancellationToken);
         var agentCities = await CustomerWithholdingAgentRules.ValidateAsync(
@@ -96,6 +139,28 @@ public sealed class CreateCustomerHandler(
                     "customers.customer.city_not_found",
                     "The city was not found.")
             : null;
+
+        // Los perfiles se comprueban igual que en el alta de uno suelto (región, ciudad, tasas) y también antes del CUC: una
+        // referencia mala en el segundo no debe quemar un número ni dejar al cliente creado.
+        var profiles = command.BillingProfiles ?? [];
+        for (var index = 0; index < profiles.Count; index++)
+        {
+            try
+            {
+                await CustomerBillingProfileWorkflow.ValidateReferencesAsync(
+                    geographyLookup, taxRateLookup, command.TenantId, profiles[index], cancellationToken);
+            }
+            catch (CustomersDomainException exception) when (exception.FieldErrors.Count > 0)
+            {
+                // El campo va con el índice del perfil (BillingProfiles[1].RegionId), como los del validador: sin él, la
+                // pantalla marcaría el campo del cliente y no el del perfil que falló.
+                throw new CustomersDomainException(
+                    exception.Code,
+                    exception.Message,
+                    exception.FieldErrors.ToDictionary(
+                        entry => $"BillingProfiles[{index}].{entry.Key}", entry => entry.Value, StringComparer.Ordinal));
+            }
+        }
 
         // Spec 2026-11-15: con empresa, el alta corre en una transacción para bloquear la fila de la empresa, igual que
         // SetCustomerCompanyHandler: así no se vuelve contacto de otra entre esta lectura y el commit. Desactivarla no toma
@@ -175,6 +240,14 @@ public sealed class CreateCustomerHandler(
         if (company is not null)
         {
             customer.LinkToCompany(company, hasContacts: false, now);
+        }
+
+        // En orden y antes del único SaveChanges: el cliente y sus perfiles se guardan juntos o no se guarda nada. El primero
+        // queda principal si ninguno lo pide. El alta de un perfil suelto no audita (paridad con direcciones), así que aquí
+        // tampoco hay una entrada por perfil: la del cliente cubre el alta.
+        foreach (var profile in command.BillingProfiles ?? [])
+        {
+            customer.EnsureBillingProfile(CustomerBillingProfileWorkflow.ToDetails(profile), profile.IsPrincipal, now);
         }
 
         repository.Add(customer);

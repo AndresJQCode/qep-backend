@@ -393,7 +393,13 @@ public sealed record CreateCustomerRequest(
     Guid? CompanyId = null,
     /// <summary>La region (provincia) del domicilio de un pais con catalogo de regiones distinto de Colombia; con <c>CO</c> se
     /// rechaza (422 con la clave <c>RegionId</c>). Ausente la deja en blanco.</summary>
-    Guid? RegionId = null);
+    Guid? RegionId = null,
+    /// <summary>Spec 2026-11-27: los perfiles de facturación que nacen con el cliente, con la misma forma que el cuerpo de
+    /// <c>POST …/billing-profiles</c>. Existe porque el formulario de alta arma los perfiles como borradores y los manda
+    /// con el cliente: así se guardan juntos o no se guarda nada, en vez de dejar un cliente a medias si falla uno. Ausente o
+    /// <c>null</c> no crea ninguno; con más de un <c>isPrincipal</c> responde 422 (clave <c>BillingProfiles</c>), y si
+    /// ninguno lo pide el primero queda principal.</summary>
+    IReadOnlyList<CustomerBillingProfileRequest>? BillingProfiles = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,

@@ -320,15 +320,21 @@ internal static class CustomerAddressWorkflow
             tenantId, new CustomerId(customerId), cancellationToken)
             ?? throw CustomerNotFound.For(customerId);
 
-        // La FK de base garantiza la ciudad, pero recién en el SaveChanges: comprobarla acá deja
-        // un 422 con código de dominio en vez de una violación de FK que no dice qué corregir.
+        await EnsureCityAsync(geographyLookup, cityId, cancellationToken);
+
+        return customer;
+    }
+
+    // La FK de base garantiza la ciudad, pero recién en el SaveChanges: comprobarla acá deja
+    // un 422 con código de dominio en vez de una violación de FK que no dice qué corregir.
+    public static async Task EnsureCityAsync(
+        ICustomerGeographyLookup geographyLookup, Guid? cityId, CancellationToken cancellationToken)
+    {
         if (cityId is { } city)
         {
             _ = await geographyLookup.FindCityAsync(city, cancellationToken)
                 ?? throw new CustomersDomainException(
                     "customers.customer.city_not_found", "The city was not found.");
         }
-
-        return customer;
     }
 }
