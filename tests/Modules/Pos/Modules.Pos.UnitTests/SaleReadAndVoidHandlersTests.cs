@@ -158,6 +158,9 @@ public sealed class SaleReadAndVoidHandlersTests
         Assert.Equal(1, bed.UnitOfWork.SaveCalls);
         Assert.Single(bed.Audit.Entries);
         Assert.Equal(1, session.VoidedCount);
+        // Ni siquiera el evento: el único «voided» publicado es el de la anulación que sí prosperó.
+        var published = Assert.Single(bed.Events.Voided);
+        Assert.Equal(twice.Id.Value, published.saleId);
     }
 
     [Fact]
