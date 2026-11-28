@@ -1953,6 +1953,14 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("name");
 
+                    b.Property<Guid?>("ReceivingDockId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("receiving_dock_id");
+
+                    b.Property<Guid?>("ReceivingZoneId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("receiving_zone_id");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
