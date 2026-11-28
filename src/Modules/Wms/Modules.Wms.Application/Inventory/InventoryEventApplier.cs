@@ -28,6 +28,7 @@ public sealed class InventoryEventApplier(
     IInventoryLedger ledger,
     IMovementReader movements,
     IInventoryEventTelemetry telemetry,
+    IWmsUnitOfWork unitOfWork,
     IClock clock) : IInventoryEventApplier
 {
     private static readonly LedgerActor SystemActor = new(Guid.Empty, LedgerActorType.System, null);
@@ -39,6 +40,10 @@ public sealed class InventoryEventApplier(
         {
             throw new InvalidOperationException($"The payload of message '{message.MessageId}' is not a valid inventory event.");
         }
+
+        // Un documento a la vez: si el reclamo de otra réplica venció a mitad de camino, la segunda espera acá a que la primera confirme y
+        // lee su estado ya escrito (el inbox condicional deshace lo que sobre). Antes de leer el estado, y antes que cualquier otro lock.
+        await unitOfWork.LockAsync($"inventory-document:{evt.DocumentType}:{evt.DocumentId:N}", cancellationToken);
 
         var now = clock.UtcNow;
         var state = await states.FindAsync(evt.TenantId, evt.DocumentType, evt.DocumentId, cancellationToken);
@@ -145,13 +150,16 @@ public sealed class InventoryEventApplier(
     {
         var (warehouseId, locationId) = await WarehouseOfAsync(evt, state, ct);
         var ownerId = (await owners.GetSelfAsync(evt.TenantId, ct)).Id.Value;
-        var (movable, skipped) = await SplitAsync(evt, ct);
+
+        // §5.6: lo que se apartó al reservar sigue apartado y lo que se reservó se descuenta, aunque hoy el filtro dijera otra cosa. Por
+        // eso no se vuelve a filtrar: se descuentan las líneas del evento que no están anotadas como apartadas (y que tienen variante).
+        var skippedAtReservation = state.SkippedLineIds.ToHashSet();
+        var movable = evt.Lines.Where(line => line.VariantId is not null && !skippedAtReservation.Contains(line.LineId)).ToList();
 
         await reservations.ConsumeAllAsync(evt.TenantId, evt.DocumentType, evt.DocumentId, ct);
         var batchId = await PostAsync(
             evt, ownerId, warehouseId, locationId, movable, occurredAt, MovementReason.Ship, LocationRole.Customer, towardsGeneral: false, ct);
         state.RecordPosting(warehouseId, locationId, batchId, batchId is null ? null : occurredAt);
-        state.SetSkippedLines(skipped.Select(line => line.Line.LineId));
     }
 
     // Recibir (compra) y vender (POS): siempre en la bodega principal de ahora; lo que se deshaga después vuelve a ésta, no a la principal
@@ -182,17 +190,10 @@ public sealed class InventoryEventApplier(
         if (state.PostingBatchId is { } batchId && state.PostingOccurredAt is { } postedAt)
         {
             original = await movements.ListBatchAsync(evt.TenantId, batchId, postedAt, ct);
-            if (original.Count > 0)
-            {
-                var entries = original
-                    .Select(movement => LedgerEntry.Reverse(ToEntry(movement), movement.Id, movement.OccurredAt, occurredAt, null))
-                    .ToArray();
-                // La compensación comparte el lote del original, como la reversa manual.
-                await ledger.PostAsync(
-                    new LedgerBatch(evt.TenantId, batchId, IdempotencyKey(evt, "reversal"), SystemActor, entries), ct);
-            }
         }
 
+        // Orden documentado: reservas primero, luego el ledger. Lo que se reserva sale de los movimientos del asiento (que sólo tiene las
+        // líneas que se descontaron: las apartadas nunca están), no de las líneas de ahora.
         if (reserveAgain)
         {
             foreach (var movement in original)
@@ -209,6 +210,16 @@ public sealed class InventoryEventApplier(
                     warehouseId,
                     ct);
             }
+        }
+
+        if (original.Count > 0)
+        {
+            var entries = original
+                .Select(movement => LedgerEntry.Reverse(ToEntry(movement), movement.Id, movement.OccurredAt, occurredAt, null))
+                .ToArray();
+            // La compensación comparte el lote del original, como la reversa manual.
+            await ledger.PostAsync(
+                new LedgerBatch(evt.TenantId, state.PostingBatchId!.Value, IdempotencyKey(evt, "reversal"), SystemActor, entries), ct);
         }
 
         state.RecordPosting(warehouseId, locationId, null, null);

@@ -14,8 +14,9 @@ namespace Modules.Wms.Infrastructure.Messaging;
 /// <remarks>
 /// <para><b>Lote.</b> Los mensajes de sus eventos posteriores a la marca de arranque, sin fila terminada en el inbox ni reclamo
 /// vigente, ordenados por (<c>OccurredAt</c>, <c>version</c> del payload, <c>Id</c>). Sólo entra un mensaje si no hay otro <b>más
-/// viejo del mismo documento</b> (misma <c>correlation_id</c>) sin procesar: un reintento o un lease vencido no puede invertir
-/// <c>prepared</c> y <c>edited</c>. Documentos distintos avanzan en el mismo lote.</para>
+/// viejo del mismo documento</b> (misma <c>correlation_id</c>) sin procesar, y dentro de un documento manda la <b>versión</b>
+/// (<c>version</c>, <c>OccurredAt</c>, <c>Id</c>): un reloj atrasado no puede dejar la versión 5 detrás de la 6. Un reintento o un
+/// lease vencido no puede invertir <c>prepared</c> y <c>edited</c>. Documentos distintos avanzan en el mismo lote.</para>
 /// <para><b>Reclamo.</b> <see cref="WmsInboxClaims"/> antes de procesar: una sentencia que se commitea sola y suma el intento. Nunca se
 /// abandona un mensaje.</para>
 /// <para><b>Un scope por mensaje.</b> Con su propio <see cref="WmsDbContext"/>: lo que dejó rastreado un mensaje que falla muere con
@@ -28,6 +29,10 @@ internal sealed class ClaimedOutboxConsumer(
     IReadOnlyList<TimeSpan> leases)
 {
     public const int BatchSize = 20;
+
+    /// <summary>Cuánto dura un reclamo mientras el mensaje se procesa: más que cualquier transacción normal (que puede aprovisionar una
+    /// bodega). Es distinto de la espera de reintento tras un fallo, que fijan <c>leases</c> (5 s, 30 s, 5 minutos).</summary>
+    public static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(2);
 
     /// <summary>Desde qué intento una falla se loguea en Error y el documento queda <c>Parked</c>: el primero que deja la espera de
     /// 5 minutos por delante (la curva es la de Purchases: 5 s, 30 s, 5 minutos).</summary>
@@ -66,7 +71,7 @@ internal sealed class ClaimedOutboxConsumer(
             {
                 var dbContext = services.GetRequiredService<WmsDbContext>();
                 var now = services.GetRequiredService<IClock>().UtcNow;
-                attempts = await WmsInboxClaims.TryClaimAsync(dbContext, consumer, record.Id, now, leases, cancellationToken);
+                attempts = await WmsInboxClaims.TryClaimAsync(dbContext, consumer, record.Id, now, ClaimLease, cancellationToken);
                 if (attempts is null)
                 {
                     // Otra réplica lo tiene, o ya se terminó desde que se armó el lote.
@@ -82,7 +87,13 @@ internal sealed class ClaimedOutboxConsumer(
             }
             catch (Exception exception)
             {
-                // El intento ya quedó contado en el reclamo: el mensaje vuelve cuando ese reclamo venza, siempre.
+                // El intento ya quedó contado en el reclamo: el mensaje vuelve tras la espera de la curva, siempre. Si ni siquiera eso se
+                // puede escribir, queda el reclamo (2 minutos).
+                if (attempts is { } attempt)
+                {
+                    await ScheduleRetryAsync(record, attempt, cancellationToken);
+                }
+
                 await onFailure(exception, record, attempts, cancellationToken);
             }
         }
@@ -92,14 +103,32 @@ internal sealed class ClaimedOutboxConsumer(
         return processed > 0;
     }
 
-    /// <summary>Marca como terminada la fila que dejó el reclamo, sin guardar: quien llama la guarda en el mismo SaveChanges que su
-    /// efecto, así que un mensaje procesado nunca queda sin marcar.</summary>
+    /// <summary>Marca como terminada la fila que dejó el reclamo, dentro de la transacción de quien llama y <b>sólo si sigue sin
+    /// terminar</b>. Si otra réplica ya lo terminó (el reclamo de ésta venció a mitad de camino) lanza, y la transacción entera
+    /// (reservas, asientos y estado) se deshace: un mensaje no cuenta dos veces.</summary>
     public async Task MarkProcessedAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(message);
-        var entry = await message.DbContext.Inbox.SingleAsync(
-            candidate => candidate.Consumer == consumer && candidate.MessageId == message.Record.Id, cancellationToken);
-        entry.ProcessedAt = message.Now;
+        if (!await WmsInboxClaims.TryMarkProcessedAsync(message.DbContext, consumer, message.Record.Id, message.Now, cancellationToken))
+        {
+            throw new InvalidOperationException($"Inventory message '{message.Record.Id}' was already processed by another replica.");
+        }
+    }
+
+    private async Task ScheduleRetryAsync(OutboxRow record, int attempt, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<WmsDbContext>();
+            var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
+            var delay = leases[Math.Min(attempt, leases.Count) - 1];
+            await WmsInboxClaims.ScheduleRetryAsync(dbContext, consumer, record.Id, now, delay, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Queda el reclamo largo: más lento, pero nunca se pierde el mensaje.
+        }
     }
 
     private async Task<List<OutboxRow>> ReadBatchAsync(
@@ -122,7 +151,7 @@ internal sealed class ClaimedOutboxConsumer(
                   WHERE p.correlation_id = o.correlation_id
                     AND p.event_name = ANY(@names)
                     AND p.occurred_at >= @startAt
-                    AND (p.occurred_at, {olderVersion}, p.id) < (o.occurred_at, {rowVersion}, o.id)
+                    AND ({olderVersion}, p.occurred_at, p.id) < ({rowVersion}, o.occurred_at, o.id)
                     AND NOT EXISTS (
                         SELECT 1 FROM wms.inbox_messages AS pi
                         WHERE pi.consumer = @consumer AND pi.message_id = p.id AND pi.processed_at IS NOT NULL))

@@ -49,7 +49,7 @@ internal sealed partial class WmsInventoryEventsProcessor(
     public Task<bool> ProcessBatchAsync(CancellationToken cancellationToken) =>
         Claims.ProcessBatchAsync(options.Value.StartAt, ProcessAsync, OnFailureAsync, cancellationToken);
 
-    private async Task ProcessAsync(ClaimedMessage message, CancellationToken cancellationToken)
+    internal async Task ProcessAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
         var unitOfWork = message.Services.GetRequiredService<IWmsUnitOfWork>();
         var record = message.Record;
