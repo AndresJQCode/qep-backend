@@ -47,6 +47,8 @@ internal sealed partial class TaskWorld
 
         public void Add(Warehouse warehouse) => throw new NotSupportedException();
 
+        public Task<Warehouse?> FindPrincipalAsync(Guid tenantId, CancellationToken ct) => throw new NotSupportedException();
+
         public Task<Location?> GetLocationAsync(Guid tenantId, LocationId id, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<Location?> GetVirtualLocationAsync(Guid tenantId, WarehouseId warehouseId, LocationRole role, CancellationToken ct) =>
