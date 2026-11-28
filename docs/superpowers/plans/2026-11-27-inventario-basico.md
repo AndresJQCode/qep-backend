@@ -363,7 +363,7 @@ Consumidor `wms.inventory-events`; eventos: los once de §5.1 (no `wholesale-can
 
 ## Cierre (lo hace la sesión que orquesta, no un implementador)
 
-- [ ] `.\scripts\test-feature.ps1` en verde, con sus avisos leídos y mostrados al owner.
+- [ ] El owner corre `.\scripts\test-feature.ps1` (decisión del owner, 2026-11-27: no lo corre ningún agente); se leen con él sus avisos.
 - [ ] Revisión final de toda la rama por un subagente de solo lectura sin el contexto de quien implementó (modelo más capaz).
 - [ ] Merge a `develop` con `--no-ff` y, en el mismo merge, la fila del WMS y el Registro de `docs/estado.md`.
 - [ ] Tarjeta CW22v9pI a «Code Review» con rama, commit, qué se probó y qué no. En la del frontend (Z3l9JnqX), el contrato final de §5.8.
