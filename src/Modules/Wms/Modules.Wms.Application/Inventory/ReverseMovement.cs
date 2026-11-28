@@ -72,6 +72,15 @@ public sealed class ReverseMovementHandler(
         await authorization.EnsureAsync(
             executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, movement.OwnerId, origin.WarehouseId.Value, cancellationToken);
 
+        // Inventario básico §5.6: lo que asentó una orden de compra, un pedido o una venta se deshace desde su documento. Si no, una
+        // reversa manual seguida de un «deshacer preparado» o una anulación devolvería dos veces.
+        if (InventoryDocumentTypes.IsInventoryDocument(movement.DocumentType))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.MovementReverseFromDocument,
+                "Este movimiento viene de una orden, un pedido o una venta: se deshace desde el documento, no a mano.");
+        }
+
         // Reversar un compensatorio sería reaplicar el original por la puerta de atrás: el camino es proponer otro ajuste.
         if (movement.Reason == MovementReason.Reversal
             || await movements.IsReversedAsync(command.TenantId, command.MovementId, cancellationToken))

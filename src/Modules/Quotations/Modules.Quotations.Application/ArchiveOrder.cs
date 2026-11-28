@@ -14,7 +14,8 @@ public sealed class ArchiveOrderHandler(
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<ArchiveOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(ArchiveOrderCommand command, CancellationToken cancellationToken)
@@ -25,6 +26,7 @@ public sealed class ArchiveOrderHandler(
 
         var now = clock.UtcNow;
         order.Archive(actor, now);
+        lifecycleEvents.PublishOrderArchived(order, now);
         OrderStateAction.Record(
             repository, auditPublisher, executionContext, command.TenantId, order, actor,
             OrderHistoryEventType.Archived, OrderChangeSummary.Archived(), OrderAutoArchive.AuditAction, now);

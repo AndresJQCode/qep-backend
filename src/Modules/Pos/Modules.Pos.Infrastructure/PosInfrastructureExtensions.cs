@@ -30,6 +30,7 @@ public static class PosInfrastructureExtensions
         services.AddScoped<IPosUnitOfWork, PosUnitOfWork>();
         services.AddScoped<IPosSaleIdLock, PosSaleIdLock>();
         services.AddScoped<IPosAuditPublisher, PosAuditPublisher>();
+        services.AddScoped<IPosSaleEventPublisher, PosSaleEventPublisher>();
         services.AddScoped<IUserReferenceProbe, PosUserReferenceProbe>();
 
         return services;

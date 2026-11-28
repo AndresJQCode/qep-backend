@@ -103,6 +103,36 @@ public sealed class ReverseMovementApiTests
         Assert.Null(await ScalarAsync<Guid?>(database, "SELECT to_handling_unit_id FROM wms.stock_movements WHERE id = @id", ("id", reversal.Id)));
     }
 
+    // Inventario básico §5.6: lo que asentó un pedido, una venta o una compra se deshace desde el documento. Una reversa manual
+    // seguida de un «deshacer preparado» devolvería dos veces.
+    [Theory]
+    [InlineData("Order")]
+    [InlineData("PosSale")]
+    [InlineData("PurchaseOrder")]
+    public async Task ReversingAMovementOfAnOrderIsRejected(string documentType)
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await StockAsync(factory, s, s.BinA, 10);
+        var customer = (await ListLocationsAsync(s.Manager, s.WarehouseId)).Single(location => location.Code == "CUSTOMER").Id;
+        var posting = await PostAsync(factory, Batch(s, new LedgerEntry(
+            new StockKey(s.OwnerId, s.BinA, s.VariantId, null, StockStatus.Available),
+            new StockKey(s.OwnerId, customer, s.VariantId, null, StockStatus.Available),
+            3,
+            null,
+            MovementReason.Ship,
+            new LedgerDocument(documentType, Guid.CreateVersion7(), Guid.CreateVersion7()),
+            DateTimeOffset.UtcNow)));
+
+        var response = await ReverseRawAsync(s.Manager, posting.MovementIds.Single(), Guid.NewGuid().ToString());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.movement.reverse_from_document", await CodeOfAsync(response));
+        Assert.Equal(7m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
+    }
+
     [Fact]
     public async Task ReversingTwiceIs422AlreadyReversed()
     {

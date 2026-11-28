@@ -79,7 +79,9 @@ public sealed record WholesaleApprovedLineData(
     string Name,
     decimal Quantity,
     decimal UnitPrice,
-    decimal TaxPercentage);
+    decimal TaxPercentage,
+    Guid LineId,
+    string ProductKind);
 
 /// <summary>Las líneas del evento de aprobación, armadas en un solo lugar para el publicador del outbox y las pruebas.</summary>
 public static class WholesaleOrderEvents
@@ -101,7 +103,9 @@ public static class WholesaleOrderEvents
                 item.ProductName ?? string.Empty,
                 item.Quantity,
                 item.UnitPrice,
-                item.TaxPercentage))
+                item.TaxPercentage,
+                item.Id.Value,
+                item.Kind.ToString()))
             .ToArray();
     }
 }
@@ -246,7 +250,7 @@ public sealed class WholesaleOrderGateway(
             OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Cancelled, memberId: null,
             OrderChangeSummary.Cancelled(order.CancellationReason!), now));
         auditPublisher.Publish(tenantId, Guid.Empty, "quotation.order.cancelled", order.Id.ToString(), "success", now);
-        lifecycleEvents.PublishOrderCancelled(order, now);
+        lifecycleEvents.PublishOrderCancelled(order, fromPlatform: false, now);
         lifecycleEvents.PublishWholesaleCancelled(order, byBuyer: true, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;

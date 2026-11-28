@@ -74,7 +74,7 @@ public sealed class CancelOrderHandler(
             order.Id.ToString(),
             "success",
             now);
-        lifecycleEvents.PublishOrderCancelled(order, now);
+        lifecycleEvents.PublishOrderCancelled(order, fromPlatform: false, now);
         if (order.Source == OrderSource.Wholesale)
         {
             // Mayorista fase 3 (D-21): la orden de compra del distribuidor se anula con este evento.

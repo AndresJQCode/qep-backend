@@ -14,7 +14,8 @@ public sealed class UnarchiveOrderHandler(
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<UnarchiveOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(UnarchiveOrderCommand command, CancellationToken cancellationToken)
@@ -25,6 +26,7 @@ public sealed class UnarchiveOrderHandler(
 
         var now = clock.UtcNow;
         order.Unarchive(now);
+        lifecycleEvents.PublishOrderUnarchived(order, now);
         OrderStateAction.Record(
             repository, auditPublisher, executionContext, command.TenantId, order, actor,
             OrderHistoryEventType.Unarchived, OrderChangeSummary.Unarchived(), "quotation.order.unarchived", now);

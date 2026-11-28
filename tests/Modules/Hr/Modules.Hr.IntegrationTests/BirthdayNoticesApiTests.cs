@@ -60,10 +60,17 @@ public sealed class BirthdayNoticesApiTests : IClassFixture<BirthdayNoticesApiTe
     {
         private readonly HashSet<(Guid TenantId, Guid ConnectionId)> _valid = [];
 
+        private readonly Dictionary<Guid, List<HrWhatsAppConnection>> _listed = [];
+
         public void Allow(Guid tenantId, Guid connectionId) => _valid.Add((tenantId, connectionId));
+
+        public void List(Guid tenantId, params HrWhatsAppConnection[] connections) => _listed[tenantId] = [.. connections];
 
         public Task<bool> IsWhatsAppConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult(_valid.Contains((tenantId, connectionId)));
+
+        public Task<IReadOnlyList<HrWhatsAppConnection>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<HrWhatsAppConnection>>(_listed.TryGetValue(tenantId, out var listed) ? listed : []);
     }
 
     private sealed class BirthdayTenant(string idText, HttpClient hr, Guid callerMemberId) : IDisposable
@@ -117,6 +124,64 @@ public sealed class BirthdayNoticesApiTests : IClassFixture<BirthdayNoticesApiTe
         Assert.Equal(JsonValueKind.Null, setting.GetProperty("whatsAppConnectionId").ValueKind);
         Assert.False(setting.GetProperty("emailEnabled").GetBoolean());
         Assert.Equal(JsonValueKind.Null, setting.GetProperty("version").ValueKind);
+    }
+
+    [Fact]
+    public async Task GetListsTheCandidatesAndTheConnectionsEvenWithoutRow()
+    {
+        using var tenant = await NewTenantAsync();
+        var ana = await ManagerAsync(tenant, "Ana Gerente");
+        await ManagerAsync(tenant, "Luis Asesor", role: "advisor");
+        var connection = Guid.NewGuid();
+        _world.Connections.List(
+            tenant.Id, new HrWhatsAppConnection(connection, "Ventas", "+57 300 111 2233", HrBirthdayNoticeTemplateStatuses.Pending));
+
+        var setting = await GetAsync(tenant);
+
+        // Only who the PUT accepts as a manager: active and with hr.employee.read. The advisor does not read HR.
+        var candidates = setting.GetProperty("candidates").EnumerateArray()
+            .Select(candidate => (candidate.GetProperty("memberId").GetGuid(), candidate.GetProperty("displayName").GetString()))
+            .ToList();
+        Assert.Equal([(ana, "Ana Gerente"), (tenant.CallerMemberId, "Quien configura")], candidates);
+
+        var listed = Assert.Single(setting.GetProperty("connections").EnumerateArray());
+        Assert.Equal(connection, listed.GetProperty("connectionId").GetGuid());
+        Assert.Equal("Ventas", listed.GetProperty("name").GetString());
+        Assert.Equal("+57 300 111 2233", listed.GetProperty("phoneNumber").GetString());
+        Assert.Equal("Pending", listed.GetProperty("templateStatus").GetString());
+    }
+
+    [Fact]
+    public async Task GetWithoutSettingsManageSendsNoCandidatesButTheConnections()
+    {
+        using var tenant = await NewTenantAsync();
+        await ManagerAsync(tenant, "Ana Gerente");
+        _world.Connections.List(tenant.Id, new HrWhatsAppConnection(Guid.NewGuid(), "Ventas", null, HrBirthdayNoticeTemplateStatuses.Missing));
+        using var reader = CreateClient(_world.Factory, SubjectId, tenant.IdText, HrPermissions.EmployeeRead);
+
+        var response = await reader.GetAsync(tenant.Url, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var setting = await JsonOfAsync(response);
+        Assert.Equal(JsonValueKind.Null, setting.GetProperty("candidates").ValueKind);
+        var listed = Assert.Single(setting.GetProperty("connections").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, listed.GetProperty("phoneNumber").ValueKind);
+        Assert.Equal("Missing", listed.GetProperty("templateStatus").GetString());
+    }
+
+    [Fact]
+    public async Task PutAnswersTheCandidatesAndTheConnections()
+    {
+        using var tenant = await NewTenantAsync();
+        var ana = await ManagerAsync(tenant, "Ana Gerente");
+        _world.Connections.List(tenant.Id, new HrWhatsAppConnection(Guid.NewGuid(), "Ventas", null, HrBirthdayNoticeTemplateStatuses.Approved));
+
+        var response = await PutAsync(tenant.Hr, tenant.Url, Body([ana]), ifMatch: null);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var setting = await JsonOfAsync(response);
+        Assert.Contains(setting.GetProperty("candidates").EnumerateArray(), candidate => candidate.GetProperty("memberId").GetGuid() == ana);
+        Assert.Equal("Approved", Assert.Single(setting.GetProperty("connections").EnumerateArray()).GetProperty("templateStatus").GetString());
     }
 
     [Fact]

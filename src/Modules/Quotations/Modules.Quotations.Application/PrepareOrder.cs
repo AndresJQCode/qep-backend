@@ -16,7 +16,8 @@ public sealed class PrepareOrderHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IQuotationSettingsStore settingsStore)
+    IQuotationSettingsStore settingsStore,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<PrepareOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(PrepareOrderCommand command, CancellationToken cancellationToken)
@@ -27,11 +28,13 @@ public sealed class PrepareOrderHandler(
 
         var now = clock.UtcNow;
         order.Prepare(actor, now);
+        lifecycleEvents.PublishOrderPrepared(order, OrderEventOrigins.Manual, now);
         OrderStateAction.Record(
             repository, auditPublisher, executionContext, command.TenantId, order, actor,
             OrderHistoryEventType.Prepared, OrderChangeSummary.Prepared(), "quotation.order.prepared", now);
         var settings = await settingsStore.GetOrderSettingsAsync(command.TenantId, cancellationToken);
-        OrderAutoArchive.Apply(settings, repository, auditPublisher, executionContext, command.TenantId, order, actor, now);
+        OrderAutoArchive.Apply(
+            settings, repository, auditPublisher, lifecycleEvents, executionContext, command.TenantId, order, actor, now);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return order.ToDto();

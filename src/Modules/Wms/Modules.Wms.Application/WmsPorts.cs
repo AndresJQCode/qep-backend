@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Warehousing;
 
@@ -216,7 +217,11 @@ public sealed record WmsVariantSnapshot(
     string Code,
     string? Barcode,
     IReadOnlyList<int> PackagingUnits,
-    bool IsActive);
+    bool IsActive,
+    // Inventario básico (§5.6): el tipo de producto y la unidad de venta que el consumidor necesita para POS y compras, que no los
+    // traen en el evento. Al final y con default para no romper a quien ya construye el snapshot.
+    ProductKind Kind = ProductKind.Physical,
+    SalesUnit SalesUnit = SalesUnit.Unit);
 
 public interface IWmsCatalogReader
 {

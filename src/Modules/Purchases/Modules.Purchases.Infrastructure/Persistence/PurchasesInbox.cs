@@ -18,7 +18,7 @@ internal sealed class PurchasesInboxMessage
     public int Attempts { get; set; }
 }
 
-// Proyección de sólo lectura del outbox de plataforma, consumida independiente por este módulo.
+// Proyección del outbox de plataforma: la lee el consumidor mayorista y la escribe el publicador de la orden recibida.
 internal sealed class PurchasesOutboxRecord
 {
     public Guid Id { get; init; }
@@ -28,6 +28,16 @@ internal sealed class PurchasesOutboxRecord
     public string PayloadJson { get; init; } = "{}";
 
     public DateTimeOffset OccurredAt { get; init; }
+
+    // Sólo los escribe PurchaseOrderEventPublisher (purchases.order.received.v1). EF no deja mapear dos entidades a la misma
+    // tabla sin relación, así que la proyección es una sola, de lectura para el consumidor y de escritura para el publicador.
+    public string CorrelationId { get; init; } = string.Empty;
+
+    public DateTimeOffset? ProcessedAt { get; init; }
+
+    public int Attempts { get; init; }
+
+    public string? LastError { get; init; }
 }
 
 /// <summary>

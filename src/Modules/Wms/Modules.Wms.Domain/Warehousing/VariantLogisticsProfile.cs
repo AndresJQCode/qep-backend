@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Wms.Domain.Inventory;
 
 namespace Modules.Wms.Domain.Warehousing;
@@ -50,13 +51,22 @@ public sealed class VariantLogisticsProfile
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
-    /// <summary>ADR-07 y ADR-08: <c>UND</c>, precisión 0, sin rastreo, y una presentación «EMPAQUE x{n}» por cada
-    /// <c>PackagingUnit</c> de la variante.</summary>
+    /// <summary>La precisión del perfil por defecto según la unidad de venta de Catalog (inventario básico §5.6): 2 decimales para lo
+    /// que se vende por peso, longitud, área o volumen; 0 para el resto. Las cantidades de pedidos, POS y compras traen a lo sumo 2.</summary>
+    public static int DefaultPrecisionFor(SalesUnit salesUnit) => salesUnit switch
+    {
+        SalesUnit.Kilogram or SalesUnit.Meter or SalesUnit.SquareMeter or SalesUnit.Liter => 2,
+        _ => 0,
+    };
+
+    /// <summary>ADR-07 y ADR-08: <c>UND</c>, sin rastreo, y una presentación «EMPAQUE x{n}» por cada <c>PackagingUnit</c> de la
+    /// variante. La precisión la pone quien llama (<see cref="DefaultPrecisionFor"/>): 0 si no sabe la unidad de venta.</summary>
     public static VariantLogisticsProfile CreateDefault(
         Guid tenantId,
         Guid variantId,
         Guid productId,
         IReadOnlyList<int> packagingUnits,
+        int baseUomPrecision,
         DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(packagingUnits);
@@ -71,7 +81,7 @@ public sealed class VariantLogisticsProfile
             tenantId,
             variantId,
             productId,
-            new ProfileChanges(UomCode.Parse("UND"), 0, TrackingPolicy.None, false, null, null, null, null, null, null, null, conversions),
+            new ProfileChanges(UomCode.Parse("UND"), baseUomPrecision, TrackingPolicy.None, false, null, null, null, null, null, null, null, conversions),
             now);
     }
 

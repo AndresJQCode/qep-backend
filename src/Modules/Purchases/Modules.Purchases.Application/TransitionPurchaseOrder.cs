@@ -31,6 +31,7 @@ public sealed class TransitionPurchaseOrderHandler(
     IPurchaseOrderRepository orders,
     IPurchasesUnitOfWork unitOfWork,
     IPurchasesAuditPublisher auditPublisher,
+    IPurchaseOrderEventPublisher events,
     PurchaseOrderComposer composer,
     IWholesaleOrderIntake wholesaleOrders,
     PurchaseOrderEmailDelivery emailDelivery)
@@ -67,6 +68,9 @@ public sealed class TransitionPurchaseOrderHandler(
             }
         }
 
+        // Una sola lectura del reloj: la orden, su evento y la auditoría llevan la misma hora.
+        var now = clock.UtcNow;
+
         switch (command.Action)
         {
             case PurchaseOrderAction.Send when order.IsLinked:
@@ -89,7 +93,9 @@ public sealed class TransitionPurchaseOrderHandler(
                 order.Send(memberId, clock.UtcNow);
                 break;
             case PurchaseOrderAction.Receive:
-                order.Receive(memberId, clock.UtcNow);
+                order.Receive(memberId, now);
+                // Justo después de la mutación: la versión del evento es la que dejó Receive. Sale en el mismo SaveChanges.
+                events.PublishReceived(order, PurchaseOrderEventOrigins.Manual, now);
                 break;
             default:
                 // D-12 en Sent; en Draft (revisión del bloque B, M1) el envío pudo dejar un pedido sin que la orden lo supiera.
@@ -103,8 +109,6 @@ public sealed class TransitionPurchaseOrderHandler(
                 order.Cancel(memberId, clock.UtcNow);
                 break;
         }
-
-        var now = clock.UtcNow;
 
         // Sin correo del proveedor no hay intento: el «sin correo» se conoce antes de guardar y queda en el mismo guardado.
         var sendsEmail = supplier is { Email: { } address } && !string.IsNullOrWhiteSpace(address);

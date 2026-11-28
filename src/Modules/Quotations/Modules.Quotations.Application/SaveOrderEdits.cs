@@ -174,6 +174,12 @@ public sealed class SaveOrderEditsHandler(
                 var giftEdits = await OrderGiftEdits.ApplyAsync(
                     order, command.Gifts, pricingLookup, costLookup, command.TenantId, updatedBy, now, cancellationToken);
                 itemEdits = [.. paidItemEdits, .. giftEdits];
+                // Justo después de las líneas: el WMS reemplaza su reserva con las que quedaron. Un guardado que no toca
+                // líneas (notas, envío, comprobantes) no publica nada.
+                if (itemEdits.Count > 0)
+                {
+                    lifecycleEvents.PublishOrderEdited(order, now);
+                }
             }
 
             foreach (var proofId in removedProofIds)
