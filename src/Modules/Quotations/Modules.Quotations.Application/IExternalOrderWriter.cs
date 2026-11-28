@@ -686,7 +686,7 @@ public sealed class ExternalOrderService(
                 : OrderChangeSummary.Cancelled(order.CancellationReason!),
             now));
         auditPublisher.PublishByIntegration(tenantId, "quotation.order.cancelled", order.Id.ToString(), "success", now);
-        lifecycleEvents.PublishOrderCancelled(order, now);
+        lifecycleEvents.PublishOrderCancelled(order, fromPlatform: true, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }

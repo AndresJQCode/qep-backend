@@ -1679,8 +1679,13 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
         Published.Add(("order.created", order.Id.Value, order.Total, order.Currency));
 
     // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
-    public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
+    public List<(Guid OrderId, bool FromPlatform)> Cancelled { get; } = [];
+
+    public void PublishOrderCancelled(Order order, bool fromPlatform, DateTimeOffset occurredAt)
+    {
         Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
+        Cancelled.Add((order.Id.Value, fromPlatform));
+    }
 
     public void PublishShippingPartyChanged(Order order, DateTimeOffset occurredAt) =>
         Published.Add(("order.shipping_party_changed", order.Id.Value, order.Total, order.Currency));
