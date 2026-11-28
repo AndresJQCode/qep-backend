@@ -863,6 +863,7 @@ public sealed class RealAuthenticationApiTests
             // cuando estaba caída y escribiéndole cuando estaba arriba. Cualquier nombre fuera de
             // "Development" y "Local" mantiene la rama de auth real sin ese override. SDD-CT-14.
             builder.UseEnvironment("IntegrationTests");
+            builder.UseSetting("Wms:InventoryEvents:StartAt", "2026-01-01T00:00:00+00:00");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             // Pinned, never inherited: the developer's user-secrets may turn the seed on.
             builder.UseSetting("Seed:Enabled", "false");

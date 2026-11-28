@@ -145,6 +145,99 @@ public sealed class InventoryEventsConsumerTests
     }
 
     [Fact]
+    public async Task WithinADocumentTheVersionOrdersBeforeTheClock()
+    {
+        var (database, factory, applier, _) = await OpenWithRecorderAsync();
+        await using var _db = database;
+        using var _f = factory;
+        var document = Guid.CreateVersion7();
+        // La versión 1 quedó con una hora posterior a la de la 2 (reloj atrasado): la versión manda.
+        var second = await PublishAsync(database, document, 2, Recent());
+        var first = await PublishAsync(database, document, 1, Recent(30));
+        var processor = Processor(factory);
+
+        for (var pass = 0; pass < 3; pass++)
+        {
+            await processor.ProcessBatchAsync(Ct);
+        }
+
+        Assert.Equal([first, second], applier.Applied.Select(message => message.MessageId));
+    }
+
+    [Fact]
+    public async Task AClaimHoldsForMinutesAndAFailureRetriesSoonerThanThat()
+    {
+        var (database, factory, applier, _) = await OpenWithRecorderAsync();
+        await using var _db = database;
+        using var _f = factory;
+        var failing = await PublishAsync(database, Guid.CreateVersion7(), 1, Recent());
+        var passing = await PublishAsync(database, Guid.CreateVersion7(), 1, Recent(1));
+        applier.FailAlways(failing);
+        double heldSeconds = 0;
+        applier.OnApply = async message =>
+        {
+            if (message.MessageId == passing)
+            {
+                heldSeconds = await ScalarAsync<double>(
+                    database,
+                    "SELECT extract(epoch FROM (claimed_until - now()))::float8 FROM wms.inbox_messages WHERE message_id = @id",
+                    ("id", passing));
+            }
+        };
+
+        await Processor(factory).ProcessBatchAsync(Ct);
+
+        // Mientras corre, el reclamo dura más que cualquier espera de reintento (un asiento puede aprovisionar una bodega).
+        Assert.InRange(heldSeconds, 100, 145);
+        // Al fallar, el reintento vuelve a la curva de Purchases: 5 s el primero.
+        var retryIn = await ScalarAsync<double>(
+            database,
+            "SELECT extract(epoch FROM (claimed_until - now()))::float8 FROM wms.inbox_messages WHERE message_id = @id",
+            ("id", failing));
+        Assert.InRange(retryIn, 0, 20);
+    }
+
+    // El candado por documento de la consulta del lote busca, por correlation_id, mensajes más viejos del mismo documento. Esa búsqueda
+    // (el predicado del NOT EXISTS interno) puede usar el índice; el plan de la consulta completa lo elige el planificador según el tamaño.
+    [Fact]
+    public async Task TheDocumentGateLookupCanUseTheOutboxCorrelationIndex()
+    {
+        var (database, factory, _, _) = await OpenWithRecorderAsync();
+        await using var _db = database;
+        using var _f = factory;
+        var document = Guid.CreateVersion7();
+        for (var version = 1; version <= 5; version++)
+        {
+            await PublishAsync(database, document, version, Recent(version));
+        }
+
+        await ExecuteAsync(database, "ANALYZE platform.outbox_messages");
+        var plan = new System.Text.StringBuilder();
+        await using (var connection = new Npgsql.NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(Ct);
+            // Con tablas de juguete el planificador prefiere recorrer todo: se le quita esa opción para ver si el índice sirve a la búsqueda.
+            await using (var off = new Npgsql.NpgsqlCommand("SET enable_seqscan = off; SET enable_bitmapscan = off", connection))
+            {
+                await off.ExecuteNonQueryAsync(Ct);
+            }
+
+            await using var explain = new Npgsql.NpgsqlCommand(
+                "EXPLAIN SELECT 1 FROM platform.outbox_messages p WHERE p.correlation_id = @correlation AND p.occurred_at >= @startAt",
+                connection);
+            explain.Parameters.AddWithValue("correlation", document.ToString("D"));
+            explain.Parameters.AddWithValue("startAt", InventoryStartAt);
+            await using var reader = await explain.ExecuteReaderAsync(Ct);
+            while (await reader.ReadAsync(Ct))
+            {
+                plan.AppendLine(reader.GetString(0));
+            }
+        }
+
+        Assert.Contains("IX_outbox_messages_correlation_occurred", plan.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AProcessedMessageIsNotAppliedTwice()
     {
         var (database, factory, applier, _) = await OpenWithRecorderAsync();
@@ -234,15 +327,21 @@ public sealed class InventoryEventsConsumerTests
 
         public void FailAlways(Guid messageId) => _failAlways.Add(messageId);
 
-        public Task ApplyAsync(InventoryMessage message, CancellationToken cancellationToken)
+        public Func<InventoryMessage, Task>? OnApply { get; set; }
+
+        public async Task ApplyAsync(InventoryMessage message, CancellationToken cancellationToken)
         {
+            if (OnApply is not null)
+            {
+                await OnApply(message);
+            }
+
             if (_failAlways.Contains(message.MessageId) || _failOnce.Remove(message.MessageId))
             {
                 throw new InvalidOperationException("The applier failed on purpose.");
             }
 
             _applied.Enqueue(message);
-            return Task.CompletedTask;
         }
     }
 

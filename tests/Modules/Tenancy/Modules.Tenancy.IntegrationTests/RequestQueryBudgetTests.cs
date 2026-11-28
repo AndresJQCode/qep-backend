@@ -282,6 +282,7 @@ public sealed class RequestQueryBudgetTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("IntegrationTests");
+            builder.UseSetting("Wms:InventoryEvents:StartAt", "2026-01-01T00:00:00+00:00");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
             builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);

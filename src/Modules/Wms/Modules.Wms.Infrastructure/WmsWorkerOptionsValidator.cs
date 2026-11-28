@@ -22,6 +22,8 @@ internal sealed class WmsInventoryEventsOptionsValidator : IValidateOptions<WmsI
 {
     public ValidateOptionsResult Validate(string? name, WmsInventoryEventsOptions options) =>
         options.StartAt == default
-            ? ValidateOptionsResult.Fail($"{WmsInventoryEventsOptions.SectionName}:StartAt is required (the date the consumer starts reading the outbox).")
+            ? ValidateOptionsResult.Fail(
+                $"{WmsInventoryEventsOptions.SectionName}:StartAt is required, with no default: set the environment variable Wms__InventoryEvents__StartAt "
+                + "to the date the inventory consumer starts reading the outbox (for example 2026-11-28T00:00:00+00:00).")
             : ValidateOptionsResult.Success;
 }

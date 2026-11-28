@@ -579,6 +579,7 @@ internal sealed class PasswordAuthApiFactory(
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("IntegrationTests");
+        builder.UseSetting("Wms:InventoryEvents:StartAt", "2026-01-01T00:00:00+00:00");
         builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
         // Pinned, never inherited: the developer's user-secrets may turn the seed on.
         builder.UseSetting("Seed:Enabled", "false");

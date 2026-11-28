@@ -396,6 +396,9 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         // Lo usan los consumidores de cada módulo: filtran por event_name y ordenan por occurred_at; su "pendiente" es el
         // anti-join contra su inbox, no processed_at, así que el índice no puede ser parcial por processed_at.
         message.HasIndex(value => new { value.EventName, value.OccurredAt });
+        // El consumidor de inventario básico del WMS ordena los mensajes de un mismo documento (misma correlation_id) y busca si hay uno
+        // más viejo sin procesar. Migración normal (decisión del owner): las escrituras del outbox esperan mientras se construye.
+        message.HasIndex(value => new { value.CorrelationId, value.OccurredAt }, "IX_outbox_messages_correlation_occurred");
     }
 
     private static void ConfigureInbox(ModelBuilder modelBuilder)

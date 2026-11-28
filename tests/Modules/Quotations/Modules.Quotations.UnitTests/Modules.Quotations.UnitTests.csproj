@@ -13,5 +13,6 @@
     <ProjectReference Include="..\..\..\..\src\Modules\Quotations\Modules.Quotations.Application\Modules.Quotations.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Quotations\Modules.Quotations.Domain\Modules.Quotations.Domain.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Quotations\Modules.Quotations.Infrastructure\Modules.Quotations.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Wms\Modules.Wms.Application\Modules.Wms.Application.csproj" />
   </ItemGroup>
 </Project>

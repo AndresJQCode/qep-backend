@@ -6,6 +6,7 @@ using Modules.Tenancy.Domain;
 using Modules.Wms.Application;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Infrastructure.Messaging;
+using Modules.Wms.Infrastructure.Persistence;
 using Testcontainers.PostgreSql;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
 using static Modules.Wms.IntegrationTests.WmsLedgerSeeding;
@@ -56,7 +57,7 @@ public sealed class BasicInventoryEndToEndTests
     private static object[] Lines(IEnumerable<OrderLine> lines) =>
         [.. lines.Select(line => new { lineId = line.LineId, variantId = line.VariantId, quantity = line.Quantity, productKind = line.Kind })];
 
-    private static async Task PublishAsync(World world, string eventName, Guid documentId, string idName, long version, Dictionary<string, object?> extra)
+    private static async Task<OutboxRow> PublishAsync(World world, string eventName, Guid documentId, string idName, long version, Dictionary<string, object?> extra)
     {
         var at = world.NextAt();
         var payload = new Dictionary<string, object?>
@@ -71,20 +72,24 @@ public sealed class BasicInventoryEndToEndTests
             payload[key] = value;
         }
 
+        var id = Guid.CreateVersion7();
+        var json = JsonSerializer.Serialize(payload);
+        var correlation = documentId.ToString("D", CultureInfo.InvariantCulture);
         await ExecuteAsync(
             world.Database,
             """
             INSERT INTO platform.outbox_messages (id, event_name, payload, correlation_id, occurred_at, attempts)
             VALUES (@id, @event, @payload::jsonb, @correlation, @occurredAt, 0)
             """,
-            ("id", Guid.CreateVersion7()),
+            ("id", id),
             ("event", eventName),
-            ("payload", JsonSerializer.Serialize(payload)),
-            ("correlation", documentId.ToString("D", CultureInfo.InvariantCulture)),
+            ("payload", json),
+            ("correlation", correlation),
             ("occurredAt", at));
+        return new OutboxRow(id, eventName, json, correlation, at);
     }
 
-    private static Task OrderEventAsync(
+    private static Task<OutboxRow> OrderEventAsync(
         World world,
         string suffix,
         Guid orderId,
@@ -124,7 +129,7 @@ public sealed class BasicInventoryEndToEndTests
         return PublishAsync(world, $"quotations.order.{suffix}.v1", orderId, "orderId", version, extra);
     }
 
-    private static Task PurchaseReceivedAsync(World world, Guid orderId, IEnumerable<OrderLine> lines, string origin = "Manual") =>
+    private static Task<OutboxRow> PurchaseReceivedAsync(World world, Guid orderId, IEnumerable<OrderLine> lines, string origin = "Manual") =>
         PublishAsync(
             world,
             "purchases.order.received.v1",
@@ -133,10 +138,10 @@ public sealed class BasicInventoryEndToEndTests
             2,
             new Dictionary<string, object?> { ["origin"] = origin, ["lines"] = Lines(lines) });
 
-    private static Task PosCreatedAsync(World world, Guid saleId, IEnumerable<OrderLine> lines) =>
+    private static Task<OutboxRow> PosCreatedAsync(World world, Guid saleId, IEnumerable<OrderLine> lines) =>
         PublishAsync(world, "pos.sale.created.v1", saleId, "saleId", 1, new Dictionary<string, object?> { ["lines"] = Lines(lines) });
 
-    private static Task PosVoidedAsync(World world, Guid saleId) =>
+    private static Task<OutboxRow> PosVoidedAsync(World world, Guid saleId) =>
         PublishAsync(world, "pos.sale.voided.v1", saleId, "saleId", 2, []);
 
     private static async Task DrainAsync(World world)
@@ -750,6 +755,235 @@ public sealed class BasicInventoryEndToEndTests
         {
             await DisposeAsync(world);
         }
+    }
+
+    [Fact]
+    public async Task AMessageReclaimedAfterItsLeaseExpiredIsCountedOnce()
+    {
+        var world = await OpenWorldAsync();
+        try
+        {
+            var variant = await VariantAsync(world, "LEA1");
+            await PurchaseReceivedAsync(world, Guid.CreateVersion7(), [Line(variant, 10)]);
+            await DrainAsync(world);
+            var sale = Guid.CreateVersion7();
+            var row = await PosCreatedAsync(world, sale, [Line(variant, 4)]);
+
+            // La réplica A reclama y se demora; el reclamo vence y la B reclama el mismo mensaje.
+            await using var scopeA = world.Factory.Services.CreateAsyncScope();
+            await using var scopeB = world.Factory.Services.CreateAsyncScope();
+            var dbA = scopeA.ServiceProvider.GetRequiredService<WmsDbContext>();
+            var dbB = scopeB.ServiceProvider.GetRequiredService<WmsDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            var attemptsA = await WmsInboxClaims.TryClaimAsync(dbA, WmsInventoryEventsProcessor.Consumer, row.Id, now, ClaimedOutboxConsumer.ClaimLease, Ct);
+            await ExecuteAsync(world.Database, "UPDATE wms.inbox_messages SET claimed_until = now() - interval '1 second' WHERE processed_at IS NULL");
+            var attemptsB = await WmsInboxClaims.TryClaimAsync(dbB, WmsInventoryEventsProcessor.Consumer, row.Id, now, ClaimedOutboxConsumer.ClaimLease, Ct);
+            Assert.Equal(1, attemptsA);
+            Assert.Equal(2, attemptsB);
+
+            var results = await Task.WhenAll(
+                SettleAsync(world.Processor.ProcessAsync(new ClaimedMessage(scopeA.ServiceProvider, dbA, row, now, attemptsA!.Value), Ct)),
+                SettleAsync(world.Processor.ProcessAsync(new ClaimedMessage(scopeB.ServiceProvider, dbB, row, now, attemptsB!.Value), Ct)));
+
+            Assert.Equal(1, results.Count(succeeded => succeeded));
+            Assert.Equal(6m, await OnHandAsync(world, variant));
+            Assert.Equal(1L, await MovementsAsync(world, "Ship", "PosSale"));
+            Assert.Equal(
+                1L,
+                await ScalarAsync<long>(world.Database, "SELECT count(*) FROM wms.inbox_messages WHERE message_id = @id AND processed_at IS NOT NULL", ("id", row.Id)));
+        }
+        finally
+        {
+            await DisposeAsync(world);
+        }
+    }
+
+    private static async Task<bool> SettleAsync(Task work)
+    {
+        try
+        {
+            await work;
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    [Fact]
+    public async Task ACancelDeliveredBeforeItsCreatedLeavesNothingReserved()
+    {
+        var world = await OpenWorldAsync();
+        try
+        {
+            var variant = await VariantAsync(world, "LATE1");
+            var order = Guid.CreateVersion7();
+            // El cancelado (v2) llega primero: se inserta con una fecha anterior a la del creado, y el orden por versión no lo frena
+            // porque el creado todavía no existe en el outbox.
+            await InsertRawAsync(world, "quotations.order.cancelled.v1", order, "orderId", 2, world.NextAt(), new Dictionary<string, object?> { ["fromPlatform"] = false });
+            await DrainAsync(world);
+            Assert.Equal("None", await StateAsync(world, "Order", order));
+
+            await InsertRawAsync(
+                world,
+                "quotations.order.created.v1",
+                order,
+                "orderId",
+                1,
+                world.NextAt(),
+                new Dictionary<string, object?> { ["awaitingWholesaleApproval"] = false, ["lines"] = Lines([Line(variant, 3)]) });
+            await DrainAsync(world);
+
+            Assert.Equal("None", await StateAsync(world, "Order", order));
+            Assert.Equal(string.Empty, await ReservationsAsync(world, order));
+        }
+        finally
+        {
+            await DisposeAsync(world);
+        }
+    }
+
+    [Fact]
+    public async Task PrepareArchiveUnarchiveMovesNothingMoreThanThePrepare()
+    {
+        var world = await OpenWorldAsync();
+        try
+        {
+            var variant = await VariantAsync(world, "PAU1");
+            await PurchaseReceivedAsync(world, Guid.CreateVersion7(), [Line(variant, 10)]);
+            var order = Guid.CreateVersion7();
+            var lines = new[] { Line(variant, 3) };
+            await OrderEventAsync(world, "created", order, 1, lines);
+            await OrderEventAsync(world, "prepared", order, 2, lines, origin: "Manual");
+            await OrderEventAsync(world, "archived", order, 3, lines, isPrepared: true);
+            await OrderEventAsync(world, "unarchived", order, 4, isPrepared: true);
+
+            await DrainAsync(world);
+
+            Assert.Equal("TakenOutByPrepare", await StateAsync(world, "Order", order));
+            Assert.Equal(7m, await OnHandAsync(world, variant));
+            Assert.Equal(1L, await MovementsAsync(world, "Ship", "Order"));
+            Assert.Equal(0L, await MovementsAsync(world, "Reversal"));
+        }
+        finally
+        {
+            await DisposeAsync(world);
+        }
+    }
+
+    [Fact]
+    public async Task AQuantityWithMoreDecimalsThanTheProfileAdmitsIsSkippedAndTheRestPosts()
+    {
+        var world = await OpenWorldAsync();
+        try
+        {
+            var fractional = await VariantAsync(world, "PRC1");
+            var whole = await VariantAsync(world, "PRC2");
+            var order = Guid.CreateVersion7();
+            var fractionalLine = Line(fractional, 1.5m);
+            await PurchaseReceivedAsync(world, order, [fractionalLine, Line(whole, 4)]);
+
+            await DrainAsync(world);
+
+            Assert.Equal(4m, await OnHandAsync(world, whole));
+            Assert.Equal(0m, await OnHandAsync(world, fractional));
+            Assert.Equal(
+                1L,
+                await ScalarAsync<long>(
+                    world.Database,
+                    "SELECT count(*) FROM wms.document_stock_states WHERE document_id = @d AND skipped_line_ids @> @ids::jsonb",
+                    ("d", order),
+                    ("ids", JsonSerializer.Serialize(new[] { fractionalLine.LineId }))));
+        }
+        finally
+        {
+            await DisposeAsync(world);
+        }
+    }
+
+    [Fact]
+    public async Task ALineSkippedAtReservationIsNeverShippedEvenIfItWouldPassNow()
+    {
+        var world = await OpenWorldAsync();
+        try
+        {
+            var tracked = await VariantAsync(world, "SKP1");
+            var plain = await VariantAsync(world, "SKP2");
+            await SetTrackingAsync(CreateManager(world.Factory), tracked, "Lot");
+            var order = Guid.CreateVersion7();
+            var lines = new[] { Line(tracked, 2), Line(plain, 3) };
+            await OrderEventAsync(world, "created", order, 1, lines);
+            await DrainAsync(world);
+            Assert.Equal("Open:3", await ReservationsAsync(world, order));
+
+            // Después de reservar, el rastreo se apaga: la línea apartada ya pasaría el filtro, pero sigue apartada.
+            await ExecuteAsync(world.Database, "UPDATE wms.variant_profiles SET tracking = 'None' WHERE variant_id = @v", ("v", tracked));
+            await OrderEventAsync(world, "prepared", order, 2, lines, origin: "Manual");
+            await DrainAsync(world);
+
+            Assert.Equal(-3m, await OnHandAsync(world, plain));
+            Assert.Equal(0m, await OnHandAsync(world, tracked));
+            Assert.Equal(1L, await MovementsAsync(world, "Ship", "Order"));
+        }
+        finally
+        {
+            await DisposeAsync(world);
+        }
+    }
+
+    [Fact]
+    public async Task AReservedLineIsShippedEvenIfTheFilterWouldNowSkipIt()
+    {
+        var world = await OpenWorldAsync();
+        try
+        {
+            var variant = await VariantAsync(world, "RSV1");
+            var order = Guid.CreateVersion7();
+            var line = Line(variant, 2);
+            await OrderEventAsync(world, "created", order, 1, [line]);
+            await DrainAsync(world);
+            Assert.Equal("Open:2", await ReservationsAsync(world, order));
+
+            // El evento de preparado trae la línea como servicio: el filtro la apartaría hoy, pero se reservó y se descuenta.
+            await OrderEventAsync(world, "prepared", order, 2, [line with { Kind = "Service" }], origin: "Manual");
+            await DrainAsync(world);
+
+            Assert.Equal(-2m, await OnHandAsync(world, variant));
+            Assert.Equal("Consumed:2", await ReservationsAsync(world, order));
+        }
+        finally
+        {
+            await DisposeAsync(world);
+        }
+    }
+
+    private static Task<int> InsertRawAsync(
+        World world, string eventName, Guid documentId, string idName, long version, DateTimeOffset at, Dictionary<string, object?> extra)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["tenantId"] = Tenant,
+            [idName] = documentId,
+            ["version"] = version,
+            ["occurredAt"] = at,
+        };
+        foreach (var (key, value) in extra)
+        {
+            payload[key] = value;
+        }
+
+        return ExecuteAsync(
+            world.Database,
+            """
+            INSERT INTO platform.outbox_messages (id, event_name, payload, correlation_id, occurred_at, attempts)
+            VALUES (@id, @event, @payload::jsonb, @correlation, @occurredAt, 0)
+            """,
+            ("id", Guid.CreateVersion7()),
+            ("event", eventName),
+            ("payload", JsonSerializer.Serialize(payload)),
+            ("correlation", documentId.ToString("D", CultureInfo.InvariantCulture)),
+            ("occurredAt", at));
     }
 
     private static InventoryMessage Message(World world, string eventName, string idName, Guid documentId, Guid variant)

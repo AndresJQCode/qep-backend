@@ -139,11 +139,17 @@ Todos al outbox en la misma transacción que el cambio. Campos en camelCase, le�
 `tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs` y, si su inbox cuenta como cola, va en `QueueDoorbellInterceptor` y
 `QueueMetricsSource` (`.claude/rules/infra-valkey-sesiones.md`).
 
-- **Marca de arranque:** el consumidor sólo mira mensajes posteriores al despliegue (una fecha fija guardada en configuración o en la
-  migración). Así no recorre la historia de `created` y `cancelled` de todos los tenants antes del primer evento real.
-- **Orden:** el lote se ordena por (`OccurredAt`, `version` del payload, `Id` del outbox, que es `Guid.CreateVersion7()`), y sólo toma un
-  mensaje si no hay otro **más viejo del mismo documento** (misma `correlationId`) sin procesar. Un reintento o un lease vencido no puede
-  invertir `prepared` y `edited`. Documentos distintos avanzan en paralelo.
+- **Marca de arranque:** el consumidor sólo mira mensajes posteriores al despliegue (`Wms:InventoryEvents:StartAt`, en configuración).
+  Así no recorre la historia de `created` y `cancelled` de todos los tenants antes del primer evento real. **No tiene valor por defecto
+  en producción** (decisión del owner 2026-11-27): `appsettings.json` no la lleva, sólo `appsettings.Development.json`; un arranque sin
+  ella falla con un mensaje que nombra la variable `Wms__InventoryEvents__StartAt`, y quien despliega la fija.
+- **Orden:** el lote sólo toma un mensaje si no hay otro **más viejo del mismo documento** (misma `correlationId`) sin procesar, y dentro
+  de un documento manda la versión: (`version` del payload, `OccurredAt`, `Id` del outbox, que es `Guid.CreateVersion7()`), para que un
+  reloj atrasado no deje la versión 5 detrás de la 6. Un reintento o un lease vencido no puede invertir `prepared` y `edited`.
+  Documentos distintos avanzan en paralelo.
+- **Reclamo y reintento:** el reclamo dura 2 minutos (una transacción puede aprovisionar una bodega); la espera de reintento tras un
+  fallo (5 s, 30 s, 5 min) se fija al fallar. Si el reclamo vence a mitad de camino y otra réplica toma el mismo mensaje, un lock por
+  documento serializa a las dos y el inbox se marca sólo si sigue sin terminar: la segunda deshace su transacción, nada cuenta dos veces.
 - **Idempotencia:** por mensaje (inbox) y por versión. **Todo evento visto escribe o actualiza su fila** en `wms.document_stock_states`,
   aunque no tenga efecto (estado `None`): así un `cancelled` que llegó antes que su `created` deja `last_version` y el `created` viejo no
   reserva (hallazgo 8). Un evento con versión menor o igual a `last_version` se marca procesado sin efecto.
