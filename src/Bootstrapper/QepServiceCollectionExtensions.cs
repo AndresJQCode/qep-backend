@@ -156,6 +156,10 @@ public static class QepServiceCollectionExtensions
             GetPlatformUsageHandler>();
         services.AddScoped<IPlatformUsageSource, PlatformUsageSource>();
         services.AddScoped<
+            IQueryHandler<GetOperatorQueuesQuery, OperatorQueuesDto>,
+            GetOperatorQueuesHandler>();
+        services.AddScoped<IOperatorQueueSource, OperatorQueueSource>();
+        services.AddScoped<
             ICommandHandler<ChangeTenantModulesCommand, OperatorTenantDetailDto>,
             ChangeTenantModulesHandler>();
         services.AddScoped<
@@ -1256,6 +1260,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.UpdateWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
             Modules.Wms.Application.UpdateWarehouseHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.SetPrincipalWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
+            Modules.Wms.Application.SetPrincipalWarehouseHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Wms.Application.ListLocationsQuery, Modules.Wms.Application.LocationsDto>,
             Modules.Wms.Application.ListLocationsHandler>();
@@ -3276,6 +3283,8 @@ public static class QepServiceCollectionExtensions
                 HrOperatorPermissions.LegalParametersManage,
                 // Reporte de uso de la plataforma: misma categoría y mismo criterio que los de arriba.
                 OperatorPermissions.UsageRead,
+                // Colas de la plataforma (spec 2026-11-27): mismo criterio.
+                OperatorPermissions.QueuesRead,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
                 // código, así que no hay migración de datos.
                 IntegrationsPermissions.ConnectionRead,
@@ -4178,6 +4187,17 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [])
         {
             Shape = new("operator.usage", "Uso de la plataforma", "read"),
+        });
+        // Colas de la plataforma: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.QueuesRead,
+            "Ver las colas de la plataforma",
+            "Permite ver cuántos trabajos hay encolados en cada cola de la plataforma.",
+            "Operator",
+            "medium",
+            RequiredModules: [])
+        {
+            Shape = new("operator.queues", "Colas de la plataforma", "read"),
         });
 
         // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
@@ -5293,6 +5313,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 OperatorPermissions.UsageRead,
                 policy => AddPermissionRequirement(policy, OperatorPermissions.UsageRead))
+            // Sin esta, RequireAuthorization de las colas de la plataforma no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                OperatorPermissions.QueuesRead,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.QueuesRead))
             .AddPolicy(
                 IntegrationsPermissions.ConnectionRead,
                 policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))

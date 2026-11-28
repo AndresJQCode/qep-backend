@@ -104,6 +104,21 @@ public sealed class InitialBalanceImportTests
         await ScalarAsync<long>(database, "SELECT version FROM wms.warehouses WHERE id = @id", ("id", warehouseId));
 
     [Fact]
+    public async Task AFractionalQuantityOfAKilogramVariantWithoutProfileIsAccepted()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await CreateVariantAsync(factory, "KG-P", null, [], "Harina", salesUnit: "Kilogram");
+
+        var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("KG-P", "A-01-02", 1.5m)]));
+
+        Assert.True(preview.CanCommit);
+        Assert.All(preview.Rows, row => Assert.Empty(row.Issues));
+    }
+
+    [Fact]
     public async Task ThePreviewResolvesCodesLocationsAndLotsAndStoresThePreview()
     {
         var (database, factory) = await OpenAsync();

@@ -12,6 +12,7 @@ public static class WmsErrorCodes
     public const string WarehouseCodeInvalid = "wms.warehouse.code_invalid";
     public const string WarehouseCityUnknown = "wms.warehouse.city_unknown";
     public const string WarehousePrincipalCannotBeDeactivated = "wms.warehouse.principal_cannot_be_deactivated";
+    public const string WarehouseInactiveCannotBePrincipal = "wms.warehouse.inactive_cannot_be_principal";
 
     public const string LocationNotFound = "wms.location.not_found";
     public const string LocationCodeTaken = "wms.location.code_taken";

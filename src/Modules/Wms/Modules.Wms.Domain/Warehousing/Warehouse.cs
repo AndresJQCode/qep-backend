@@ -93,6 +93,13 @@ public sealed class Warehouse
     /// diferible.</summary>
     public void MarkPrincipal(DateTimeOffset now)
     {
+        // Decisión del owner, 2026-11-27: una bodega inactiva no puede ser la principal (el inventario básico asienta ahí).
+        if (!IsActive)
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.WarehouseInactiveCannotBePrincipal, "Una bodega inactiva no puede ser la principal: actívala primero.");
+        }
+
         IsPrincipal = true;
         Version++;
         UpdatedAt = now;

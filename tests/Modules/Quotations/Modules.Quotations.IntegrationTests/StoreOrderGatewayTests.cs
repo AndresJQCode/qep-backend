@@ -151,9 +151,9 @@ public sealed class StoreOrderGatewayTests(SharedQuotationsHost sharedHost) : IC
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(draft, TestContext.Current.CancellationToken));
 
         var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
-        // Colombia se guarda como null: una sola forma para CO (QuotationPartyDetails.cs:108-125).
+        // La facturación guarda CO literal (spec 2026-11-27); sólo el envío lo guarda como null.
         Assert.Equal(
-            ("Ana Pérez", "1020304050", PartyIdentificationType.Cc, "ana@example.com", first.CityId, (string?)null),
+            ("Ana Pérez", "1020304050", PartyIdentificationType.Cc, "ana@example.com", first.CityId, (string?)"CO"),
             (order.Billing!.Name, order.Billing.IdentificationNumber, order.Billing.IdentificationType, order.Billing.Email,
                 order.Billing.CityId, order.Billing.Country));
         Assert.Equal(

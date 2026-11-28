@@ -12,4 +12,5 @@ public static class OperatorPermissions
     public const string ModulesManage = "operator.modules.manage";
     public const string TenantsManage = "operator.tenants.manage";
     public const string UsageRead = "operator.usage.read";
+    public const string QueuesRead = "operator.queues.read";
 }

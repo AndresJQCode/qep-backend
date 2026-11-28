@@ -3,6 +3,10 @@
 Entradas del registro de [`docs/estado.md`](../estado.md) de este mes, la más reciente arriba. Lo que vale hoy está en
 `estado.md`; esto es historia y no se corrige.
 
+- 2026-11-27 — Mergeada a `develop`, sin push, la **consola de colas de la plataforma** (merge `345fb9525`, tarjeta
+  `CN1QTtcc`): `GET …/operator/queues` con `operator.queues.read`. El owner autorizó la prueba nueva de arquitectura.
+- 2026-11-27 — Mergeado a `develop`, sin push, **país de «Facturar a» obligatorio** (merge `0f9b7573f`, tarjeta
+  `PGAmC4DJ`): 422 al guardar sin país, `CO` literal en la facturación y faltante de Siigo. `test-feature.ps1` en verde.
 - 2026-11-27 — Mergeado a `develop`, sin push, **ajuste de cumpleaños como BFF** (`feature/hr-birthday-settings-bff`:
   `1d919ef6a`, `0825e556c`; merge `18df9611f`; tarjeta `pjzEGHMV`). `GET` y `PUT /hr/birthday-notices` suman `candidates`
   (miembros activos con `hr.employee.read`; `null` sin `hr.settings.manage`) y `connections` (WhatsApp activas con

@@ -309,14 +309,19 @@ public sealed class ExternalOrderInvoicingService(
             ? billingName
             : CustomerName(order, customer, personType);
         // Ciudad, departamento, país y nombre de ciudad salen juntos de una sola fuente: la parte de facturación si declara ciudad o
-        // país, y si no, la ficha. Una parte colombiana guarda el país null: con su CityId, ese null es Colombia y no se completa.
+        // país, y si no, la ficha. La facturación colombiana guarda CO (una vieja, null con CityId: el país efectivo la lee como CO).
+        // Con el país pendiente (spec 2026-11-27) no se sabe a qué país factura: no se completa nada con la ficha y el armador de
+        // Siigo pide el país (customer_country_missing).
+        var countryPending = billing?.IsCountryPending == true;
         var billingDeclaresPlace = billing is not null
             && (billing.CityId is not null
                 || !string.IsNullOrWhiteSpace(billing.CityName)
-                || !string.IsNullOrWhiteSpace(billing.Country));
-        var (cityId, departmentId, country, cityName) = billingDeclaresPlace
-            ? (billing!.CityId, billing.DepartmentId, FirstNonBlank(billing.Country, null), FirstNonBlank(billing.CityName, null))
-            : (customer?.CityId, customer?.DepartmentId, FirstNonBlank(customer?.Country, null), FirstNonBlank(customer?.CityName, null));
+                || !string.IsNullOrWhiteSpace(billing.EffectiveCountry));
+        var (cityId, departmentId, country, cityName) = countryPending
+            ? ((Guid?)null, (Guid?)null, (string?)null, (string?)null)
+            : billingDeclaresPlace
+                ? (billing!.CityId, billing.DepartmentId, FirstNonBlank(billing.EffectiveCountry, null), FirstNonBlank(billing.CityName, null))
+                : (customer?.CityId, customer?.DepartmentId, FirstNonBlank(customer?.Country, null), FirstNonBlank(customer?.CityName, null));
         return new ExternalInvoicingParty(
             false,
             personType,
@@ -329,7 +334,8 @@ public sealed class ExternalOrderInvoicingService(
             country,
             FirstNonBlank(billing?.Email, customer?.Email),
             FirstNonBlank(billing?.Phone, customer?.Phone),
-            cityName);
+            cityName,
+            countryPending);
     }
 
     // La razón social cuando el pedido factura a ella (BillingUsesBusinessName) o la persona es jurídica; si no, el nombre de contacto.

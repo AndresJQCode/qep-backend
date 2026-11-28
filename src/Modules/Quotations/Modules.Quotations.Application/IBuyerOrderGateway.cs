@@ -313,7 +313,7 @@ public sealed class BuyerOrderGateway(
         // Un diccionario por llamada y sólo si hay ids: facturación y envío en la misma ciudad piden una vez. Una
         // excepción del lookup sale tal cual; nunca se disfraza de nombre nulo.
         var colombian = new[] { billingParty, shippingParty }
-            .Where(party => party is { Country: null })
+            .Where(party => party is not null && IsColombian(party))
             .ToArray();
         var departments = await NamesAsync(
             colombian.Select(party => party!.DepartmentId), geography.FindDepartmentNamesAsync, cancellationToken);
@@ -395,13 +395,18 @@ public sealed class BuyerOrderGateway(
             : await find(distinct, cancellationToken);
     }
 
-    private static string CountryOf(OrderParty party) => party.Country ?? QuotationPartyDetails.ColombiaCountryCode;
+    private static string CountryOf(OrderParty party) => party.EffectiveCountry ?? QuotationPartyDetails.ColombiaCountryCode;
+
+    // Colombia es el país efectivo nulo (envío, o facturación vieja o pendiente) o CO literal (la facturación desde el spec 2026-11-27):
+    // sólo ahí los nombres salen de Geography por id.
+    private static bool IsColombian(OrderParty party) =>
+        party.EffectiveCountry is null or QuotationPartyDetails.ColombiaCountryCode;
 
     private static string? DepartmentName(OrderParty party, IReadOnlyDictionary<Guid, string> departments) =>
-        party is { Country: null, DepartmentId: { } id } && departments.TryGetValue(id, out var name) ? name : null;
+        IsColombian(party) && party.DepartmentId is { } id && departments.TryGetValue(id, out var name) ? name : null;
 
     private static string? CityName(OrderParty party, IReadOnlyDictionary<Guid, string> cities) =>
-        party.Country is not null
+        !IsColombian(party)
             ? party.CityName
             : party.CityId is { } id && cities.TryGetValue(id, out var name) ? name : null;
 

@@ -248,6 +248,7 @@ public sealed class PreviewInitialBalancesHandler(
             factors[$"EMPAQUE x{units}"] = units;
         }
 
-        return new LedgerVariantRules("UND", 0, TrackingPolicy.None, factors);
+        // La precisión sale de la unidad de venta, como en el perfil que el ledger creará (CreateDefault).
+        return new LedgerVariantRules("UND", VariantLogisticsProfile.DefaultPrecisionFor(variant.SalesUnit), TrackingPolicy.None, factors);
     }
 }

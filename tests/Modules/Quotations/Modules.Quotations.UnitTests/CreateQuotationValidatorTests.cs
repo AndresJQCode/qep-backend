@@ -172,4 +172,36 @@ public sealed class CreateQuotationValidatorTests
     private static CreateQuotationCommand Command(params QuotationItemAddition[] items) =>
         new(TenantId, ClientId, ValidUntil: null, PaymentMethod: null, Notes: null, Parties: null,
             BillingAccount: null, Items: items);
+
+    // Spec 2026-11-27: el país de quien se factura no se asume; se exige con el campo en errors al crear.
+    [Fact]
+    public async Task ANamedBillingPartyWithoutCountryIsAFieldError()
+    {
+        var parties = new QuotationPartiesRequest(
+            new QuotationPartyRequest("Otra S.A.S.", "900123456", null, null, null, null, null, IdentificationType: "NIT"),
+            null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Parties.Billing.Country");
+        Assert.Equal("The country is required when billing to someone else.", error.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ANamedBillingPartyWithACountryOrWithoutNameHasNoCountryError()
+    {
+        var named = new QuotationPartiesRequest(
+            new QuotationPartyRequest("Otra S.A.S.", "900123456", null, null, null, null, null, IdentificationType: "NIT", Country: "CO"),
+            null);
+        var unnamed = new QuotationPartiesRequest(new QuotationPartyRequest(null, null, null, null, null, null, null), null);
+
+        foreach (var parties in new[] { named, unnamed })
+        {
+            var result = await new CreateQuotationValidator().ValidateAsync(
+                Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+            Assert.DoesNotContain(result.Errors, e => e.PropertyName == "Parties.Billing.Country");
+        }
+    }
 }

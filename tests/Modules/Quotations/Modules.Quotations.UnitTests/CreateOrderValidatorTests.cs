@@ -131,4 +131,33 @@ public sealed class CreateOrderValidatorTests
             Assert.Contains(result.Errors, error => error.PropertyName == "Shipping.FreightChargeMode");
         }
     }
+
+    // Spec 2026-11-27: el pedido manual exige el país de la facturación propia al guardar, como el documento; el
+    // cálculo previo no lo exige.
+    [Fact]
+    public void TheBillingPartyNeedsItsCountryOnlyWhenSaving()
+    {
+        var parties = new QuotationPartiesRequest(
+            new QuotationPartyRequest(
+                "Otra S.A.S.", "900123456", "1", "a@b.co", "x", Guid.CreateVersion7(), Guid.CreateVersion7(),
+                IdentificationType: "NIT"),
+            null,
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+        var command = Valid() with { Parties = parties };
+
+        var saved = new CreateOrderValidator().Validate(command);
+        var previewed = new PreviewOrderValidator().Validate(new PreviewOrderQuery(
+            command.TenantId, command.ClientId, command.PaymentMethod, command.Notes, command.IsRetail,
+            command.GlobalScaleFloor, command.Parties, command.BillingAccount, command.Items, command.PaymentProofs));
+
+        Assert.Contains(saved.Errors, error => error.PropertyName == "Parties.Billing.Country");
+        Assert.DoesNotContain(previewed.Errors, error => error.PropertyName == "Parties.Billing.Country");
+
+        var withCountry = new CreateOrderValidator().Validate(command with
+        {
+            Parties = parties with { Billing = parties.Billing! with { Country = "CO" } }
+        });
+        Assert.DoesNotContain(withCountry.Errors, error => error.PropertyName == "Parties.Billing.Country");
+    }
 }

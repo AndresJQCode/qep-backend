@@ -34,7 +34,12 @@ public sealed record StockRowDto(
     decimal? DisplayQty,
     DateTimeOffset UpdatedAt);
 
-/// <summary><c>Pickable</c> viaja con los totales (spec §24.3): sin él la pantalla no sabe cuánto se puede tomar sobre el filtro completo.</summary>
+/// <summary><c>Pickable</c> viaja con los totales (spec §24.3): sin él la pantalla no sabe cuánto se puede tomar sobre el filtro completo.
+/// <para>Inventario básico §5.4: <c>Reserved</c> y <c>Available</c> suman también las reservas de demanda de los pedidos (por bodega y
+/// variante, sin ubicación), así que el total de la lista coincide con el resumen; las filas por ubicación muestran sólo lo asignado.
+/// Por eso <c>Pickable</c>, que es lo físico que se puede tomar, <b>puede superar a <c>Available</c></b> (10 en el bin, 3 reservados por
+/// pedidos: se pueden tomar 10, quedan 7 por vender) y <c>Available</c> puede ser negativo si se reservó más de lo que hay. Es lo
+/// correcto: la pantalla no debe «arreglarlo».</para></summary>
 public sealed record StockTotalsDto(decimal OnHand, decimal Reserved, decimal Available, decimal Pickable);
 
 /// <summary><c>Totals</c> viaja porque sumar la página da un total que depende de la página que se esté mirando, y

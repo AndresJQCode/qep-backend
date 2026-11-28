@@ -16,6 +16,11 @@ internal sealed class WarehouseRepository(WmsDbContext dbContext) : IWarehouseRe
             .Include(warehouse => warehouse.Locations)
             .FirstOrDefaultAsync(warehouse => warehouse.TenantId == tenantId && warehouse.Id == id, ct);
 
+    public Task<Warehouse?> FindPrincipalAsync(Guid tenantId, CancellationToken ct) =>
+        dbContext.Warehouses
+            .Include(warehouse => warehouse.Locations)
+            .FirstOrDefaultAsync(warehouse => warehouse.TenantId == tenantId && warehouse.IsPrincipal, ct);
+
     public async Task<IReadOnlyList<Warehouse>> ListAsync(Guid tenantId, bool includeInactive, CancellationToken ct) =>
         await dbContext.Warehouses
             .AsNoTracking()

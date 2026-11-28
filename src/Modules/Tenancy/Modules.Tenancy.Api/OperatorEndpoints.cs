@@ -73,6 +73,12 @@ public static class OperatorEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Colas de la plataforma (spec 2026-11-27): sólo lectura, con permiso propio.
+        group.MapGet("/queues", GetQueuesAsync)
+            .RequireAuthorization(OperatorPermissions.QueuesRead)
+            .Produces<OperatorQueuesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         return endpoints;
     }
 
@@ -83,6 +89,15 @@ public static class OperatorEndpoints
         string? period = null)
     {
         var result = await dispatcher.QueryAsync(new GetPlatformUsageQuery(new TenantId(tenantId), period), cancellationToken);
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> GetQueuesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.QueryAsync(new GetOperatorQueuesQuery(new TenantId(tenantId)), cancellationToken);
         return Results.Ok(result);
     }
 

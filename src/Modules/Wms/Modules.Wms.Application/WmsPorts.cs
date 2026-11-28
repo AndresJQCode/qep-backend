@@ -112,6 +112,10 @@ public interface IWarehouseRepository
     /// <summary>Con sus ubicaciones y rastreada: el agregado necesita el árbol entero para sus reglas.</summary>
     Task<Warehouse?> GetAsync(Guid tenantId, WarehouseId id, CancellationToken ct);
 
+    /// <summary>La bodega principal del tenant (inventario básico §5.3), con sus ubicaciones y rastreada; <c>null</c> si todavía no hay.
+    /// Una sola por tenant: lo exige el índice único parcial <c>IX_warehouses_tenant_principal</c>.</summary>
+    Task<Warehouse?> FindPrincipalAsync(Guid tenantId, CancellationToken ct);
+
     /// <summary>Con sus ubicaciones, sin rastreo.</summary>
     Task<IReadOnlyList<Warehouse>> ListAsync(Guid tenantId, bool includeInactive, CancellationToken ct);
 

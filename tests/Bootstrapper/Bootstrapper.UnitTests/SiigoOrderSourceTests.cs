@@ -184,6 +184,50 @@ public sealed class SiigoOrderSourceTests
         Assert.Null(input.BilledParty.UnlinkedCity);
     }
 
+    private static ExternalInvoicingParty Pending() =>
+        Order().BilledParty with
+        {
+            Country = null, CityName = null, CityId = null, DepartmentId = null, CountryPending = true,
+        };
+
+    // Spec 2026-11-27: el país pendiente viaja como bandera y no se adivina un lugar: ni DIVIPOLA ni lista de Siigo.
+    [Fact]
+    public async Task APendingCountryTravelsAsAFlagWithoutAskingForAnyPlace()
+    {
+        var geography = new FakeGeography();
+        var source = new SiigoOrderSource(
+            new FakeInvoicing(Order() with { BilledParty = Pending() }), geography, new FakeSplitter(null));
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        var party = input!.BilledParty;
+        Assert.True(party.CountryPending);
+        Assert.Empty(geography.Asked);
+        Assert.Null(party.UnlinkedCity);
+        Assert.Equal((null, null, null), (party.CityCode, party.StateCode, party.SiigoCountryCode));
+    }
+
+    [Fact]
+    public async Task APartyWithACountryIsNotPending()
+    {
+        var source = new SiigoOrderSource(new FakeInvoicing(Order()), new FakeGeography(), new FakeSplitter(null));
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        Assert.False(input!.BilledParty.CountryPending);
+    }
+
+    // Aunque el país esté pendiente, el teléfono se parte con la región de siempre (CO): el faltante ya bloquea la factura.
+    [Fact]
+    public async Task APendingCountryStillSplitsThePhoneWithTheColombianRegion()
+    {
+        var splitter = new FakeSplitter(null);
+
+        await GetWithPartyAsync(Pending() with { Phone = "3001234567" }, splitter);
+
+        Assert.Equal(("3001234567", "CO"), Assert.Single(splitter.Calls));
+    }
+
     [Fact]
     public async Task ASplitPhoneTravelsAsIndicativeAndNumber()
     {

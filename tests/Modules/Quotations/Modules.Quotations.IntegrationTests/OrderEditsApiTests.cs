@@ -918,7 +918,7 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         return new OrderBillingEditRequest(
             new QuotationPartyRequest(
                 name, "900123456", "3001234567", "otra@correo.co", "Calle 1 # 2-3", home.DepartmentId, home.CityId,
-                PersonType: personType, IdentificationType: identificationType),
+                PersonType: personType, IdentificationType: identificationType, Country: "CO"),
             // Lo manda el frontend viejo y se ignora (spec impuestos por tipo §9.3): las retenciones son
             // SaveOrderEditsRequest.WithholdingTaxRateIds.
             BillingWithRetention: true,

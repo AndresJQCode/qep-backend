@@ -32,6 +32,11 @@ public sealed record ExternalInvoicingProof(Guid ProofId, decimal Amount);
 /// Así una parte extranjera sin ciudad no hereda la ciudad de otra ficha (el armador dice <c>customer_city_missing</c>). Los textos
 /// van recortados y un blanco es <c>null</c>; el consumidor final lleva <c>CityName</c> nulo.
 /// </para>
+/// <para>
+/// <paramref name="CountryPending"/> es <c>true</c> cuando la fuente es una parte de facturación con nombre, sin país y sin ciudad
+/// (spec 2026-11-27): no se sabe a qué país factura, así que tampoco se completa el lugar con la ficha del cliente y los cuatro
+/// datos del lugar viajan nulos. El armador de Siigo dice <c>customer_country_missing</c>.
+/// </para>
 /// </summary>
 public sealed record ExternalInvoicingParty(
     bool IsFinalConsumer,
@@ -45,7 +50,8 @@ public sealed record ExternalInvoicingParty(
     string? Country,
     string? Email,
     string? Phone,
-    string? CityName = null)
+    string? CityName = null,
+    bool CountryPending = false)
 {
     public override string ToString() => "ExternalInvoicingParty { }";
 }

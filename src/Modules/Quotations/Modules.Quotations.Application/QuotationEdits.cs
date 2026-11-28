@@ -137,6 +137,15 @@ internal sealed class QuotationPartiesRequestValidator : AbstractValidator<Quota
                 && !parties.BillsToFinalConsumer
                 && !string.IsNullOrWhiteSpace(parties.Billing?.Name));
 
+        // El país de quien se factura no se asume (spec 2026-11-27): se elige. Sólo al guardar, como el documento.
+        RuleFor(parties => parties.Billing!.Country)
+            .NotEmpty()
+            .WithMessage("The country is required when billing to someone else.")
+            .When(parties =>
+                requireBillingIdentification
+                && !parties.BillsToFinalConsumer
+                && !string.IsNullOrWhiteSpace(parties.Billing?.Name));
+
         // Un valor fuera de la lista es un error de campo y no una excepción de dominio: así el formulario
         // marca el input. Vale también para el cálculo previo, que no exige el campo pero no lo acepta mal escrito.
         RuleFor(parties => parties.Billing!.IdentificationType)
