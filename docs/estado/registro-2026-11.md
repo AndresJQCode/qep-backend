@@ -3,6 +3,13 @@
 Entradas del registro de [`docs/estado.md`](../estado.md) de este mes, la más reciente arriba. Lo que vale hoy está en
 `estado.md`; esto es historia y no se corrige.
 
+- 2026-11-27 — Mergeado a `develop`, sin push, **ajuste de cumpleaños como BFF** (`feature/hr-birthday-settings-bff`:
+  `1d919ef6a`, `0825e556c`; merge `18df9611f`; tarjeta `pjzEGHMV`). `GET` y `PUT /hr/birthday-notices` suman `candidates`
+  (miembros activos con `hr.employee.read`; `null` sin `hr.settings.manage`) y `connections` (WhatsApp activas con
+  `templateStatus`). **Decisión del owner:** autorizó el cambio de contrato. Arregla además `SeedCallerMembershipAsync`
+  del harness de Hr (`23505 PK_users` desde `a8f567836`). **Pruebas:** `HrWhatsAppConnectionsTests` 2/2 y
+  `BirthdayNoticesApiTests` 19/19; `test-feature.ps1` no corrió (falló el build por paquetes sin restaurar) y falta la
+  suite completa. **Falta:** frontend.
 - 2026-11-27 — Mergeado a `develop` y llevado a `main` **número de documento numérico** (`feature/documento-solo-digitos`:
   `cd5cbcabc` hasta `11a128f34`, correcciones `931c795d0` hasta `56a8204ef`). NIT, CC y CE (RRHH: CC, CE, PEP y PPT) sólo
   admiten dígitos, puntos, guiones y espacios (RRHH sin espacios); pasaporte, NIF, NIE y TAX_ID siguen libres. Validador
