@@ -3,6 +3,8 @@
 Entradas del registro de [`docs/estado.md`](../estado.md) de este mes, la más reciente arriba. Lo que vale hoy está en
 `estado.md`; esto es historia y no se corrige.
 
+- 2026-11-28 — Mergeada a `develop`, sin push, el **alta de cliente con perfiles de facturación** (merge `0b43bf5a6`,
+  tarjeta `gPRWKkXq`): `POST /customers` con `billingProfiles[]` en el mismo guardado.
 - 2026-11-28 — Mergeado a `develop`, sin push, el **inventario básico del WMS** completo (merge `8f80fc42d`, tarjeta `CW22v9pI`):
   eventos con líneas, consumidor por documento, bodega principal y reservas; incluye la corrección del doble conteo entre réplicas.
 - 2026-11-27 — Mergeada a `develop`, sin push, la **brecha G-11 del WMS** (merge `49ab0290b`, tarjeta `ck9h9QAI`): la zona
