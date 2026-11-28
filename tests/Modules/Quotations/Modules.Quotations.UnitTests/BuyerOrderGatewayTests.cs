@@ -683,6 +683,37 @@ public sealed class BuyerOrderGatewayTests
         }
     }
 
+    // Spec 2026-11-27: la facturación guarda CO literal; sigue siendo Colombia y sus nombres salen de Geography.
+    [Fact]
+    public async Task ABillingWithTheLiteralColombiaCodeShowsItsDepartmentAndCity()
+    {
+        var billing = ColombianParty() with { Country = "CO" };
+        var order = StoreOrder(Buyer, parties: Parties(billing: billing));
+        Assert.Equal("CO", order.Billing!.Country);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.NotNull(detail.Billing);
+        Assert.Equal(
+            ("CO", "Valle del Cauca", "Cali"),
+            (detail.Billing.Country, detail.Billing.DepartmentName, detail.Billing.CityName));
+    }
+
+    // Una facturación vieja (país null con ciudad) se lee como Colombia.
+    [Fact]
+    public async Task ALegacyBillingWithoutCountryButWithACityShowsColombia()
+    {
+        var order = StoreOrder(Buyer, parties: Parties(billing: ColombianParty()));
+        Assert.Null(order.Billing!.Country);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.NotNull(detail.Billing);
+        Assert.Equal(
+            ("CO", "Valle del Cauca", "Cali"),
+            (detail.Billing.Country, detail.Billing.DepartmentName, detail.Billing.CityName));
+    }
+
     [Fact]
     public async Task ColombianPlacesComeFromTheLookupOneCallPerDictionary()
     {

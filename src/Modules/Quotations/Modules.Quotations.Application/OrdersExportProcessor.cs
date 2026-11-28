@@ -574,9 +574,13 @@ public sealed class OrdersExportProcessor(
                 customer?.Phone ?? string.Empty,
                 customer?.Email ?? string.Empty);
 
-    // Una parte de afuera no tiene ciudad de DIVIPOLA: la columna lleva el texto que se escribió.
+    // Una parte de afuera no tiene ciudad de DIVIPOLA: la columna lleva el texto que se escribió. Colombia es el país efectivo nulo
+    // (envío, o facturación vieja o pendiente) o CO literal (la facturación desde el spec 2026-11-27).
     private static string CityOf(OrderParty party, IReadOnlyDictionary<Guid, string> cityNames) =>
-        party.Country is null ? NameOf(party.CityId, cityNames) : party.CityName ?? string.Empty;
+        IsColombian(party) ? NameOf(party.CityId, cityNames) : party.CityName ?? string.Empty;
+
+    private static bool IsColombian(OrderParty party) =>
+        party.EffectiveCountry is null or QuotationPartyDetails.ColombiaCountryCode;
 
     private static string NameOf(Guid? id, IReadOnlyDictionary<Guid, string> names) =>
         id is { } value && names.TryGetValue(value, out var name) ? name : string.Empty;
