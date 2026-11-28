@@ -218,4 +218,28 @@ public sealed class QuotationPartyTests
         Assert.Equal("CO", old.ToDetails().Country);
         Assert.Null(pending.ToDetails().Country);
     }
+
+    // Spec 2026-11-27: una facturación vieja (país null con ciudad) vuelta a guardar con CO no es un cambio, así que el
+    // historial no anota «Editó datos de facturación».
+    [Fact]
+    public void TheHistoryReadsAnOldColombianBillingRowAsColombia()
+    {
+        var departmentId = Guid.CreateVersion7();
+        var cityId = Guid.CreateVersion7();
+        QuotationPartyDetails Billing(string? country) => new()
+        {
+            Name = "Sede administrativa",
+            Phone = "+573001112233",
+            Email = "sede@x.co",
+            Address = "Carrera 7",
+            DepartmentId = departmentId,
+            CityId = cityId,
+            Country = country,
+        };
+
+        var old = Modules.Quotations.Application.QuotationHeaderSnapshot.Of(NewQuotation(Billing(null)));
+        var saved = Modules.Quotations.Application.QuotationHeaderSnapshot.Of(NewQuotation(Billing("CO")));
+
+        Assert.Equal(saved.Billing, old.Billing);
+    }
 }

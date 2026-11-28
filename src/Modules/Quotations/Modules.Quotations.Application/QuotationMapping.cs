@@ -142,10 +142,9 @@ internal static class QuotationMapping
         party.CityId,
         party.PersonType?.ToWireValue(),
         party.IdentificationType?.ToWireValue(),
-        // Facturación: el país efectivo, y null es «pendiente» (spec 2026-11-27). Envío: sin país es Colombia.
-        party.Role == QuotationPartyRole.Billing
-            ? party.EffectiveCountry
-            : party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
+        // Sólo una facturación pendiente (con nombre, sin país ni ciudad; spec 2026-11-27) viaja con null. Lo demás es el
+        // país efectivo, y sin país es Colombia, como siempre: una fila sin nombre no es pendiente.
+        party.IsCountryPending ? null : party.EffectiveCountry ?? QuotationPartyDetails.ColombiaCountryCode,
         party.CityName,
         party.RegionId,
         party.PostalCode);
