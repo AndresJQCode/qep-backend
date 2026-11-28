@@ -1,6 +1,7 @@
 # País de «Facturar a» obligatorio en cotizaciones y pedidos
 
-Fecha: 2026-11-27. Estado: **borrador, pendiente de aprobación del owner.** Tarjeta:
+Fecha: 2026-11-27. Estado: **aprobado por el owner en conversación (2026-11-27), incluido el pedido
+manual.** Tarjeta:
 <https://trello.com/c/PGAmC4DJ>. Frontend: <https://trello.com/c/QolgF4Ma>.
 
 ## Por qué
@@ -159,6 +160,6 @@ campo nuevo.
 - La parte de envío.
 - Cambiar `IsColombian` para el resto de los módulos (Customers, Store, Buyers).
 
-## Decisiones pendientes del owner
+## Decisiones del owner sobre este spec
 
-- ¿El pedido manual (`CreateOrder`) también exige el país? Se propone que sí (§2).
+- El pedido manual (`CreateOrder`) también exige el país (§2). Aprobado el 2026-11-27.
