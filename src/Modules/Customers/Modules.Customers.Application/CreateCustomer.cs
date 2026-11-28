@@ -142,10 +142,24 @@ public sealed class CreateCustomerHandler(
 
         // Los perfiles se comprueban igual que en el alta de uno suelto (región, ciudad, tasas) y también antes del CUC: una
         // referencia mala en el segundo no debe quemar un número ni dejar al cliente creado.
-        foreach (var profile in command.BillingProfiles ?? [])
+        var profiles = command.BillingProfiles ?? [];
+        for (var index = 0; index < profiles.Count; index++)
         {
-            await CustomerBillingProfileWorkflow.ValidateReferencesAsync(
-                geographyLookup, taxRateLookup, command.TenantId, profile, cancellationToken);
+            try
+            {
+                await CustomerBillingProfileWorkflow.ValidateReferencesAsync(
+                    geographyLookup, taxRateLookup, command.TenantId, profiles[index], cancellationToken);
+            }
+            catch (CustomersDomainException exception) when (exception.FieldErrors.Count > 0)
+            {
+                // El campo va con el índice del perfil (BillingProfiles[1].RegionId), como los del validador: sin él, la
+                // pantalla marcaría el campo del cliente y no el del perfil que falló.
+                throw new CustomersDomainException(
+                    exception.Code,
+                    exception.Message,
+                    exception.FieldErrors.ToDictionary(
+                        entry => $"BillingProfiles[{index}].{entry.Key}", entry => entry.Value, StringComparer.Ordinal));
+            }
         }
 
         // Spec 2026-11-15: con empresa, el alta corre en una transacción para bloquear la fila de la empresa, igual que

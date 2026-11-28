@@ -82,6 +82,8 @@ public sealed class CreateCustomerBillingProfilesTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("customers.billing_profile.region_invalid", failure.Code);
+        // El campo lleva el índice del perfil que falló, no el RegionId del cliente.
+        Assert.Equal(["BillingProfiles[1].RegionId"], failure.FieldErrors.Keys);
         Assert.DoesNotContain("cuc", calls);
         Assert.Empty(customers.Added);
     }
