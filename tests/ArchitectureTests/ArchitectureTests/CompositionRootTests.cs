@@ -380,7 +380,8 @@ public sealed class CompositionRootTests
         // + the two hr.medical.* permissions (spec 2026-11-23).
         // + los dieciséis de bodegas (wms, spec WMS 2026-10-31 §11.5).
         // + el de supervisar tareas de bodega (wms.task.manage, spec 2026-11-26).
-        Assert.Equal(131, PermissionConstants().Length);
+        // + el de las colas de la plataforma (operator.queues.read, spec 2026-11-27).
+        Assert.Equal(132, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -419,6 +420,24 @@ public sealed class CompositionRootTests
         Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "billing"));
         Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == OperatorPermissions.UsageRead);
+        Assert.Equal("Operator", definition.Category);
+        Assert.Empty(definition.RequiredModules!);
+    }
+
+    /// <summary>Colas de la plataforma (spec 2026-11-27): gemela de la del reporte de uso. Categoría <c>Operator</c>, de núcleo, y sólo
+    /// la lleva el rol global <c>admin</c>; <c>OperatorPermissionFilter</c> la deja viva sólo en el tenant operador.</summary>
+    [Fact]
+    public void OnlyTheAdminRoleCarriesTheQueuesPermission()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("operator.queues.read", OperatorPermissions.QueuesRead);
+        Assert.Contains(OperatorPermissions.QueuesRead, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(OperatorPermissions.QueuesRead, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(OperatorPermissions.QueuesRead, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(OperatorPermissions.QueuesRead, FactoryPermissions(provider, "cashier"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == OperatorPermissions.QueuesRead);
         Assert.Equal("Operator", definition.Category);
         Assert.Empty(definition.RequiredModules!);
     }
