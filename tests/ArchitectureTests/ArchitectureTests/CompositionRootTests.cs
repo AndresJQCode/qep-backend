@@ -380,7 +380,8 @@ public sealed class CompositionRootTests
         // + the two hr.medical.* permissions (spec 2026-11-23).
         // + los dieciséis de bodegas (wms, spec WMS 2026-10-31 §11.5).
         // + el de supervisar tareas de bodega (wms.task.manage, spec 2026-11-26).
-        Assert.Equal(131, PermissionConstants().Length);
+        // + el de las colas de la plataforma (operator.queues.read, spec 2026-11-27).
+        Assert.Equal(132, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
