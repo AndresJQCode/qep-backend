@@ -707,7 +707,7 @@ public sealed class QuotationMunicipalWithholdingsApiTests(SharedQuotationsHost 
         new(
             new QuotationPartyRequest(
                 "Sede administrativa", "1020304050", "3001234567", "sede@verde.co", "Calle 80 # 10-20",
-                fx.Bogota.DepartmentId, fx.Bogota.CityId, PersonType: "Natural", IdentificationType: "CC"),
+                fx.Bogota.DepartmentId, fx.Bogota.CityId, PersonType: "Natural", IdentificationType: "CC", Country: "CO"),
             null,
             BillingVatSurplus: false,
             BillingWithholdingTaxRateIds: withholdingTaxRateIds);

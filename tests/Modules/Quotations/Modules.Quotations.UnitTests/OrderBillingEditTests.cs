@@ -202,4 +202,22 @@ public sealed class OrderBillingEditTests
         Assert.False(changed);
         Assert.Equal(version, order.Version);
     }
+
+    // Spec 2026-11-27: una fila vieja (país null con ciudad) vuelta a guardar sin cambios, con CO o sin país, no es un
+    // cambio: no hay versión nueva ni historial.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("CO")]
+    public void ReSavingAnOldBillingRowWithoutChangesIsNotAChange(string? country)
+    {
+        var row = Row();
+        var order = OrderWithRow(row);
+        Assert.Null(order.Billing!.Country);
+        var version = order.Version;
+
+        var changed = order.SetBilling(row with { Country = country }, false, false, partyVatSurplus: false, Advisor, Now);
+
+        Assert.False(changed);
+        Assert.Equal(version, order.Version);
+    }
 }

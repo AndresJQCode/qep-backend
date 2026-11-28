@@ -58,7 +58,9 @@ public sealed record SiigoUnlinkedCity(string CountryCode, string CityText, bool
 /// <summary>La parte a la que se factura, ya resuelta (pedido o ficha del cliente). Lleva datos del cliente: nunca se imprime ni se
 /// loguea (el <c>ToString</c> no escribe nada). <paramref name="SiigoCountryCode"/> es el código de país de la lista de Siigo (<c>Us</c>)
 /// y sólo viaja fuera de Colombia; <paramref name="UnlinkedCity"/> es la ciudad escrita que no se vinculó (el armador reporta
-/// <c>customer_city_unlinked</c> en vez de <c>customer_city_missing</c>).</summary>
+/// <c>customer_city_unlinked</c> en vez de <c>customer_city_missing</c>); <paramref name="CountryPending"/> es <c>true</c> cuando la
+/// parte de facturación no declara a qué país factura (spec 2026-11-27): el armador reporta <c>customer_country_missing</c> en vez
+/// del faltante de ciudad.</summary>
 public sealed record SiigoBilledPartyInput(
     bool IsFinalConsumer,
     SiigoPersonKind? PersonType,
@@ -71,7 +73,8 @@ public sealed record SiigoBilledPartyInput(
     string? Email,
     SiigoPhone? Phone,
     string? SiigoCountryCode = null,
-    SiigoUnlinkedCity? UnlinkedCity = null)
+    SiigoUnlinkedCity? UnlinkedCity = null,
+    bool CountryPending = false)
 {
     public override string ToString() => "SiigoBilledPartyInput { }";
 }

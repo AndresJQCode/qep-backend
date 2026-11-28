@@ -43,8 +43,16 @@ public sealed class OrderParty
 
     public Guid? CityId { get; private set; }
 
-    /// <summary>ISO alfa-2; <c>null</c> es Colombia (ver <see cref="QuotationPartyDetails.Country"/>).</summary>
+    /// <summary>ISO alfa-2. En el envío <c>null</c> es Colombia; en la facturación <c>CO</c> se guarda literal y <c>null</c>
+    /// es lo viejo o «sin país» (ver <see cref="QuotationPartyDetails.Country"/> y <see cref="EffectiveCountry"/>).</summary>
     public string? Country { get; private set; }
+
+    /// <summary>El país que se lee de la parte: <see cref="Country"/>, salvo una facturación vieja (<c>null</c>) con
+    /// ciudad, que es Colombia. <c>null</c> en la facturación es país pendiente.</summary>
+    public string? EffectiveCountry => PartyCountry.Effective(Role, Country, CityId);
+
+    /// <summary>Facturación con nombre, sin país y sin ciudad (spec 2026-11-27): el país está pendiente.</summary>
+    public bool IsCountryPending => PartyCountry.IsPending(Role, Name, Country, CityId);
 
     /// <summary>La ciudad como texto, sólo fuera de Colombia.</summary>
     public string? CityName { get; private set; }
@@ -85,7 +93,7 @@ public sealed class OrderParty
         Address = Address,
         DepartmentId = DepartmentId,
         CityId = CityId,
-        Country = Country,
+        Country = EffectiveCountry,
         CityName = CityName,
         RegionId = RegionId,
         PostalCode = PostalCode,
@@ -96,7 +104,7 @@ public sealed class OrderParty
         var normalized = (Role == QuotationPartyRole.Billing
             ? details with { PostalCode = null }
             : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null })
-            .Normalized(fieldPrefix ?? $"Parties.{Role}");
+            .Normalized(fieldPrefix ?? $"Parties.{Role}", keepColombia: Role == QuotationPartyRole.Billing);
         Name = normalized.Name;
         IdentificationNumber = normalized.IdentificationNumber;
         PersonType = normalized.PersonType;

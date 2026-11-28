@@ -440,7 +440,9 @@ public sealed record QuotationHeaderSnapshot(
                 party.Address,
                 party.DepartmentId,
                 party.CityId,
-                party.Country,
+                // El efectivo (spec 2026-11-27): una facturación vieja guardada con null y ciudad es CO, y volver a
+                // guardarla con CO no debe anotar un cambio.
+                party.EffectiveCountry,
                 party.CityName,
                 party.RegionId);
 }

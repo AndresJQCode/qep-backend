@@ -390,7 +390,7 @@ public sealed class OrderConvertApiTests(SharedQuotationsHost sharedHost) : Orde
         var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
         var billing = new QuotationPartyRequest(
             "Otra persona", "1020304050", "3001234567", "otra@correo.co", "Calle 1 # 2-3", home.DepartmentId, home.CityId,
-            PersonType: "Natural", IdentificationType: "CE");
+            PersonType: "Natural", IdentificationType: "CE", Country: "CO");
         var quotation = await CreateSentQuotationAsync(
             client, factory, tenantId, clientId, productId,
             parties: new QuotationPartiesRequest(billing, null, BillingWithRetention: false, BillingVatSurplus: false));

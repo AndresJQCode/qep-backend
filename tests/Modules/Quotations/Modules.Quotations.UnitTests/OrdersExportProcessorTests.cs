@@ -1096,6 +1096,64 @@ public sealed class OrdersExportProcessorTests
             cells);
     }
 
+    // Spec 2026-11-27: la facturación guarda CO literal, y una colombiana sigue leyendo ciudad y departamento de Geography.
+    [Fact]
+    public async Task ABillingPartyWithTheLiteralColombiaCodeKeepsItsCityAndDepartmentFromGeography()
+    {
+        var parties = new QuotationParties(
+            Billing: CompleteBillingParty("Distribuciones Andinas S.A.S.") with
+            {
+                Country = "CO",
+                CityId = BillingCityId,
+                DepartmentId = BillingDepartmentId,
+            },
+            Shipping: null,
+            BillingVatSurplus: false);
+
+        var cells = await CustomerAndBillingCellsAsync(
+            parties,
+            CustomerWithFullData,
+            legacy: row => Assert.Equal("CO", row.Billing!.Country));
+
+        Assert.Equal("Medellín", cells[12].Text);
+        Assert.Equal("Antioquia", cells[13].Text);
+    }
+
+    // Una facturación vieja (país null con ciudad de DIVIPOLA) es Colombia y se lee igual que antes.
+    [Fact]
+    public async Task ALegacyBillingPartyWithoutCountryButWithACityIsStillColombian()
+    {
+        var cells = await CustomerAndBillingCellsAsync(
+            BillingPartyNamed("Distribuciones Andinas S.A.S."),
+            CustomerWithFullData,
+            legacy: row => Assert.Null(row.Billing!.Country));
+
+        Assert.Equal("Medellín", cells[12].Text);
+        Assert.Equal("Antioquia", cells[13].Text);
+    }
+
+    // Una facturación fuera de Colombia escribe el texto de su ciudad y no consulta ids de DIVIPOLA.
+    [Fact]
+    public async Task AForeignBillingPartyWritesItsCityText()
+    {
+        var parties = new QuotationParties(
+            Billing: CompleteBillingParty("Andean Supplies") with
+            {
+                Country = "US",
+                CityName = "Miami",
+                DepartmentId = null,
+                CityId = null,
+                IdentificationType = PartyIdentificationType.TaxId,
+            },
+            Shipping: null,
+            BillingVatSurplus: false);
+
+        var cells = await CustomerAndBillingCellsAsync(parties, CustomerWithFullData);
+
+        Assert.Equal("Miami", cells[12].Text);
+        Assert.Equal(string.Empty, cells[13].Text);
+    }
+
     // Una consulta de departamentos por lote, con los de las partes de facturación (spec 2026-09-15, E6).
     [Fact]
     public async Task ResolvesTheBillingDepartmentsOncePerBatch()

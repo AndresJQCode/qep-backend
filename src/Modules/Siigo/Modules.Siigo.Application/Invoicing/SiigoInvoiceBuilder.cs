@@ -249,7 +249,12 @@ public static class SiigoInvoiceBuilder
                 SiigoMissing.CustomerIdentificationTypeUnsupported, party.IdentificationType?.ToString(), null));
         }
 
-        if (string.IsNullOrWhiteSpace(party.CityCode) || string.IsNullOrWhiteSpace(party.StateCode))
+        // Sin país no se sabe qué carril de ciudad pedir (spec 2026-11-27): el faltante del país reemplaza al de la ciudad.
+        if (party.CountryPending)
+        {
+            missing.Add(new SiigoMissing(SiigoMissing.CustomerCountryMissing, null, null));
+        }
+        else if (string.IsNullOrWhiteSpace(party.CityCode) || string.IsNullOrWhiteSpace(party.StateCode))
         {
             // Una ciudad escrita que no se vinculó no es «sin ciudad»: el operador la vincula una vez para todos (spec 2026-11-26).
             missing.Add(new SiigoMissing(

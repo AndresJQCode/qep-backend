@@ -652,6 +652,12 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
             .WithMessage("The identification type is required when billing to someone else.")
             .When(edits => requireBillingIdentification && HasNamedOwnParty(edits));
 
+        // El país no se asume (spec 2026-11-27): se elige. Sólo al guardar, igual que el documento.
+        RuleFor(edits => edits.Billing!.Party!.Country)
+            .NotEmpty()
+            .WithMessage("The country is required when billing to someone else.")
+            .When(edits => requireBillingIdentification && HasNamedOwnParty(edits));
+
         RuleFor(edits => edits.Billing!.Party!.IdentificationType)
             .Must(type => PartyFiscalTypesParser.SupportedIdentificationTypes
                 .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))

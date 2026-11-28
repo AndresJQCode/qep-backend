@@ -473,8 +473,8 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal(10_000m, invoicing.ProductsTotal);
     }
 
-    // La parte colombiana guarda el país como null: con su propia ciudad, ese null es Colombia y no «toma el de la ficha». Sin parte de
-    // facturación, la ciudad sale de la ficha del cliente y el país va con ella.
+    // La parte colombiana guarda CO literal (spec 2026-11-27) y una vieja, null: con su propia ciudad, ni una ni otra «toma el de la
+    // ficha». Sin parte de facturación, la ciudad sale de la ficha del cliente y el país va con ella.
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -520,8 +520,52 @@ public sealed class OrderExternalInvoicingTests
 
         Assert.NotNull(invoicing);
         Assert.Equal(
-            hasBillingParty ? (billingCityId, null) : ((Guid?)null, "US"),
+            hasBillingParty ? (billingCityId, "CO") : ((Guid?)null, "US"),
             (invoicing.BilledParty.CityId, invoicing.BilledParty.Country));
+        Assert.False(invoicing.BilledParty.CountryPending);
+    }
+
+    // Una facturación vieja (país null con ciudad) es Colombia: conserva su ciudad, se lee como CO y no está pendiente.
+    [Fact]
+    public async Task ALegacyBillingPartyWithACityButNoCountryIsColombianAndNotPending()
+    {
+        var billingCityId = Guid.CreateVersion7();
+        var billing = new QuotationPartyDetails
+        {
+            Name = "Distribuidora Andina",
+            IdentificationNumber = "900123456",
+            IdentificationType = PartyIdentificationType.Nit,
+            PersonType = PartyPersonType.Juridica,
+            Phone = "3001234567",
+            Email = "facturas@andina.co",
+            Address = "Calle 1 # 2-3",
+            Country = "CO",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = billingCityId,
+        };
+        var order = Order.CreateManual(
+            OrderId.New(),
+            TenantId,
+            "PED-2026-0007",
+            new OrderHeader(ClientId, Advisor, "COP", "Transferencia", false, null, false, []),
+            new QuotationParties(billing, null, BillingVatSurplus: false),
+            Account,
+            ShippingDetails.None,
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
+            null,
+            Advisor,
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)],
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+        typeof(OrderParty).GetProperty(nameof(OrderParty.Country))!.SetValue(order.Billing, null);
+        var service = NewService(order, CustomerRef("US", "Miami"), new Dictionary<Guid, string>());
+
+        var invoicing = await service.GetForInvoicingAsync(TenantId, order.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(invoicing);
+        Assert.Equal(
+            (billingCityId, "CO", false),
+            (invoicing.BilledParty.CityId, invoicing.BilledParty.Country, invoicing.BilledParty.CountryPending));
     }
 
     // El dominio sólo deja crear un pedido con la parte de facturación completa (con ciudad). Una parte sin ciudad —lo que la tienda o
@@ -594,14 +638,53 @@ public sealed class OrderExternalInvoicingTests
             (party.CityId, party.DepartmentId, party.Country, party.CityName));
     }
 
+    // Spec 2026-11-27: con nombre, sin país y sin ciudad, el país está pendiente y no se completa con la ficha del cliente.
     [Fact]
-    public async Task WithoutBillingCityTheFourComeFromTheCustomer()
+    public async Task APendingBillingPartyIsFlaggedAndDoesNotTakeThePlaceOfTheCustomer()
     {
-        var party = await BilledPartyOfAsync(null, null, CustomerRef("US", "Miami"));
+        var party = await BilledPartyOfAsync(
+            null, null, CustomerRef("US", "Miami", Guid.CreateVersion7(), Guid.CreateVersion7()));
 
+        Assert.True(party.CountryPending);
         Assert.Equal(
-            ((Guid?)null, (Guid?)null, "US", "Miami"),
+            ((Guid?)null, (Guid?)null, (string?)null, (string?)null),
             (party.CityId, party.DepartmentId, party.Country, party.CityName));
+    }
+
+    [Fact]
+    public async Task ABillingPartyWithACountryIsNotPending()
+    {
+        var party = await BilledPartyOfAsync("US", "Miami", CustomerRef("CO", "Bogotá"));
+
+        Assert.False(party.CountryPending);
+    }
+
+    // Sin parte de facturación la fuente es la ficha del cliente y ahí no hay «pendiente».
+    [Fact]
+    public async Task WithoutABillingPartyThePlaceComesFromTheCustomerAndIsNotPending()
+    {
+        var order = Order.CreateManual(
+            OrderId.New(),
+            TenantId,
+            "PED-2026-0008",
+            new OrderHeader(ClientId, Advisor, "COP", "Transferencia", false, null, false, []),
+            QuotationParties.Empty,
+            Account,
+            ShippingDetails.None,
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
+            null,
+            Advisor,
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)],
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+        var service = NewService(order, CustomerRef("US", "Miami"), new Dictionary<Guid, string>());
+
+        var invoicing = await service.GetForInvoicingAsync(TenantId, order.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(invoicing);
+        Assert.Equal(
+            ("US", "Miami", false),
+            (invoicing.BilledParty.Country, invoicing.BilledParty.CityName, invoicing.BilledParty.CountryPending));
     }
 
     private static ExternalOrderInvoicingService NewService(
