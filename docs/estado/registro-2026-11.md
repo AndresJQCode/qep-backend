@@ -3,6 +3,8 @@
 Entradas del registro de [`docs/estado.md`](../estado.md) de este mes, la más reciente arriba. Lo que vale hoy está en
 `estado.md`; esto es historia y no se corrige.
 
+- 2026-11-27 — Mergeada a `develop`, sin push, la **brecha G-11 del WMS** (merge `49ab0290b`, tarjeta `ck9h9QAI`): la zona
+  y el muelle de recepción se protegen por id y no por código (decisión del owner), con migración sin backfill.
 - 2026-11-27 — Mergeada a `develop`, sin push, la **consola de colas de la plataforma** (merge `345fb9525`, tarjeta
   `CN1QTtcc`): `GET …/operator/queues` con `operator.queues.read`. El owner autorizó la prueba nueva de arquitectura.
 - 2026-11-27 — Mergeado a `develop`, sin push, **país de «Facturar a» obligatorio** (merge `0f9b7573f`, tarjeta
