@@ -404,7 +404,22 @@ public static class CustomerEndpoints
                 request.WithholdingTaxRateIds,
                 request.WithholdingAgentCities,
                 CompanyId: request.CompanyId,
-                RegionId: request.RegionId),
+                RegionId: request.RegionId,
+                BillingProfiles: request.BillingProfiles?.Select(profile => new NewCustomerBillingProfile(
+                    profile.Name,
+                    profile.PersonType,
+                    profile.IdentificationType,
+                    profile.IdentificationNumber,
+                    profile.Phone,
+                    profile.Email,
+                    profile.Address,
+                    profile.Country,
+                    profile.CityId,
+                    profile.CityName,
+                    profile.RegionId,
+                    profile.WithholdingTaxRateIds,
+                    profile.VatSurplus,
+                    profile.IsPrincipal)).ToList()),
             cancellationToken);
 
         return Results.Created(

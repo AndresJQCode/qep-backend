@@ -333,6 +333,25 @@ internal static class CustomerBillingProfileWorkflow
         return customer;
     }
 
+    /// <summary>Las referencias de un perfil que todavía no tiene cliente (el alta con perfiles): región, ciudad y tasas, en el
+    /// mismo orden y con los mismos códigos que <see cref="LoadForWriteAsync"/>, sin cargar ningún cliente.</summary>
+    public static async Task ValidateReferencesAsync(
+        ICustomerGeographyLookup geographyLookup,
+        ICustomerTaxRateLookup taxRateLookup,
+        Guid tenantId,
+        ICustomerBillingProfileWriteCommand command,
+        CancellationToken cancellationToken)
+    {
+        _ = await CustomerRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country, command.RegionId, CustomerRegionRules.BillingProfileRegionInvalid,
+            cancellationToken);
+
+        await CustomerAddressWorkflow.EnsureCityAsync(geographyLookup, command.CityId, cancellationToken);
+
+        await CustomerWithholdingRules.ValidateAsync(
+            taxRateLookup, tenantId, command.WithholdingTaxRateIds ?? [], cancellationToken);
+    }
+
     // El validador ya exigio los textos; el dominio vuelve a comprobarlos y los normaliza.
     public static CustomerBillingProfileDetails ToDetails(ICustomerBillingProfileWriteCommand command) =>
         new()

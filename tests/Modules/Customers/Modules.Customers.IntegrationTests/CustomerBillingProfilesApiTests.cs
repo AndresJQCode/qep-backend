@@ -422,4 +422,62 @@ public sealed class CustomerBillingProfilesApiTests
         Assert.Equal("customers.billing_profile.region_invalid", await ProblemCodeAsync(response));
         Assert.Equal(["RegionId"], await ValidationFieldsAsync(response));
     }
+
+    private static Dictionary<string, object?> CreateBody(Guid cityId, Guid classificationId, params object[] profiles) => new()
+    {
+        ["name"] = "Verde Esencial S.A.S.",
+        ["identificationType"] = "NIT",
+        ["identificationNumber"] = "900.123.456-1",
+        ["phone"] = "310 935 2187",
+        ["email"] = "compras@verde.co",
+        ["address"] = "Calle 10 # 45-12",
+        ["country"] = "CO",
+        ["cityId"] = cityId,
+        ["classificationId"] = classificationId,
+        ["vatSurplus"] = false,
+        ["billingProfiles"] = profiles
+    };
+
+    [Fact]
+    public async Task CreatingACustomerWithTwoProfilesReturnsBothAndTheFirstIsPrincipal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var body = CreateBody(
+            city.CityId,
+            classification.Id,
+            ColombianBody(city.CityId, name: "Primero"),
+            ColombianBody(city.CityId, name: "Segundo", identificationNumber: "900123457"));
+
+        var response = await client.PostAsJsonAsync(CustomersUrl(TenantId), body, TestContext.Current.CancellationToken);
+        var customer = await ReadAsync(response, HttpStatusCode.Created);
+
+        var profiles = Profiles(customer);
+        Assert.Equal(["Primero", "Segundo"], profiles.Select(p => p.GetProperty("name").GetString()));
+        Assert.Equal([true, false], profiles.Select(p => p.GetProperty("isPrincipal").GetBoolean()));
+    }
+
+    [Fact]
+    public async Task CreatingACustomerWithAnInvalidProfileLeavesNoCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var body = CreateBody(
+            city.CityId,
+            classification.Id,
+            ColombianBody(city.CityId, name: "Primero"),
+            ColombianBody(city.CityId, name: "Segundo", identificationNumber: "ACME"));
+
+        var response = await client.PostAsJsonAsync(CustomersUrl(TenantId), body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(0, await ScalarAsync(database.GetConnectionString(), "SELECT count(*) FROM customers.customers"));
+        Assert.Equal(0, await ScalarAsync(database.GetConnectionString(), "SELECT count(*) FROM customers.customer_billing_profiles"));
+    }
 }
