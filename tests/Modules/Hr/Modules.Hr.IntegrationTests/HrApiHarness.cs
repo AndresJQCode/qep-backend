@@ -143,10 +143,15 @@ internal static class HrApiHarness
         var ct = TestContext.Current.CancellationToken;
         var now = DateTimeOffset.UtcNow;
 
-        var user = User.CreateInvited(UserId.Parse(SubjectId), $"caller-{tenantId[^2..]}@example.com", now);
-        identity.Users.Add(user);
+        // One user per database: a class that seeds one tenant per test in a shared database calls this once per tenant.
+        var userId = UserId.Parse(SubjectId);
+        if (await identity.Users.FindAsync([userId], ct) is null)
+        {
+            identity.Users.Add(User.CreateInvited(userId, $"caller-{tenantId[^2..]}@example.com", now));
+        }
+
         var membership = Membership.CreateActive(
-            MembershipId.New(), user.Id.Value, new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId)), [role], "test", now);
+            MembershipId.New(), userId.Value, new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId)), [role], "test", now);
         membership.UpdateProfile(displayName, null, now);
         tenancy.Memberships.Add(membership);
         await identity.SaveChangesAsync(ct);
