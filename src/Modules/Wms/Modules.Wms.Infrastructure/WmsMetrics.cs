@@ -12,6 +12,7 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
 
     private readonly Counter<long> _movements;
     private readonly Histogram<double> _confirmDuration;
+    private readonly Counter<long> _documentsParked;
     private long _balanceDrift;
     private long _partitionMissing;
     private long _reconciliationFailed;
@@ -20,6 +21,9 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
     {
         Meter = meterFactory.Create(MeterName);
         _movements = Meter.CreateCounter<long>("qep.wms.movements", description: "Stock movements written to the ledger.");
+        _documentsParked = Meter.CreateCounter<long>(
+            "qep.wms.inventory.documents_parked",
+            description: "Documents of the basic inventory whose event kept failing past the threshold and wait for it to pass.");
         _confirmDuration = Meter.CreateHistogram(
             "qep.wms.confirm.duration",
             unit: "ms",
@@ -43,6 +47,8 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
 
     public void RecordMovements(MovementReason reason, int count) =>
         _movements.Add(count, new KeyValuePair<string, object?>("reason", reason.ToString()));
+
+    public void RecordDocumentParked() => _documentsParked.Add(1);
 
     public void RecordConfirmDuration(double milliseconds) => _confirmDuration.Record(milliseconds);
 

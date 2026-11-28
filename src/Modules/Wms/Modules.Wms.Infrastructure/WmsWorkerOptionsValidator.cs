@@ -16,3 +16,12 @@ internal sealed class WmsWorkerOptionsValidator : IValidateOptions<WmsWorkerOpti
             : ValidateOptionsResult.Fail(results.Select(result => $"{WmsWorkerOptions.SectionName}: {result.ErrorMessage}"));
     }
 }
+
+// La marca de arranque del consumidor de inventario básico es obligatoria: el valor por defecto (0001-01-01) leería todo el outbox.
+internal sealed class WmsInventoryEventsOptionsValidator : IValidateOptions<WmsInventoryEventsOptions>
+{
+    public ValidateOptionsResult Validate(string? name, WmsInventoryEventsOptions options) =>
+        options.StartAt == default
+            ? ValidateOptionsResult.Fail($"{WmsInventoryEventsOptions.SectionName}:StartAt is required (the date the consumer starts reading the outbox).")
+            : ValidateOptionsResult.Success;
+}

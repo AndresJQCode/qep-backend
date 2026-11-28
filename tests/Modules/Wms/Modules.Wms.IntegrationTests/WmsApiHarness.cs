@@ -47,6 +47,9 @@ internal static partial class WmsApiHarness
         WmsPermissions.TaskManage,
     ];
 
+    /// <summary>La marca de arranque del consumidor de inventario básico en las pruebas: lo anterior no se mira.</summary>
+    public static readonly DateTimeOffset InventoryStartAt = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     public static string WmsUrl(string tenantId = TenantId) => $"/api/v1/tenants/{tenantId}/wms";
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
@@ -253,6 +256,7 @@ internal static partial class WmsApiHarness
             builder.UseSetting("Wms:Workers:PartitionSweepHours", "24");
             builder.UseSetting("Wms:Workers:HousekeepingHours", "24");
             builder.UseSetting("Wms:Workers:HousekeepingStartupSeconds", "3600");
+            builder.UseSetting("Wms:InventoryEvents:StartAt", InventoryStartAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
 
             if (configureServices is not null)
             {
