@@ -323,6 +323,61 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal(new SiigoMissing("customer_city_unlinked", null, null), unlinked);
     }
 
+    // Spec 2026-11-27: sin país no se sabe qué carril de ciudad pedir; el faltante del país ocupa el lugar del de la ciudad.
+    [Fact]
+    public void APendingCountryReplacesTheCityMissing()
+    {
+        var input = Order() with
+        {
+            BilledParty = Company() with { CityCode = null, StateCode = null, CountryPending = true },
+        };
+
+        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(input)).Missing;
+
+        Assert.Equal(new SiigoMissing("customer_country_missing", null, null), Assert.Single(missing));
+    }
+
+    [Fact]
+    public void ThePendingCountryComesRightAfterTheIdentificationAndBeforePayment()
+    {
+        var settings = SiigoSettings.Create(Guid.NewGuid(), Guid.NewGuid());
+        var input = Order() with
+        {
+            BilledParty = Company() with { Identification = " ", CityCode = null, CountryPending = true },
+        };
+
+        var codes = Assert.IsType<SiigoBuildResult.NotReady>(Build(input, settings)).Missing.Select(value => value.Code).ToArray();
+
+        var country = Array.IndexOf(codes, "customer_country_missing");
+        Assert.True(country > Array.IndexOf(codes, "customer_identification_missing"));
+        Assert.True(country < Array.IndexOf(codes, "payment_unlinked"));
+        Assert.DoesNotContain("customer_city_missing", codes);
+    }
+
+    // Sin pendiente, la falta de ciudad se reporta como siempre.
+    [Fact]
+    public void WithoutAPendingCountryTheCityMissingIsReportedAsBefore()
+    {
+        var input = Order() with { BilledParty = Company() with { CityCode = null, StateCode = null } };
+
+        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(input)).Missing;
+
+        Assert.Equal(new SiigoMissing("customer_city_missing", null, null), Assert.Single(missing));
+    }
+
+    [Fact]
+    public void AFinalConsumerIgnoresThePendingCountry()
+    {
+        var input = Order() with
+        {
+            BilledParty = Company() with { IsFinalConsumer = true, CountryPending = true },
+        };
+
+        var missing = Build(input) is SiigoBuildResult.NotReady notReady ? notReady.Missing : [];
+
+        Assert.DoesNotContain(missing, value => value.Code == "customer_country_missing");
+    }
+
     [Fact]
     public void TheUnlinkedCityNeverPrints() =>
         Assert.DoesNotContain("Miamy", new SiigoUnlinkedCity("US", "Miamy", true).ToString(), StringComparison.Ordinal);

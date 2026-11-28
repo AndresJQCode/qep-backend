@@ -62,7 +62,8 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
                 party.Email,
                 PhoneOf(party),
                 place.SiigoCountryCode,
-                place.UnlinkedCity),
+                place.UnlinkedCity,
+                party.CountryPending),
             order.CompanyId,
             order.Version,
             order.AdvisorMembershipId,
@@ -95,7 +96,8 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
     // recortado y en mayúscula, como lo guarda el catálogo. Otro país sin ciudad escrita: nada, y el armador dice customer_city_missing.
     private async Task<Place> PlaceOfAsync(ExternalInvoicingParty party, CancellationToken cancellationToken)
     {
-        if (party.IsFinalConsumer)
+        // Con el país pendiente (spec 2026-11-27) no se sabe a qué país factura: ningún lugar; el armador dice customer_country_missing.
+        if (party.IsFinalConsumer || party.CountryPending)
         {
             return Place.None;
         }
@@ -124,7 +126,8 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
         public static Place None { get; } = new(null, null, null, null);
     }
 
-    // Lo que no se puede partir viaja crudo: el armador del cliente decide si Siigo lo aceptaría.
+    // Lo que no se puede partir viaja crudo: el armador del cliente decide si Siigo lo aceptaría. Con el país pendiente la región es CO
+    // (IsColombian de null): la factura no sale hasta que se elija el país, así que el teléfono se parte como una ficha vieja.
     private SiigoPhone? PhoneOf(ExternalInvoicingParty party)
     {
         if (string.IsNullOrWhiteSpace(party.Phone))
