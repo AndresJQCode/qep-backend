@@ -38,7 +38,7 @@ public sealed class SaleReadAndVoidHandlersTests
         new(bed.Sales, bed.Memberships, bed.Context(permissions), bed.TenantClock, new ListPosSalesValidator());
 
     private static VoidPosSaleHandler Void(PosTestBed bed, params string[] permissions) =>
-        new(bed.Sales, bed.Sessions, bed.UnitOfWork, bed.Audit, bed.Cashiers, bed.Memberships,
+        new(bed.Sales, bed.Sessions, bed.UnitOfWork, bed.Audit, bed.Events, bed.Cashiers, bed.Memberships,
             bed.Context(permissions), bed.Clock, bed.TenantClock, new VoidPosSaleValidator());
 
     private static ListCashSessionsHandler Sessions(PosTestBed bed, params string[] permissions) =>
