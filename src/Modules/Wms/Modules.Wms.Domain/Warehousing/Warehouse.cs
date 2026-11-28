@@ -35,6 +35,15 @@ public sealed class Warehouse
     /// Referencia blanda (sin FK): <see cref="EnsureGeneralLocation"/> la recrea si ya no está.</summary>
     public LocationId? GeneralLocationId { get; private set; }
 
+    /// <summary>La zona de recepción que nace con la bodega. Se guarda por id y no por código: el código se puede cambiar y la
+    /// protección contra el borrado (G-11) no puede depender de un texto editable. Referencia blanda, sin FK; es nula en las
+    /// bodegas creadas antes de que existiera.</summary>
+    public LocationId? ReceivingZoneId { get; private set; }
+
+    /// <summary>El muelle de recepción (<c>REC-01</c> al nacer). Se guarda por id por la misma razón que
+    /// <see cref="ReceivingZoneId"/>; la recepción lo busca por aquí y no por su código.</summary>
+    public LocationId? ReceivingDockId { get; private set; }
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -66,9 +75,11 @@ public sealed class Warehouse
         var receiving = warehouse.Insert(
             LocationId.New(), null, LocationCodes.ReceivingZone, LocationKind.Zone, LocationRole.Receiving,
             isVirtual: false, allowsStorage: false, allowsPicking: false, LocationCapacity.None, 0, [], now);
-        warehouse.Insert(
+        var dock = warehouse.Insert(
             LocationId.New(), receiving.Id, LocationCodes.ReceivingDock, LocationKind.Dock, LocationRole.Receiving,
             isVirtual: false, allowsStorage: true, allowsPicking: false, LocationCapacity.None, 0, [], now);
+        warehouse.ReceivingZoneId = receiving.Id;
+        warehouse.ReceivingDockId = dock.Id;
 
         return warehouse;
     }
@@ -203,9 +214,10 @@ public sealed class Warehouse
             throw new WmsDomainException(WmsErrorCodes.LocationVirtualImmutable, "A virtual location cannot be removed.");
         }
 
-        // RF-003: la zona de recepción y su muelle nacen con la bodega y se tratan como las virtuales. WMS-C y WMS-D asumen que
-        // REC-01 existe; si se pudiera borrar, la recepción quedaría sin dónde descargar.
-        if (location.Code is LocationCodes.ReceivingZone or LocationCodes.ReceivingDock)
+        // RF-003: la zona de recepción y su muelle nacen con la bodega y se tratan como las virtuales; si se pudieran borrar, la
+        // recepción quedaría sin dónde descargar. G-11: se protegen por identidad y no por código, porque el código se puede
+        // editar y una ubicación nueva llamada REC-01 no debe quedar protegida por accidente.
+        if (location.Id == ReceivingZoneId || location.Id == ReceivingDockId)
         {
             throw new WmsDomainException(WmsErrorCodes.LocationVirtualImmutable, "The receiving zone and its dock cannot be removed.");
         }
