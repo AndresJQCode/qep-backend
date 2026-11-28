@@ -1327,7 +1327,7 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
     incidents and answers 422 `wms.adjustment.count_stale` after saving (same pattern as `SyncConflict`). The rejection is audited
     as `wms.adjustment.rejected` with the **system** as actor (`Guid.Empty`, `WmsActorType.System`) and the caller in `triggeredBy`;
     the incident event has no member (decision 15).
-38. (Final review, decisión del agente, por confirmar) H1 details: the re-link moves **every** incident whose `verification_task_id` is
+38. (Final review, confirmed by the owner 2026-11-27) H1 details: the re-link moves **every** incident whose `verification_task_id` is
     the old `Count` (any status, not only open ones: in the normal flow the children were already resolved by the system, and
     separation of duties derives reporters from `verification_task_id`); the new `Count`'s source is the rejected `CountVariance`; a
     serial variant gets no new `Count`. `post` reads the balance without locks first (the recount needs `count-key` and numbering,
@@ -1336,7 +1336,7 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
     balance row has nothing to lock (a concurrent first insert is not covered).
 39. (Final review, confirmed by the owner 2026-11-27) M1: reporters of a `CountVariance` are `ListReportersVerifiedByAsync(sourceCount)`
     (replaces `ListReportersOfChildrenAsync`).
-40. (Final review, decisión del agente, por confirmar) M3/L3: `AcceptIntoStock` is not offered nor accepted when the raw payload's
+40. (Final review, confirmed by the owner 2026-11-27) M3/L3: `AcceptIntoStock` is not offered nor accepted when the raw payload's
     `toLocationId` differs from the line destination (an unreadable value counts as different), when the variant is lot-tracked and
     the incident has no lot, or when `actualQty` exceeds the line's **current** remaining (≤ the remaining at incident time).
 41. (Final review, security) The cap is cumulative: remaining = planned − confirmed − sum of `actual_qty` of incidents already
@@ -1347,8 +1347,19 @@ merge to `develop` waits for the owner's authorization of every item in «Owner 
     (the order of `GET /incidents` is `reported_at DESC, number DESC`; `number` added so a backward scan serves the whole order),
     migration `AddIncidentsTenantReportedIndex`, expand-only.
 
-**Owner confirmation, 2026-11-27:** the owner reviewed decisions 27, 29, 34, 35, 39, 41 and 42 one by one against the code and
-confirmed all seven as implemented. They are no longer pending.
+**Owner confirmation, 2026-11-27:** the owner reviewed decisions 27 to 32, 34 to 36 and 38 to 42 one by one against the code and
+confirmed all fourteen as implemented. With decisions 1 to 26 (approved in block), 33 and 37 (owner decisions), no agent decision
+of this plan is pending.
+
+Known limitations the owner accepted for T2 (to revisit in the cut that needs them):
+
+- **Multi-line `Count` (decision 31).** `CountVerificationHook` evaluates every counted line when the task closes and gives each
+  `CountVariance` the same `operation_key`; the unique index on `(tenant_id, operation_key)` would refuse the second one. Every
+  `Count` T2 generates has one line. A cut that brings multi-line counts (cycle counts) must change this first.
+- **Key without a balance row (decision 38).** `post` has nothing to lock when the counted key never had stock, so a concurrent
+  first receipt can slip in between the re-read and the ledger movement.
+- **Busy locations (decision 37).** The stale check is an exact comparison: on a location with constant movement the adjustment is
+  rejected and recounted until it is approved while the balance is still.
 
 ## Deviations
 
