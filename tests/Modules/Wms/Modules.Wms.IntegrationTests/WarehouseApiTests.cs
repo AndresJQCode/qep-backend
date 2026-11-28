@@ -314,6 +314,33 @@ public sealed class WarehouseApiTests
     }
 
     [Fact]
+    public async Task SettingAnInactiveWarehouseAsPrincipalIs422AndChangesNothing()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var first = await CreateAsync(client, "BOG", "Bogotá");
+        var firstId = first.GetProperty("id").GetGuid();
+        var principal = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(firstId), new { version = 1 }), Ct);
+        Assert.Equal(HttpStatusCode.OK, principal.StatusCode);
+        var second = await CreateAsync(client, "MED", "Medellín");
+        var secondId = second.GetProperty("id").GetGuid();
+        var deactivated = await client.SendAsync(
+            Write(HttpMethod.Put, $"{WarehousesUrl}/{secondId}", new { name = "Medellín", cityId = (Guid?)null, isActive = false, version = 1 }), Ct);
+        using var body = JsonDocument.Parse(await BodyAsync(deactivated));
+        var version = body.RootElement.GetProperty("version").GetInt64();
+
+        var response = await client.SendAsync(Write(HttpMethod.Put, PrincipalUrl(secondId), new { version }), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.warehouse.inactive_cannot_be_principal", await CodeOfAsync(response));
+        // La anterior sigue siendo la principal: la transacción se deshizo entera.
+        Assert.True((await WarehouseAsync(client, firstId)).GetProperty("isPrincipal").GetBoolean());
+        Assert.False((await WarehouseAsync(client, secondId)).GetProperty("isPrincipal").GetBoolean());
+    }
+
+    [Fact]
     public async Task DeactivatingThePrincipalIs422()
     {
         var (database, factory) = await OpenAsync();
